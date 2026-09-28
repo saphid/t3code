@@ -6,6 +6,8 @@
  * the menu showing what the page really has.
  */
 import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
+import { Tooltip } from "@t3tools/extension-sdk/authoring";
+import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -89,6 +91,7 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
  * `blockReason` disables every page item and says why; `run` sends one verb.
  */
 export function PageMenu(props: {
+  host: Pick<ClientHost, "React" | "tooltip">;
   session: BrowserSession | null;
   blockReason: string | null;
   run: (verb: PageVerb) => void;
@@ -97,7 +100,7 @@ export function PageMenu(props: {
   /** Rendered under the page items while open; profile actions do not need a live page. */
   children?: ReactNode;
 }) {
-  const { session, blockReason, run, zoomStep, children } = props;
+  const { host, session, blockReason, run, zoomStep, children } = props;
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -125,17 +128,19 @@ export function PageMenu(props: {
 
   return (
     <div ref={root} style={{ position: "relative" }}>
-      <button
-        type="button"
-        aria-label="Page menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={session === null}
-        onClick={() => setOpen((value) => !value)}
-        style={control}
-      >
-        ⋯
-      </button>
+      <Tooltip host={host} label="More">
+        <button
+          type="button"
+          aria-label="Preview menu"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          disabled={session === null}
+          onClick={() => setOpen((value) => !value)}
+          style={control}
+        >
+          ⋯
+        </button>
+      </Tooltip>
       {open && (
         <div
           role="menu"

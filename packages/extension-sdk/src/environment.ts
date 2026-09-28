@@ -244,6 +244,71 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
     : null;
 }
 
+/** One host-rendered tooltip around a single trigger element. */
+export interface TooltipProps {
+  /** Tooltip text. Null or empty renders `children` alone. */
+  readonly label: string | null | undefined;
+  /**
+   * The trigger: one DOM element, or a component that forwards its ref and
+   * props to one. The tooltip is visual; keep the trigger's own `aria-label`.
+   */
+  readonly children: React.ReactElement;
+  /** Defaults to `"top"`. */
+  readonly side?: "top" | "bottom" | "left" | "right";
+  /** Defaults to `"center"`. */
+  readonly align?: "start" | "center" | "end";
+  /**
+   * A trigger with `disabled` set shows no tooltip, like native disabled
+   * controls. Set this where the matching native control stays hoverable
+   * while disabled — to explain why, or to keep naming an action (or its
+   * pending state) while a write holds it. The host then wraps the trigger
+   * in a hoverable inline-flex span (enabled or not, so its ancestry does
+   * not change with its state).
+   */
+  readonly showWhenDisabled?: boolean;
+}
+
+/**
+ * `ClientHost.tooltip` version 1. A rendering primitive like `codeView`: no
+ * grant, no broker. The host owns the popup's look, open delay, placement,
+ * focus behavior and theme.
+ */
+export interface ClientTooltip {
+  readonly version: 1;
+  readonly Tooltip: React.ComponentType<TooltipProps>;
+}
+
+const REACT_MEMO_TYPE = Symbol.for("react.memo");
+const REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref");
+
+/**
+ * Whether `value` can be rendered as a component: a function (or class), or
+ * a genuine `React.memo` / `React.forwardRef` wrapper around one. Elements,
+ * lazy objects and arbitrary tagged objects are not.
+ */
+function isComponentType(value: unknown, depth = 0): boolean {
+  if (typeof value === "function") return true;
+  if (typeof value !== "object" || value === null || depth > 4) return false;
+  const wrapper = value as { $$typeof?: unknown; type?: unknown; render?: unknown };
+  if (wrapper.$$typeof === REACT_MEMO_TYPE) return isComponentType(wrapper.type, depth + 1);
+  if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE) return typeof wrapper.render === "function";
+  return false;
+}
+
+/**
+ * The host's tooltip when it offers version 1 or a compatible later (integer)
+ * one with a renderable component, else null. Packs usually render the
+ * `Tooltip` from `authoring`, which falls back to the trigger alone.
+ */
+export function resolveTooltip(host: Pick<ClientHost, "tooltip">): ClientTooltip | null {
+  const member: unknown = host.tooltip;
+  if (!member || typeof member !== "object") return null;
+  const { version, Tooltip } = member as Record<string, unknown>;
+  return Number.isInteger(version) && (version as number) >= 1 && isComponentType(Tooltip)
+    ? (member as ClientTooltip)
+    : null;
+}
+
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
@@ -298,6 +363,11 @@ export interface ClientHost {
    * and keep plugin-owned rows as the fallback.
    */
   readonly codeView?: ClientCodeView;
+  /**
+   * Host-rendered tooltip. Absent on hosts without one — render it through
+   * `authoring`'s `Tooltip`, which falls back to the trigger alone.
+   */
+  readonly tooltip?: ClientTooltip;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

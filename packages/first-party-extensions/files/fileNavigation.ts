@@ -170,6 +170,14 @@ export function fileBreadcrumbs(rootLabel: string, relativePath: string): FileBr
   ];
 }
 
+/**
+ * A crumb's tooltip, as native's: the full path, and for the root its
+ * label (native shows the project name; a project-scope view gets none).
+ */
+export function fileBreadcrumbTooltip(crumb: FileBreadcrumb): string {
+  return crumb.kind === "project" ? crumb.label : crumb.path;
+}
+
 /** Direct children of a crumb's directory, directories first, name-sorted. */
 export function fileBreadcrumbChildren(
   entries: readonly { readonly path: string; readonly kind: "file" | "directory" }[],

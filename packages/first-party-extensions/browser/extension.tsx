@@ -1,6 +1,7 @@
 import {
   defineExtension,
   requireApi,
+  Tooltip,
   useBrowserSurfaceSlot,
   useRemoteBrowserFrames,
 } from "@t3tools/extension-sdk/authoring";
@@ -29,6 +30,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AnnotateButton } from "./annotateButton.js";
 import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
@@ -940,6 +942,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   // Native disables capture until the page is on screen here and while it failed to load.
   const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
   const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
+  const pageLoading =
+    held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
     leaseState?.kind === "ended"
       ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
@@ -983,43 +987,50 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           alignItems: "center",
         }}
       >
+        <Tooltip host={host} label="Back">
+          <button
+            type="button"
+            aria-label="Back"
+            disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
+            onClick={() => (held ? command("back") : commit(goBack(state)))}
+            style={buttonStyle}
+          >
+            ←
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label="Forward">
+          <button
+            type="button"
+            aria-label="Forward"
+            disabled={
+              held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
+            }
+            onClick={() => (held ? command("forward") : commit(goForward(state)))}
+            style={buttonStyle}
+          >
+            →
+          </button>
+        </Tooltip>
+        <Tooltip host={host} label={pageLoading ? "Loading…" : "Refresh"}>
+          <button
+            type="button"
+            aria-label={pageLoading ? "Stop" : "Refresh"}
+            disabled={
+              fileSource === null &&
+              (held
+                ? pageBlock !== null && !isRecoveryExhausted(live)
+                : state.status.kind !== "target")
+            }
+            onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
+            style={buttonStyle}
+          >
+            ⟳
+          </button>
+        </Tooltip>
+        {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
         <button
           type="button"
-          aria-label="Back"
-          disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
-          onClick={() => (held ? command("back") : commit(goBack(state)))}
-          style={buttonStyle}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          aria-label="Forward"
-          disabled={
-            held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
-          }
-          onClick={() => (held ? command("forward") : commit(goForward(state)))}
-          style={buttonStyle}
-        >
-          →
-        </button>
-        <button
-          type="button"
-          aria-label="Reload"
-          disabled={
-            fileSource === null &&
-            (held
-              ? pageBlock !== null && !isRecoveryExhausted(live)
-              : state.status.kind !== "target")
-          }
-          onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
-          style={buttonStyle}
-        >
-          ⟳
-        </button>
-        <button
-          type="button"
-          aria-label={deviceMode ? "Turn off device toolbar" : "Turn on device toolbar"}
+          aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
           aria-pressed={deviceMode}
           disabled={!held || viewportPending}
           onClick={() => {
@@ -1041,29 +1052,28 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⛶
         </button>
-        <button
-          type="button"
-          aria-label="Screenshot page to chat"
-          aria-description={capture.blockReason ?? undefined}
-          disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
-          onClick={() => capture.capture("page")}
+        {/* Native says "Screenshot · Shift-click to record"; this pack has no
+            recording, so it keeps only the part that is true here. */}
+        <Tooltip host={host} label="Screenshot">
+          <button
+            type="button"
+            aria-label="Capture screenshot"
+            aria-description={capture.blockReason ?? undefined}
+            disabled={capture.blockReason !== null || capture.state.kind === "capturing"}
+            onClick={() => capture.capture("page")}
+            style={buttonStyle}
+          >
+            ▣
+          </button>
+        </Tooltip>
+        <AnnotateButton
+          host={host}
+          blockReason={capture.blockReason}
+          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
+          pageFailed={capturePage === "failed"}
+          onPick={() => capture.capture("element")}
           style={buttonStyle}
-        >
-          ▣
-        </button>
-        <button
-          type="button"
-          aria-label={capture.picking ? "Cancel annotation" : "Pick element to chat"}
-          aria-description={capture.picking ? undefined : (capture.blockReason ?? undefined)}
-          aria-pressed={capture.picking}
-          disabled={
-            !capture.picking && (capture.blockReason !== null || capture.state.kind === "capturing")
-          }
-          onClick={() => capture.capture("element")}
-          style={buttonStyle}
-        >
-          ⌖
-        </button>
+        />
         <input
           type="text"
           aria-label="Address"
@@ -1086,26 +1096,29 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             padding: "0 4px",
           }}
         />
-        <button
-          type="button"
-          aria-label="Open in system browser"
-          disabled={externalTarget === null}
-          onClick={() => {
-            if (externalTarget === null) return;
-            void openExternally(
-              bindApi(uiExternalApi, host, session.context),
-              externalTarget,
-              session.signal,
-            ).then((fault) => {
-              if (fault !== null && !session.signal.aborted) setNotice(fault);
-            });
-          }}
-          style={buttonStyle}
-        >
-          ↗
-        </button>
+        <Tooltip host={host} label="Open in system browser">
+          <button
+            type="button"
+            aria-label="Open in system browser"
+            disabled={externalTarget === null}
+            onClick={() => {
+              if (externalTarget === null) return;
+              void openExternally(
+                bindApi(uiExternalApi, host, session.context),
+                externalTarget,
+                session.signal,
+              ).then((fault) => {
+                if (fault !== null && !session.signal.aborted) setNotice(fault);
+              });
+            }}
+            style={buttonStyle}
+          >
+            ↗
+          </button>
+        </Tooltip>
 
         <PageMenu
+          host={host}
           session={held ? live : null}
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}

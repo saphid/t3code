@@ -4,11 +4,13 @@ import type { SurfaceRenderer } from "./react.js";
 import {
   ENVIRONMENT_ASSET_MEDIA_TYPES,
   validateAssetPath,
+  resolveTooltip,
   validateEnvironmentPackage,
   type ClientHost,
   type ClientFactory,
   type EnvironmentAsset,
   type EnvironmentPackage,
+  type TooltipProps,
 } from "./environment.js";
 import {
   bindApi,
@@ -246,6 +248,19 @@ export function requireApi(
   versionRange = defaultVersionRange(api),
 ): ApiRequirement {
   return { id: api.definition.id, versionRange };
+}
+
+/**
+ * The host's native tooltip around one trigger (`ClientHost.tooltip`); hosts
+ * without one render the trigger alone. A disabled trigger stays silent unless
+ * `showWhenDisabled` is set — see `TooltipProps`.
+ */
+export function Tooltip(
+  props: TooltipProps & { readonly host: Pick<ClientHost, "React" | "tooltip"> },
+) {
+  const { host, ...rest } = props;
+  const tooltip = resolveTooltip(host);
+  return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
 }
 
 export type ApiReadState<T> =

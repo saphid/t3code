@@ -32,10 +32,11 @@ import {
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
 } from "@t3tools/extension-sdk/catalogue";
+import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   PRS_INVOLVEMENTS,
@@ -71,6 +72,14 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsActionPresentation,
+  prsActorTooltip,
+  prsArmedAutoMergeTooltip,
+  prsCheckTooltip,
+  prsChecksTooltip,
+  prsConflictTooltip,
+  prsReviewTooltip,
+  prsStackTooltip,
   prsWriteActionOffers,
   prsWriteGate,
   prsWriteUnavailableNote,
@@ -696,19 +705,32 @@ function badge(text: string, tone: "open" | "closed" | "merged" | "muted") {
   );
 }
 
-function stateBadge(entry: { readonly state: string; readonly isDraft?: boolean }) {
-  if (entry.state === "open" && entry.isDraft) return badge("Draft", "muted");
-  if (entry.state === "open") return badge("Open", "open");
-  if (entry.state === "merged") return badge("Merged", "merged");
-  return badge("Closed", "closed");
+function stateBadge(
+  host: ClientHost,
+  entry: { readonly state: string; readonly isDraft?: boolean },
+) {
+  const [text, tone] =
+    entry.state === "open" && entry.isDraft
+      ? (["Draft", "muted"] as const)
+      : entry.state === "open"
+        ? (["Open", "open"] as const)
+        : entry.state === "merged"
+          ? (["Merged", "merged"] as const)
+          : (["Closed", "closed"] as const);
+  return (
+    <Tooltip host={host} side="top" label={text}>
+      {badge(text, tone)}
+    </Tooltip>
+  );
 }
 
-function PrListRow(props: {
+export function PrListRow(props: {
+  host: ClientHost;
   entry: PrsListEntry;
   viewers: Readonly<Record<string, string>>;
   onSelect: () => void;
 }) {
-  const { entry, viewers, onSelect } = props;
+  const { host, entry, viewers, onSelect } = props;
   const review = prsReviewLabel(entry.reviewDecision);
   const checks = prsChecksLabel(entry.checksState);
   const stack = prsStackLabel(entry.stack);
@@ -732,7 +754,7 @@ function PrListRow(props: {
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          {stateBadge(entry)}
+          {stateBadge(host, entry)}
           <span
             style={{
               flex: 1,
@@ -771,17 +793,28 @@ function PrListRow(props: {
             {prsRowMeta(entry)}
             {prsAuthoredByViewer(entry, viewers) ? " · you" : ""}
           </span>
-          {review !== null && badge(review, review === "Approved" ? "open" : "closed")}
-          {checks !== null &&
-            badge(
-              checks,
-              entry.checksState === "passing"
-                ? "open"
-                : entry.checksState === "failing"
-                  ? "closed"
-                  : "muted",
-            )}
-          {stack !== null && badge(stack, "merged")}
+          {review !== null && (
+            <Tooltip host={host} side="top" label={prsReviewTooltip(entry.reviewDecision)}>
+              {badge(review, review === "Approved" ? "open" : "closed")}
+            </Tooltip>
+          )}
+          {checks !== null && (
+            <Tooltip host={host} side="top" label={prsChecksTooltip(entry.checksState)}>
+              {badge(
+                checks,
+                entry.checksState === "passing"
+                  ? "open"
+                  : entry.checksState === "failing"
+                    ? "closed"
+                    : "muted",
+              )}
+            </Tooltip>
+          )}
+          {stack !== null && (
+            <Tooltip host={host} side="top" label={prsStackTooltip(entry.stack)}>
+              {badge(stack, "merged")}
+            </Tooltip>
+          )}
         </span>
         {entry.labels.length > 0 && (
           <span
@@ -815,7 +848,7 @@ function PrListRow(props: {
 
 /* ---------------- detail ---------------- */
 
-function metaRow(label: string, value: string) {
+function metaRow(label: string, value: ReactNode) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "1px 0", fontSize: 12 }}>
       <span style={{ width: 110, flexShrink: 0, color: muted }}>{label}</span>
@@ -824,7 +857,7 @@ function metaRow(label: string, value: string) {
   );
 }
 
-function CheckRow({ check }: { check: PrsCheck }) {
+function CheckRow({ host, check }: { host: ClientHost; check: PrsCheck }) {
   return (
     <li
       style={{
@@ -848,21 +881,31 @@ function CheckRow({ check }: { check: PrsCheck }) {
       >
         {prsCheckStatusLabel(check.status)}
       </span>
-      <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{check.name}</span>
-      {check.description !== null && (
-        <span
-          style={{
-            color: muted,
-            fontSize: 12,
-            flexShrink: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {check.description}
-        </span>
+      {/* Native's help is the full description, else the name; it sits on
+          the clipped description where there is one. */}
+      {check.description === null ? (
+        <Tooltip host={host} side="top" label={prsCheckTooltip(check)}>
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{check.name}</span>
+        </Tooltip>
+      ) : (
+        <>
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{check.name}</span>
+          <Tooltip host={host} side="top" label={prsCheckTooltip(check)}>
+            <span
+              style={{
+                color: muted,
+                fontSize: 12,
+                flexShrink: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {check.description}
+            </span>
+          </Tooltip>
+        </>
       )}
     </li>
   );
@@ -1212,28 +1255,42 @@ function PrsWriteErrorLine({ error }: { error: string | null }) {
   );
 }
 
-function PrsActionButton(props: {
+/**
+ * One header write. `disabled` is any write in flight; `pendingAction` is
+ * the action that write runs, which alone shows its pending words.
+ */
+export function PrsActionButton(props: {
+  host: ClientHost;
   offer: PrsWriteActionOffer;
-  pending: boolean;
+  disabled: boolean;
+  pendingAction: string | null;
   method: string;
   onMethodChange: (value: string) => void;
   onRun: (offer: PrsWriteActionOffer, method?: string) => void;
 }) {
-  const { offer, pending, method, onMethodChange, onRun } = props;
+  const { host, offer, disabled, pendingAction, method, onMethodChange, onRun } = props;
   const choices: readonly string[] = offer.methods ?? offer.updateMethods ?? [];
+  const presentation = prsActionPresentation(offer.action, method, pendingAction);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => onRun(offer, method === "" ? undefined : method)}
-        style={{
-          ...control,
-          color: offer.destructive ? "var(--destructive, #b42318)" : "inherit",
-        }}
+      <Tooltip
+        host={host}
+        side="top"
+        label={presentation.tooltip}
+        showWhenDisabled={presentation.hoverWhileDisabled}
       >
-        {pending ? `${offer.label}…` : offer.label}
-      </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onRun(offer, method === "" ? undefined : method)}
+          style={{
+            ...control,
+            color: offer.destructive ? "var(--destructive, #b42318)" : "inherit",
+          }}
+        >
+          {presentation.label}
+        </button>
+      </Tooltip>
       {choices.length > 1 && (
         <select
           aria-label={`${offer.label} method`}
@@ -1536,7 +1593,8 @@ export function PullRequestsPanel(props: {
           {
             ...selected,
             action: offer.action,
-            ...(offer.action === "merge" && method !== undefined
+            ...((offer.action === "merge" || offer.action === "enable-auto-merge") &&
+            method !== undefined
               ? { mergeMethod: method as PrsWriteMergeMethod }
               : {}),
             ...(offer.action === "update-branch" && method !== undefined
@@ -1735,9 +1793,16 @@ export function PullRequestsPanel(props: {
             />
           </>
         ) : (
-          <button type="button" onClick={() => onSelect(null)} style={control}>
-            ← Pull requests
-          </button>
+          <Tooltip host={host} side="top" label="Back to pull requests">
+            <button
+              type="button"
+              aria-label="Back to this thread's pull requests"
+              onClick={() => onSelect(null)}
+              style={control}
+            >
+              ← Pull requests
+            </button>
+          </Tooltip>
         )}
         {ready && ops?.["prs.invalidate"] === true && (
           <button type="button" onClick={runInvalidate} style={control}>
@@ -1820,6 +1885,7 @@ export function PullRequestsPanel(props: {
                   {list.entries.map((prEntry) => (
                     <PrListRow
                       key={prsRefKey(prEntry)}
+                      host={host}
                       entry={prEntry}
                       viewers={list.result?.viewers ?? {}}
                       onSelect={() =>
@@ -1887,21 +1953,41 @@ export function PullRequestsPanel(props: {
                           flexWrap: "wrap",
                         }}
                       >
-                        {stateBadge(detail)}
-                        <strong style={{ fontSize: 14, overflowWrap: "anywhere" }}>
-                          {detail.title}
-                        </strong>
-                        <span style={{ color: muted, fontSize: 12 }}>
-                          {detail.repository}#{detail.number}
-                        </span>
+                        {stateBadge(host, detail)}
+                        <Tooltip host={host} side="top" label={detail.title}>
+                          <strong style={{ fontSize: 14, overflowWrap: "anywhere" }}>
+                            {detail.title}
+                          </strong>
+                        </Tooltip>
+                        <Tooltip host={host} side="top" label={detail.repository}>
+                          <span style={{ color: muted, fontSize: 12 }}>
+                            {detail.repository}#{detail.number}
+                          </span>
+                        </Tooltip>
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
                     </div>
                     <div style={{ padding: "4px 10px" }}>
-                      {metaRow("Author", prsActorLabel(detail.author))}
+                      {metaRow(
+                        "Author",
+                        <Tooltip host={host} side="top" label={prsActorTooltip(detail.author)}>
+                          <span>{prsActorLabel(detail.author)}</span>
+                        </Tooltip>,
+                      )}
                       {metaRow(
                         "Branches",
-                        `${detail.headRepositoryNameWithOwner ?? detail.headBranch}:${detail.headBranch} → ${detail.baseBranch}`,
+                        <>
+                          <Tooltip host={host} side="top" label={detail.headBranch}>
+                            <span>
+                              {detail.headRepositoryNameWithOwner ?? detail.headBranch}:
+                              {detail.headBranch}
+                            </span>
+                          </Tooltip>
+                          {" → "}
+                          <Tooltip host={host} side="top" label={detail.baseBranch}>
+                            <span>{detail.baseBranch}</span>
+                          </Tooltip>
+                        </>,
                       )}
                       {metaRow(
                         "Changes",
@@ -1909,7 +1995,12 @@ export function PullRequestsPanel(props: {
                           detail.changedFiles === 1 ? "" : "s"
                         }`,
                       )}
-                      {metaRow("Mergeability", prsMergeabilityLabel(detail.mergeability))}
+                      {metaRow(
+                        "Mergeability",
+                        <Tooltip host={host} side="top" label={prsConflictTooltip(detail)}>
+                          <span>{prsMergeabilityLabel(detail.mergeability)}</span>
+                        </Tooltip>,
+                      )}
                       {detail.baseComparison !== undefined &&
                         metaRow(
                           "Base",
@@ -1918,7 +2009,16 @@ export function PullRequestsPanel(props: {
                             : detail.baseComparison,
                         )}
                       {detail.autoMergeEnabled === true &&
-                        metaRow("Auto-merge", detail.autoMergeMethod ?? "enabled")}
+                        metaRow(
+                          "Auto-merge",
+                          <Tooltip
+                            host={host}
+                            side="top"
+                            label={prsArmedAutoMergeTooltip(detail.autoMergeMethod)}
+                          >
+                            <span>{detail.autoMergeMethod ?? "enabled"}</span>
+                          </Tooltip>,
+                        )}
                       {detail.workflowApprovalsRequired !== undefined &&
                         detail.workflowApprovalsRequired > 0 &&
                         metaRow(
@@ -1984,8 +2084,14 @@ export function PullRequestsPanel(props: {
                       prsWriteActionOffers(detail, write).map((offer) => (
                         <PrsActionButton
                           key={offer.action}
+                          host={host}
                           offer={offer}
-                          pending={writeState?.pending === true}
+                          disabled={writeState?.pending === true}
+                          pendingAction={
+                            writeState?.pending === true && writeState.key.startsWith("action:")
+                              ? writeState.key.slice("action:".length)
+                              : null
+                          }
                           method={
                             draft(`method:${offer.action}`) ||
                             (offer.methods ?? offer.updateMethods ?? [])[0] ||
@@ -2050,6 +2156,7 @@ export function PullRequestsPanel(props: {
                     {detail?.checks.map((check) => (
                       <CheckRow
                         key={`${check.name}:${check.status}:${check.url ?? ""}`}
+                        host={host}
                         check={check}
                       />
                     ))}

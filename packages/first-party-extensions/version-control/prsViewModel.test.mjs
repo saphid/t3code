@@ -35,6 +35,14 @@ import {
   prsThreadMoreLabel,
   prsThreadStateLabel,
   prsUnavailableLabel,
+  prsActionPresentation,
+  prsActorTooltip,
+  prsArmedAutoMergeTooltip,
+  prsCheckTooltip,
+  prsChecksTooltip,
+  prsConflictTooltip,
+  prsReviewTooltip,
+  prsStackTooltip,
   prsWriteActionLabel,
   prsWriteActionOffers,
   prsWriteGate,
@@ -723,4 +731,97 @@ NodeTest.test("prsReviewVerdict keeps a stored pick across remounts", () => {
   const approveOnly = prsWriteVerdictOptions(["approve"]);
   NodeAssert.equal(prsReviewVerdict("request-changes", approveOnly), "approve");
   NodeAssert.equal(prsReviewVerdict("", []), "comment");
+});
+
+NodeTest.test("prsActionPresentation: native names, pending words and disabled hover", () => {
+  const view = (action, method, pending) => prsActionPresentation(action, method, pending);
+  const hover = (label) => ({ label, tooltip: label, hoverWhileDisabled: true });
+
+  // Ready keeps its words while its own write runs.
+  NodeAssert.deepEqual(view("ready", "", null), hover("Ready for review"));
+  NodeAssert.deepEqual(view("ready", "", "ready"), hover("Ready for review"));
+
+  // Merge is named by its method; only its own write says "Merging...".
+  NodeAssert.deepEqual(view("merge", "squash", null), hover("Squash and merge"));
+  NodeAssert.deepEqual(view("merge", "rebase", "close"), hover("Rebase and merge"));
+  NodeAssert.deepEqual(view("merge", "", null), hover("Merge"));
+  NodeAssert.deepEqual(view("merge", "squash", "merge"), hover("Merging..."));
+
+  NodeAssert.deepEqual(
+    view("enable-auto-merge", "squash", null),
+    hover("Auto-merge (squash and merge)"),
+  );
+  NodeAssert.deepEqual(view("enable-auto-merge", "", null), hover("Auto-merge"));
+  NodeAssert.deepEqual(view("enable-auto-merge", "merge", "merge"), hover("Auto-merge (merge)"));
+  NodeAssert.deepEqual(
+    view("enable-auto-merge", "merge", "enable-auto-merge"),
+    hover("Enabling..."),
+  );
+
+  NodeAssert.deepEqual(view("approve-workflows", "", null), hover("Approve workflows to run"));
+  NodeAssert.deepEqual(view("approve-workflows", "", "approve-workflows"), hover("Approving..."));
+
+  // Native keeps these in a plain menu: no tooltip, silent while disabled.
+  NodeAssert.deepEqual(view("close", "", null), {
+    label: "Close",
+    tooltip: null,
+    hoverWhileDisabled: false,
+  });
+  NodeAssert.equal(view("close", "", "close").label, "Close…");
+  NodeAssert.equal(view("close", "", "merge").label, "Close");
+});
+
+NodeTest.test("enable-auto-merge offers the merge methods its label names", () => {
+  const [arm] = prsWriteActionOffers(
+    { state: "open", isDraft: true, autoMergeEnabled: false },
+    { actions: ["enable-auto-merge"], mergeMethods: ["squash", "merge"], updateMethods: [] },
+  );
+  NodeAssert.deepEqual(arm?.methods, ["squash", "merge"]);
+});
+
+NodeTest.test("native hover help for status, checks, authors and armed auto-merge", () => {
+  NodeAssert.equal(prsChecksTooltip("passing"), "All checks have passed");
+  NodeAssert.equal(prsChecksTooltip("failing"), "Some checks were not successful");
+  NodeAssert.equal(prsChecksTooltip("pending"), "Some checks haven't completed yet");
+  NodeAssert.equal(prsChecksTooltip(undefined), null);
+
+  NodeAssert.equal(
+    prsStackTooltip({ number: 7, position: 2, size: 4, base: "main" }),
+    "GitHub stack of 4: merging a layer lands the ones below it.",
+  );
+  NodeAssert.equal(prsStackTooltip(undefined), null);
+
+  NodeAssert.equal(prsReviewTooltip("approved"), "Approved");
+  NodeAssert.equal(prsReviewTooltip("changes-requested"), "Changes requested");
+  NodeAssert.equal(prsReviewTooltip("review-required"), "Awaiting review");
+  NodeAssert.equal(prsReviewTooltip(null), null);
+
+  NodeAssert.equal(
+    prsCheckTooltip({ name: "ci / test", description: "3 failing tests in the web suite" }),
+    "3 failing tests in the web suite",
+  );
+  NodeAssert.equal(prsCheckTooltip({ name: "ci / test", description: null }), "ci / test");
+
+  NodeAssert.equal(
+    prsActorTooltip({ login: "octo", name: "Octo Cat", avatarUrl: null }),
+    "Octo Cat (@octo)",
+  );
+  NodeAssert.equal(prsActorTooltip({ login: "octo", name: "octo", avatarUrl: null }), "octo");
+  NodeAssert.equal(prsActorTooltip({ login: "octo", name: null, avatarUrl: null }), "octo");
+  NodeAssert.equal(prsActorTooltip(null), null);
+
+  NodeAssert.equal(
+    prsConflictTooltip({ mergeability: "conflicting", baseBranch: "main" }),
+    "Conflicts with main",
+  );
+  NodeAssert.equal(prsConflictTooltip({ mergeability: "mergeable", baseBranch: "main" }), null);
+
+  NodeAssert.equal(
+    prsArmedAutoMergeTooltip("squash"),
+    "Auto-merge (squash and merge): the host will merge this on its own once its requirements are met",
+  );
+  NodeAssert.equal(
+    prsArmedAutoMergeTooltip(undefined),
+    "Auto-merge: the host will merge this on its own once its requirements are met",
+  );
 });

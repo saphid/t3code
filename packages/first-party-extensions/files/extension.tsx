@@ -14,7 +14,7 @@ import {
   workspaceTreeApi,
   type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
-import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
+import { defineExtension, requireApi, Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -25,6 +25,7 @@ import {
   dragMentionPayload,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
+  fileBreadcrumbTooltip,
   fileBreadcrumbs,
   isAbsolutePath,
   lineStartOffset,
@@ -179,6 +180,7 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
     status: snapshot?.revision === refresh ? snapshot.status : "Loading files",
     truncated: snapshot?.revision === refresh ? snapshot.truncated : false,
     revision: refresh,
+    pending: snapshot?.revision !== refresh,
     visible,
     refresh: () => setRefresh((value) => value + 1),
   };
@@ -871,12 +873,13 @@ function RenderedMarkdown(props: {
 const WORKSPACE_ROOT_LABEL = "Workspace";
 
 function FileBreadcrumbBar(props: {
+  readonly host: ClientHost;
   readonly selected: string;
   readonly entries: readonly TreeEntry[];
   readonly truncated: boolean;
   readonly onSelect: (path: string) => void;
 }) {
-  const { selected, entries, truncated, onSelect } = props;
+  const { host, selected, entries, truncated, onSelect } = props;
   const crumbs = fileBreadcrumbs(WORKSPACE_ROOT_LABEL, selected);
   // Host-absolute paths are outside the workspace — labels only, no menus.
   const hostPath = isAbsolutePath(selected);
@@ -964,55 +967,53 @@ function FileBreadcrumbBar(props: {
           return (
             <span key={crumb.path || crumb.label} style={{ flexShrink: 0 }}>
               {menuable ? (
-                <button
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={openCrumb?.crumb === crumb.path}
-                  {...(crumb.kind === "project"
-                    ? {
-                        // Honest label: the extension API surface gives a
-                        // project-scope view no project title to show here.
-                        title: `${WORKSPACE_ROOT_LABEL} root — extensions can't read the project title`,
+                <Tooltip host={host} side="top" label={fileBreadcrumbTooltip(crumb)}>
+                  <button
+                    type="button"
+                    aria-label={`Browse ${crumb.label}`}
+                    aria-haspopup="menu"
+                    aria-expanded={openCrumb?.crumb === crumb.path}
+                    onClick={(event) => {
+                      if (openCrumb?.crumb === crumb.path) {
+                        setOpenMenu(null);
+                        return;
                       }
-                    : {})}
-                  onClick={(event) => {
-                    if (openCrumb?.crumb === crumb.path) {
-                      setOpenMenu(null);
-                      return;
-                    }
-                    const anchor = event.currentTarget.getBoundingClientRect();
-                    setMenuDir(crumb.path);
-                    setOpenMenu({
-                      crumb: crumb.path,
-                      forPath: selected,
-                      left: anchor.left,
-                      top: anchor.top,
-                      bottom: anchor.bottom,
-                    });
-                  }}
-                  style={{
-                    border: "none",
-                    background:
-                      openCrumb?.crumb === crumb.path
-                        ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                        : "none",
-                    font: "inherit",
-                    color: "inherit",
-                    padding: "1px 4px",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                  }}
-                >
-                  {crumb.label}
-                </button>
+                      const anchor = event.currentTarget.getBoundingClientRect();
+                      setMenuDir(crumb.path);
+                      setOpenMenu({
+                        crumb: crumb.path,
+                        forPath: selected,
+                        left: anchor.left,
+                        top: anchor.top,
+                        bottom: anchor.bottom,
+                      });
+                    }}
+                    style={{
+                      border: "none",
+                      background:
+                        openCrumb?.crumb === crumb.path
+                          ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                          : "none",
+                      font: "inherit",
+                      color: "inherit",
+                      padding: "1px 4px",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {crumb.label}
+                  </button>
+                </Tooltip>
               ) : (
-                <span
-                  {...(last ? { "data-current-file-crumb": "" } : {})}
-                  aria-current={last ? "page" : undefined}
-                  style={{ padding: "1px 4px", fontWeight: last ? 600 : 400 }}
-                >
-                  {crumb.label}
-                </span>
+                <Tooltip host={host} side="top" label={crumb.path}>
+                  <span
+                    {...(last ? { "data-current-file-crumb": "" } : {})}
+                    aria-current={last ? "page" : undefined}
+                    style={{ padding: "1px 4px", fontWeight: last ? 600 : 400 }}
+                  >
+                    {crumb.label}
+                  </span>
+                </Tooltip>
               )}
               {!last && (
                 <span aria-hidden="true" style={{ color: muted, padding: "0 1px" }}>
@@ -1025,6 +1026,7 @@ function FileBreadcrumbBar(props: {
       </nav>
       {openCrumb !== null && (
         <CrumbMenu
+          host={host}
           rootPath={openCrumb.crumb}
           menuDir={menuDir}
           anchor={{ left: openCrumb.left, top: openCrumb.top, bottom: openCrumb.bottom }}
@@ -1045,6 +1047,7 @@ function FileBreadcrumbBar(props: {
 
 /** The open crumb's child-entry menu — files select, directories drill in. */
 function CrumbMenu(props: {
+  readonly host: ClientHost;
   readonly rootPath: string;
   readonly menuDir: string;
   readonly anchor: { readonly left: number; readonly top: number; readonly bottom: number };
@@ -1055,8 +1058,18 @@ function CrumbMenu(props: {
   readonly onSelect: (path: string) => void;
   readonly onClose: () => void;
 }) {
-  const { rootPath, menuDir, anchor, entries, selected, truncated, onNavigate, onSelect, onClose } =
-    props;
+  const {
+    host,
+    rootPath,
+    menuDir,
+    anchor,
+    entries,
+    selected,
+    truncated,
+    onNavigate,
+    onSelect,
+    onClose,
+  } = props;
   const children = fileBreadcrumbChildren(entries, menuDir);
   const parent = fileBreadcrumbParent(menuDir);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -1142,24 +1155,25 @@ function CrumbMenu(props: {
           </button>
         )}
         {children.map((child) => (
-          <button
-            key={child.path}
-            type="button"
-            role="menuitem"
-            aria-current={child.path === selected ? "true" : undefined}
-            onClick={() =>
-              child.kind === "directory" ? onNavigate(child.path) : onSelect(child.path)
-            }
-            style={{
-              ...itemStyle,
-              background:
-                child.path === selected
-                  ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                  : "none",
-            }}
-          >
-            {child.kind === "directory" ? `${child.label}/` : child.label}
-          </button>
+          <Tooltip key={child.path} host={host} side="right" label={child.path}>
+            <button
+              type="button"
+              role="menuitem"
+              aria-current={child.path === selected ? "true" : undefined}
+              onClick={() =>
+                child.kind === "directory" ? onNavigate(child.path) : onSelect(child.path)
+              }
+              style={{
+                ...itemStyle,
+                background:
+                  child.path === selected
+                    ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                    : "none",
+              }}
+            >
+              {child.kind === "directory" ? `${child.label}/` : child.label}
+            </button>
+          </Tooltip>
         ))}
         {children.length === 0 && (
           <div role="none" style={{ padding: "4px 8px", color: muted, fontSize: 12 }}>
@@ -1196,7 +1210,7 @@ const toolbarControl = {
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
-  const { entries, status, refresh, revision, visible, truncated } = useWorkspaceTree(
+  const { entries, status, refresh, revision, pending, visible, truncated } = useWorkspaceTree(
     host,
     session,
   );
@@ -1735,9 +1749,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           alignItems: "center",
         }}
       >
-        <button type="button" onClick={refresh} style={toolbarControl}>
-          Refresh files
-        </button>
+        <Tooltip host={host} label={pending ? "Refreshing…" : "Refresh files"}>
+          <button
+            type="button"
+            aria-label="Refresh workspace files"
+            onClick={refresh}
+            style={toolbarControl}
+          >
+            Refresh files
+          </button>
+        </Tooltip>
         <select
           aria-label="Search mode"
           value={searchMode}
@@ -1972,6 +1993,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       </output>
       {selected !== null && (
         <FileBreadcrumbBar
+          host={host}
           selected={selected}
           entries={entries}
           truncated={truncated}
@@ -2041,18 +2063,25 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             </span>
           )}
           {isMarkdownPath(selected) && selectedKind === "text" && (
-            <button
-              type="button"
-              aria-pressed={renderMarkdown}
-              onClick={() => setRenderMarkdown((value) => !value)}
+            <Tooltip
+              host={host}
+              label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
             >
-              {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
-            </button>
+              <button
+                type="button"
+                aria-pressed={renderMarkdown}
+                onClick={() => setRenderMarkdown((value) => !value)}
+              >
+                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+              </button>
+            </Tooltip>
           )}
           {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
-            <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
-              {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
-            </button>
+            <Tooltip host={host} label={wordWrap.value ? "Disable word wrap" : "Enable word wrap"}>
+              <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
+                {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
+              </button>
+            </Tooltip>
           )}
           {wordWrap.writeError !== null && (
             <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>

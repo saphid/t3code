@@ -6,6 +6,7 @@ import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import { uiNotificationsApi } from "@t3tools/extension-sdk/catalogue";
 
 import {
+  annotationControl,
   captureOutcomeMessage,
   captureOutcomeToast,
   capturePageView,
@@ -81,7 +82,10 @@ NodeTest.describe("captureUnavailableReason", () => {
     );
     NodeAssert.match(captureUnavailableReason(host, null, "thread-a"), /Open a page/);
     NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "hidden"), /not shown here/);
-    NodeAssert.match(captureUnavailableReason(host, held, "thread-a", "failed"), /didn't load/);
+    NodeAssert.equal(
+      captureUnavailableReason(host, held, "thread-a", "failed"),
+      "Page didn't load — pick unavailable until the page renders",
+    );
     NodeAssert.equal(captureUnavailableReason(host, held, "thread-a"), null);
   });
 });
@@ -789,4 +793,52 @@ NodeTest.describe("useBrowserCapture status", () => {
     await act(() => notified.promise);
     NodeAssert.deepEqual(view.reports, ["Capturing the page…", null]);
   });
+});
+
+NodeTest.test("annotationControl: a failed page disables pick with native's reason", () => {
+  const reason = captureUnavailableReason(fakeHost(), held, "thread-a", "failed");
+  // Supported desktop host, held tab, idle capture: only the page failed.
+  NodeAssert.deepEqual(
+    annotationControl({ blockReason: reason, capturing: null, pageFailed: true }),
+    {
+      disabled: true,
+      picking: false,
+      ariaLabel: "Annotate preview",
+      tooltip: reason,
+      hoverWhileDisabled: true,
+    },
+  );
+  NodeAssert.deepEqual(
+    annotationControl({ blockReason: null, capturing: null, pageFailed: false }),
+    {
+      disabled: false,
+      picking: false,
+      ariaLabel: "Annotate preview",
+      tooltip: "Annotate elements, regions, and drawings",
+      hoverWhileDisabled: false,
+    },
+  );
+  // Other disabled states stay silent, as native's ordinary disabled buttons.
+  const blocked = annotationControl({
+    blockReason: "Open a page to capture it.",
+    capturing: null,
+    pageFailed: false,
+  });
+  NodeAssert.equal(blocked.disabled, true);
+  NodeAssert.equal(blocked.hoverWhileDisabled, false);
+  const picking = annotationControl({ blockReason: null, capturing: "element", pageFailed: false });
+  NodeAssert.equal(picking.ariaLabel, "Cancel annotation");
+  NodeAssert.equal(picking.tooltip, "Cancel annotation (Esc)");
+});
+
+NodeTest.test("annotationControl: pressing pick again while picking cancels", () => {
+  // The picker is open, so the button is Cancel annotation and must stay
+  // enabled, even if capture became blocked while it was open.
+  for (const blockReason of [null, "The page is not shown here yet — capture once it renders."]) {
+    const picking = annotationControl({ blockReason, capturing: "element", pageFailed: false });
+    NodeAssert.equal(picking.disabled, false);
+    NodeAssert.equal(picking.picking, true);
+    NodeAssert.equal(picking.ariaLabel, "Cancel annotation");
+    NodeAssert.equal(picking.tooltip, "Cancel annotation (Esc)");
+  }
 });

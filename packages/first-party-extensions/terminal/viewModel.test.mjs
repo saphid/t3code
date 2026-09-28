@@ -22,6 +22,7 @@ import {
   removeTerminalId,
   resolveActiveTerminalId,
   openTerminalUrl,
+  terminalCloseLabel,
   terminalPathLinkTarget,
 } from "./viewModel.ts";
 
@@ -1736,4 +1737,10 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
       }),
     );
   });
+});
+
+NodeTest.test("terminalCloseLabel names the close shortcut only on the active tab", () => {
+  NodeAssert.equal(terminalCloseLabel("Terminal 2", true, "⌘W"), "Close Terminal 2 (⌘W)");
+  NodeAssert.equal(terminalCloseLabel("Terminal 2", false, "⌘W"), "Close Terminal 2");
+  NodeAssert.equal(terminalCloseLabel("Terminal 2", true, null), "Close Terminal 2");
 });

@@ -5,6 +5,7 @@ import {
   dragMentionPayload,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
+  fileBreadcrumbTooltip,
   fileBreadcrumbs,
   isAbsolutePath,
   lineStartOffset,
@@ -165,6 +166,11 @@ NodeTest.describe("file navigation helpers", () => {
         { label: "docs", path: "docs", kind: "directory" },
         { label: "guide.md", path: "docs/guide.md", kind: "file" },
       ]);
+    });
+
+    NodeTest.it("titles each crumb as native: its path, the root by name", () => {
+      const tips = fileBreadcrumbs("Workspace", "docs/guide.md").map(fileBreadcrumbTooltip);
+      NodeAssert.deepEqual(tips, ["Workspace", "docs", "docs/guide.md"]);
     });
 
     NodeTest.it("omits the root crumb for absolute host paths", () => {

@@ -5,7 +5,11 @@ import {
 } from "@t3tools/shared/keybindings";
 import type { KeybindingRule, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
-import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import {
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+  type ShortcutMatchContext,
+} from "~/keybindings";
 import { publishShortcutContext } from "~/lib/shortcutContext";
 
 import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
@@ -52,6 +56,57 @@ describe("t3.ui/keybindings@1.1.0 client capability", () => {
     }
     expect(host?.resolveTerminalFocusKey(chord("d"))).toBe("terminal.close");
     expect(host?.resolveTerminalFocusKey(chord("t"))).toBeNull();
+  });
+
+  it("labels a command's effective terminal shortcut the way native terminal chrome does", () => {
+    const defaults = bind(DEFAULT_RESOLVED_KEYBINDINGS).host;
+    const native = shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "terminal.close", {
+      platform: "MacIntel",
+      context: { terminalFocus: true },
+    });
+    expect(native).not.toBeNull();
+    expect(defaults?.terminalFocusShortcutLabel?.("terminal.close")).toBe(native);
+
+    const remapped = bind(
+      withUserRules({ key: "mod+shift+x", command: "terminal.close", when: "terminalFocus" }),
+    );
+    expect(remapped.host?.terminalFocusShortcutLabel?.("terminal.close")).toBe("⇧⌘X");
+    expect(remapped.host?.terminalFocusShortcutLabel?.("plugin.unbound")).toBeNull();
+    remapped.lifetime.abort();
+    expect(remapped.host?.terminalFocusShortcutLabel?.("terminal.close")).toBeNull();
+  });
+
+  it("labels only the shortcut the dispatcher would run in its published context", () => {
+    const { host } = bind(
+      withUserRules({ key: "mod+shift+x", command: "terminal.close", when: "terminalOpen" }),
+    );
+    const shiftX = chord("X", { shiftKey: true });
+    for (const terminalOpen of [false, true]) {
+      const unpublish = publishShortcutContext(() => ({
+        terminalFocus: false,
+        terminalOpen,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      }));
+      try {
+        const dispatched = host?.resolveTerminalFocusKey(shiftX);
+        const label = host?.terminalFocusShortcutLabel?.("terminal.close");
+        // An extension terminal owns focus while the native drawer may be closed.
+        expect(dispatched).toBe(terminalOpen ? "terminal.close" : null);
+        expect(label === "⇧⌘X").toBe(dispatched === "terminal.close");
+        expect(label).toBe(
+          shortcutLabelForCommand(
+            withUserRules({ key: "mod+shift+x", command: "terminal.close", when: "terminalOpen" }),
+            "terminal.close",
+            { platform: "MacIntel", context: { terminalFocus: true, terminalOpen } },
+          ),
+        );
+      } finally {
+        unpublish();
+      }
+    }
   });
 
   it("evaluates the dispatcher's published context with terminal focus forced", () => {

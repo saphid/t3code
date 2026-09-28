@@ -7780,6 +7780,27 @@ var __t3Client = (() => {
     "application/octet-stream",
     "font/woff2"
   ];
+  var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
+  var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
+  function isComponentType(value, depth = 0) {
+    if (typeof value === "function")
+      return true;
+    if (typeof value !== "object" || value === null || depth > 4)
+      return false;
+    const wrapper = value;
+    if (wrapper.$$typeof === REACT_MEMO_TYPE)
+      return isComponentType(wrapper.type, depth + 1);
+    if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE)
+      return typeof wrapper.render === "function";
+    return false;
+  }
+  function resolveTooltip(host) {
+    const member = host.tooltip;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Tooltip: Tooltip2 } = member;
+    return Number.isInteger(version) && version >= 1 && isComponentType(Tooltip2) ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -8007,6 +8028,11 @@ var __t3Client = (() => {
   }
   function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
+  }
+  function Tooltip(props) {
+    const { host, ...rest } = props;
+    const tooltip = resolveTooltip(host);
+    return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
   }
 
   // extension.tsx
@@ -9815,7 +9841,7 @@ ${ref.number}`;
       case "merge":
         return "Merge";
       case "ready":
-        return "Mark ready for review";
+        return "Ready for review";
       case "draft":
         return "Convert to draft";
       case "close":
@@ -9833,6 +9859,81 @@ ${ref.number}`;
       case "approve-workflows":
         return "Approve workflows";
     }
+  }
+  var PRS_MERGE_METHOD_LABELS = {
+    merge: "Merge",
+    squash: "Squash and merge",
+    rebase: "Rebase and merge"
+  };
+  function prsActionPresentation(action, method, pendingAction) {
+    const running = pendingAction === action;
+    const native = (label) => ({
+      label,
+      tooltip: label,
+      hoverWhileDisabled: true
+    });
+    switch (action) {
+      case "ready":
+        return native("Ready for review");
+      case "merge":
+        return native(running ? "Merging..." : PRS_MERGE_METHOD_LABELS[method] ?? "Merge");
+      case "enable-auto-merge": {
+        const methodLabel = PRS_MERGE_METHOD_LABELS[method];
+        return native(
+          running ? "Enabling..." : methodLabel === void 0 ? "Auto-merge" : `Auto-merge (${methodLabel.toLowerCase()})`
+        );
+      }
+      case "approve-workflows":
+        return native(running ? "Approving..." : "Approve workflows to run");
+      default: {
+        const label = prsWriteActionLabel(action);
+        return { label: running ? `${label}\u2026` : label, tooltip: null, hoverWhileDisabled: false };
+      }
+    }
+  }
+  function prsArmedAutoMergeTooltip(method) {
+    const methodLabel = method == null ? void 0 : PRS_MERGE_METHOD_LABELS[method];
+    const armed = methodLabel === void 0 ? "Auto-merge" : `Auto-merge (${methodLabel.toLowerCase()})`;
+    return `${armed}: the host will merge this on its own once its requirements are met`;
+  }
+  function prsChecksTooltip(state2) {
+    switch (state2) {
+      case "passing":
+        return "All checks have passed";
+      case "failing":
+        return "Some checks were not successful";
+      case "pending":
+        return "Some checks haven't completed yet";
+      default:
+        return null;
+    }
+  }
+  function prsStackTooltip(stack) {
+    if (stack === void 0) return null;
+    return `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`;
+  }
+  function prsReviewTooltip(decision2) {
+    switch (decision2) {
+      case "approved":
+        return "Approved";
+      case "changes-requested":
+        return "Changes requested";
+      case "review-required":
+        return "Awaiting review";
+      default:
+        return null;
+    }
+  }
+  function prsConflictTooltip(detail) {
+    if (detail.mergeability !== "conflicting") return null;
+    return detail.baseBranch ? `Conflicts with ${detail.baseBranch}` : "Has conflicts";
+  }
+  function prsActorTooltip(actor) {
+    if (!actor) return null;
+    return actor.name && actor.name !== actor.login ? `${actor.name} (@${actor.login})` : actor.login;
+  }
+  function prsCheckTooltip(check) {
+    return check.description ?? check.name;
   }
   function prsWriteActionOffers(detail, write) {
     const declared = new Set(write.actions);
@@ -9862,7 +9963,7 @@ ${ref.number}`;
         const disarm = offer("disable-auto-merge");
         if (disarm !== null) offers.push(disarm);
       } else if (detail.autoMergeEnabled === false) {
-        const arm = offer("enable-auto-merge");
+        const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
         if (arm !== null) offers.push(arm);
       }
       const close = offer("close");
@@ -10353,14 +10454,12 @@ ${writeKey}`;
       }
     );
   }
-  function stateBadge(entry) {
-    if (entry.state === "open" && entry.isDraft) return badge("Draft", "muted");
-    if (entry.state === "open") return badge("Open", "open");
-    if (entry.state === "merged") return badge("Merged", "merged");
-    return badge("Closed", "closed");
+  function stateBadge(host, entry) {
+    const [text, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
   }
   function PrListRow(props) {
-    const { entry, viewers, onSelect } = props;
+    const { host, entry, viewers, onSelect } = props;
     const review = prsReviewLabel(entry.reviewDecision);
     const checks = prsChecksLabel(entry.checksState);
     const stack = prsStackLabel(entry.stack);
@@ -10384,7 +10483,7 @@ ${writeKey}`;
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0 }, children: [
-            stateBadge(entry),
+            stateBadge(host, entry),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "span",
               {
@@ -10431,12 +10530,12 @@ ${writeKey}`;
                     ]
                   }
                 ),
-                review !== null && badge(review, review === "Approved" ? "open" : "closed"),
-                checks !== null && badge(
+                review !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
+                checks !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsChecksTooltip(entry.checksState), children: badge(
                   checks,
                   entry.checksState === "passing" ? "open" : entry.checksState === "failing" ? "closed" : "muted"
-                ),
-                stack !== null && badge(stack, "merged")
+                ) }),
+                stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
               ]
             }
           ),
@@ -10475,7 +10574,7 @@ ${writeKey}`;
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { minWidth: 0, overflowWrap: "anywhere" }, children: value })
     ] });
   }
-  function CheckRow({ check }) {
+  function CheckRow({ host, check }) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "li",
       {
@@ -10497,22 +10596,24 @@ ${writeKey}`;
               children: prsCheckStatusLabel(check.status)
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
-          check.description !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "span",
-            {
-              style: {
-                color: muted,
-                fontSize: 12,
-                flexShrink: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap"
-              },
-              children: check.description
-            }
-          )
+          check.description === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "span",
+              {
+                style: {
+                  color: muted,
+                  fontSize: 12,
+                  flexShrink: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                },
+                children: check.description
+              }
+            ) })
+          ] })
         ]
       }
     );
@@ -10776,20 +10877,30 @@ ${writeKey}`;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: error });
   }
   function PrsActionButton(props) {
-    const { offer, pending, method, onMethodChange, onRun } = props;
+    const { host, offer, disabled, pendingAction, method, onMethodChange, onRun } = props;
     const choices = offer.methods ?? offer.updateMethods ?? [];
+    const presentation = prsActionPresentation(offer.action, method, pendingAction);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
+        Tooltip,
         {
-          type: "button",
-          disabled: pending,
-          onClick: () => onRun(offer, method === "" ? void 0 : method),
-          style: {
-            ...control,
-            color: offer.destructive ? "var(--destructive, #b42318)" : "inherit"
-          },
-          children: pending ? `${offer.label}\u2026` : offer.label
+          host,
+          side: "top",
+          label: presentation.tooltip,
+          showWhenDisabled: presentation.hoverWhileDisabled,
+          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              type: "button",
+              disabled,
+              onClick: () => onRun(offer, method === "" ? void 0 : method),
+              style: {
+                ...control,
+                color: offer.destructive ? "var(--destructive, #b42318)" : "inherit"
+              },
+              children: presentation.label
+            }
+          )
         }
       ),
       choices.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -10982,7 +11093,7 @@ ${writeKey}`;
           {
             ...selected,
             action: offer.action,
-            ...offer.action === "merge" && method !== void 0 ? { mergeMethod: method } : {},
+            ...(offer.action === "merge" || offer.action === "enable-auto-merge") && method !== void 0 ? { mergeMethod: method } : {},
             ...offer.action === "update-branch" && method !== void 0 ? { updateMethod: method } : {}
           },
           signal
@@ -11142,7 +11253,16 @@ ${thread.id}`;
                       style: { ...inputStyle, maxWidth: 160 }
                     }
                   )
-                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => onSelect(null), style: control, children: "\u2190 Pull requests" }),
+                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Back to pull requests", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-label": "Back to this thread's pull requests",
+                    onClick: () => onSelect(null),
+                    style: control,
+                    children: "\u2190 Pull requests"
+                  }
+                ) }),
                 ready && ops?.["prs.invalidate"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: runInvalidate, style: control, children: "Refresh" })
               ]
             }
@@ -11184,6 +11304,7 @@ ${thread.id}`;
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: "2px 4px" }, children: list.entries.map((prEntry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   PrListRow,
                   {
+                    host,
                     entry: prEntry,
                     viewers: list.result?.viewers ?? {},
                     onSelect: () => onSelect({
@@ -11233,34 +11354,59 @@ ${thread.id}`;
                           flexWrap: "wrap"
                         },
                         children: [
-                          stateBadge(detail),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
+                          stateBadge(host, detail),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.repository, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                             detail.repository,
                             "#",
                             detail.number
-                          ] })
+                          ] }) })
                         ]
                       }
                     ),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
-                    metaRow("Author", prsActorLabel(detail.author)),
+                    metaRow(
+                      "Author",
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsActorTooltip(detail.author), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: prsActorLabel(detail.author) }) })
+                    ),
                     metaRow(
                       "Branches",
-                      `${detail.headRepositoryNameWithOwner ?? detail.headBranch}:${detail.headBranch} \u2192 ${detail.baseBranch}`
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.headBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                          detail.headRepositoryNameWithOwner ?? detail.headBranch,
+                          ":",
+                          detail.headBranch
+                        ] }) }),
+                        " \u2192 ",
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.baseBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: detail.baseBranch }) })
+                      ] })
                     ),
                     metaRow(
                       "Changes",
                       `+${detail.additions} \u2212${detail.deletions} \xB7 ${detail.changedFiles} file${detail.changedFiles === 1 ? "" : "s"}`
                     ),
-                    metaRow("Mergeability", prsMergeabilityLabel(detail.mergeability)),
+                    metaRow(
+                      "Mergeability",
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsConflictTooltip(detail), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: prsMergeabilityLabel(detail.mergeability) }) })
+                    ),
                     detail.baseComparison !== void 0 && metaRow(
                       "Base",
                       detail.baseComparison === "behind" ? `behind ${detail.baseBranch}${detail.behindBy !== void 0 ? ` by ${detail.behindBy}` : ""}` : detail.baseComparison
                     ),
-                    detail.autoMergeEnabled === true && metaRow("Auto-merge", detail.autoMergeMethod ?? "enabled"),
+                    detail.autoMergeEnabled === true && metaRow(
+                      "Auto-merge",
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        Tooltip,
+                        {
+                          host,
+                          side: "top",
+                          label: prsArmedAutoMergeTooltip(detail.autoMergeMethod),
+                          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: detail.autoMergeMethod ?? "enabled" })
+                        }
+                      )
+                    ),
                     detail.workflowApprovalsRequired !== void 0 && detail.workflowApprovalsRequired > 0 && metaRow(
                       "Approvals",
                       `${detail.workflowApprovalsRequired} workflow approval${detail.workflowApprovalsRequired === 1 ? "" : "s"} required`
@@ -11308,8 +11454,10 @@ ${thread.id}`;
                       writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                         PrsActionButton,
                         {
+                          host,
                           offer,
-                          pending: writeState?.pending === true,
+                          disabled: writeState?.pending === true,
+                          pendingAction: writeState?.pending === true && writeState.key.startsWith("action:") ? writeState.key.slice("action:".length) : null,
                           method: draft(`method:${offer.action}`) || (offer.methods ?? offer.updateMethods ?? [])[0] || "",
                           onMethodChange: (value) => setDraft(`method:${offer.action}`, value),
                           onRun: runPrAction
@@ -11362,6 +11510,7 @@ ${thread.id}`;
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                     CheckRow,
                     {
+                      host,
                       check
                     },
                     `${check.name}:${check.status}:${check.url ?? ""}`

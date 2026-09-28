@@ -63,7 +63,7 @@ export function captureUnavailableReason(
     return "Capturing needs the T3 Code desktop app, where the page renders.";
   if (held === null) return "Open a page to capture it.";
   if (page === "hidden") return "The page is not shown here yet — capture once it renders.";
-  if (page === "failed") return "Page didn't load — capture unavailable until the page renders.";
+  if (page === "failed") return "Page didn't load — pick unavailable until the page renders";
   return null;
 }
 
@@ -74,6 +74,39 @@ export function captureUnavailableReason(
  * when the stored image could not be added to the draft.
  */
 export type CaptureFailureStage = "request" | "image" | "insert";
+
+/**
+ * The annotate button, worded as native's PreviewChromeRow. While picking it
+ * is Cancel annotation, so it stays enabled. A failed page blocks capture
+ * (`blockReason`), and its tooltip then gives that reason — the one disabled
+ * control that stays hoverable.
+ */
+export function annotationControl(input: {
+  readonly blockReason: string | null;
+  readonly capturing: BrowserCaptureTarget | null;
+  readonly pageFailed: boolean;
+}): {
+  readonly disabled: boolean;
+  readonly picking: boolean;
+  readonly ariaLabel: string;
+  readonly tooltip: string;
+  readonly hoverWhileDisabled: boolean;
+} {
+  const picking = input.capturing === "element";
+  const disabled = !picking && (input.blockReason !== null || input.capturing !== null);
+  return {
+    disabled,
+    picking,
+    ariaLabel: picking ? "Cancel annotation" : "Annotate preview",
+    tooltip:
+      disabled && input.pageFailed && input.blockReason !== null
+        ? input.blockReason
+        : picking
+          ? "Cancel annotation (Esc)"
+          : "Annotate elements, regions, and drawings",
+    hoverWhileDisabled: input.pageFailed,
+  };
+}
 
 export type CaptureToChatOutcome =
   | {
