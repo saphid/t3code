@@ -31,6 +31,12 @@ The PR browser consumes the `t3.prs/read` grant:
   and each commit, handed to the reader's own client through
   `t3.ui/external` (`t3.ui/external.open` grant); a refusal or a denied
   grant is named under the header rather than swallowed;
+- Check out (`t3.vcs/actions` `preparePullRequestThread`, offered only when
+  the workspace's driver reports it): native's menu — "In a separate
+  worktree" or "In this repository" — with the receipt naming where the
+  checkout landed, a stale checkout, or the host's own refusal. No thread
+  opens alongside it: no extension contract creates one, so the worktree
+  option does not promise one either;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
   thread resolve/unresolve, each gated on the write capability probe's
   per-operation flags.

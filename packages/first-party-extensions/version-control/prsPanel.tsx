@@ -15,6 +15,7 @@ import {
   prsReadApi,
   prsWriteApi,
   uiExternalApi,
+  vcsActionsApi,
   type PrsActivity,
   type PrsCapabilitiesResult,
   type PrsCheck,
@@ -40,6 +41,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
+  PRS_CHECKOUT_OPTIONS,
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
   collectPrsDiffStream,
@@ -53,6 +55,8 @@ import {
   prsActorLabel,
   prsAuthoredByViewer,
   prsBranchUrl,
+  prsCheckoutLabel,
+  prsCheckoutReceipt,
   prsCommitUrl,
   prsHeadRepositoryUrl,
   prsOpenOnHostLabel,
@@ -98,7 +102,9 @@ import {
   type DiffFileRow,
   type PrsDiffDelivery,
   type PrsInvolvement,
+  type PrsCheckoutMode,
   type PrsListState,
+  type PrsReceipt,
   type PrsWriteActionOffer,
 } from "./prsViewModel.js";
 
@@ -267,6 +273,36 @@ function usePrsWriteCapabilities(
     return () => controller.abort();
   }, [host, session, enabled, tick]);
   return result?.key === tick ? result : { capabilities: null, error: null };
+}
+
+/**
+ * Whether this workspace can prepare a pull-request checkout
+ * (`t3.vcs/actions` `preparePullRequestThread`). A failed probe — no git,
+ * a denied grant — simply leaves the checkout offer out.
+ */
+function useCheckoutSupport(host: ClientHost, session: ViewSession, enabled: boolean) {
+  const [supported, setSupported] = useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(vcsActionsApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted)
+            setSupported(
+              capabilities.detected &&
+                capabilities.operations["actions.preparePullRequestThread"] === true,
+            );
+        },
+        () => {
+          if (!signal.aborted) setSupported(false);
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled]);
+  return enabled && supported;
 }
 
 /**
@@ -1411,6 +1447,137 @@ export function PrsActionButton(props: {
 }
 
 /**
+ * Native's Check out menu: a trigger that names the running checkout, and
+ * the two places a checkout can land. Arrow keys move between the options,
+ * Escape closes back onto the trigger, and leaving the menu closes it.
+ */
+function CheckoutMenu(props: {
+  host: ClientHost;
+  pending: boolean;
+  disabled: boolean;
+  onPick: (mode: PrsCheckoutMode) => void;
+}) {
+  const { host, pending, disabled, onPick } = props;
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const items = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    if (open) items.current[0]?.focus();
+  }, [open]);
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  const move = (step: number) => {
+    const focused = typeof document === "undefined" ? null : document.activeElement;
+    const at = items.current.findIndex((item) => item === focused);
+    const count = PRS_CHECKOUT_OPTIONS.length;
+    items.current[(at + step + count) % count]?.focus();
+  };
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <Tooltip host={host} side="top" label="Check out this pull request">
+        <button
+          ref={trigger}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={prsCheckoutLabel(pending)}
+          disabled={disabled}
+          onClick={() => setOpen((value) => !value)}
+          style={{ ...control, fontSize: 12, border }}
+        >
+          {prsCheckoutLabel(pending)} ▾
+        </button>
+      </Tooltip>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Check out"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              move(event.key === "ArrowDown" ? 1 : -1);
+            } else if (event.key === "Home" || event.key === "End") {
+              event.preventDefault();
+              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+            }
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+          }}
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 10,
+            minWidth: 260,
+            marginTop: 4,
+            padding: 4,
+            border,
+            borderRadius: 6,
+            background:
+              "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+          }}
+        >
+          {PRS_CHECKOUT_OPTIONS.map((option, index) => (
+            <button
+              key={option.mode}
+              ref={(element) => {
+                items.current[index] = element;
+              }}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close();
+                onPick(option.mode);
+              }}
+              style={{
+                ...control,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                width: "100%",
+                textAlign: "left",
+                fontSize: 13,
+              }}
+            >
+              <span>{option.label}</span>
+              <span style={{ fontSize: 12, color: muted }}>{option.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function ReceiptLine({ receipt }: { receipt: PrsReceipt | null }) {
+  if (receipt === null) return null;
+  return (
+    <p role={receipt.tone === "error" ? "alert" : "status"} style={{ ...noteStyle, fontSize: 12 }}>
+      <strong
+        style={{
+          color:
+            receipt.tone === "error"
+              ? "var(--t3-version-control-error, var(--destructive, #b42318))"
+              : receipt.tone === "warning"
+                ? "var(--warning, #b54708)"
+                : "inherit",
+        }}
+      >
+        {receipt.title}
+      </strong>
+      {receipt.description !== null ? ` — ${receipt.description}` : ""}
+    </p>
+  );
+}
+
+/**
  * Textarea + submit shared by the comment composer, the review bar and
  * thread replies. The draft lives in the panel, not here — a refresh
  * reprobe unmounts the whole ready subtree, and a composer-local
@@ -1576,6 +1743,13 @@ export function PullRequestsPanel(props: {
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
+  // the last one's receipt, bound to the PR it answered.
+  const [handoff, setHandoff] = useState<string | null>(null);
+  const [handoffReceipt, setHandoffReceipt] = useState<{
+    readonly refKey: string;
+    readonly receipt: PrsReceipt;
+  } | null>(null);
 
   /** Hands a host URL to the reader's own client (`t3.ui/external`); a refusal is said by name. */
   const openOnHost = (url: string) => {
@@ -1648,6 +1822,29 @@ export function PullRequestsPanel(props: {
   };
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
+  const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+
+  /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
+  const startCheckout = (url: string, mode: PrsCheckoutMode) => {
+    if (selectedKey === null || handoff !== null) return;
+    const refKey = selectedKey;
+    setHandoff(`checkout:${mode}`);
+    setHandoffReceipt(null);
+    void bindApi(vcsActionsApi, host, session.context)
+      .invoke("preparePullRequestThread", { reference: url, mode }, session.signal)
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({
+          ok: false as const,
+          detail: error instanceof Error ? error.message : null,
+        }),
+      )
+      .then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        setHandoffReceipt({ refKey, receipt: prsCheckoutReceipt(mode, outcome) });
+      });
+  };
   const draftKey = (key: string) => prsDraftKey(selectedKey, key);
   const draft = (key: string) => drafts[draftKey(key)] ?? "";
   const setDraft = (key: string, value: string) =>
@@ -2112,8 +2309,23 @@ export function PullRequestsPanel(props: {
                           </button>
                         </Tooltip>
                         <ChecksIcon host={host} state={prsChecksStateFromChecks(detail.checks)} />
+                        {canCheckout && (
+                          <span style={{ marginLeft: "auto" }}>
+                            <CheckoutMenu
+                              host={host}
+                              pending={handoff?.startsWith("checkout") === true}
+                              disabled={handoff !== null}
+                              onPick={(mode) => startCheckout(detail.url, mode)}
+                            />
+                          </span>
+                        )}
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
+                      <ReceiptLine
+                        receipt={
+                          handoffReceipt?.refKey === selectedKey ? handoffReceipt.receipt : null
+                        }
+                      />
                       {openError !== null && (
                         <p role="alert" style={{ ...noteStyle, padding: "2px 0", fontSize: 12 }}>
                           {openError}

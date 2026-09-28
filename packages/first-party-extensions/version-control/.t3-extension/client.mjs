@@ -9549,6 +9549,44 @@ ${ref.number}`;
         return "Could not open the link \u2014 the system refused it.";
     }
   }
+  var PRS_CHECKOUT_OPTIONS = [
+    {
+      mode: "worktree",
+      label: "In a separate worktree",
+      description: "Its own folder. Nothing you have open moves."
+    },
+    {
+      mode: "local",
+      label: "In this repository",
+      description: "Switches the branch you are working in, like `gh pr checkout`."
+    }
+  ];
+  function prsCheckoutLabel(pending) {
+    return pending ? "Checking out..." : "Check out";
+  }
+  function prsCheckoutReceipt(mode, outcome) {
+    if (!outcome.ok)
+      return {
+        tone: "error",
+        title: "Could not prepare the pull request checkout",
+        description: outcome.detail
+      };
+    if (!outcome.value.isOnPullRequestHead)
+      return {
+        tone: "warning",
+        title: "Checked out, but not on the latest commits",
+        description: "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is."
+      };
+    return mode === "local" || outcome.value.worktreePath === null ? {
+      tone: "success",
+      title: "Checked out here",
+      description: "This repository is on the pull request's branch."
+    } : {
+      tone: "success",
+      title: "Checked out",
+      description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`
+    };
+  }
   function prsBranchChips(detail, stacked) {
     return {
       base: {
@@ -10212,6 +10250,27 @@ ${writeKey}`;
       return () => controller.abort();
     }, [host, session, enabled, tick]);
     return result?.key === tick ? result : { capabilities: null, error: null };
+  }
+  function useCheckoutSupport(host, session, enabled) {
+    const [supported, setSupported] = (0, import_react.useState)(false);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsActionsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted)
+            setSupported(
+              capabilities.detected && capabilities.operations["actions.preparePullRequestThread"] === true
+            );
+        },
+        () => {
+          if (!signal.aborted) setSupported(false);
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    return enabled && supported;
   }
   function usePrsRefreshes(host, session, enabled) {
     const [state2, setState] = (0, import_react.useState)({
@@ -11064,6 +11123,122 @@ ${writeKey}`;
       )
     ] });
   }
+  function CheckoutMenu(props) {
+    const { host, pending, disabled, onPick } = props;
+    const [open, setOpen] = (0, import_react.useState)(false);
+    const trigger = (0, import_react.useRef)(null);
+    const items = (0, import_react.useRef)([]);
+    (0, import_react.useEffect)(() => {
+      if (open) items.current[0]?.focus();
+    }, [open]);
+    const close = () => {
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    const move = (step) => {
+      const focused = typeof document === "undefined" ? null : document.activeElement;
+      const at = items.current.findIndex((item) => item === focused);
+      const count = PRS_CHECKOUT_OPTIONS.length;
+      items.current[(at + step + count) % count]?.focus();
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Check out this pull request", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "button",
+        {
+          ref: trigger,
+          type: "button",
+          "aria-haspopup": "menu",
+          "aria-expanded": open,
+          "aria-label": prsCheckoutLabel(pending),
+          disabled,
+          onClick: () => setOpen((value) => !value),
+          style: { ...control, fontSize: 12, border },
+          children: [
+            prsCheckoutLabel(pending),
+            " \u25BE"
+          ]
+        }
+      ) }),
+      open && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          role: "menu",
+          "aria-label": "Check out",
+          onKeyDown: (event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              move(event.key === "ArrowDown" ? 1 : -1);
+            } else if (event.key === "Home" || event.key === "End") {
+              event.preventDefault();
+              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+            }
+          },
+          onBlur: (event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+          },
+          style: {
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 10,
+            minWidth: 260,
+            marginTop: 4,
+            padding: 4,
+            border,
+            borderRadius: 6,
+            background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
+          },
+          children: PRS_CHECKOUT_OPTIONS.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              ref: (element) => {
+                items.current[index] = element;
+              },
+              type: "button",
+              role: "menuitem",
+              onClick: () => {
+                close();
+                onPick(option.mode);
+              },
+              style: {
+                ...control,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                width: "100%",
+                textAlign: "left",
+                fontSize: 13
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: option.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 12, color: muted }, children: option.description })
+              ]
+            },
+            option.mode
+          ))
+        }
+      )
+    ] });
+  }
+  function ReceiptLine({ receipt: receipt2 }) {
+    if (receipt2 === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: receipt2.tone === "error" ? "alert" : "status", style: { ...noteStyle, fontSize: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "strong",
+        {
+          style: {
+            color: receipt2.tone === "error" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : receipt2.tone === "warning" ? "var(--warning, #b54708)" : "inherit"
+          },
+          children: receipt2.title
+        }
+      ),
+      receipt2.description !== null ? ` \u2014 ${receipt2.description}` : ""
+    ] });
+  }
   function PrsComposer(props) {
     const { label, placeholder, value, pending, error, onChange, onSubmit } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
@@ -11154,6 +11329,8 @@ ${writeKey}`;
     const [drafts, setDrafts] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
     const [openError, setOpenError] = (0, import_react.useState)(null);
+    const [handoff, setHandoff] = (0, import_react.useState)(null);
+    const [handoffReceipt, setHandoffReceipt] = (0, import_react.useState)(null);
     const openOnHost = (url) => {
       setOpenError(null);
       void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
@@ -11211,6 +11388,24 @@ ${writeKey}`;
       ).finally(() => controller.abort());
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
+    const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const startCheckout = (url, mode) => {
+      if (selectedKey === null || handoff !== null) return;
+      const refKey = selectedKey;
+      setHandoff(`checkout:${mode}`);
+      setHandoffReceipt(null);
+      void bindApi(vcsActionsApi, host, session.context).invoke("preparePullRequestThread", { reference: url, mode }, session.signal).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({
+          ok: false,
+          detail: error instanceof Error ? error.message : null
+        })
+      ).then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        setHandoffReceipt({ refKey, receipt: prsCheckoutReceipt(mode, outcome) });
+      });
+    };
     const draftKey = (key) => prsDraftKey(selectedKey, key);
     const draft = (key) => drafts[draftKey(key)] ?? "";
     const setDraft = (key, value) => setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
@@ -11551,11 +11746,26 @@ ${thread.id}`;
                               ]
                             }
                           ) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: prsChecksStateFromChecks(detail.checks) })
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: prsChecksStateFromChecks(detail.checks) }),
+                          canCheckout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { marginLeft: "auto" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            CheckoutMenu,
+                            {
+                              host,
+                              pending: handoff?.startsWith("checkout") === true,
+                              disabled: handoff !== null,
+                              onPick: (mode) => startCheckout(detail.url, mode)
+                            }
+                          ) })
                         ]
                       }
                     ),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      ReceiptLine,
+                      {
+                        receipt: handoffReceipt?.refKey === selectedKey ? handoffReceipt.receipt : null
+                      }
+                    ),
                     openError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, padding: "2px 0", fontSize: 12 }, children: openError })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [

@@ -41,6 +41,7 @@ import type {
   PrsWriteOperationsSupport,
   PrsWriteUpdateMethod,
   PrsWriteVerdict,
+  VcsActionPrepareThreadResult,
 } from "@t3tools/extension-sdk/catalogue";
 
 /* ---------------- capability gate ---------------- */
@@ -403,6 +404,75 @@ export function prsOpenRefusedLabel(
     case "opener-refused":
       return "Could not open the link — the system refused it.";
   }
+}
+
+/* ---------------- checkout ---------------- */
+
+export type PrsCheckoutMode = "worktree" | "local";
+
+/**
+ * Native's checkout menu. The worktree option drops native's "and thread":
+ * `t3.vcs/actions` prepares the checkout but no extension contract opens a
+ * thread, so the pack does not claim one.
+ */
+export const PRS_CHECKOUT_OPTIONS: readonly {
+  readonly mode: PrsCheckoutMode;
+  readonly label: string;
+  readonly description: string;
+}[] = [
+  {
+    mode: "worktree",
+    label: "In a separate worktree",
+    description: "Its own folder. Nothing you have open moves.",
+  },
+  {
+    mode: "local",
+    label: "In this repository",
+    description: "Switches the branch you are working in, like `gh pr checkout`.",
+  },
+];
+
+export function prsCheckoutLabel(pending: boolean): string {
+  return pending ? "Checking out..." : "Check out";
+}
+
+export interface PrsReceipt {
+  readonly tone: "success" | "warning" | "error";
+  readonly title: string;
+  readonly description: string | null;
+}
+
+/** Native's checkout toasts as one receipt: where it landed, stale, or the host's own refusal. */
+export function prsCheckoutReceipt(
+  mode: PrsCheckoutMode,
+  outcome:
+    | { readonly ok: true; readonly value: VcsActionPrepareThreadResult }
+    | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  if (!outcome.ok)
+    return {
+      tone: "error",
+      title: "Could not prepare the pull request checkout",
+      description: outcome.detail,
+    };
+  if (!outcome.value.isOnPullRequestHead)
+    return {
+      tone: "warning",
+      title: "Checked out, but not on the latest commits",
+      description:
+        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
+    };
+  return mode === "local" || outcome.value.worktreePath === null
+    ? {
+        tone: "success",
+        title: "Checked out here",
+        description: "This repository is on the pull request's branch.",
+      }
+    : {
+        tone: "success",
+        title: "Checked out",
+        description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`,
+      };
 }
 
 /* ---------------- detail projections ---------------- */
