@@ -5,6 +5,8 @@ export type PullRequestHandoffOutcome =
   | { readonly kind: "thread-failed" }
   | { readonly kind: "checkout-failed"; readonly detail: string | null }
   | { readonly kind: "thread-move-failed"; readonly branch: string }
+  /** Cancelled while a step was still running, so whether that step happened is unknown. */
+  | { readonly kind: "stopped"; readonly stage: "thread" | "checkout" | "thread-move" }
   | {
       readonly kind: "ready";
       readonly mode: "worktree" | "local";
@@ -41,6 +43,12 @@ export function beginPullRequestCheckoutToast() {
   };
 }
 
+const STOPPED_STAGE = {
+  thread: "opening a thread",
+  checkout: "preparing the checkout",
+  "thread-move": "moving the thread to the checkout",
+} as const;
+
 function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
   switch (outcome.kind) {
     case "thread-failed":
@@ -62,6 +70,12 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
         type: "error",
         title: "Checked out, but the thread stayed where it was",
         description: `The checkout is ready on \`${outcome.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+      } as const;
+    case "stopped":
+      return {
+        type: "warning",
+        title: "Handoff stopped",
+        description: `Stopped while ${STOPPED_STAGE[outcome.stage]}; it may still finish.`,
       } as const;
     case "ready":
       // The host could not confirm or apply the pull request's latest commits (unreadable head,

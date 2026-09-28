@@ -538,18 +538,23 @@ describe("pull-request handoff provider", () => {
       prepare: ["openThread", "prepare"],
       point: ["openThread", "prepare", "point"],
     };
+    // Cancellation leaves the step's outcome unknown, so it names the pending stage rather than
+    // reporting native's definitive failure.
     const abandoned: Record<HostStep, Record<string, unknown>> = {
       openThread: {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
+        type: "warning",
+        title: "Handoff stopped",
+        description: "Stopped while opening a thread; it may still finish.",
       },
-      prepare: { type: "error", title: "Could not prepare the pull request checkout" },
+      prepare: {
+        type: "warning",
+        title: "Handoff stopped",
+        description: "Stopped while preparing the checkout; it may still finish.",
+      },
       point: {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description:
-          "The checkout is ready on `feat/x`. Point a thread at it from the branch picker, then ask again.",
+        type: "warning",
+        title: "Handoff stopped",
+        description: "Stopped while moving the thread to the checkout; it may still finish.",
       },
     };
     const interruptions = [
@@ -558,6 +563,32 @@ describe("pull-request handoff provider", () => {
       "disabled",
       "stripped of its handoff grant",
     ] as const;
+    // Native moves the thread's workspace before its navigation settles, so a move cancelled
+    // mid-flight may already have happened; claiming the thread stayed put would be false.
+    it("says it stopped, not that the thread stayed, when cancelled after the move was applied", async () => {
+      const handoff = setup({ hold: "point" });
+      const started = handoff.start({ task: "resolve-conflicts", pullRequest: PULL_REQUEST }, null);
+      await handoff.reached;
+      expect(handoff.steps.at(-1)).toEqual([
+        "point",
+        {
+          branch: "feat/x",
+          worktreePath: "/work/project-a/.t3/worktrees/feat-x",
+          envMode: "worktree",
+        },
+      ]);
+      handoff.interruptions.cancelled();
+      await expect(started).rejects.toBeInstanceOf(ClientProviderOpError);
+      expect(toastsSoFar()).toEqual([abandoned.point]);
+      handoff.release();
+      expect(await handoff.host.openThread.mock.results.at(-1)?.value).toEqual({
+        draftId: NEW_DRAFT,
+        threadId: NEW_THREAD,
+      });
+      expect(toastsSoFar()).toEqual([abandoned.point]);
+      expect(JSON.stringify(timeline)).not.toContain("the thread stayed where it was");
+      expect(draftPrompt(NEW_DRAFT)).toBe("");
+    });
     for (const hold of ["openThread", "prepare", "point"] as const) {
       for (const interruption of interruptions) {
         it(`starts nothing after ${hold} when ${interruption}`, async () => {

@@ -69,7 +69,6 @@ import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import {
   beginPullRequestCheckoutToast,
   showTaskAddedToComposerToast,
-  type PullRequestHandoffOutcome,
 } from "../components/pullRequest/pullRequestHandoffToast";
 import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
@@ -1841,12 +1840,12 @@ export function createPrHandoffClientProvider(
           throw error;
         }
       };
-      // A call cancelled or timed out while a host step runs fails at once, reporting that step
-      // as failed; the step itself is not undone, and nothing starts from what it later returns.
-      const step = <A>(work: Promise<A>, abandoned: PullRequestHandoffOutcome) =>
+      // A call cancelled or timed out while a host step runs fails at once, saying which step it
+      // stopped in; the step itself is not undone, and nothing starts from what it later returns.
+      const step = <A>(work: Promise<A>, stage: "thread" | "checkout" | "thread-move") =>
         new Promise<A>((resolve, reject) => {
           const abandon = () => {
-            toast.settle(abandoned);
+            toast.settle({ kind: "stopped", stage });
             reject(new ClientProviderOpError("client-target-denied", "Handoff cancelled"));
           };
           if (call.signal.aborted) return abandon();
@@ -1861,9 +1860,7 @@ export function createPrHandoffClientProvider(
       // for a checkout that knows which thread it is for.
       const opened = await step(
         host.openThread(projectRef).catch(() => null),
-        {
-          kind: "thread-failed",
-        },
+        "thread",
       );
       live();
       if (opened === null) {
@@ -1878,7 +1875,7 @@ export function createPrHandoffClientProvider(
           mode,
           threadId: opened.threadId,
         }),
-        { kind: "checkout-failed", detail: null },
+        "checkout",
       );
       live();
       if (!prepared.ok) {
@@ -1898,7 +1895,7 @@ export function createPrHandoffClientProvider(
             envMode: worktreePath === null ? "local" : "worktree",
           })
           .catch(() => null),
-        { kind: "thread-move-failed", branch },
+        "thread-move",
       );
       live();
       // Writing the task now would aim the agent at whatever the thread was already open on.

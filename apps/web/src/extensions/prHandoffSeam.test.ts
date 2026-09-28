@@ -396,7 +396,11 @@ async function setup() {
 /** Lets the released host step and anything it would start run to the end. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-const CHECKOUT_FAILED = { type: "error", title: "Could not prepare the pull request checkout" };
+const CHECKOUT_STOPPED = {
+  type: "warning",
+  title: "Handoff stopped",
+  description: "Stopped while preparing the checkout; it may still finish.",
+};
 
 describe("a handoff whose call ends while the checkout is still running", () => {
   it("is cancelled on the client when the server stops waiting, and a late checkout starts nothing", async () => {
@@ -408,15 +412,15 @@ describe("a handoff whose call ends while the checkout is still running", () => 
     await vi.waitFor(() => expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]));
     await vi.waitFor(() => expect(handoff.signal().aborted).toBe(true));
     await vi.waitFor(() => expect(handoff.replies).toHaveLength(1));
-    // The client answered, so its pending entry is gone, and the spinner says the checkout failed.
+    // The client answered, so its pending entry is gone, and the spinner says where it stopped.
     expect(handoff.replies[0]).toMatchObject({ ok: false });
-    expect([...toasts.values()]).toEqual([CHECKOUT_FAILED]);
+    expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
 
     handoff.release();
     await settle();
     expect(handoff.steps).toEqual(["open", "prepare"]);
     expect(useComposerDraftStore.getState().getComposerDraft(NEW_DRAFT)?.prompt ?? "").toBe("");
-    expect([...toasts.values()]).toEqual([CHECKOUT_FAILED]);
+    expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
   });
 
   it("lets go at once when its pack is uninstalled, before the checkout returns", async () => {
@@ -426,11 +430,11 @@ describe("a handoff whose call ends while the checkout is still running", () => 
     await vi.waitFor(() => expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]));
     await vi.waitFor(() => expect(handoff.signal().aborted).toBe(true));
     await vi.waitFor(() => expect(handoff.replies).toHaveLength(1));
-    expect([...toasts.values()]).toEqual([CHECKOUT_FAILED]);
+    expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
 
     handoff.release();
     await settle();
     expect(handoff.steps).toEqual(["open", "prepare"]);
-    expect([...toasts.values()]).toEqual([CHECKOUT_FAILED]);
+    expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
   });
 });
