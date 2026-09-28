@@ -8205,13 +8205,16 @@ export const messagesEnrichmentApi = defineApi<MessagesEnrichmentMethods>(
   // Consumers keep loading on a 1.1.0 host; probe before asking for text.
   {
     baseline: "1.1.0",
-    additions: [{ version: "1.2.0", method: "listAnnotations", input: "include" }],
+    additions: [
+      { version: "1.2.0", method: "listAnnotations", input: "include" },
+      { version: "1.2.0", method: "getAnnotation" },
+    ],
   },
 );
 /** Frozen published 1.1.0 definition, before listed text; providers may still declare it. */
-export const messagesEnrichmentApiV1_1 = defineApi<MessagesEnrichmentMethods>(
-  messagesEnrichmentDefinition(false),
-);
+export const messagesEnrichmentApiV1_1 = defineApi<
+  Omit<MessagesEnrichmentMethods, "getAnnotation">
+>(messagesEnrichmentDefinition(false));
 
 /**
  * Lists the caller's own unsent annotations through

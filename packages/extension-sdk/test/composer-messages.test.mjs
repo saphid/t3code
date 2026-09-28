@@ -407,7 +407,10 @@ NodeTest.test("listAnnotations text is a 1.2.0 addition over a frozen 1.1.0", as
   NodeAssert.equal(messagesEnrichmentApi.baseline, "1.1.0");
   NodeAssert.deepEqual(
     messagesEnrichmentApi.additions.map(({ version, method, input }) => [version, method, input]),
-    [["1.2.0", "listAnnotations", "include"]],
+    [
+      ["1.2.0", "listAnnotations", "include"],
+      ["1.2.0", "getAnnotation", undefined],
+    ],
   );
   for (const definition of [MESSAGES_ENRICHMENT_API, CLIENT_COMPOSER_API]) {
     const list = methodsOf(definition).listAnnotations;
@@ -517,4 +520,42 @@ NodeTest.test("readOwnAnnotationText reads one comment's whole text on a 1.2.0 h
     [null, asked],
     [null, []],
   ]);
+});
+
+// Review repro (gaps-files-3 P2): getAnnotation is a 1.2.0 addition, so a
+// binding at the ^1.1.0 baseline refuses it before transport.
+NodeTest.test("getAnnotation is refused below ^1.2.0 and dispatched at it", async () => {
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  const input = { threadId: "t", annotationId: "annotation:ext.a:1" };
+  for (const range of [undefined, "^1.1.0"]) {
+    const dispatched = [];
+    const client = {
+      invokeApi: async (request) => {
+        dispatched.push(request.versionRange);
+        return { found: false };
+      },
+    };
+    await NodeAssert.rejects(
+      bindApi(messagesEnrichmentApi, client, context, range).invoke("getAnnotation", input, signal),
+      (error) => error instanceof ApiVersionError && error.code === "api-version-not-negotiated",
+    );
+    NodeAssert.deepEqual(dispatched, []);
+  }
+  const dispatched = [];
+  const client = {
+    invokeApi: async (request) => {
+      dispatched.push([request.method, request.versionRange]);
+      return { found: false };
+    },
+  };
+  NodeAssert.deepEqual(
+    await bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+      "getAnnotation",
+      input,
+      signal,
+    ),
+    { found: false },
+  );
+  NodeAssert.deepEqual(dispatched, [["getAnnotation", "^1.2.0"]]);
 });
