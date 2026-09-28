@@ -74,7 +74,7 @@ import {
   prsBranchChips,
   prsStackedOnBase,
   prsChecksIcon,
-  prsChecksStateFromChecks,
+  prsReconcileChecks,
   prsChecksSummary,
   prsCheckStatusLabel,
   prsDraftKey,
@@ -815,23 +815,193 @@ const CHECKS_TONES = {
   warning: "var(--warning, #b54708)",
 } as const;
 
-/** Native's checks glyph: an icon named by its headline, the same words on hover. */
-export function ChecksIcon(props: {
+type LazyChecks =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly checks: readonly PrsCheck[] }
+  | { readonly status: "error"; readonly detail: string };
+
+/**
+ * Native's checks indicator and the popover it opens, on a list row and in
+ * the detail header. The header passes the checks it holds; a row passes
+ * `loadChecks`, read only once the popover opens. The trigger is a
+ * focusable span, not a button — a row is itself a button — and it stops
+ * its click and Enter/Space so opening the checks never selects the row.
+ */
+export function ChecksControl(props: {
   host: ClientHost;
   state: "passing" | "failing" | "pending" | null | undefined;
+  checks?: readonly PrsCheck[];
+  stale?: boolean;
+  loadChecks?: (signal: AbortSignal) => Promise<readonly PrsCheck[]>;
+  onOpenLink: (url: string) => void;
 }) {
-  const icon = prsChecksIcon(props.state);
+  const { host, state, checks, stale = false, loadChecks, onOpenLink } = props;
+  const icon = prsChecksIcon(state);
+  const [open, setOpen] = useState(false);
+  const [lazy, setLazy] = useState<LazyChecks>({ status: "loading" });
+  const trigger = useRef<HTMLSpanElement | null>(null);
+  const popup = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open || checks !== undefined || loadChecks === undefined) return;
+    const controller = new AbortController();
+    setLazy({ status: "loading" });
+    loadChecks(controller.signal).then(
+      (loaded) => {
+        if (!controller.signal.aborted) setLazy({ status: "ready", checks: loaded });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          setLazy({ status: "error", detail: message(error, "Checks unavailable") });
+      },
+    );
+    return () => controller.abort();
+    // loadChecks is rebuilt every render; the read belongs to the opening.
+  }, [open]);
+  useEffect(() => {
+    if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
+    const onPress = (event: Event) => {
+      const target = event.target as Node | null;
+      if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onPress);
+    return () => document.removeEventListener("mousedown", onPress);
+  }, [open]);
   if (icon === null) return null;
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  const shown: LazyChecks | null =
+    checks !== undefined ? { status: "ready", checks } : loadChecks !== undefined ? lazy : null;
+  const summary = checks === undefined || stale ? null : prsChecksSummary(checks);
+  const Popover = resolveFloatingLayer(host)?.Popover;
+  const popupProps = {
+    role: "dialog",
+    "aria-label": "Checks",
+    // Portaled or not, React delivers these through the row: keep them here.
+    onClick: (event: { stopPropagation: () => void }) => event.stopPropagation(),
+    onKeyDown: (event: {
+      key: string;
+      stopPropagation: () => void;
+      preventDefault: () => void;
+    }) => {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    },
+    style: {
+      width: 320,
+      maxWidth: "calc(100vw - 24px)",
+      padding: "8px 10px",
+      border,
+      borderRadius: 6,
+      fontSize: 12,
+      textAlign: "left",
+      cursor: "default",
+      color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+      background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+      boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+    },
+  } as const;
+  const body = (
+    <>
+      <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 13 }}>{icon.label}</p>
+      {summary !== null && <p style={{ margin: "0 0 6px", color: muted }}>{summary}</p>}
+      {stale ? (
+        <p style={{ margin: 0, color: muted }}>
+          Check details are out of date. Refresh the pull request to update them.
+        </p>
+      ) : shown?.status === "loading" ? (
+        <p style={{ margin: 0, color: muted }}>Loading checks…</p>
+      ) : shown?.status === "error" ? (
+        <p style={{ margin: 0, color: muted }}>{shown.detail}</p>
+      ) : shown?.status === "ready" && shown.checks.length === 0 ? (
+        <p style={{ margin: 0, color: muted }}>No checks reported</p>
+      ) : shown?.status === "ready" ? (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {shown.checks.map((check, index) => (
+            <li
+              key={`${index}:${check.name}`}
+              style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" }}
+            >
+              <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{check.name}</span>
+              <span style={{ flexShrink: 0, color: muted }}>
+                {prsCheckStatusLabel(check.status)}
+              </span>
+              {check.url !== null && (
+                <button
+                  type="button"
+                  aria-label={`Open check ${check.name}`}
+                  onClick={() => check.url !== null && onOpenLink(check.url)}
+                  style={{ ...linkButton, flexShrink: 0 }}
+                >
+                  Details
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
   return (
-    <Tooltip host={props.host} side="top" label={icon.label}>
+    <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
       <span
-        role="img"
-        aria-label={icon.label}
-        style={{ flexShrink: 0, fontSize: 11, lineHeight: 1, color: CHECKS_TONES[icon.tone] }}
+        ref={trigger}
+        role="button"
+        tabIndex={0}
+        aria-label={`Checks: ${icon.label}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen((value) => !value);
+          } else if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
+        style={{
+          fontSize: 11,
+          lineHeight: 1,
+          cursor: "pointer",
+          color: CHECKS_TONES[icon.tone],
+        }}
       >
         {icon.glyph}
       </span>
-    </Tooltip>
+      {open &&
+        (Popover !== undefined && trigger.current !== null ? (
+          <Popover
+            {...popupProps}
+            anchor={trigger.current}
+            side="bottom"
+            align="start"
+            elementRef={(element) => {
+              popup.current = element;
+            }}
+          >
+            {body}
+          </Popover>
+        ) : (
+          <div
+            {...popupProps}
+            ref={popup}
+            style={{ ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 }}
+          >
+            {body}
+          </div>
+        ))}
+    </span>
   );
 }
 
@@ -893,8 +1063,10 @@ export function PrListRow(props: {
   entry: PrsListEntry;
   viewers: Readonly<Record<string, string>>;
   onSelect: () => void;
+  loadChecks: (signal: AbortSignal) => Promise<readonly PrsCheck[]>;
+  onOpenLink: (url: string) => void;
 }) {
-  const { host, entry, viewers, onSelect } = props;
+  const { host, entry, viewers, onSelect, loadChecks, onOpenLink } = props;
   const review = prsReviewLabel(entry.reviewDecision);
   const stack = prsStackLabel(entry.stack);
   return (
@@ -929,7 +1101,12 @@ export function PrListRow(props: {
           >
             {entry.title}
           </span>
-          <ChecksIcon host={host} state={entry.checksState} />
+          <ChecksControl
+            host={host}
+            state={entry.checksState}
+            loadChecks={loadChecks}
+            onOpenLink={onOpenLink}
+          />
           {entry.viewerReviewRequested && badge("Review requested", "open")}
         </span>
         <span
@@ -2247,6 +2424,21 @@ export function PullRequestsPanel(props: {
     stackError: sections.stackError,
   });
   const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+  // The list row for this PR may carry a newer checks rollup than the detail.
+  const checksRollup =
+    detail === null
+      ? null
+      : prsReconcileChecks(
+          detail.checks,
+          list.entries.find((entry) => selectedKey !== null && prsRefKey(entry) === selectedKey)
+            ?.checksState,
+        );
+  const checksHeading =
+    detail === null || checksRollup === null
+      ? null
+      : checksRollup.stale
+        ? (prsChecksIcon(checksRollup.state)?.label ?? "No checks reported")
+        : prsChecksSummary(detail.checks);
   const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
   // One method for merge, auto-merge and the stack merge, resolved as native does.
   const mergeMethod = prsResolveMergeMethod(
@@ -2488,6 +2680,20 @@ export function PullRequestsPanel(props: {
                       host={host}
                       entry={prEntry}
                       viewers={list.result?.viewers ?? {}}
+                      loadChecks={(signal) =>
+                        bindApi(prsReadApi, host, session.context)
+                          .invoke(
+                            "detail",
+                            {
+                              host: prEntry.host,
+                              repository: prEntry.repository,
+                              number: prEntry.number,
+                            },
+                            AbortSignal.any([signal, session.signal]),
+                          )
+                          .then((read) => read.checks)
+                      }
+                      onOpenLink={openOnHost}
                       onSelect={() =>
                         onSelect({
                           host: prEntry.host,
@@ -2590,7 +2796,13 @@ export function PullRequestsPanel(props: {
                             #{detail.number} ↗
                           </button>
                         </Tooltip>
-                        <ChecksIcon host={host} state={prsChecksStateFromChecks(detail.checks)} />
+                        <ChecksControl
+                          host={host}
+                          state={checksRollup?.state}
+                          checks={detail.checks}
+                          stale={checksRollup?.stale === true}
+                          onOpenLink={openOnHost}
+                        />
                         {canCheckout && (
                           <span style={{ marginLeft: "auto" }}>
                             <CheckoutMenu
@@ -2869,9 +3081,7 @@ export function PullRequestsPanel(props: {
                 <section aria-label="Checks" style={{ paddingBottom: 4 }}>
                   <h3 style={headingStyle}>
                     Checks
-                    {detail !== null && prsChecksSummary(detail.checks) !== null
-                      ? ` — ${prsChecksSummary(detail.checks)}`
-                      : ""}
+                    {checksHeading !== null ? ` — ${checksHeading}` : ""}
                   </h3>
                   {detail !== null && detail.checks.length === 0 && (
                     <p style={{ ...noteStyle, fontSize: 12 }}>No checks reported.</p>

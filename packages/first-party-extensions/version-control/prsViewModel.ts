@@ -1205,6 +1205,25 @@ export function prsChecksStateFromChecks(
 }
 
 /**
+ * The header's checks rollup, reconciled as native's is: a list rollup newer
+ * than the detail wins, except that a run awaiting approval keeps it pending
+ * unless something failed (list rollups can omit those runs). `stale` says
+ * the detail's own checks no longer back the rollup.
+ */
+export function prsReconcileChecks(
+  checks: readonly Pick<PrsCheck, "status">[],
+  summaryState: PrsChecksState | undefined,
+): { readonly state: PrsChecksState | null; readonly stale: boolean } {
+  const detailState = prsChecksStateFromChecks(checks);
+  const latest = summaryState === undefined ? detailState : summaryState;
+  const state =
+    latest !== "failing" && checks.some((check) => check.status === "action-required")
+      ? "pending"
+      : latest;
+  return { state, stale: state !== detailState };
+}
+
+/**
  * Native's stack-membership help. List membership only ever comes from the
  * host's own stack graph (GitHub stacks), never a base-branch chain, so this
  * is native's `kind === "native"` wording.

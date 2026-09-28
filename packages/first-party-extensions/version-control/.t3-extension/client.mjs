@@ -10190,6 +10190,12 @@ ${ref.number}`;
     if (statuses.has("pending") || statuses.has("action-required")) return "pending";
     return statuses.has("success") ? "passing" : null;
   }
+  function prsReconcileChecks(checks, summaryState) {
+    const detailState = prsChecksStateFromChecks(checks);
+    const latest = summaryState === void 0 ? detailState : summaryState;
+    const state2 = latest !== "failing" && checks.some((check) => check.status === "action-required") ? "pending" : latest;
+    return { state: state2, stale: state2 !== detailState };
+  }
   function prsStackTooltip(stack) {
     if (stack === void 0) return null;
     return `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`;
@@ -10865,18 +10871,152 @@ ${writeKey}`;
     destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
     warning: "var(--warning, #b54708)"
   };
-  function ChecksIcon(props) {
-    const icon = prsChecksIcon(props.state);
+  function ChecksControl(props) {
+    const { host, state: state2, checks, stale = false, loadChecks, onOpenLink } = props;
+    const icon = prsChecksIcon(state2);
+    const [open, setOpen] = (0, import_react2.useState)(false);
+    const [lazy, setLazy] = (0, import_react2.useState)({ status: "loading" });
+    const trigger = (0, import_react2.useRef)(null);
+    const popup = (0, import_react2.useRef)(null);
+    (0, import_react2.useEffect)(() => {
+      if (!open || checks !== void 0 || loadChecks === void 0) return;
+      const controller = new AbortController();
+      setLazy({ status: "loading" });
+      loadChecks(controller.signal).then(
+        (loaded) => {
+          if (!controller.signal.aborted) setLazy({ status: "ready", checks: loaded });
+        },
+        (error) => {
+          if (!controller.signal.aborted)
+            setLazy({ status: "error", detail: message(error, "Checks unavailable") });
+        }
+      );
+      return () => controller.abort();
+    }, [open]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
+      const onPress = (event) => {
+        const target = event.target;
+        if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setOpen(false);
+      };
+      document.addEventListener("mousedown", onPress);
+      return () => document.removeEventListener("mousedown", onPress);
+    }, [open]);
     if (icon === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: icon.label, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      "span",
-      {
-        role: "img",
-        "aria-label": icon.label,
-        style: { flexShrink: 0, fontSize: 11, lineHeight: 1, color: CHECKS_TONES[icon.tone] },
-        children: icon.glyph
+    const close = () => {
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    const shown = checks !== void 0 ? { status: "ready", checks } : loadChecks !== void 0 ? lazy : null;
+    const summary = checks === void 0 || stale ? null : prsChecksSummary(checks);
+    const Popover = resolveFloatingLayer(host)?.Popover;
+    const popupProps = {
+      role: "dialog",
+      "aria-label": "Checks",
+      // Portaled or not, React delivers these through the row: keep them here.
+      onClick: (event) => event.stopPropagation(),
+      onKeyDown: (event) => {
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          close();
+        }
+      },
+      style: {
+        width: 320,
+        maxWidth: "calc(100vw - 24px)",
+        padding: "8px 10px",
+        border,
+        borderRadius: 6,
+        fontSize: 12,
+        textAlign: "left",
+        cursor: "default",
+        color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+        background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+        boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
       }
-    ) });
+    };
+    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", fontWeight: 600, fontSize: 13 }, children: icon.label }),
+      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", color: muted }, children: summary }),
+      stale ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "li",
+        {
+          style: { display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted }, children: prsCheckStatusLabel(check.status) }),
+            check.url !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                "aria-label": `Open check ${check.name}`,
+                onClick: () => check.url !== null && onOpenLink(check.url),
+                style: { ...linkButton, flexShrink: 0 },
+                children: "Details"
+              }
+            )
+          ]
+        },
+        `${index}:${check.name}`
+      )) }) : null
+    ] });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "span",
+        {
+          ref: trigger,
+          role: "button",
+          tabIndex: 0,
+          "aria-label": `Checks: ${icon.label}`,
+          "aria-haspopup": "dialog",
+          "aria-expanded": open,
+          onClick: (event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          },
+          onKeyDown: (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen((value) => !value);
+            } else if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
+          },
+          style: {
+            fontSize: 11,
+            lineHeight: 1,
+            cursor: "pointer",
+            color: CHECKS_TONES[icon.tone]
+          },
+          children: icon.glyph
+        }
+      ),
+      open && (Popover !== void 0 && trigger.current !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        Popover,
+        {
+          ...popupProps,
+          anchor: trigger.current,
+          side: "bottom",
+          align: "start",
+          elementRef: (element) => {
+            popup.current = element;
+          },
+          children: body
+        }
+      ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          ...popupProps,
+          ref: popup,
+          style: { ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 },
+          children: body
+        }
+      ))
+    ] });
   }
   var chipStyle = {
     minWidth: 0,
@@ -10908,7 +11048,7 @@ ${writeKey}`;
     ] });
   }
   function PrListRow(props) {
-    const { host, entry, viewers, onSelect } = props;
+    const { host, entry, viewers, onSelect, loadChecks, onOpenLink } = props;
     const review = prsReviewLabel(entry.reviewDecision);
     const stack = prsStackLabel(entry.stack);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -10945,7 +11085,15 @@ ${writeKey}`;
                 children: entry.title
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: entry.checksState }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              ChecksControl,
+              {
+                host,
+                state: entry.checksState,
+                loadChecks,
+                onOpenLink
+              }
+            ),
             entry.viewerReviewRequested && badge("Review requested", "open")
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -11924,6 +12072,11 @@ ${thread.id}`;
       stackError: sections.stackError
     });
     const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+    const checksRollup = detail === null ? null : prsReconcileChecks(
+      detail.checks,
+      list.entries.find((entry) => selectedKey !== null && prsRefKey(entry) === selectedKey)?.checksState
+    );
+    const checksHeading = detail === null || checksRollup === null ? null : checksRollup.stale ? prsChecksIcon(checksRollup.state)?.label ?? "No checks reported" : prsChecksSummary(detail.checks);
     const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
     const mergeMethod = prsResolveMergeMethod(
       allowedMergeMethods,
@@ -12085,6 +12238,16 @@ ${thread.id}`;
                     host,
                     entry: prEntry,
                     viewers: list.result?.viewers ?? {},
+                    loadChecks: (signal) => bindApi(prsReadApi, host, session.context).invoke(
+                      "detail",
+                      {
+                        host: prEntry.host,
+                        repository: prEntry.repository,
+                        number: prEntry.number
+                      },
+                      AbortSignal.any([signal, session.signal])
+                    ).then((read) => read.checks),
+                    onOpenLink: openOnHost,
                     onSelect: () => onSelect({
                       host: prEntry.host,
                       repository: prEntry.repository,
@@ -12165,7 +12328,16 @@ ${thread.id}`;
                               ]
                             }
                           ) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: prsChecksStateFromChecks(detail.checks) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            ChecksControl,
+                            {
+                              host,
+                              state: checksRollup?.state,
+                              checks: detail.checks,
+                              stale: checksRollup?.stale === true,
+                              onOpenLink: openOnHost
+                            }
+                          ),
                           canCheckout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { marginLeft: "auto" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                             CheckoutMenu,
                             {
@@ -12398,7 +12570,7 @@ ${thread.id}`;
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Checks", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
                     "Checks",
-                    detail !== null && prsChecksSummary(detail.checks) !== null ? ` \u2014 ${prsChecksSummary(detail.checks)}` : ""
+                    checksHeading !== null ? ` \u2014 ${checksHeading}` : ""
                   ] }),
                   detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No checks reported." }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(

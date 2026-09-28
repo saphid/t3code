@@ -497,3 +497,127 @@ NodeTest.describe("PR outcomes report through toasts, inline without them", () =
     view.unmount();
   });
 });
+
+NodeTest.describe("checks control", () => {
+  const entry = (overrides = {}) => ({
+    provider: "github",
+    host: "github.com",
+    projectId: "p1",
+    projectTitle: "Project",
+    repository: "o/r",
+    number: 7,
+    title: "Row PR",
+    url: "https://github.com/o/r/pull/7",
+    author: null,
+    headBranch: "feature",
+    baseBranch: "main",
+    state: "open",
+    isDraft: false,
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+    viewerReviewRequested: false,
+    labels: [],
+    checksState: "failing",
+    ...overrides,
+  });
+  const listOf = (entries) => () => ({
+    viewers: {},
+    providers: [],
+    entries,
+    errors: [],
+    truncated: false,
+    nextCursors: {},
+  });
+  const failingCheck = {
+    name: "ci / test",
+    status: "failure",
+    description: null,
+    url: "https://ci.example/run/1",
+  };
+
+  NodeTest.it("opens from a row without selecting it, reading checks only then", async () => {
+    const selections = [];
+    const details = [];
+    const view = mount(
+      (host, session) =>
+        React.createElement(panel.PullRequestsPanel, {
+          host,
+          session,
+          visible: true,
+          selected: null,
+          onSelect: (ref) => selections.push(ref),
+        }),
+      defaultHandlers({
+        "t3.prs/read#list": listOf([entry()]),
+        "t3.prs/read#detail": (input) => {
+          details.push(input.number);
+          return detailOf({ number: 7, checks: [failingCheck] });
+        },
+      }),
+    );
+    await flush();
+    NodeAssert.deepEqual(details, []);
+    const trigger = view.find("Checks: Some checks were not successful");
+    const click = dispatch(trigger, "onClick");
+    await flush();
+    NodeAssert.equal(click.propagationStopped, true);
+    NodeAssert.deepEqual(selections, []);
+    NodeAssert.deepEqual(details, [7]);
+    NodeAssert.match(view.text(), /ci \/ test/);
+    NodeAssert.equal(view.has("Open check ci / test"), true);
+    view.unmount();
+  });
+
+  NodeTest.it("is keyboard reachable and keeps Enter from selecting the row", async () => {
+    const selections = [];
+    const view = mount(
+      (host, session) =>
+        React.createElement(panel.PullRequestsPanel, {
+          host,
+          session,
+          visible: true,
+          selected: null,
+          onSelect: (ref) => selections.push(ref),
+        }),
+      defaultHandlers({
+        "t3.prs/read#list": listOf([entry()]),
+        "t3.prs/read#detail": () => detailOf({ number: 7, checks: [failingCheck] }),
+      }),
+    );
+    await flush();
+    const trigger = view.find("Checks: Some checks were not successful");
+    NodeAssert.equal(trigger.props.tabIndex, 0);
+    const enter = dispatch(trigger, "onKeyDown", { key: "Enter" });
+    await flush();
+    NodeAssert.equal(enter.defaultPrevented, true);
+    NodeAssert.equal(enter.propagationStopped, true);
+    NodeAssert.deepEqual(selections, []);
+    NodeAssert.equal(
+      view.find("Checks: Some checks were not successful").props["aria-expanded"],
+      true,
+    );
+    view.unmount();
+  });
+
+  NodeTest.it("the header shows a newer failing rollup over older passing detail", async () => {
+    const view = mountPanel(
+      defaultHandlers({
+        "t3.prs/read#list": listOf([entry({ number: 3, checksState: "failing" })]),
+        "t3.prs/read#detail": () =>
+          detailOf({
+            checks: [{ name: "ci", status: "success", description: null, url: null }],
+          }),
+      }),
+    );
+    await flush();
+    const trigger = view.find("Checks: Some checks were not successful");
+    dispatch(trigger, "onClick");
+    await flush();
+    NodeAssert.match(view.text(), /Check details are out of date/);
+    NodeAssert.equal(view.has("Checks: All checks have passed"), false);
+    view.unmount();
+  });
+});

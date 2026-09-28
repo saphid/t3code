@@ -12,7 +12,10 @@ The PR browser consumes the `t3.prs/read` grant:
   involvement, debounced search, `limit`-paged "Load more") keyed on
   `prs.list` rows — state/decision/checks/labels/branches per row;
 - a detail pane (`prs.summary` + `prs.detail`): title/body, state,
-  author, branches, checks with verdict, review decision;
+  author, branches, checks with verdict, review decision. The checks glyph
+  on a row and in the header opens native's checks popover (a row reads its
+  checks only when opened); a newer list rollup than the detail wins and
+  marks the detail's checks as out of date;
 - review threads and comments via `prs.activity`, with
   `prs.threadComments` paging when a thread arrives truncated;
 - linked orchestration threads via `prs.linkedThreads` (display only —

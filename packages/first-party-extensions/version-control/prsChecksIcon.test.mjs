@@ -42,3 +42,42 @@ NodeTest.describe("checks status icon", () => {
     NodeAssert.equal(prsChecksStateFromChecks([check("neutral"), check("skipped")]), null);
   });
 });
+
+NodeTest.describe("checks rollup freshness", () => {
+  const reconcile = async (...args) => {
+    const { prsReconcileChecks } = await import("./prsViewModel.ts");
+    return prsReconcileChecks?.(...args) ?? null;
+  };
+
+  NodeTest.it(
+    "a newer failing list rollup beats an older passing detail, marked stale",
+    async () => {
+      NodeAssert.deepEqual(await reconcile([check("success")], "failing"), {
+        state: "failing",
+        stale: true,
+      });
+    },
+  );
+
+  NodeTest.it("keeps the detail's own rollup when the list says the same or nothing", async () => {
+    NodeAssert.deepEqual(await reconcile([check("success")], "passing"), {
+      state: "passing",
+      stale: false,
+    });
+    NodeAssert.deepEqual(await reconcile([check("failure")], undefined), {
+      state: "failing",
+      stale: false,
+    });
+  });
+
+  NodeTest.it("a run awaiting approval keeps it pending unless something failed", async () => {
+    NodeAssert.deepEqual(await reconcile([check("action-required")], "passing"), {
+      state: "pending",
+      stale: false,
+    });
+    NodeAssert.deepEqual(await reconcile([check("action-required")], "failing"), {
+      state: "failing",
+      stale: true,
+    });
+  });
+});
