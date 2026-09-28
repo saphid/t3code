@@ -225,6 +225,7 @@ afterEach(async () => {
 });
 
 async function setup() {
+  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- the promise-based broker and client connection call back into the seam, so one runtime must outlive any single it.effect run.
   const runtime = ManagedRuntime.make(
     Layer.mergeAll(
       clientApiProvidersLayer.pipe(
