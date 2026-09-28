@@ -538,6 +538,20 @@ describe("pull-request handoff provider", () => {
       prepare: ["openThread", "prepare"],
       point: ["openThread", "prepare", "point"],
     };
+    const abandoned: Record<HostStep, Record<string, unknown>> = {
+      openThread: {
+        type: "error",
+        title: "Could not open a thread for the checkout",
+        description: "Try again from the project, or open a thread first.",
+      },
+      prepare: { type: "error", title: "Could not prepare the pull request checkout" },
+      point: {
+        type: "error",
+        title: "Checked out, but the thread stayed where it was",
+        description:
+          "The checkout is ready on `feat/x`. Point a thread at it from the branch picker, then ask again.",
+      },
+    };
     const interruptions = [
       "cancelled",
       "uninstalled",
@@ -558,8 +572,11 @@ describe("pull-request handoff provider", () => {
           await expect(started).rejects.toBeInstanceOf(ClientProviderOpError);
           expect(handoff.steps.map((step) => (step as unknown[])[0])).toEqual(next[hold]);
           expect(draftPrompt(NEW_DRAFT)).toBe("");
-          // No spinner is left behind for a handoff that stopped.
-          expect(toastsSoFar()).toEqual(["closed"]);
+          // No spinner is left behind for a handoff that stopped. A cancelled call fails the step
+          // still running as native would; a revocation is noticed only once it returns.
+          expect(toastsSoFar()).toEqual([
+            interruption === "cancelled" ? abandoned[hold] : "closed",
+          ]);
         });
       }
     }

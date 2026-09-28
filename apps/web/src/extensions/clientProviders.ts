@@ -69,6 +69,7 @@ import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import {
   beginPullRequestCheckoutToast,
   showTaskAddedToComposerToast,
+  type PullRequestHandoffOutcome,
 } from "../components/pullRequest/pullRequestHandoffToast";
 import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
@@ -1840,21 +1841,45 @@ export function createPrHandoffClientProvider(
           throw error;
         }
       };
+      // A call cancelled or timed out while a host step runs fails at once, reporting that step
+      // as failed; the step itself is not undone, and nothing starts from what it later returns.
+      const step = <A>(work: Promise<A>, abandoned: PullRequestHandoffOutcome) =>
+        new Promise<A>((resolve, reject) => {
+          const abandon = () => {
+            toast.settle(abandoned);
+            reject(new ClientProviderOpError("client-target-denied", "Handoff cancelled"));
+          };
+          if (call.signal.aborted) return abandon();
+          call.signal.addEventListener("abort", abandon, { once: true });
+          const done = () => call.signal.removeEventListener("abort", abandon);
+          work.then(
+            (value) => (done(), resolve(value)),
+            (error: unknown) => (done(), reject(error)),
+          );
+        });
       // The thread is opened before the checkout because the project's setup script only runs
       // for a checkout that knows which thread it is for.
-      const opened = await host.openThread(projectRef).catch(() => null);
+      const opened = await step(
+        host.openThread(projectRef).catch(() => null),
+        {
+          kind: "thread-failed",
+        },
+      );
       live();
       if (opened === null) {
         toast.settle({ kind: "thread-failed" });
         return { status: "failed", stage: "thread" };
       }
-      const prepared = await host.prepare({
-        environmentId: deps.environmentId,
-        cwd: project.workspaceRoot,
-        reference: pullRequest.url,
-        mode,
-        threadId: opened.threadId,
-      });
+      const prepared = await step(
+        host.prepare({
+          environmentId: deps.environmentId,
+          cwd: project.workspaceRoot,
+          reference: pullRequest.url,
+          mode,
+          threadId: opened.threadId,
+        }),
+        { kind: "checkout-failed", detail: null },
+      );
       live();
       if (!prepared.ok) {
         toast.settle({ kind: "checkout-failed", detail: prepared.detail });
@@ -1865,13 +1890,16 @@ export function createPrHandoffClientProvider(
         };
       }
       const { branch, worktreePath, isOnPullRequestHead } = prepared.value;
-      const pointed = await host
-        .openThread(projectRef, {
-          branch,
-          worktreePath,
-          envMode: worktreePath === null ? "local" : "worktree",
-        })
-        .catch(() => null);
+      const pointed = await step(
+        host
+          .openThread(projectRef, {
+            branch,
+            worktreePath,
+            envMode: worktreePath === null ? "local" : "worktree",
+          })
+          .catch(() => null),
+        { kind: "thread-move-failed", branch },
+      );
       live();
       // Writing the task now would aim the agent at whatever the thread was already open on.
       if (pointed === null) {
