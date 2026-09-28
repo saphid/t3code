@@ -5666,10 +5666,180 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       expect(result.branch).toBe("feature/pr-file-fork");
+      expect(result.isTrackingPullRequestHead).toBe(false);
       expect((yield* runGit(repoDir, ["remote"])).stdout.trim()).toBe("origin");
       expect(
         (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"], true)).exitCode,
       ).not.toBe(0);
+    }),
+  );
+
+  // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
+  // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
+  // answers each clone-URL lookup with `cloneUrl(lookup)`.
+  const setUpForkPullRequest = (input: {
+    readonly kind: "github" | "gitlab";
+    readonly number: number;
+    readonly pullRequestUrl: string;
+    readonly originUrl: string;
+    readonly headBranch: string;
+    readonly headRepository: string;
+    readonly forkUrl: string;
+    readonly cloneUrl: (lookup: { readonly host?: string; readonly repository: string }) => string;
+  }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["checkout", "-b", input.headBranch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork head\n");
+      yield* runGit(repoDir, ["add", "fork.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork head"]);
+      const headCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", forkDir, `HEAD:refs/heads/${input.headBranch}`]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", input.headBranch]);
+      yield* runGit(repoDir, ["remote", "add", "origin", input.originUrl]);
+      yield* servePullRequestRepository(repoDir, forkDir, input.forkUrl);
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        kind: input.kind,
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: input.kind,
+            number: input.number,
+            title: "Fork PR",
+            url: input.pullRequestUrl,
+            baseRefName: "main",
+            headRefName: input.headBranch,
+            state: "open" as const,
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: input.headRepository,
+            headRepositoryOwnerLogin: input.headRepository.split("/")[0] ?? "fork",
+            updatedAt: Option.none(),
+          }),
+        getRepositoryCloneUrls: (lookup) => {
+          const url = input.cloneUrl(lookup);
+          return Effect.succeed({ nameWithOwner: lookup.repository, url, sshUrl: url });
+        },
+        checkoutChangeRequest: () => Effect.die("A worktree checkout never runs the provider's"),
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      return { repoDir, manager, headCommit };
+    });
+
+  // The URL of the remote the worktree's branch tracks, and the branch it tracks there.
+  const readTracking = (cwd: string) =>
+    Effect.gen(function* () {
+      const branch = (yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim();
+      const remote = (yield* runGit(cwd, ["config", `branch.${branch}.remote`])).stdout.trim();
+      return {
+        url: (yield* runGit(cwd, ["config", `remote.${remote}.url`])).stdout.trim(),
+        merge: (yield* runGit(cwd, ["config", `branch.${branch}.merge`])).stdout.trim(),
+      };
+    });
+
+  it.effect("worktree PR checkout fetches an HTTP-only GitLab fork on origin's own server", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, headCommit } = yield* setUpForkPullRequest({
+        kind: "gitlab",
+        number: 7,
+        pullRequestUrl: "http://forge.example/team/repo/-/merge_requests/7",
+        originUrl: "http://forge.example/team/repo.git",
+        headBranch: "feature/http-fork",
+        headRepository: "alex/repo",
+        forkUrl: "http://forge.example/alex/repo",
+        cloneUrl: () => "http://forge.example/alex/repo",
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "7",
+        mode: "worktree",
+      });
+
+      expect(result.isTrackingPullRequestHead).toBe(true);
+      const worktreePath = result.worktreePath ?? "";
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headCommit);
+      expect(yield* readTracking(worktreePath)).toEqual({
+        url: "http://forge.example/alex/repo",
+        merge: "refs/heads/feature/http-fork",
+      });
+    }),
+  );
+
+  it.effect("worktree PR checkout tracks the head on its own HTTPS port, not origin's", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, headCommit } = yield* setUpForkPullRequest({
+        kind: "gitlab",
+        number: 8,
+        pullRequestUrl: "https://forge.example:8443/team/repo/-/merge_requests/8",
+        // Never fetched: a remote picked by path alone would fail to reach this server.
+        originUrl: "https://forge.example:9443/team/repo.git",
+        headBranch: "feature/port-head",
+        headRepository: "team/repo",
+        forkUrl: "https://forge.example:8443/team/repo.git",
+        cloneUrl: () => "https://forge.example:8443/team/repo.git",
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "8",
+        mode: "worktree",
+      });
+
+      const worktreePath = result.worktreePath ?? "";
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headCommit);
+      expect(yield* readTracking(worktreePath)).toEqual({
+        url: "https://forge.example:8443/team/repo.git",
+        merge: "refs/heads/feature/port-head",
+      });
+    }),
+  );
+
+  // Without a host `gh repo view` answers for github.com, where a same-named fork holds other work.
+  it.effect("worktree PR checkout looks the fork up on the pull request's own GitHub host", () =>
+    Effect.gen(function* () {
+      const lookups: Array<string | undefined> = [];
+      const { repoDir, manager, headCommit } = yield* setUpForkPullRequest({
+        kind: "github",
+        number: 9,
+        pullRequestUrl: "https://github.example:8443/team/repo/pull/9",
+        originUrl: "https://github.example:8443/team/repo.git",
+        headBranch: "feature/enterprise-fork",
+        headRepository: "alex/repo",
+        forkUrl: "https://github.example:8443/alex/repo.git",
+        cloneUrl: (lookup) => {
+          lookups.push(lookup.host);
+          return `https://${lookup.host ?? "github.com"}/alex/repo.git`;
+        },
+      });
+      const publicForkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["checkout", "-b", "public"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "public.txt"), "someone else's work\n");
+      yield* runGit(repoDir, ["add", "public.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Public fork"]);
+      yield* runGit(repoDir, ["push", publicForkDir, "HEAD:refs/heads/feature/enterprise-fork"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* servePullRequestRepository(repoDir, publicForkDir, "https://github.com/alex/repo.git");
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "9",
+        mode: "worktree",
+      });
+
+      const worktreePath = result.worktreePath ?? "";
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headCommit);
+      expect((yield* readTracking(worktreePath)).url).toBe(
+        "https://github.example:8443/alex/repo.git",
+      );
+      expect(lookups.length).toBeGreaterThan(0);
+      expect(lookups.every((host) => host === "github.example:8443")).toBe(true);
     }),
   );
 

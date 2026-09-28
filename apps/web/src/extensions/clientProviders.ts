@@ -1824,6 +1824,7 @@ export interface PrHandoffHost {
           readonly branch: string;
           readonly worktreePath: string | null;
           readonly isOnPullRequestHead: boolean;
+          readonly isTrackingPullRequestHead?: boolean;
         };
       }
     | { readonly ok: false; readonly detail: string | null }
@@ -1986,7 +1987,8 @@ export function createPrHandoffClientProvider(
           ...(prepared.detail ? { detail: prepared.detail.slice(0, 2048) } : {}),
         };
       }
-      const { branch, worktreePath, isOnPullRequestHead } = prepared.value;
+      const { branch, worktreePath, isOnPullRequestHead, isTrackingPullRequestHead } =
+        prepared.value;
       const pointed = await step(
         host
           .openThread(projectRef, {
@@ -2004,7 +2006,13 @@ export function createPrHandoffClientProvider(
         return { status: "failed", stage: "thread-move", branch };
       }
       if (prompt !== null) writePullRequestTaskToComposer(opened.draftId, { prompt });
-      toast.settle({ kind: "ready", mode, withTask: prompt !== null, isOnPullRequestHead });
+      toast.settle({
+        kind: "ready",
+        mode,
+        withTask: prompt !== null,
+        isOnPullRequestHead,
+        isTrackingPullRequestHead: isTrackingPullRequestHead !== false,
+      });
       return { status: "ready", branch, worktreePath, isOnPullRequestHead };
     },
   };

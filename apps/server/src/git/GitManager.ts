@@ -866,6 +866,31 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The remote for the pull request's named head repository, added when none matches. The lookup
+  // names the pull request's own host: without it `gh repo view` answers for github.com (or
+  // GH_HOST), which can hold a different repository of the same name.
+  const ensureHeadRepositoryRemote = Effect.fn("ensureHeadRepositoryRemote")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    repositoryNameWithOwner: string,
+  ) {
+    const host = urlHost(pullRequest.url);
+    const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      cwd,
+      ...(host === null ? {} : { host }),
+      repository: repositoryNameWithOwner,
+    });
+    const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+    return yield* gitCore.ensureRemote({
+      cwd,
+      preferredName:
+        pullRequest.headRepositoryOwnerLogin?.trim() ||
+        repositoryNameWithOwner.split("/")[0]?.trim() ||
+        "fork",
+      url: shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url,
+    });
+  });
+
   // The remote the pull request's head branch lives on, added when it is a fork. Null for a
   // cross-repository head whose repository the provider did not name.
   const resolvePullRequestHeadRemoteName = Effect.fn("resolvePullRequestHeadRemoteName")(function* (
@@ -879,21 +904,7 @@ export const make = Effect.gen(function* () {
         : yield* gitCore.resolvePrimaryRemoteName(cwd);
     }
 
-    const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
-      cwd,
-      repository: repositoryNameWithOwner,
-    });
-    const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-    const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
-    const preferredRemoteName =
-      pullRequest.headRepositoryOwnerLogin?.trim() ||
-      repositoryNameWithOwner.split("/")[0]?.trim() ||
-      "fork";
-    return yield* gitCore.ensureRemote({
-      cwd,
-      preferredName: preferredRemoteName,
-      url: remoteUrl,
-    });
+    return yield* ensureHeadRepositoryRemote(cwd, pullRequest, repositoryNameWithOwner);
   });
 
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
@@ -991,13 +1002,15 @@ export const make = Effect.gen(function* () {
     localBranch = pullRequest.headBranch,
   ) =>
     configurePullRequestHeadUpstreamBase(cwd, pullRequest, localBranch).pipe(
+      Effect.as(true),
+      // False reaches the client as a warning: the branch keeps whatever upstream it had, if any.
       Effect.catch((error) =>
         Effect.logWarning("GitManager.configurePullRequestHeadUpstream failed", {
           cwd,
           localBranch,
           headBranch: pullRequest.headBranch,
           cause: error,
-        }).pipe(Effect.asVoid),
+        }).pipe(Effect.as(false)),
       ),
     );
 
@@ -1018,21 +1031,11 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const remoteName = yield* ensureHeadRepositoryRemote(
         cwd,
-        repository: repositoryNameWithOwner,
-      });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
-      const preferredRemoteName =
-        pullRequest.headRepositoryOwnerLogin?.trim() ||
-        repositoryNameWithOwner.split("/")[0]?.trim() ||
-        "fork";
-      const remoteName = yield* gitCore.ensureRemote({
-        cwd,
-        preferredName: preferredRemoteName,
-        url: remoteUrl,
-      });
+        pullRequest,
+        repositoryNameWithOwner,
+      );
 
       yield* gitCore.fetchRemoteBranch({
         cwd,
@@ -2578,7 +2581,7 @@ export const make = Effect.gen(function* () {
           return yield* Effect.failCause(checkout.cause);
         }
         const details = yield* gitCore.statusDetails(input.cwd);
-        yield* configurePullRequestHeadUpstream(
+        const isTrackingPullRequestHead = yield* configurePullRequestHeadUpstream(
           input.cwd,
           pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
@@ -2598,6 +2601,7 @@ export const make = Effect.gen(function* () {
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
           isOnPullRequestHead: refreshed.onTarget,
+          isTrackingPullRequestHead,
         };
       }
 
@@ -2605,7 +2609,7 @@ export const make = Effect.gen(function* () {
         worktreePath: string,
       ) {
         const details = yield* gitCore.statusDetails(worktreePath);
-        yield* configurePullRequestHeadUpstream(
+        return yield* configurePullRequestHeadUpstream(
           worktreePath,
           {
             ...pullRequest,
@@ -2635,12 +2639,12 @@ export const make = Effect.gen(function* () {
           // findLocalHeadBranch also accepts a branch that merely shares the head's bare name —
           // a fork PR opened from "main" matches the user's own local main. That checkout is
           // somebody else's work, so it keeps its tracking config and nothing else.
-          yield* ensureExistingWorktreeUpstream(worktreePath);
           return {
             pullRequest,
             branch: localPullRequestBranch,
             worktreePath,
             isOnPullRequestHead: false,
+            isTrackingPullRequestHead: yield* ensureExistingWorktreeUpstream(worktreePath),
           };
         }
 
@@ -2654,7 +2658,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
           );
 
-        yield* ensureExistingWorktreeUpstream(worktreePath);
+        const isTrackingPullRequestHead = yield* ensureExistingWorktreeUpstream(worktreePath);
 
         // Only the head read back from the pull request's own repository. The branch's upstream
         // does not name it: configuring it is best-effort, so it can still point at whatever the
@@ -2696,6 +2700,7 @@ export const make = Effect.gen(function* () {
           branch: localPullRequestBranch,
           worktreePath,
           isOnPullRequestHead: refreshed.onTarget,
+          isTrackingPullRequestHead,
         };
       });
 
@@ -2789,7 +2794,9 @@ export const make = Effect.gen(function* () {
           ),
         },
       );
-      yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+      const isTrackingPullRequestHead = yield* ensureExistingWorktreeUpstream(
+        worktree.worktree.path,
+      );
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
@@ -2797,6 +2804,7 @@ export const make = Effect.gen(function* () {
         branch: worktree.worktree.refName,
         worktreePath: worktree.worktree.path,
         isOnPullRequestHead: true,
+        isTrackingPullRequestHead,
       };
     }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
   });

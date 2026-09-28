@@ -1207,6 +1207,7 @@ export function PullRequestDetailPanel({
       mode,
       withTask: task !== null,
       isOnPullRequestHead: prepared.value.isOnPullRequestHead,
+      isTrackingPullRequestHead: prepared.value.isTrackingPullRequestHead,
     });
   };
 

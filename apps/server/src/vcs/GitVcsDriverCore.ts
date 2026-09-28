@@ -29,7 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -328,20 +328,17 @@ function sanitizeRemoteName(value: string): string {
   return sanitized.length > 0 ? sanitized : "fork";
 }
 
-// Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
-// provider would read the local disk or run a command. A leading `-` would be an option.
-function isHostedRepositoryUrl(url: string): boolean {
-  return !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
-}
-
-// The repository a remote URL names, across SSH and HTTPS spellings. An HTTP(S) port is kept:
-// unlike an SSH port, it can be a different server with the same repository path.
+// The repository a remote URL names. SSH on its default port and HTTPS on its default port are
+// one forge's two doors to a repository, so they share a key. Plain HTTP and any other port can be
+// a different server serving the same path, so the scheme and port stay in the key.
 function remoteRepositoryKey(url: string): string {
   const key = normalizeGitRemoteUrl(url);
-  if (!/^https?:\/\//iu.test(url.trim())) return key;
+  if (!/^(?:ssh|https?):\/\//iu.test(url.trim())) return key;
   try {
-    const port = new URL(url.trim()).port;
-    return port.length > 0 ? `${key}#${port}` : key;
+    const { protocol, port } = new URL(url.trim());
+    const isDefaultDoor =
+      protocol === "https:" ? port === "" : protocol === "ssh:" && (port === "" || port === "22");
+    return isDefaultDoor ? key : `${protocol}${port}/${key}`;
   } catch {
     return key;
   }
@@ -1522,13 +1519,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     // A remote the user configured is theirs to trust; one added here takes its URL from the
-    // provider, so it must be a hosting service's.
-    if (!isHostedRepositoryUrl(input.url)) {
+    // provider, so it must be a hosting service's, or origin's own plain-HTTP server.
+    const originUrl = yield* runGitStdout(
+      "GitVcsDriver.ensureRemote.readOriginUrl",
+      input.cwd,
+      ["config", "--get", "remote.origin.url"],
+      true,
+    );
+    if (!isProviderRepositoryUrlAllowed(input.url, originUrl)) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.ensureRemote",
         command: "git remote add",
         cwd: input.cwd,
-        detail: "Refusing to add a remote whose URL is not HTTPS or SSH.",
+        detail: "Refusing to add a remote whose URL is not HTTPS, SSH or origin's HTTP server.",
       });
     }
     let remoteName = preferredName;
@@ -3252,7 +3255,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (input) {
       const url = input.url;
       if (
-        !isHostedRepositoryUrl(url) ||
+        !isProviderRepositoryUrlAllowed(url) ||
         !input.ref.startsWith("refs/") ||
         input.ref.includes(":")
       ) {

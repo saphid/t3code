@@ -157,6 +157,92 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   );
 });
 
+it.effect("fetches a Forgejo pull request over fj only from a hosted or origin's HTTP URL", () => {
+  const fetched: string[] = [];
+  const cases = [
+    { origin: "https://forgejo.test/maria/project.git", url: "file:///tmp/other", fetches: false },
+    {
+      origin: "https://forgejo.test/maria/project.git",
+      url: "http://forgejo.test/alex/project.git",
+      fetches: false,
+    },
+    {
+      origin: "ssh://git@forgejo.test/maria/project.git",
+      url: "ext::sh -c touch% /tmp/pwned",
+      fetches: false,
+    },
+    {
+      origin: "http://forgejo.local:3000/maria/project.git",
+      url: "http://forgejo.local:3000/alex/project.git",
+      fetches: true,
+    },
+  ];
+  let current = cases[0]!;
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    for (const testCase of cases) {
+      current = testCase;
+      fetched.length = 0;
+      const result = yield* provider
+        .checkoutChangeRequest({
+          cwd: "/repo",
+          reference: "42",
+          context: {
+            provider: { kind: "forgejo", name: "Forgejo", baseUrl: "https://forgejo.test" },
+            remoteName: "origin",
+            remoteUrl: testCase.origin,
+          },
+        })
+        .pipe(Effect.result);
+      assert.strictEqual(result._tag === "Success", testCase.fetches, testCase.url);
+      assert.deepStrictEqual(fetched, testCase.fetches ? [testCase.url] : [], testCase.url);
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) => {
+            if (input.args[0] === "fetch") fetched.push(input.args[2] ?? "");
+            return Effect.succeed(
+              processOutput("", {
+                exitCode: ChildProcessSpawner.ExitCode(input.args[0] === "show-ref" ? 1 : 0),
+              }),
+            );
+          },
+        }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              command: "fj" as const,
+              login: "work",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) =>
+            encodeJsonEffect(
+              input.path.endsWith("/pulls/42")
+                ? {
+                    number: 42,
+                    title: "Forgejo fork",
+                    html_url: "https://forgejo.test/maria/project/pulls/42",
+                    state: "open",
+                    merged: false,
+                    base: { ref: "main", sha: "base", repo: null },
+                    head: { ref: "feature", sha: "head", repo: null },
+                  }
+                : {
+                    full_name: "alex/project",
+                    clone_url: current.url,
+                    ssh_url: current.url,
+                  },
+            ).pipe(Effect.orDie, Effect.map(processOutput)),
+        }),
+      ),
+    ),
+  );
+});
+
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
@@ -1500,11 +1586,14 @@ it.effect(
               const url = input.args[2];
               assert.isDefined(url);
               fetched.push(url!);
-              // Only SSH transport is substituted; both paths fetch the real pull ref.
+              // Only the transport is substituted; both paths fetch the real pull ref.
               return git.run({
                 ...input,
                 args: input.args.map((arg) =>
-                  arg === "git@forgejo.test:reviewer/project.git" ? source : arg,
+                  arg === "git@forgejo.test:reviewer/project.git" ||
+                  arg === "https://forgejo.test/reviewer/project.git"
+                    ? source
+                    : arg,
                 ),
               });
             },
@@ -1539,7 +1628,7 @@ it.effect(
                         }
                       : {
                           full_name: "reviewer/project",
-                          clone_url: source,
+                          clone_url: "https://forgejo.test/reviewer/project.git",
                           ssh_url: "git@forgejo.test:reviewer/project.git",
                           default_branch: "main",
                         },
@@ -1620,7 +1709,11 @@ it.effect(
         yield* fs.readFileString(path.join(cwd, "feature.txt")),
         "pull request change\n",
       );
-      assert.deepStrictEqual(fetched, [source, source, "git@forgejo.test:reviewer/project.git"]);
+      assert.deepStrictEqual(fetched, [
+        "https://forgejo.test/reviewer/project.git",
+        "https://forgejo.test/reviewer/project.git",
+        "git@forgejo.test:reviewer/project.git",
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),

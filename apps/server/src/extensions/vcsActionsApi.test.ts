@@ -397,6 +397,7 @@ const makeProvider = (
             branch: "pr-7",
             worktreePath: null,
             isOnPullRequestHead: true,
+            isTrackingPullRequestHead: false,
           })),
     },
     vcsRegistry: {
@@ -1029,6 +1030,13 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       })) as { branch: string; isOnPullRequestHead: boolean };
       expect(prepared.branch).toBe("pr-7");
       expect(prepared.isOnPullRequestHead).toBe(true);
+      // The SDK's result schema is closed to fields it does not declare.
+      expect(Object.keys(prepared).sort()).toEqual([
+        "branch",
+        "isOnPullRequestHead",
+        "pullRequest",
+        "worktreePath",
+      ]);
       expect(yield* Deferred.await(t.refreshed)).toBe(ROOT);
     }),
   );

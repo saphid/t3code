@@ -13,6 +13,8 @@ export type PullRequestHandoffOutcome =
       /** Whether a task was written into the new thread's composer. */
       readonly withTask: boolean;
       readonly isOnPullRequestHead: boolean;
+      /** False when the branch could not be set to track the pull request's branch. */
+      readonly isTrackingPullRequestHead: boolean;
     };
 
 /** A task written straight into the composer of a thread that is already open. */
@@ -87,6 +89,13 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
           title: "Checked out, but the latest commits are unconfirmed",
           description:
             "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+        } as const;
+      if (!outcome.isTrackingPullRequestHead)
+        return {
+          type: "warning",
+          title: "Checked out, but not tracking the pull request",
+          description:
+            "The branch could not be set to track the pull request's branch, so pull and push may not reach it. Set it with `git branch --set-upstream-to`.",
         } as const;
       if (outcome.withTask)
         return {

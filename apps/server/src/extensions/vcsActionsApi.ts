@@ -908,7 +908,14 @@ export function createVcsActionsApiProvider(
               "The prepared pull request exceeds the public bounds.",
             );
           }
-          return result satisfies VcsActionPrepareThreadResult;
+          // The public result's schema is closed; tracking reaches packs only through native's
+          // handoff toast.
+          return {
+            pullRequest: result.pullRequest,
+            branch: result.branch,
+            worktreePath: result.worktreePath,
+            isOnPullRequestHead: result.isOnPullRequestHead,
+          } satisfies VcsActionPrepareThreadResult;
         }),
       }),
       handoffPullRequest: runMethod({
