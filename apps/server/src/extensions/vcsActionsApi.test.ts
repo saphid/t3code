@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the broker deadline proof stages a package on disk.
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -14,8 +15,12 @@ import {
   type OrchestrationThreadShell,
   type SourceControlPublishRepositoryInput,
 } from "@t3tools/contracts";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,7 +29,11 @@ import * as Schema from "effect/Schema";
 import { PRS_WRITE, VCS_HANDOFF, VCS_MUTATE } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
-import type { HostApiProvider } from "@t3tools/extension-runtime";
+import {
+  createExtensionRuntime,
+  type HostApiProvider,
+  type HostApiRootAuthority,
+} from "@t3tools/extension-runtime";
 import type { GitActionProgressReporter } from "../git/GitManager.ts";
 import type { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import type { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
@@ -249,6 +258,8 @@ interface TestDeps {
   readonly refreshes: string[];
   /** Completes with the cwd of the first detached post-mutation refresh. */
   readonly refreshed: Deferred.Deferred<string>;
+  /** Completes once a detached refresh has run for `cwd`. */
+  readonly refreshedAt: (cwd: string) => Deferred.Deferred<void>;
   readonly published: SourceControlPublishRepositoryInput[];
   readonly dispatched: OrchestrationCommand[];
   readonly grants: Set<string>;
@@ -286,6 +297,15 @@ const makeProvider = (
   const grants = new Set(overrides.grants ?? []);
   const authorizeCalls: string[] = [];
   const refreshed = Deferred.makeUnsafe<string>();
+  const refreshedByCwd = new Map<string, Deferred.Deferred<void>>();
+  const refreshedAt = (cwd: string) => {
+    let done = refreshedByCwd.get(cwd);
+    if (done === undefined) {
+      done = Deferred.makeUnsafe<void>();
+      refreshedByCwd.set(cwd, done);
+    }
+    return done;
+  };
   const roots = overrides.workspaceRoots ?? { project: ROOT, other: OTHER_ROOT };
   const handoffStarts: TestDeps["handoffStarts"] = [];
   const resolveCalls: string[] = [];
@@ -340,6 +360,7 @@ const makeProvider = (
       refreshStatus: (cwd) =>
         Effect.sync(() => refreshes.push(cwd)).pipe(
           Effect.andThen(Deferred.succeed(refreshed, cwd)),
+          Effect.andThen(Deferred.succeed(refreshedAt(cwd), undefined)),
           Effect.ignoreCause({ log: true }),
           Effect.as(statusResult),
         ),
@@ -443,6 +464,7 @@ const makeProvider = (
     runCalls,
     refreshes,
     refreshed,
+    refreshedAt,
     published,
     dispatched,
     grants,
@@ -1240,8 +1262,34 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
           },
         ]);
         expect(t.handoffStarts[0]?.context.resource.projectId).toBe("project");
-        expect(yield* Deferred.await(t.refreshed)).toBe(ROOT);
       }),
+  );
+
+  // Native's preparation RPC refreshes after a checkout; a composer draft or a
+  // failure before checkout touches nothing, so the adapter refreshes never.
+  it.effect("never refreshes Git status itself, whatever the handoff returned", () =>
+    Effect.gen(function* () {
+      for (const handoffResult of [
+        { status: "drafted" },
+        { status: "failed", stage: "thread", detail: "No thread." },
+        { status: "failed", stage: "checkout", detail: "No checkout." },
+      ]) {
+        const t = makeProvider({ handoffResult });
+        expect(
+          yield* invoke(
+            t.provider,
+            "handoffPullRequest",
+            { reference: "7", task: "resolve-conflicts" },
+            makeContext("other", null),
+          ),
+        ).toEqual(handoffResult);
+        // A refreshing call in another repository afterwards: detached forks
+        // run in order, so a refresh the handoff scheduled lands before this one.
+        yield* invoke(t.provider, "preparePullRequestThread", { reference: "7", mode: "worktree" });
+        yield* Deferred.await(t.refreshedAt(ROOT));
+        expect(t.refreshes).toEqual([ROOT]);
+      }
+    }),
   );
 
   it.effect(
@@ -1378,4 +1426,91 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       expect(t.resolveCalls).toEqual([]);
     }),
   );
+});
+
+/** The API deadline `EnvironmentExtensions` gives the broker for ordinary calls. */
+const ORDINARY_API_DEADLINE_MS = 15_000;
+const HANDOFF_CONSUMER_MANIFEST =
+  '{"format":2,"manifest":{"id":"test.vcs-handoff","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
+  '"serverEntry":"server.mjs","tools":[],"provides":[],' +
+  '"requires":[{"id":"t3.vcs/actions","versionRange":"^1.1.0"}],"dependencies":[]}';
+
+// Native's handoff has no short deadline: a cold worktree or a slow fetch can
+// take longer than an ordinary API call, and the broker must not report a
+// failure while the checkout carries on.
+it("a handoff through the broker outlives the ordinary API deadline", async () => {
+  const dir = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "vcs-handoff-broker-")),
+  );
+  const started = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  const t = makeProvider({
+    prHandoffClient: {
+      available: () => Effect.succeed(true),
+      start: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ status: "drafted" as const }),
+        ),
+    },
+  });
+  const root: HostApiRootAuthority = {
+    principal: meta(t.provider).principal!,
+    allowWrite: true,
+    revalidate: () => {},
+  };
+  try {
+    const source = NodePath.join(dir, "source");
+    await NodeFSP.mkdir(source);
+    await NodeFSP.writeFile(NodePath.join(source, "t3-extension.json"), HANDOFF_CONSUMER_MANIFEST);
+    await NodeFSP.writeFile(
+      NodePath.join(source, "server.mjs"),
+      "export default {tools:[],apis:[]};",
+    );
+    const runtime = await createExtensionRuntime({
+      rootDir: NodePath.join(dir, "state"),
+      environmentId: "env",
+      services: [],
+      apiProviders: [t.provider],
+      authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
+      timeoutMs: ORDINARY_API_DEADLINE_MS,
+    });
+    try {
+      const installed = await runtime.install(source, {
+        capabilities: [VCS_MUTATE, VCS_HANDOFF],
+        projectIds: ["project"],
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const handoff = runtime
+          .invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.vcs/actions",
+              versionRange: "^1.1.0",
+              method: "handoffPullRequest",
+              input: { reference: "7", task: "checkout" },
+              context: makeContext(),
+            },
+            new AbortController().signal,
+            root,
+          )
+          .then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+          );
+        await Effect.runPromise(Deferred.await(started));
+        vi.advanceTimersByTime(ORDINARY_API_DEADLINE_MS * 4);
+        await Effect.runPromise(Deferred.succeed(release, undefined));
+        expect(await handoff).toEqual({ value: { status: "drafted" } });
+      } finally {
+        vi.useRealTimers();
+      }
+    } finally {
+      await runtime.dispose();
+    }
+  } finally {
+    await NodeFSP.rm(dir, { recursive: true, force: true });
+  }
 });

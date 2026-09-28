@@ -85,6 +85,8 @@ const MAX_PR_URL = 4_096;
 const MAX_WORKTREE_PATH = 32_768;
 /** A handoff opens a thread and checks out; like native, it is not raced against a short deadline. */
 const HANDOFF_TIMEOUT_MS = 5 * 60_000;
+/** The broker's deadline for the whole handoff: the pull request lookup, then the client's own wait. */
+const HANDOFF_DEADLINE_MS = HANDOFF_TIMEOUT_MS + 60_000;
 const CLIENT_PR_HANDOFF = "t3.client/pr-handoff";
 
 const decode = <A, I>(schema: Schema.Codec<A, I>) =>
@@ -659,6 +661,7 @@ export function createVcsActionsApiProvider(
     providerId: "t3.host-vcs-actions",
     definition: VCS_ACTIONS_API,
     requiresRootAuthority: true,
+    deadlineMs: (method) => (method === "handoffPullRequest" ? HANDOFF_DEADLINE_MS : undefined),
     invoke: invokeProvider({
       getCapabilities: runMethod({
         operation: "vcs.actions.getCapabilities",
@@ -911,7 +914,7 @@ export function createVcsActionsApiProvider(
         operation: "vcs.actions.handoffPullRequest",
         requiredScope: AuthOrchestrationOperateScope,
         decode: handoffInput,
-        refreshAfter: true,
+        // No refresh here: native's preparation RPC refreshes after a checkout.
         run: Effect.fn("vcs.actions.handoffPullRequest")(function* (
           safe,
           scope,
