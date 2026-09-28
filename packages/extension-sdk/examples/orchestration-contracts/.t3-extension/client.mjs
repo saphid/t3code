@@ -2161,6 +2161,7 @@ var __t3Client = (() => {
     ]
   });
   var CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"];
+  var CLIENT_PR_HANDOFF_MODES = ["worktree", "local"];
   var prHandoffResultSchema = {
     oneOf: [
       {
@@ -2171,8 +2172,9 @@ var __t3Client = (() => {
         properties: { status: { const: "drafted" } }
       },
       {
-        // Checked out into its own worktree with a thread open on it; a task
-        // other than checkout is in that thread's composer.
+        // Checked out, into its own worktree or this repository (`worktreePath`
+        // null), with a thread open on it; a task other than checkout is in that
+        // thread's composer.
         type: "object",
         additionalProperties: false,
         required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
@@ -2209,6 +2211,7 @@ var __t3Client = (() => {
         requiredGrants: [],
         inputSchema: withTarget({
           task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          mode: { enum: [...CLIENT_PR_HANDOFF_MODES] },
           pullRequest: {
             type: "object",
             additionalProperties: false,
@@ -2220,7 +2223,7 @@ var __t3Client = (() => {
               baseBranch: { type: "string", minLength: 1, maxLength: 4096 }
             }
           }
-        }, ["task", "pullRequest"]),
+        }, ["task", "mode", "pullRequest"]),
         outputSchema: prHandoffResultSchema
       }
     ]
@@ -5634,11 +5637,14 @@ var __t3Client = (() => {
         },
         {
           // Native's pull-request handoff, run by the host: it resolves the pull
-          // request, opens a thread, checks the pull request out into its own
-          // worktree (running the project's setup script for that thread), and
-          // leaves any task in the composer as a draft for the reader to send.
-          // `resolve-conflicts` from a view beside a thread drafts into that
-          // thread instead, as native does. The pack names a task, never text.
+          // request, opens a thread, checks the pull request out (running the
+          // project's setup script for that thread), points the thread at the
+          // checkout, and leaves any task in the composer as a draft for the
+          // reader to send. `checkout` lands in its own worktree, or with
+          // `mode: "local"` in this repository; `resolve-conflicts` always takes
+          // a worktree and refuses a mode, and from a view beside a thread
+          // drafts into that thread instead, as native does. The pack names a
+          // task, never text.
           name: "handoffPullRequest",
           effect: "write",
           requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
@@ -5648,7 +5654,8 @@ var __t3Client = (() => {
             required: ["reference", "task"],
             properties: {
               reference: { type: "string", minLength: 1, maxLength: 2048 },
-              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] }
+              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+              mode: { enum: [...CLIENT_PR_HANDOFF_MODES] }
             }
           },
           outputSchema: prHandoffResultSchema

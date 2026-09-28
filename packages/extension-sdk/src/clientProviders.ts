@@ -1216,6 +1216,13 @@ export const CLIENT_NAVIGATION_V11_RANGE = "^1.1.0";
  */
 export const CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"] as const;
 
+/**
+ * Where a handoff checks the pull request out, as native's checkout menu
+ * offers it: its own worktree, or this repository's own checkout. Native
+ * resolves conflicts in a worktree only.
+ */
+export const CLIENT_PR_HANDOFF_MODES = ["worktree", "local"] as const;
+
 /** What a handoff did. No variant carries prompt text or claims a send. */
 export const prHandoffResultSchema = {
   oneOf: [
@@ -1227,8 +1234,9 @@ export const prHandoffResultSchema = {
       properties: { status: { const: "drafted" } },
     },
     {
-      // Checked out into its own worktree with a thread open on it; a task
-      // other than checkout is in that thread's composer.
+      // Checked out, into its own worktree or this repository (`worktreePath`
+      // null), with a thread open on it; a task other than checkout is in that
+      // thread's composer.
       type: "object",
       additionalProperties: false,
       required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
@@ -1259,9 +1267,9 @@ export const prHandoffResultSchema = {
 /**
  * Backs `t3.vcs/actions#handoffPullRequest`. The adapter resolves the pull
  * request itself and forwards only its host-resolved identity with a closed
- * task kind; the client opens the thread, prepares the checkout (which runs
- * the setup script for that thread), and writes its own prompt into the
- * composer. It never sends.
+ * task kind and checkout mode; the client opens the thread, prepares the
+ * checkout (which runs the setup script for that thread), points the thread
+ * at it, and writes its own prompt into the composer. It never sends.
  */
 export const CLIENT_PR_HANDOFF_API = validateApiDefinition({
   id: "t3.client/pr-handoff",
@@ -1274,6 +1282,7 @@ export const CLIENT_PR_HANDOFF_API = validateApiDefinition({
       inputSchema: withTarget(
         {
           task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          mode: { enum: [...CLIENT_PR_HANDOFF_MODES] },
           pullRequest: {
             type: "object",
             additionalProperties: false,
@@ -1286,7 +1295,7 @@ export const CLIENT_PR_HANDOFF_API = validateApiDefinition({
             },
           },
         },
-        ["task", "pullRequest"],
+        ["task", "mode", "pullRequest"],
       ),
       outputSchema: prHandoffResultSchema,
     },

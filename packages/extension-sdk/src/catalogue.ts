@@ -38,6 +38,7 @@ import {
   uiNavigationFileReceiptSchema,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
+  CLIENT_PR_HANDOFF_MODES,
   CLIENT_PR_HANDOFF_TASKS,
   prHandoffResultSchema,
 } from "./clientProviders.js";
@@ -4831,11 +4832,17 @@ export type VcsActionPrepareThreadResult = {
 };
 /** A task the host knows how to hand off; see `handoffPullRequest`. */
 export type VcsPullRequestHandoffTask = (typeof CLIENT_PR_HANDOFF_TASKS)[number];
-export type VcsActionHandoffInput = {
-  /** The pull request, as `preparePullRequestThread` takes it. */
-  readonly reference: string;
-  readonly task: VcsPullRequestHandoffTask;
-};
+/** Where a checkout handoff lands; see `handoffPullRequest`. */
+export type VcsPullRequestHandoffMode = (typeof CLIENT_PR_HANDOFF_MODES)[number];
+export type VcsActionHandoffInput =
+  | {
+      /** The pull request, as `preparePullRequestThread` takes it. */
+      readonly reference: string;
+      readonly task: "checkout";
+      /** Native's checkout menu entry; absent reads as `worktree`. */
+      readonly mode?: VcsPullRequestHandoffMode;
+    }
+  | { readonly reference: string; readonly task: "resolve-conflicts" };
 export type VcsActionHandoffResult =
   | { readonly status: "drafted" }
   | {
@@ -5284,11 +5291,14 @@ export const vcsActionsApi: TypedApi<{
       },
       {
         // Native's pull-request handoff, run by the host: it resolves the pull
-        // request, opens a thread, checks the pull request out into its own
-        // worktree (running the project's setup script for that thread), and
-        // leaves any task in the composer as a draft for the reader to send.
-        // `resolve-conflicts` from a view beside a thread drafts into that
-        // thread instead, as native does. The pack names a task, never text.
+        // request, opens a thread, checks the pull request out (running the
+        // project's setup script for that thread), points the thread at the
+        // checkout, and leaves any task in the composer as a draft for the
+        // reader to send. `checkout` lands in its own worktree, or with
+        // `mode: "local"` in this repository; `resolve-conflicts` always takes
+        // a worktree and refuses a mode, and from a view beside a thread
+        // drafts into that thread instead, as native does. The pack names a
+        // task, never text.
         name: "handoffPullRequest",
         effect: "write",
         requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
@@ -5299,6 +5309,7 @@ export const vcsActionsApi: TypedApi<{
           properties: {
             reference: { type: "string", minLength: 1, maxLength: 2048 },
             task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+            mode: { enum: [...CLIENT_PR_HANDOFF_MODES] },
           },
         },
         outputSchema: prHandoffResultSchema,

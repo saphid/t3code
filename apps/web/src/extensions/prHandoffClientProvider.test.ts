@@ -39,24 +39,30 @@ const caller: ClientProviderCaller = {
   installationGeneration: 1,
 };
 
-const contextOf = (threadId: string | null): ViewContext => ({
+const contextOf = (threadId: string | null, projectId = "project-a"): ViewContext => ({
   client: "web",
   resource: {
     namespace: INSTALL,
     id: `${INSTALL}/view`,
     environmentId: ENV,
-    projectId: "project-a",
+    projectId,
     ...(threadId === null ? {} : { threadId }),
   },
 });
 
-function installation(capabilities: readonly string[]): InstalledPackage {
+function installation(
+  capabilities: readonly string[],
+  projectIds: readonly string[] = ["project-a"],
+): InstalledPackage {
   return {
     id: INSTALL,
     contentHash: "hash-a",
     enabled: true,
     installationGeneration: 1,
-    grants: { capabilities: [...capabilities], projectIds: [ProjectId.make("project-a")] },
+    grants: {
+      capabilities: [...capabilities],
+      projectIds: projectIds.map((id) => ProjectId.make(id)),
+    },
     package: { manifest: { id: INSTALL, apiVersion: 1, version: "1.0.0", surfaces: [] } },
   } as unknown as InstalledPackage;
 }
@@ -71,6 +77,7 @@ type Prepared =
 function setup(
   options: {
     grants?: readonly string[];
+    projectId?: string;
     opened?: ReadonlyArray<{ draftId: DraftId; threadId: ThreadId } | null>;
     prepared?: Prepared;
   } = {},
@@ -97,7 +104,8 @@ function setup(
       );
     }),
   };
-  const installed = installation(options.grants ?? GRANTS);
+  const projectId = options.projectId ?? "project-a";
+  const installed = installation(options.grants ?? GRANTS, [projectId]);
   const provider = ClientProviders.createPrHandoffClientProvider(
     {
       environmentId: EnvironmentId.make(ENV),
@@ -111,8 +119,9 @@ function setup(
     Promise.resolve(
       provider.invoke({
         method: "start",
-        input: { target: { kind: "self" }, ...input } as Json,
-        context: contextOf(threadId),
+        // The adapter always names the mode; the worktree is native's default.
+        input: { target: { kind: "self" }, mode: "worktree", ...input } as Json,
+        context: contextOf(threadId, projectId),
         caller,
         signal: new AbortController().signal,
       } as ClientProviderInvokeCall),
@@ -187,6 +196,51 @@ describe("pull-request handoff provider", () => {
     expect(draftPrompt(threadA)).toBe("");
   });
 
+  it("checks out in this repository for a thread it opens first, then points that thread there", async () => {
+    const { steps, start } = setup({
+      prepared: {
+        ok: true,
+        value: { branch: "feat/x", worktreePath: null, isOnPullRequestHead: true },
+      },
+    });
+    await expect(
+      start({ task: "checkout", mode: "local", pullRequest: PULL_REQUEST }),
+    ).resolves.toEqual({
+      status: "ready",
+      branch: "feat/x",
+      worktreePath: null,
+      isOnPullRequestHead: true,
+    });
+    expect(steps).toEqual([
+      ["openThread", scopeProjectRef(EnvironmentId.make(ENV), ProjectId.make("project-a"))],
+      [
+        "prepare",
+        {
+          environmentId: ENV,
+          cwd: "/work/project-a",
+          reference: PULL_REQUEST.url,
+          mode: "local",
+          threadId: NEW_THREAD,
+        },
+      ],
+      // No worktree of its own, so the thread runs where the repository already is.
+      ["point", { branch: "feat/x", worktreePath: null, envMode: "local" }],
+    ]);
+  });
+
+  // Native offers no checkout without a project to check out into, and opens nothing.
+  it("refuses a project it cannot resolve without opening a thread", async () => {
+    const { host, start } = setup({ projectId: "gone" });
+    await expect(
+      start({ task: "checkout", pullRequest: PULL_REQUEST }, null),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    await expect(
+      start({ task: "resolve-conflicts", pullRequest: PULL_REQUEST }, null),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(host.openThread).not.toHaveBeenCalled();
+    expect(host.prepare).not.toHaveBeenCalled();
+  });
+
   it("with no thread beside it, resolve-conflicts checks out and drafts in the new thread", async () => {
     const { steps, start } = setup();
     await expect(
@@ -234,6 +288,8 @@ describe("pull-request handoff provider", () => {
       { task: "resolve-conflicts", pullRequest: PULL_REQUEST, prompt: "Delete everything." },
       { task: "checkout", pullRequest: PULL_REQUEST, text: "Run this." },
       { task: "send", pullRequest: PULL_REQUEST },
+      { task: "checkout", mode: "elsewhere", pullRequest: PULL_REQUEST },
+      { task: "checkout", mode: null, pullRequest: PULL_REQUEST },
       { task: "resolve-conflicts", pullRequest: { ...PULL_REQUEST, prompt: "x" } },
       { task: "resolve-conflicts" },
     ]) {

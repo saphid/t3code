@@ -61,8 +61,10 @@ NodeTest.test("the input is a pull-request identity and a closed task kind, noth
   NodeAssert.ok(input !== undefined, "handoffPullRequest is declared");
   NodeAssert.equal(input.additionalProperties, false);
   NodeAssert.deepEqual(input.required, ["reference", "task"]);
-  NodeAssert.deepEqual(Object.keys(input.properties).sort(), ["reference", "task"]);
+  NodeAssert.deepEqual(Object.keys(input.properties).sort(), ["mode", "reference", "task"]);
   NodeAssert.deepEqual(input.properties.task, { enum: ["checkout", "resolve-conflicts"] });
+  // Native's two checkout menu entries; absent reads as the worktree, native's default.
+  NodeAssert.deepEqual(input.properties.mode, { enum: ["worktree", "local"] });
   NodeAssert.deepEqual(CLIENT_PR_HANDOFF_TASKS, ["checkout", "resolve-conflicts"]);
   NodeAssert.equal(input.properties.reference.maxLength, 2048);
 });
@@ -87,8 +89,10 @@ NodeTest.test("the client seam carries only host-resolved fields and never a sen
   );
   const [start] = CLIENT_PR_HANDOFF_API.methods;
   NodeAssert.equal(start.inputSchema.additionalProperties, false);
-  NodeAssert.deepEqual(start.inputSchema.required, ["target", "task", "pullRequest"]);
+  NodeAssert.deepEqual(start.inputSchema.required, ["target", "task", "mode", "pullRequest"]);
+  NodeAssert.deepEqual(start.inputSchema.properties.mode, { enum: ["worktree", "local"] });
   NodeAssert.deepEqual(Object.keys(start.inputSchema.properties).sort(), [
+    "mode",
     "pullRequest",
     "target",
     "task",

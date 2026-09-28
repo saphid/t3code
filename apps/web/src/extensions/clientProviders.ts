@@ -28,7 +28,10 @@ import {
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
 import type { Json } from "@t3tools/extension-sdk/contracts";
-import { CLIENT_PR_HANDOFF_TASKS } from "@t3tools/extension-sdk/clientProviders";
+import {
+  CLIENT_PR_HANDOFF_MODES,
+  CLIENT_PR_HANDOFF_TASKS,
+} from "@t3tools/extension-sdk/clientProviders";
 import {
   applyThemeColorPreview,
   transferThemePreviewOwner,
@@ -1708,7 +1711,7 @@ export interface PrHandoffHost {
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
     readonly reference: string;
-    readonly mode: "worktree";
+    readonly mode: (typeof CLIENT_PR_HANDOFF_MODES)[number];
     readonly threadId: ThreadId;
   }) => Promise<
     | {
@@ -1738,16 +1741,18 @@ export const nativePrHandoffPrepare: PrHandoffHost["prepare"] = async ({
   return { ok: false, detail: failure instanceof Error ? failure.message : null };
 };
 
-const PR_HANDOFF_KEYS = new Set(["target", "task", "pullRequest"]);
+const PR_HANDOFF_KEYS = new Set(["target", "task", "mode", "pullRequest"]);
 const PR_HANDOFF_PULL_REQUEST_KEYS = new Set(["number", "url", "headBranch", "baseBranch"]);
 
-/** A host-resolved pull request and a closed task — nothing else is accepted. */
+/** A host-resolved pull request, a closed task and a checkout mode — nothing else is accepted. */
 function readPrHandoffInput(value: Json) {
   const input = readInputObject(value);
   const task = CLIENT_PR_HANDOFF_TASKS.find((kind) => kind === input.task);
+  const mode = CLIENT_PR_HANDOFF_MODES.find((kind) => kind === input.mode);
   const pullRequest = readInputObject(input.pullRequest ?? null);
   if (
     task === undefined ||
+    mode === undefined ||
     Object.keys(input).some((key) => !PR_HANDOFF_KEYS.has(key)) ||
     Object.keys(pullRequest).some((key) => !PR_HANDOFF_PULL_REQUEST_KEYS.has(key)) ||
     typeof pullRequest.number !== "number"
@@ -1755,6 +1760,7 @@ function readPrHandoffInput(value: Json) {
     throw new ClientProviderOpError("provider-rejected", "Invalid pull-request handoff");
   return {
     task,
+    mode,
     pullRequest: {
       number: pullRequest.number,
       url: readInputString(pullRequest, "url")!,
@@ -1784,14 +1790,17 @@ export function createPrHandoffClientProvider(
         VCS_MUTATE,
         VCS_HANDOFF,
       ]);
-      const { task, pullRequest } = readPrHandoffInput(call.input);
+      const { task, mode, pullRequest } = readPrHandoffInput(call.input);
       const projectId = installation.grants.projectIds.find(
         (id) => id === call.context.resource.projectId,
       );
       const project = projectId
         ? readProject(scopeProjectRef(deps.environmentId, projectId))
         : null;
-      if (!projectId || !project) return { status: "failed", stage: "thread" };
+      // Native offers no checkout without a project to check out into, and opens nothing; saying
+      // a thread failed to open would name a step that never ran.
+      if (!projectId || !project)
+        throw new ClientProviderOpError("provider-rejected", "Unknown project");
       const prompt = task === "resolve-conflicts" ? buildResolveConflictsPrompt(pullRequest) : null;
       // Beside a thread, native hands a task to that thread's composer and checks nothing out.
       const threadId = call.context.resource.threadId;
@@ -1814,7 +1823,7 @@ export function createPrHandoffClientProvider(
         environmentId: deps.environmentId,
         cwd: project.workspaceRoot,
         reference: pullRequest.url,
-        mode: "worktree",
+        mode,
         threadId: opened.threadId,
       });
       if (!prepared.ok)

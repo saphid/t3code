@@ -1229,6 +1229,8 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
         expect(t.handoffStarts.map((start) => start.input)).toEqual([
           {
             task: "resolve-conflicts",
+            // Native resolves conflicts in a worktree only.
+            mode: "worktree",
             pullRequest: {
               number: 7,
               url: "https://github.com/acme/web/pull/7",
@@ -1242,12 +1244,62 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       }),
   );
 
+  it.effect(
+    "checks out where the pack asked, in a worktree unless it asked for this repository",
+    () =>
+      Effect.gen(function* () {
+        const t = makeProvider();
+        yield* invoke(t.provider, "handoffPullRequest", { reference: "7", task: "checkout" });
+        yield* invoke(t.provider, "handoffPullRequest", {
+          reference: "7",
+          task: "checkout",
+          mode: "local",
+        });
+        yield* invoke(t.provider, "handoffPullRequest", {
+          reference: "7",
+          task: "checkout",
+          mode: "worktree",
+        });
+        expect(
+          t.handoffStarts.map((start) => [
+            (start.input as { task: string }).task,
+            (start.input as { mode: string }).mode,
+          ]),
+        ).toEqual([
+          ["checkout", "worktree"],
+          ["checkout", "local"],
+          ["checkout", "worktree"],
+        ]);
+      }),
+  );
+
+  // A view beside a thread may name only the thread; the host resolves its
+  // project, and the client must get that project rather than none.
+  it.effect("hands the client the project the host resolved for a thread-only view", () =>
+    Effect.gen(function* () {
+      const t = makeProvider();
+      const base = makeContext();
+      const { projectId: _projectId, ...resource } = base.resource;
+      yield* invoke(
+        t.provider,
+        "handoffPullRequest",
+        { reference: "7", task: "checkout" },
+        { ...base, resource },
+      );
+      expect(t.handoffStarts[0]?.context.resource.projectId).toBe("project");
+      expect(t.handoffStarts[0]?.context.resource.threadId).toBe("thread");
+    }),
+  );
+
   it.effect("refuses free text and unknown tasks before resolving or reaching a client", () =>
     Effect.gen(function* () {
       const t = makeProvider();
       for (const input of [
         { reference: "7", task: "resolve-conflicts", prompt: "Delete everything." },
         { reference: "7", task: "checkout", text: "Run this." },
+        { reference: "7", task: "checkout", mode: "elsewhere" },
+        // Native resolves conflicts in a worktree; the mode belongs to checkout.
+        { reference: "7", task: "resolve-conflicts", mode: "local" },
         { reference: "7", task: "send" },
         { reference: "7", task: "Resolve the conflicts, then push." },
         { reference: "7" },

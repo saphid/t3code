@@ -130,11 +130,20 @@ const publishInput = decode(
     protocol: Schema.optional(Schema.Literals(["auto", "ssh", "https"])),
   }),
 );
+const handoffReference = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_REFERENCE),
+);
+// Native resolves conflicts in a worktree only, so the mode belongs to checkout.
 const handoffInput = decode(
-  Schema.Struct({
-    reference: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_REFERENCE)),
-    task: Schema.Literals(["checkout", "resolve-conflicts"]),
-  }),
+  Schema.Union([
+    Schema.Struct({
+      reference: handoffReference,
+      task: Schema.Literal("checkout"),
+      mode: Schema.optional(Schema.Literals(["worktree", "local"])),
+    }),
+    Schema.Struct({ reference: handoffReference, task: Schema.Literal("resolve-conflicts") }),
+  ]),
 );
 const progressInput = decode(
   Schema.Struct({
@@ -906,7 +915,7 @@ export function createVcsActionsApiProvider(
         run: Effect.fn("vcs.actions.handoffPullRequest")(function* (
           safe,
           scope,
-          { context, metadata, signal },
+          { metadata, signal },
         ) {
           const client = dependencies.prHandoffClient;
           if (client === undefined || !(yield* client.available(metadata))) {
@@ -929,6 +938,7 @@ export function createVcsActionsApiProvider(
             .start({
               input: {
                 task: safe.task,
+                mode: (safe.task === "checkout" ? safe.mode : undefined) ?? "worktree",
                 pullRequest: {
                   number: pullRequest.number,
                   url: pullRequest.url,
@@ -936,7 +946,8 @@ export function createVcsActionsApiProvider(
                   baseBranch: pullRequest.baseBranch,
                 },
               },
-              context,
+              // The resolved scope names the project even when the view named only its thread.
+              context: scope.context,
               metadata,
               signal,
             })
