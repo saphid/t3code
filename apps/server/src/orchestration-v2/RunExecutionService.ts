@@ -930,6 +930,12 @@ export const layer: Layer.Layer<
           const rootTerminalSeen = yield* Ref.make(false);
           const rootRunFinalized = yield* Ref.make(false);
           const providerThreadOwnerLost = yield* Ref.make(false);
+          // Set when ingesting an event was skipped. A skipped terminal means
+          // the failure item was not stored; a skipped completion or roster
+          // update means the stored rows are stale, so the stream stays open
+          // until the provider closes it rather than releasing tracking early.
+          const terminalIngestSkipped = yield* Ref.make(false);
+          const completionIngestSkipped = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
           const activeBackgroundTurnItems = yield* Ref.make<
@@ -959,7 +965,8 @@ export const layer: Layer.Layer<
                     }),
                 openRunOwnedSubagents: openSubagents,
                 terminal,
-                failureItemPersisted: terminal.status === "failed",
+                failureItemPersisted:
+                  terminal.status === "failed" && !(yield* Ref.get(terminalIngestSkipped)),
                 refreshAfterTurn,
               }).pipe(
                 Effect.mapError(
@@ -1102,6 +1109,9 @@ export const layer: Layer.Layer<
             if (terminal !== null && terminal.status !== "completed") {
               return true;
             }
+            if (yield* Ref.get(completionIngestSkipped)) {
+              return false;
+            }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
             if (childProviderTurns.size > 0) {
               return false;
@@ -1157,6 +1167,7 @@ export const layer: Layer.Layer<
             Stream.tap((event) =>
               Effect.gen(function* () {
                 let storedEventCount = 0;
+                let ingestSkipped = false;
                 const deliveredEvent = filterAssistantEvent(
                   event,
                   DateTime.toEpochMillis(yield* DateTime.now),
@@ -1171,39 +1182,69 @@ export const layer: Layer.Layer<
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
                     event.providerThread.id === input.providerThread.id;
-                  const storedEvents = yield* providerEventIngestor.ingestNormalized({
-                    analyticsContext: {
-                      modelSelection: input.modelSelection,
-                      runtimeMode: input.runtimePolicy.runtimeMode,
-                      interactionMode: input.runtimePolicy.interactionMode,
-                    },
-                    providerSessionId: input.providerSessionId,
-                    providerInstanceId: input.run.providerInstanceId,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    event: deliveredEvent,
-                    ...(isRootProviderThreadUpdate
-                      ? rootTerminalAlreadySeen
-                        ? {
-                            writeIfProviderThreadOwner: {
-                              providerThreadId: input.providerThread.id,
-                              runId: input.run.id,
-                              activeAttemptId: input.attempt.id,
-                              expectedLastRunOrdinal: input.run.ordinal,
-                            },
-                          }
-                        : {
-                            writeIfRunCurrent: {
-                              runId: input.run.id,
-                              activeAttemptId: input.attempt.id,
-                              expectedStatus: "running" as const,
-                            },
-                          }
-                      : {}),
-                  });
-                  storedEventCount = storedEvents.length;
+                  // One event that cannot be stored or decoded must not end the
+                  // run while the provider process is alive. Only a terminal
+                  // event or the stream closing settles it.
+                  const storedEvents = yield* providerEventIngestor
+                    .ingestNormalized({
+                      analyticsContext: {
+                        modelSelection: input.modelSelection,
+                        runtimeMode: input.runtimePolicy.runtimeMode,
+                        interactionMode: input.runtimePolicy.interactionMode,
+                      },
+                      providerSessionId: input.providerSessionId,
+                      providerInstanceId: input.run.providerInstanceId,
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      nodeId: input.rootNode.id,
+                      event: deliveredEvent,
+                      ...(isRootProviderThreadUpdate
+                        ? rootTerminalAlreadySeen
+                          ? {
+                              writeIfProviderThreadOwner: {
+                                providerThreadId: input.providerThread.id,
+                                runId: input.run.id,
+                                activeAttemptId: input.attempt.id,
+                                expectedLastRunOrdinal: input.run.ordinal,
+                              },
+                            }
+                          : {
+                              writeIfRunCurrent: {
+                                runId: input.run.id,
+                                activeAttemptId: input.attempt.id,
+                                expectedStatus: "running" as const,
+                              },
+                            }
+                        : {}),
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Cause.hasInterrupts(cause)
+                          ? Effect.failCause(cause)
+                          : Effect.logWarning(
+                              "orchestration V2 provider event ingestion skipped an event",
+                              {
+                                runId: input.run.id,
+                                eventType: event.type,
+                                cause: Cause.pretty(cause),
+                              },
+                            ).pipe(
+                              Effect.andThen(
+                                event.type === "turn.terminal"
+                                  ? Ref.set(terminalIngestSkipped, true)
+                                  : event.type === "turn_item.updated" ||
+                                      event.type === "provider_thread.updated"
+                                    ? Ref.set(completionIngestSkipped, true)
+                                    : Effect.void,
+                              ),
+                              Effect.as(null),
+                            ),
+                      ),
+                    );
+                  ingestSkipped = storedEvents === null;
+                  storedEventCount = storedEvents?.length ?? 0;
                   if (
+                    storedEvents !== null &&
                     isRootProviderThreadUpdate &&
                     rootTerminalAlreadySeen &&
                     storedEventCount === 0
@@ -1232,7 +1273,9 @@ export const layer: Layer.Layer<
                   yield* Ref.set(rootTerminalSeen, true);
                   yield* finalizeRootRun(event);
                 }
-                yield* trackChildLifecycle(event, deliveredEvent !== null);
+                if (!ingestSkipped) {
+                  yield* trackChildLifecycle(event, deliveredEvent !== null);
+                }
               }),
             ),
             Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
