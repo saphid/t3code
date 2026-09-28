@@ -79,11 +79,19 @@ function mountToolbar(setting) {
   const commits = [];
   let current = setting;
   let pending = false;
+  let locked = false;
   let renderer;
   const render = () =>
     React.createElement(BrowserViewportToolbar, {
+      // No host tooltip: controls render bare.
+      host: { React },
       setting: current,
       pending,
+      aspectLocked: locked,
+      onAspectLockedChange: (next) => {
+        locked = next;
+        renderer.update(render());
+      },
       onCommit: (next) => {
         commits.push(next);
         pending = true;
@@ -95,6 +103,7 @@ function mountToolbar(setting) {
   });
   return {
     commits,
+    locked: () => locked,
     land() {
       const next = commits.at(-1);
       act(() => {
@@ -202,5 +211,51 @@ NodeTest.describe("device toolbar dimension edits", () => {
     toolbar.land();
     NodeAssert.equal(toolbar.find("Viewport width").props.value, "420");
     NodeAssert.equal(toolbar.find("Viewport width").props.disabled, false);
+  });
+});
+
+NodeTest.describe("device toolbar aspect-ratio lock", () => {
+  const LOCK = "Lock viewport aspect ratio";
+  const UNLOCK = "Unlock viewport aspect ratio";
+
+  NodeTest.it("toggles like native: pressed while locked, relabelled to unlock", () => {
+    const toolbar = mountToolbar(IPHONE_SE);
+    NodeAssert.equal(toolbar.find(LOCK).props["aria-pressed"], false);
+    click(toolbar, LOCK, "Viewport width");
+    NodeAssert.equal(toolbar.locked(), true);
+    NodeAssert.equal(toolbar.find(UNLOCK).props["aria-pressed"], true);
+    click(toolbar, UNLOCK, "Viewport width");
+    NodeAssert.equal(toolbar.locked(), false);
+    // Toggling commits nothing: the lock is view state.
+    NodeAssert.deepEqual(toolbar.commits, []);
+  });
+
+  NodeTest.it("derives the other dimension from a typed one while locked", () => {
+    const toolbar = mountToolbar({ _tag: "freeform", width: 1280, height: 800 });
+    click(toolbar, LOCK, "Viewport width");
+    typeInto(toolbar, "Viewport height", "1000");
+    NodeAssert.equal(toolbar.find("Viewport width").props.value, "1600");
+    dispatch(toolbar.find("Viewport height"), "onKeyDown", { key: "Enter" });
+    NodeAssert.deepEqual(toolbar.commits, [{ _tag: "freeform", width: 1600, height: 1000 }]);
+  });
+
+  NodeTest.it("leaves the other dimension alone while unlocked", () => {
+    const toolbar = mountToolbar({ _tag: "freeform", width: 1280, height: 800 });
+    typeInto(toolbar, "Viewport height", "1000");
+    NodeAssert.equal(toolbar.find("Viewport width").props.value, "1280");
+  });
+
+  NodeTest.it("is unavailable for an invalid pending size", () => {
+    const toolbar = mountToolbar(IPHONE_SE);
+    typeInto(toolbar, "Viewport width", "12");
+    NodeAssert.equal(toolbar.find(LOCK).props.disabled, true);
+  });
+
+  NodeTest.it("releases when the device toolbar closes", () => {
+    const toolbar = mountToolbar(IPHONE_SE);
+    click(toolbar, LOCK, "Viewport width");
+    click(toolbar, "Close device toolbar", "Viewport width");
+    NodeAssert.equal(toolbar.locked(), false);
+    NodeAssert.deepEqual(toolbar.commits, [{ _tag: "fill" }]);
   });
 });

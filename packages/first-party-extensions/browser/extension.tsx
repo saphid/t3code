@@ -86,6 +86,7 @@ import {
   ViewportTargetChangedError,
   createViewportCommitter,
   deviceViewportLayout,
+  lockedAspectRatio,
   notifyViewportResizeFailure,
   responsiveViewportForToggle,
   viewportFailureMessage,
@@ -583,11 +584,18 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
   const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
   const pageZoom = live?.zoomFactor ?? 1;
+  const fixedViewport =
+    viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
+  // The tab whose aspect ratio is locked: native keeps the lock per webview,
+  // so another tab starts unlocked.
+  const [aspectLockTab, setAspectLockTab] = useState<string | null>(null);
+  const aspectLocked = held !== null && aspectLockTab === held.tabId;
   const rails = useViewportRails({
-    setting: viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null,
+    setting: fixedViewport,
     target: held?.tabId ?? null,
     slot: viewportSlot,
     zoomFactor: pageZoom,
+    aspectRatio: lockedAspectRatio(fixedViewport, aspectLocked),
     commit: commitViewport,
   });
   /** Toolbar and toggle changes supersede any rail edit still pending, like native. */
@@ -1266,9 +1274,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                * plugin chrome and engine chrome never stack.
                */}
               <BrowserViewportToolbar
+                host={host}
                 setting={rails.displayed}
                 pending={viewportPending}
                 onCommit={commitViewportChange}
+                aspectLocked={aspectLocked}
+                onAspectLockedChange={(locked) => setAspectLockTab(locked ? held.tabId : null)}
                 zIndex={layers.deviceChrome}
               />
               <ViewportDeviceFrame

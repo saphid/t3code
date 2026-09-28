@@ -16289,9 +16289,63 @@ ${ind(d)}}`;
   var VIEWPORT_RAIL_KEY_COMMIT_DELAY_MS = 150;
   var controlsWidth = (direction) => direction.includes("east") || direction.includes("west");
   var controlsHeight = (direction) => direction.includes("south");
-  function resizeViewportBy(start, delta, direction) {
+  var validAspectRatio = (aspectRatio) => aspectRatio !== null && aspectRatio !== void 0 && Number.isFinite(aspectRatio) && aspectRatio > 0;
+  function resizeAtAspectRatio(desired, aspectRatio, primaryAxis) {
+    if (primaryAxis === "width") {
+      const minimum2 = Math.ceil(
+        Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION * aspectRatio)
+      );
+      const maximum2 = Math.floor(
+        Math.min(
+          PREVIEW_VIEWPORT_MAX_DIMENSION,
+          PREVIEW_VIEWPORT_MAX_DIMENSION * aspectRatio,
+          Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA * aspectRatio)
+        )
+      );
+      let width2 = Math.min(maximum2, Math.max(minimum2, Math.round(desired)));
+      let height2 = Math.round(width2 / aspectRatio);
+      while (width2 * height2 > PREVIEW_VIEWPORT_MAX_AREA && width2 > minimum2) {
+        width2 -= 1;
+        height2 = Math.round(width2 / aspectRatio);
+      }
+      return { width: width2, height: height2 };
+    }
+    const minimum = Math.ceil(
+      Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION / aspectRatio)
+    );
+    const maximum = Math.floor(
+      Math.min(
+        PREVIEW_VIEWPORT_MAX_DIMENSION,
+        PREVIEW_VIEWPORT_MAX_DIMENSION / aspectRatio,
+        Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA / aspectRatio)
+      )
+    );
+    let height = Math.min(maximum, Math.max(minimum, Math.round(desired)));
+    let width = Math.round(height * aspectRatio);
+    while (width * height > PREVIEW_VIEWPORT_MAX_AREA && height > minimum) {
+      height -= 1;
+      width = Math.round(height * aspectRatio);
+    }
+    return { width, height };
+  }
+  function lockedAspectRatio(setting, locked) {
+    return locked && setting !== null ? setting.width / setting.height : null;
+  }
+  function resizeViewportBy(start, delta, direction, aspectRatio = null) {
     const horizontal = direction.includes("east") ? delta.x : direction.includes("west") ? -delta.x : 0;
     const vertical = direction.includes("south") ? delta.y : 0;
+    if (validAspectRatio(aspectRatio)) {
+      const desiredWidth = start.width + horizontal;
+      const desiredHeight = start.height + vertical;
+      const leadsWidth = horizontal !== 0 || direction === "east" || direction === "west";
+      const leadsHeight = vertical !== 0 || direction === "south";
+      const primaryAxis = leadsWidth && !leadsHeight ? "width" : leadsHeight && !leadsWidth ? "height" : Math.abs(desiredWidth - start.width) / start.width >= Math.abs(desiredHeight - start.height) / start.height ? "width" : "height";
+      return resizeAtAspectRatio(
+        primaryAxis === "width" ? desiredWidth : desiredHeight,
+        aspectRatio,
+        primaryAxis
+      );
+    }
     let width = clampDimension(Math.round(start.width + horizontal));
     let height = clampDimension(Math.round(start.height + vertical));
     if (width * height <= PREVIEW_VIEWPORT_MAX_AREA) return { width, height };
@@ -16321,7 +16375,7 @@ ${ind(d)}}`;
     const targetEdge = (available - start) / 2 + pointerDelta;
     return targetEdge >= 0 ? available - targetEdge * 2 : available - targetEdge;
   };
-  function resizeViewportFromRail(start, pointerDelta, available, renderScale, direction) {
+  function resizeViewportFromRail(start, pointerDelta, available, renderScale, direction, aspectRatio = null) {
     const scale = normalizeZoomFactor(renderScale);
     const startWidth = start.width * scale;
     const startHeight = start.height * scale;
@@ -16332,7 +16386,8 @@ ${ind(d)}}`;
     return resizeViewportBy(
       start,
       { x: direction.includes("west") ? -widthDelta : widthDelta, y: heightDelta },
-      direction
+      direction,
+      aspectRatio
     );
   }
   function railKeyDelta(direction, key, shiftKey) {
@@ -16534,8 +16589,31 @@ ${ind(d)}}`;
     }, [element]);
     return size;
   }
+  function AspectLockIcon(props) {
+    return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+      "svg",
+      {
+        "aria-hidden": true,
+        width: 12,
+        height: 12,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        style: { display: "block" },
+        children: props.locked ? /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M9 17H7A5 5 0 0 1 7 7h2" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M15 7h2a5 5 0 1 1 0 10h-2" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("line", { x1: "8", x2: "16", y1: "12", y2: "12" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("path", { d: "M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" })
+      }
+    );
+  }
   function BrowserViewportToolbar(props) {
-    const { setting, pending, onCommit, zIndex } = props;
+    const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
+    const aspectRatio = lockedAspectRatio(setting, aspectLocked);
     const [edit, setEdit] = (0, import_react6.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
@@ -16555,6 +16633,26 @@ ${ind(d)}}`;
       onCommit({ _tag: "freeform", width: customWidth, height: customHeight });
     };
     const keepFocus = (event) => event.preventDefault();
+    const updateDimension = (axis, value) => {
+      setEdit((current) => {
+        const kept = current && current.key === committedKey ? current : null;
+        const next = {
+          key: committedKey,
+          width: axis === "width" ? value : kept?.width ?? String(setting.width),
+          height: axis === "height" ? value : kept?.height ?? String(setting.height)
+        };
+        const numeric = Number(value);
+        if (aspectRatio === null || !Number.isInteger(numeric) || numeric < PREVIEW_VIEWPORT_MIN_DIMENSION || numeric > PREVIEW_VIEWPORT_MAX_DIMENSION)
+          return next;
+        const resized = resizeViewportBy(
+          setting,
+          axis === "width" ? { x: numeric - setting.width, y: 0 } : { x: 0, y: numeric - setting.height },
+          axis === "width" ? "east" : "south",
+          aspectRatio
+        );
+        return { key: committedKey, width: String(resized.width), height: String(resized.height) };
+      });
+    };
     const selectViewport = (value) => {
       if (value === "responsive") {
         if (setting._tag === "freeform") return;
@@ -16638,11 +16736,7 @@ ${ind(d)}}`;
                         height: String(setting.height)
                       }
                     ),
-                    onChange: (event) => setEdit((current) => ({
-                      key: committedKey,
-                      width: event.target.value,
-                      height: current && current.key === committedKey ? current.height : String(setting.height)
-                    })),
+                    onChange: (event) => updateDimension("width", event.target.value),
                     "aria-label": "Viewport width",
                     "aria-invalid": !customValid,
                     style: numberInput
@@ -16665,11 +16759,7 @@ ${ind(d)}}`;
                         height: String(setting.height)
                       }
                     ),
-                    onChange: (event) => setEdit((current) => ({
-                      key: committedKey,
-                      width: current && current.key === committedKey ? current.width : String(setting.width),
-                      height: event.target.value
-                    })),
+                    onChange: (event) => updateDimension("height", event.target.value),
                     "aria-label": "Viewport height",
                     "aria-invalid": !customValid,
                     style: numberInput
@@ -16678,6 +16768,22 @@ ${ind(d)}}`;
               ]
             }
           ),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio", children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+            "button",
+            {
+              type: "button",
+              "aria-label": aspectLocked ? "Unlock viewport aspect ratio" : "Lock viewport aspect ratio",
+              "aria-pressed": aspectLocked,
+              disabled: pending || !customValid,
+              onMouseDown: keepFocus,
+              onClick: () => onAspectLockedChange(!aspectLocked),
+              style: {
+                ...chromeButton,
+                ...aspectLocked ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
+              },
+              children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(AspectLockIcon, { locked: aspectLocked })
+            }
+          ) }),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
             "button",
             {
@@ -16704,6 +16810,7 @@ ${ind(d)}}`;
               onMouseDown: keepFocus,
               onClick: () => {
                 setEdit(null);
+                onAspectLockedChange(false);
                 onCommit({ _tag: "fill" });
               },
               style: { ...chromeButton, marginLeft: "auto" },
@@ -16769,7 +16876,7 @@ ${ind(d)}}`;
     ] });
   }
   function useViewportRails(options) {
-    const { setting, target, slot, zoomFactor, commit: commit2 } = options;
+    const { setting, target, slot, zoomFactor, aspectRatio, commit: commit2 } = options;
     const [preview, setPreview] = (0, import_react6.useState)(null);
     const [gestures] = (0, import_react6.useState)(() => createRailGestures(setPreview));
     (0, import_react6.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
@@ -16804,7 +16911,8 @@ ${ind(d)}}`;
           { x: moveEvent.clientX - startX, y: moveEvent.clientY - startY },
           area,
           renderScale,
-          direction
+          direction,
+          aspectRatio
         );
         if (next.width === latest.width && next.height === latest.height) return;
         latest = next;
@@ -16847,7 +16955,7 @@ ${ind(d)}}`;
       if (!delta) return;
       event.preventDefault();
       event.stopPropagation();
-      const next = resizeViewportBy(displayed, delta, direction);
+      const next = resizeViewportBy(displayed, delta, direction, aspectRatio);
       if (next.width === displayed.width && next.height === displayed.height) return;
       const gesture = gestures.begin(target, displayed, true);
       gestures.input(gesture, { ...next, direction });
@@ -17419,11 +17527,15 @@ ${ind(d)}}`;
     const deviceMode = viewportSetting !== null && viewportSetting._tag !== "fill";
     const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
     const pageZoom = live?.zoomFactor ?? 1;
+    const fixedViewport = viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
+    const [aspectLockTab, setAspectLockTab] = (0, import_react7.useState)(null);
+    const aspectLocked = held !== null && aspectLockTab === held.tabId;
     const rails = useViewportRails({
-      setting: viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null,
+      setting: fixedViewport,
       target: held?.tabId ?? null,
       slot: viewportSlot,
       zoomFactor: pageZoom,
+      aspectRatio: lockedAspectRatio(fixedViewport, aspectLocked),
       commit: commitViewport
     });
     const commitViewportChange = (next) => {
@@ -17978,9 +18090,12 @@ ${titledTitle}`;
               /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
                 BrowserViewportToolbar,
                 {
+                  host,
                   setting: rails.displayed,
                   pending: viewportPending,
                   onCommit: commitViewportChange,
+                  aspectLocked,
+                  onAspectLockedChange: (locked) => setAspectLockTab(locked ? held.tabId : null),
                   zIndex: layers.deviceChrome
                 }
               ),

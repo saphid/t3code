@@ -377,16 +377,81 @@ const controlsWidth = (direction: ViewportRailDirection) =>
   direction.includes("east") || direction.includes("west");
 const controlsHeight = (direction: ViewportRailDirection) => direction.includes("south");
 
+/** A usable locked ratio: finite and positive, like native `validAspectRatio`. */
+const validAspectRatio = (aspectRatio: number | null | undefined): aspectRatio is number =>
+  aspectRatio !== null &&
+  aspectRatio !== undefined &&
+  Number.isFinite(aspectRatio) &&
+  aspectRatio > 0;
+
 /**
- * Native `resizeFreeformViewport` without an aspect lock (the plugin toolbar
- * has none): apply a CSS-pixel delta along the rail's axes, clamp each
- * dimension into 240–3840, then bring the area under the cap by shrinking
- * the axis that moved most.
+ * Native `resizeAtAspectRatio`: size the primary axis to `desired` inside
+ * the envelope the ratio leaves it, derive the other axis from the ratio,
+ * then shrink until the area fits under the cap.
+ */
+function resizeAtAspectRatio(
+  desired: number,
+  aspectRatio: number,
+  primaryAxis: "width" | "height",
+): { readonly width: number; readonly height: number } {
+  if (primaryAxis === "width") {
+    const minimum = Math.ceil(
+      Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION * aspectRatio),
+    );
+    const maximum = Math.floor(
+      Math.min(
+        PREVIEW_VIEWPORT_MAX_DIMENSION,
+        PREVIEW_VIEWPORT_MAX_DIMENSION * aspectRatio,
+        Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA * aspectRatio),
+      ),
+    );
+    let width = Math.min(maximum, Math.max(minimum, Math.round(desired)));
+    let height = Math.round(width / aspectRatio);
+    while (width * height > PREVIEW_VIEWPORT_MAX_AREA && width > minimum) {
+      width -= 1;
+      height = Math.round(width / aspectRatio);
+    }
+    return { width, height };
+  }
+  const minimum = Math.ceil(
+    Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION / aspectRatio),
+  );
+  const maximum = Math.floor(
+    Math.min(
+      PREVIEW_VIEWPORT_MAX_DIMENSION,
+      PREVIEW_VIEWPORT_MAX_DIMENSION / aspectRatio,
+      Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA / aspectRatio),
+    ),
+  );
+  let height = Math.min(maximum, Math.max(minimum, Math.round(desired)));
+  let width = Math.round(height * aspectRatio);
+  while (width * height > PREVIEW_VIEWPORT_MAX_AREA && height > minimum) {
+    height -= 1;
+    width = Math.round(height * aspectRatio);
+  }
+  return { width, height };
+}
+
+/**
+ * The ratio a locked toolbar holds: the committed setting's own shape, so a
+ * preset pick or a rotation carries the lock onto the new shape, as native
+ * derives it from the viewport rather than storing a number. Null unlocked.
+ */
+export function lockedAspectRatio(setting: FixedViewport | null, locked: boolean): number | null {
+  return locked && setting !== null ? setting.width / setting.height : null;
+}
+
+/**
+ * Native `resizeFreeformViewport`: apply a CSS-pixel delta along the rail's
+ * axes, clamp each dimension into 240–3840, then bring the area under the
+ * cap by shrinking the axis that moved most. With an aspect lock the axis
+ * that moved (relatively) most leads and the other follows the ratio.
  */
 export function resizeViewportBy(
   start: { readonly width: number; readonly height: number },
   delta: { readonly x: number; readonly y: number },
   direction: ViewportRailDirection,
+  aspectRatio: number | null = null,
 ): { readonly width: number; readonly height: number } {
   const horizontal = direction.includes("east")
     ? delta.x
@@ -394,6 +459,26 @@ export function resizeViewportBy(
       ? -delta.x
       : 0;
   const vertical = direction.includes("south") ? delta.y : 0;
+  if (validAspectRatio(aspectRatio)) {
+    const desiredWidth = start.width + horizontal;
+    const desiredHeight = start.height + vertical;
+    const leadsWidth = horizontal !== 0 || direction === "east" || direction === "west";
+    const leadsHeight = vertical !== 0 || direction === "south";
+    const primaryAxis =
+      leadsWidth && !leadsHeight
+        ? "width"
+        : leadsHeight && !leadsWidth
+          ? "height"
+          : Math.abs(desiredWidth - start.width) / start.width >=
+              Math.abs(desiredHeight - start.height) / start.height
+            ? "width"
+            : "height";
+    return resizeAtAspectRatio(
+      primaryAxis === "width" ? desiredWidth : desiredHeight,
+      aspectRatio,
+      primaryAxis,
+    );
+  }
   let width = clampDimension(Math.round(start.width + horizontal));
   let height = clampDimension(Math.round(start.height + vertical));
   if (width * height <= PREVIEW_VIEWPORT_MAX_AREA) return { width, height };
@@ -443,6 +528,7 @@ export function resizeViewportFromRail(
   available: { readonly width: number; readonly height: number },
   renderScale: number,
   direction: ViewportRailDirection,
+  aspectRatio: number | null = null,
 ): { readonly width: number; readonly height: number } {
   const scale = normalizeZoomFactor(renderScale);
   const startWidth = start.width * scale;
@@ -461,6 +547,7 @@ export function resizeViewportFromRail(
     start,
     { x: direction.includes("west") ? -widthDelta : widthDelta, y: heightDelta },
     direction,
+    aspectRatio,
   );
 }
 

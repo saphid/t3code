@@ -624,8 +624,8 @@ NodeTest.test("rail sizes clamp into the vendored envelope", () => {
   NodeAssert.equal(capped.width, 3840);
   NodeAssert.equal(capped.height, Math.floor(PREVIEW_VIEWPORT_MAX_AREA / 3840));
   NodeAssert.ok(capped.width * capped.height <= PREVIEW_VIEWPORT_MAX_AREA);
-  // Native `resizeFreeformViewport` answers for every rail (no aspect lock
-  // in the plugin): each dimension clamps, then the area cap.
+  // Native `resizeFreeformViewport` answers for every rail (unlocked
+  // here; viewportAspect.test covers the lock): each dimension clamps, then the area cap.
   const start = { width: 3500, height: 2100 };
   const golden = {
     west: [

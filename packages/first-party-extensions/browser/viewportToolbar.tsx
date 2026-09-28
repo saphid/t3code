@@ -1,4 +1,6 @@
+import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import type { BrowserSessionViewport } from "@t3tools/extension-sdk/catalogue";
+import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import {
   useEffect,
   useState,
@@ -17,6 +19,7 @@ import {
   PREVIEW_VIEWPORT_PRESETS,
   deviceViewportLayout,
   freeformFromSetting,
+  lockedAspectRatio,
   presetViewport,
   rotateViewport,
   VIEWPORT_RAIL_KEY_COMMIT_DELAY_MS,
@@ -87,22 +90,57 @@ export function useElementSize(
   return size;
 }
 
+/** Native's Link2 (locked) / Unlink2 (unlocked) glyphs, drawn inline. */
+function AspectLockIcon(props: { readonly locked: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      width={12}
+      height={12}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "block" }}
+    >
+      {props.locked ? (
+        <>
+          <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+          <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+          <line x1="8" x2="16" y1="12" y2="12" />
+        </>
+      ) : (
+        <path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" />
+      )}
+    </svg>
+  );
+}
+
 /**
  * The device toolbar, overlaying the top strip of the slot area (the height
  * the host's engine view already reserves, `DEVICE_TOOLBAR_HEIGHT`). Native
  * `BrowserDeviceToolbar` semantics: a Responsive/preset picker, freeform
- * width × height inputs, rotate, and close back to fill. Every change is a
- * `sessions.resize` through `onCommit`; nothing applies optimistically, so a
- * rejected commit leaves the toolbar showing the session's last setting.
+ * width × height inputs, the aspect-ratio lock, rotate, and close back to
+ * fill. Every change is a `sessions.resize` through `onCommit`; nothing
+ * applies optimistically, so a rejected commit leaves the toolbar showing the
+ * session's last setting. The lock is view state, like native's per-webview
+ * flag: while it is on, typing one dimension derives the other and the rails
+ * keep the shape; closing the toolbar releases it.
  */
 export function BrowserViewportToolbar(props: {
+  readonly host: Pick<ClientHost, "React" | "tooltip">;
   readonly setting: FixedViewport;
   readonly pending: boolean;
   readonly onCommit: (next: BrowserSessionViewport) => void;
+  readonly aspectLocked: boolean;
+  readonly onAspectLockedChange: (locked: boolean) => void;
   /** Stacks the toolbar over the composited page (`floatingLayers().deviceChrome`). */
   readonly zIndex: number;
 }) {
-  const { setting, pending, onCommit, zIndex } = props;
+  const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
+  const aspectRatio = lockedAspectRatio(setting, aspectLocked);
   // An in-progress edit is keyed to the setting it was typed against: a
   // resize landing from anywhere — this view's receipt, the events stream,
   // another client — retires the edit instead of showing it against a
@@ -141,6 +179,39 @@ export function BrowserViewportToolbar(props: {
   // on macOS, so the press would blur the edited field out of the toolbar,
   // commit the edit, and disable the button before its click landed.
   const keepFocus = (event: MouseEvent) => event.preventDefault();
+
+  /**
+   * Native `updateCustomDimension`: the typed axis takes the value; with the
+   * lock on, a typed value inside the envelope also resizes the other axis
+   * to the locked shape, measured from the committed setting.
+   */
+  const updateDimension = (axis: "width" | "height", value: string) => {
+    setEdit((current) => {
+      const kept = current && current.key === committedKey ? current : null;
+      const next = {
+        key: committedKey,
+        width: axis === "width" ? value : (kept?.width ?? String(setting.width)),
+        height: axis === "height" ? value : (kept?.height ?? String(setting.height)),
+      };
+      const numeric = Number(value);
+      if (
+        aspectRatio === null ||
+        !Number.isInteger(numeric) ||
+        numeric < PREVIEW_VIEWPORT_MIN_DIMENSION ||
+        numeric > PREVIEW_VIEWPORT_MAX_DIMENSION
+      )
+        return next;
+      const resized = resizeViewportBy(
+        setting,
+        axis === "width"
+          ? { x: numeric - setting.width, y: 0 }
+          : { x: 0, y: numeric - setting.height },
+        axis === "width" ? "east" : "south",
+        aspectRatio,
+      );
+      return { key: committedKey, width: String(resized.width), height: String(resized.height) };
+    });
+  };
 
   const selectViewport = (value: string) => {
     if (value === "responsive") {
@@ -231,14 +302,7 @@ export function BrowserViewportToolbar(props: {
                   },
             )
           }
-          onChange={(event) =>
-            setEdit((current) => ({
-              key: committedKey,
-              width: event.target.value,
-              height:
-                current && current.key === committedKey ? current.height : String(setting.height),
-            }))
-          }
+          onChange={(event) => updateDimension("width", event.target.value)}
           aria-label="Viewport width"
           aria-invalid={!customValid}
           style={numberInput}
@@ -264,19 +328,30 @@ export function BrowserViewportToolbar(props: {
                   },
             )
           }
-          onChange={(event) =>
-            setEdit((current) => ({
-              key: committedKey,
-              width:
-                current && current.key === committedKey ? current.width : String(setting.width),
-              height: event.target.value,
-            }))
-          }
+          onChange={(event) => updateDimension("height", event.target.value)}
           aria-label="Viewport height"
           aria-invalid={!customValid}
           style={numberInput}
         />
       </form>
+      <Tooltip host={host} label={aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio"}>
+        <button
+          type="button"
+          aria-label={aspectLocked ? "Unlock viewport aspect ratio" : "Lock viewport aspect ratio"}
+          aria-pressed={aspectLocked}
+          disabled={pending || !customValid}
+          onMouseDown={keepFocus}
+          onClick={() => onAspectLockedChange(!aspectLocked)}
+          style={{
+            ...chromeButton,
+            ...(aspectLocked
+              ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+              : {}),
+          }}
+        >
+          <AspectLockIcon locked={aspectLocked} />
+        </button>
+      </Tooltip>
       <button
         type="button"
         aria-label="Rotate viewport"
@@ -301,6 +376,7 @@ export function BrowserViewportToolbar(props: {
         onMouseDown={keepFocus}
         onClick={() => {
           setEdit(null);
+          onAspectLockedChange(false);
           onCommit({ _tag: "fill" });
         }}
         style={{ ...chromeButton, marginLeft: "auto" }}
@@ -396,9 +472,11 @@ export function useViewportRails(options: {
   readonly target: string | null;
   readonly slot: { readonly width: number; readonly height: number };
   readonly zoomFactor: number;
+  /** The toolbar's locked ratio; rails hold it like native's locked drag. */
+  readonly aspectRatio: number | null;
   readonly commit: (next: BrowserSessionViewport, target: string) => Promise<boolean>;
 }) {
-  const { setting, target, slot, zoomFactor, commit } = options;
+  const { setting, target, slot, zoomFactor, aspectRatio, commit } = options;
   const [preview, setPreview] = useState<RailPreview | null>(null);
   const [gestures] = useState(() => createRailGestures(setPreview));
   useEffect(() => gestures.bindCommit(commit), [gestures, commit]);
@@ -450,6 +528,7 @@ export function useViewportRails(options: {
         area,
         renderScale,
         direction,
+        aspectRatio,
       );
       // Pointer events arrive at most once per frame; an unchanged size
       // neither re-renders nor commits.
@@ -506,7 +585,7 @@ export function useViewportRails(options: {
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = resizeViewportBy(displayed, delta, direction);
+    const next = resizeViewportBy(displayed, delta, direction, aspectRatio);
     if (next.width === displayed.width && next.height === displayed.height) return;
     const gesture = gestures.begin(target, displayed, true);
     gestures.input(gesture, { ...next, direction });
