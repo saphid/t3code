@@ -190,7 +190,11 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
-  /** RPC delivery window per subscription; the RPC client's default when absent. */
+  /**
+   * RPC delivery window per subscription, also used for the session switch's
+   * own queue so a paused consumer holds no more than the window across it;
+   * the RPC client's and `switchMap`'s defaults when absent.
+   */
   readonly streamBufferSize?: number;
 }
 
@@ -315,6 +319,9 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
               return subscribeToSession();
             },
           }),
+          options?.streamBufferSize === undefined
+            ? undefined
+            : { bufferSize: options.streamBufferSize },
         ),
       );
     }),

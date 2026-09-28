@@ -36,6 +36,8 @@ acknowledgement. The worker protocol still grants exactly one producer pull at a
 apiStreamTransport.test.ts proves the bound using the real RPC client/server ACK and interrupt
 machinery: after one delivered frame stalls, only two more frames can be produced; interrupt
 runs producer cleanup. This test is in-memory RPC, not network or installed-package proof.
+The resumable path (below) adds the session switch's queue, sized to the same window: a stalled
+consumer there can hold one more frame queued and one awaiting admission (client.test.ts).
 
 Client iterator return aborts first, including a pending next, before awaiting cleanup.
 A plugin stream uses one authenticated connection lifetime; it is not silently resubscribed.

@@ -116,7 +116,11 @@ function run<A, E>(
     signal ? { signal } : undefined,
   );
 }
-/** A pull-driven iterator retains only the RPC's bounded delivery window. */
+/**
+ * A pull-driven iterator retains only the stream's bounded window: the RPC
+ * delivery window, plus one frame queued at the session switch on the
+ * resumable path.
+ */
 async function* authenticatedApiFrames(
   stream:
     | ReturnType<typeof environmentExtensionApiStream>

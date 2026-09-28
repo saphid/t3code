@@ -633,6 +633,45 @@ describe("environment RPC", () => {
       }),
     );
 
+    it.effect("a paused consumer bounds the session switch like the delivery window", () =>
+      Effect.gen(function* () {
+        let produced = 0;
+        const { activeSession, supervisor } = yield* makeHarness();
+        const delivered = yield* Deferred.make<void>();
+        const paused = yield* Deferred.make<void>();
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(
+            session(
+              extensionClient(() =>
+                // A source that produces as fast as it is pulled, with no RPC
+                // window of its own: only the switch's queue can hold frames.
+                Stream.forever(Stream.fromEffect(Effect.sync(() => `frame ${(produced += 1)}`))),
+              ),
+            ),
+          ),
+        );
+        const fiber = yield* subscribeDynamicUntilComplete(
+          WS_METHODS.subscribeExtensionApi,
+          () => Effect.succeed({}) as never,
+          { streamBufferSize: 1 },
+        ).pipe(
+          Stream.runForEach(() =>
+            Deferred.succeed(delivered, undefined).pipe(Effect.andThen(Deferred.await(paused))),
+          ),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(delivered);
+        for (let attempt = 0; attempt < 200; attempt += 1) yield* Effect.yieldNow;
+
+        // One delivered, one in the switch's queue, one awaiting admission —
+        // not the 16-frame default queue.
+        expect(produced).toBeLessThanOrEqual(3);
+        yield* Fiber.interrupt(fiber);
+      }),
+    );
+
     it.effect("fails on a domain error without resubscribing", () =>
       Effect.gen(function* () {
         const domainError = new Error("stream refused");
