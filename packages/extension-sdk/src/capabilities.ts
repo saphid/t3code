@@ -110,10 +110,15 @@ export interface ResumableApiStreams {
 }
 export interface ResumableStreamOptions {
   /**
-   * Runs each time the transport drops and the iterable starts waiting for
-   * the next session, after every frame received before the drop — show
-   * "Reconnecting…" until the resumed snapshot. Hosts that predate it never
-   * call it; then a resumed snapshot is the only sign of the gap.
+   * Runs whenever the iterable is waiting for a transport session, after
+   * every frame received before that point. That includes the wait before
+   * the first connection: it can fire before any frame arrives, so show
+   * "Reconnecting…" only once the stream has been live, and keep your
+   * connecting state otherwise. It can also fire more than once for one
+   * outage (the transport failing, then its session being torn down), so
+   * make the handler idempotent. The next snapshot ends the wait. Hosts that
+   * predate it never call it; then a resumed snapshot is the only sign of
+   * the gap.
    */
   readonly onSuspended?: () => void;
 }
