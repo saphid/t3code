@@ -11026,25 +11026,67 @@ ${writeKey}`;
     fontFamily: "var(--font-mono, ui-monospace, monospace)",
     fontSize: 11
   };
+  function CopyableCode(props) {
+    const { host, value, copyLabel, copiedLabel, onError } = props;
+    const [copied, setCopied] = (0, import_react2.useState)(false);
+    (0, import_react2.useEffect)(() => {
+      if (!copied) return;
+      const timer = setTimeout(() => setCopied(false), 1600);
+      return () => clearTimeout(timer);
+    }, [copied]);
+    const copy = () => {
+      const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
+      if (clipboard === void 0) {
+        onError("Clipboard unavailable");
+        return;
+      }
+      clipboard.writeText(value).then(
+        () => setCopied(true),
+        (error) => onError(message(error, "Copy failed"))
+      );
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: `${copied ? "Copied" : copyLabel}: ${value}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": copied ? copiedLabel : copyLabel,
+        onClick: copy,
+        style: { ...linkButton, textDecoration: "none", minWidth: 0, maxWidth: "100%" },
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, display: "block" }, children: copied ? "Copied" : value })
+      }
+    ) });
+  }
   function BranchChips(props) {
     const chips = prsBranchChips(props.detail, props.stacked);
-    const chip = (text, url) => url === null ? text : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    const openControl = (text, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
       "button",
       {
         type: "button",
         "aria-label": `Open branch ${text} on host`,
         onClick: () => props.onOpen(url),
-        style: { ...linkButton, textDecoration: "none" },
-        children: text
+        style: { ...linkButton, textDecoration: "none", flexShrink: 0, fontSize: 11 },
+        children: "\u2197"
       }
-    );
+    ) });
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
         chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
-        chip(chips.base.text, props.baseUrl)
+        chips.base.text
       ] }) }),
+      openControl(chips.base.text, props.baseUrl),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.head.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, flex: 1 }, children: chip(chips.head.text, props.headUrl) }) })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { display: "inline-flex", flex: 1, minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        CopyableCode,
+        {
+          host: props.host,
+          value: chips.head.text,
+          copyLabel: "Copy pull request branch",
+          copiedLabel: "Branch name copied",
+          onError: props.onCopyError
+        },
+        chips.head.text
+      ) }),
+      openControl(chips.head.text, props.headUrl)
     ] });
   }
   function PrListRow(props) {
@@ -12382,7 +12424,8 @@ ${thread.id}`;
                             ),
                             detail.headBranch
                           ),
-                          onOpen: openOnHost
+                          onOpen: openOnHost,
+                          onCopyError: setOpenError
                         }
                       )
                     ),

@@ -1015,8 +1015,52 @@ const chipStyle = {
 } as const;
 
 /**
+ * Native's `PullRequestCopyableCode`: the chip copies its value, says so for
+ * 1.6 s, and its tooltip names the action. A failed copy is reported.
+ */
+function CopyableCode(props: {
+  host: ClientHost;
+  value: string;
+  copyLabel: string;
+  copiedLabel: string;
+  onError: (detail: string) => void;
+}) {
+  const { host, value, copyLabel, copiedLabel, onError } = props;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copy = () => {
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (clipboard === undefined) {
+      onError("Clipboard unavailable");
+      return;
+    }
+    clipboard.writeText(value).then(
+      () => setCopied(true),
+      (error: unknown) => onError(message(error, "Copy failed")),
+    );
+  };
+  return (
+    <Tooltip host={host} side="top" label={`${copied ? "Copied" : copyLabel}: ${value}`}>
+      <button
+        type="button"
+        aria-label={copied ? copiedLabel : copyLabel}
+        onClick={copy}
+        style={{ ...linkButton, textDecoration: "none", minWidth: 0, maxWidth: "100%" }}
+      >
+        <code style={{ ...chipStyle, display: "block" }}>{copied ? "Copied" : value}</code>
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
  * Native's `base ← head` chips; the base keeps up to 45% so a long head
- * cannot squeeze it out. A branch the host can show opens there.
+ * cannot squeeze it out. The head copies its branch as native's does;
+ * opening a branch on the host is its own ↗ control beside the chip.
  */
 function BranchChips(props: {
   host: ClientHost;
@@ -1025,35 +1069,45 @@ function BranchChips(props: {
   baseUrl: string | null;
   headUrl: string | null;
   onOpen: (url: string) => void;
+  onCopyError: (detail: string) => void;
 }) {
   const chips = prsBranchChips(props.detail, props.stacked);
-  const chip = (text: string, url: string | null) =>
-    url === null ? (
-      text
-    ) : (
-      <button
-        type="button"
-        aria-label={`Open branch ${text} on host`}
-        onClick={() => props.onOpen(url)}
-        style={{ ...linkButton, textDecoration: "none" }}
-      >
-        {text}
-      </button>
+  const openControl = (text: string, url: string | null) =>
+    url === null ? null : (
+      <Tooltip host={props.host} side="top" label={`Open ${text} on host`}>
+        <button
+          type="button"
+          aria-label={`Open branch ${text} on host`}
+          onClick={() => props.onOpen(url)}
+          style={{ ...linkButton, textDecoration: "none", flexShrink: 0, fontSize: 11 }}
+        >
+          ↗
+        </button>
+      </Tooltip>
     );
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }}>
       <Tooltip host={props.host} side="top" label={chips.base.tooltip}>
         <code style={{ ...chipStyle, maxWidth: "45%", flexShrink: 0 }}>
           {chips.base.stacked && <span aria-label="Stacked pull request">⧉ </span>}
-          {chip(chips.base.text, props.baseUrl)}
+          {chips.base.text}
         </code>
       </Tooltip>
+      {openControl(chips.base.text, props.baseUrl)}
       <span role="img" aria-label={chips.arrowLabel} style={{ flexShrink: 0 }}>
         ←
       </span>
-      <Tooltip host={props.host} side="top" label={chips.head.tooltip}>
-        <code style={{ ...chipStyle, flex: 1 }}>{chip(chips.head.text, props.headUrl)}</code>
-      </Tooltip>
+      <span style={{ display: "inline-flex", flex: 1, minWidth: 0 }}>
+        <CopyableCode
+          key={chips.head.text}
+          host={props.host}
+          value={chips.head.text}
+          copyLabel="Copy pull request branch"
+          copiedLabel="Branch name copied"
+          onError={props.onCopyError}
+        />
+      </span>
+      {openControl(chips.head.text, props.headUrl)}
     </span>
   );
 }
@@ -2850,6 +2904,7 @@ export function PullRequestsPanel(props: {
                             detail.headBranch,
                           )}
                           onOpen={openOnHost}
+                          onCopyError={setOpenError}
                         />,
                       )}
                       {metaRow(

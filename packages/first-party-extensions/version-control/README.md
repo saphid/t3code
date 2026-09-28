@@ -41,8 +41,9 @@ The PR browser consumes the `t3.prs/read` grant:
   are held back as native does;
 - `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
   unwired — nothing in the panel needs them yet;
-- open-on-host links for the repository, the PR number, both branch chips
-  and each commit, handed to the reader's own client through
+- the head branch chip copies its branch, as native's does;
+- open-on-host links for the repository, the PR number, each branch (a ↗
+  beside its chip) and each commit, handed to the reader's own client through
   `t3.ui/external` (`t3.ui/external.open` grant); a refusal or a denied
   grant is named under the header rather than swallowed;
 - Check out (`t3.vcs/actions` `preparePullRequestThread`, offered only when

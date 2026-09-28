@@ -621,3 +621,42 @@ NodeTest.describe("checks control", () => {
     view.unmount();
   });
 });
+
+NodeTest.describe("head branch chip", () => {
+  NodeTest.it("copies the branch like native, with host navigation kept separate", async () => {
+    const copied = [];
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text) => void copied.push(text) },
+    });
+    try {
+      const view = mountPanel(
+        defaultHandlers({
+          "t3.ui/external#open": (input) => ({
+            status: "opened",
+            url: input.url,
+            opener: "browser-window",
+          }),
+        }),
+      );
+      await flush();
+      dispatch(view.find("Copy pull request branch"), "onClick");
+      await flush();
+      NodeAssert.deepEqual(copied, ["b3"]);
+      NodeAssert.equal(view.has("Branch name copied"), true);
+      NodeAssert.deepEqual(
+        view.calls.filter((call) => call.id === "t3.ui/external").map((call) => call.input.url),
+        [],
+      );
+      dispatch(view.find("Open branch b3 on host"), "onClick");
+      await flush();
+      NodeAssert.deepEqual(
+        view.calls.filter((call) => call.id === "t3.ui/external").map((call) => call.input.url),
+        ["https://github.com/o/r/tree/b3"],
+      );
+      view.unmount();
+    } finally {
+      delete globalThis.navigator.clipboard;
+    }
+  });
+});
