@@ -1289,10 +1289,13 @@ export function fileOpenFailed(
   error: unknown,
 ): Extract<FileOpenState, { readonly status: "denied" | "unavailable" }> {
   const text = error instanceof Error ? error.message : String(error);
+  // The denied grant is navigation's own, or the presentation provider's
+  // t3.file/open when the host could not present the file.
+  const denied = /capability denied: (t3\.[\w./-]*\w)/.exec(text)?.[1];
   if (text.includes("capability denied"))
     return {
       status: "denied",
-      message: "Open is denied — this installation is missing the t3.ui/navigation.open grant",
+      message: `Open is denied — this installation is missing the ${denied ?? "t3.ui/navigation.open"} grant`,
     };
   if (
     text.includes("missing-api") ||

@@ -38,6 +38,84 @@ export interface PresentationRequest {
   readonly newerInput?: { readonly version: string; readonly input: Json };
 }
 
+/**
+ * A file link's `t3.file/presentation.open`: the path, and its line for a
+ * provider that takes one (1.1.0).
+ */
+export function filePresentationRequest(
+  relativePath: string,
+  line: number | null,
+  navigationId?: string,
+): PresentationRequest {
+  return {
+    apiId: "t3.file/presentation",
+    method: "open",
+    ...(navigationId === undefined ? {} : { navigationId }),
+    input: { relativePath },
+    ...(line !== null ? { newerInput: { version: "1.1.0", input: { relativePath, line } } } : {}),
+  };
+}
+
+/**
+ * Asks the selected provider to present `request` and returns the view it
+ * names, or null when no provider is selected and the native panel presents.
+ * Rejects when the provider cannot present it.
+ */
+export async function presentSelected(
+  request: PresentationRequest,
+  context: ViewContext,
+  signal: AbortSignal,
+): Promise<ViewRecord | null> {
+  const selected = await resolveInstalledApiProvider(request.apiId, context, signal);
+  if (!selected) return null;
+  const newer = request.newerInput;
+  const upgrade =
+    newer !== undefined && satisfiesSemverRange(selected.discovery.version, "^" + newer.version);
+  const value = await selected.client.invokeApi(
+    {
+      id: request.apiId,
+      versionRange: upgrade ? "^" + newer.version : "^1.0.0",
+      method: request.method,
+      input: upgrade ? newer.input : request.input,
+      context,
+      expectedGeneration: selected.discovery.generation,
+    },
+    signal,
+  );
+  signal.throwIfAborted();
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !("surfaceId" in value) ||
+    typeof value.surfaceId !== "string" ||
+    !value.surfaceId.startsWith(selected.discovery.pluginId + "/") ||
+    !("placement" in value) ||
+    value.placement !== "side-panel" ||
+    !("restoreState" in value) ||
+    !value.restoreState ||
+    typeof value.restoreState !== "object" ||
+    Array.isArray(value.restoreState)
+  )
+    throw new Error("Selected API provider returned an incompatible presentation");
+  const descriptor = installedSurfaceDescriptor(
+    context.resource.environmentId,
+    selected.discovery.pluginId!,
+    value.surfaceId,
+  );
+  if (!descriptor || !descriptor.placements.includes(value.placement))
+    throw new Error("Selected API provider surface or placement is unavailable");
+  return {
+    version: 1,
+    surfaceId: value.surfaceId,
+    placement: "side-panel",
+    stateVersion: descriptor.stateVersion,
+    restoreState: value.restoreState,
+    context,
+    fallback: "Selected presentation unavailable",
+  };
+}
+
 /** Domain adapters supply requests; this component knows no panel kinds or plugin ids. */
 export function SelectedApiPresentation(props: {
   request: PresentationRequest;
@@ -76,62 +154,11 @@ export function SelectedApiPresentation(props: {
     const context = JSON.parse(key)[2] as ViewContext;
     void (async () => {
       try {
-        const selected = await resolveInstalledApiProvider(
-          request.apiId,
-          context,
-          controller.signal,
-        );
-        if (!selected) {
+        const record = await presentSelected(request, context, controller.signal);
+        if (!record) {
           setState({ key, legacy: true });
           return;
         }
-        const newer = request.newerInput;
-        const upgrade =
-          newer !== undefined &&
-          satisfiesSemverRange(selected.discovery.version, "^" + newer.version);
-        const value = await selected.client.invokeApi(
-          {
-            id: request.apiId,
-            versionRange: upgrade ? "^" + newer.version : "^1.0.0",
-            method: request.method,
-            input: upgrade ? newer.input : request.input,
-            context,
-            expectedGeneration: selected.discovery.generation,
-          },
-          controller.signal,
-        );
-        controller.signal.throwIfAborted();
-        if (
-          !value ||
-          typeof value !== "object" ||
-          Array.isArray(value) ||
-          !("surfaceId" in value) ||
-          typeof value.surfaceId !== "string" ||
-          !value.surfaceId.startsWith(selected.discovery.pluginId + "/") ||
-          !("placement" in value) ||
-          value.placement !== "side-panel" ||
-          !("restoreState" in value) ||
-          !value.restoreState ||
-          typeof value.restoreState !== "object" ||
-          Array.isArray(value.restoreState)
-        )
-          throw new Error("Selected API provider returned an incompatible presentation");
-        const descriptor = installedSurfaceDescriptor(
-          context.resource.environmentId,
-          selected.discovery.pluginId!,
-          value.surfaceId,
-        );
-        if (!descriptor || !descriptor.placements.includes(value.placement))
-          throw new Error("Selected API provider surface or placement is unavailable");
-        const record: ViewRecord = {
-          version: 1,
-          surfaceId: value.surfaceId,
-          placement: "side-panel",
-          stateVersion: descriptor.stateVersion,
-          restoreState: value.restoreState,
-          context,
-          fallback: "Selected presentation unavailable",
-        };
         const storageKey = presentationStateKey(JSON.stringify([request, context]), record);
         // The same surface is navigated in place, keeping its session, edits
         // and saved state, which moves to the new request's key; only a first

@@ -119,6 +119,7 @@ import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
+import { filePresentationRequest, presentSelected } from "./SelectedApiPresentation";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isAtomCommandInterrupted,
@@ -1742,6 +1743,13 @@ export function createNavigationClientProvider(
         }
         // The native file-link path: the file surface resolves the selected
         // t3.file/presentation provider (SelectedApiPresentation) or native.
+        // A provider that cannot present the file fails the open here, for the
+        // caller to report, rather than as a tab showing only the failure.
+        await presentSelected(
+          filePresentationRequest(relativePath, line ?? null),
+          call.context,
+          call.signal,
+        );
         useRightPanelStore.getState().openFile(ref, relativePath, line);
         return { status: "opened", relativePath } as UiNavigationFileReceipt;
       }

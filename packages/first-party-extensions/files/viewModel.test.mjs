@@ -730,6 +730,19 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.match(state.message, /t3\.ui\/navigation\.open grant/);
   });
 
+  NodeTest.it("fileOpenFailed names the presentation's t3.file/open denial", () => {
+    const state = fileOpenFailed(
+      new Error(
+        "Failed to fetch remote environment endpoint http://localhost:7212/api/extensions/api/invoke (ExtensionOperationError: API capability denied: t3.file/open).",
+      ),
+    );
+    NodeAssert.equal(state.status, "denied");
+    NodeAssert.equal(
+      state.message,
+      "Open is denied — this installation is missing the t3.file/open grant",
+    );
+  });
+
   NodeTest.it("fileOpenFailed maps a host without the open API to unavailable", () => {
     NodeAssert.match(
       fileOpenFailed(new Error("Unknown navigation op openFile")).message,
