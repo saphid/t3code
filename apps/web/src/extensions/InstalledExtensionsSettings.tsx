@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { AuthAccessWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  EXTENSION_GRANT_CAPABILITIES_MAX,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { GENERIC_API_CATALOGUE, HOST_CAPABILITY_GRANTS } from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
@@ -56,6 +61,9 @@ function grantUses(grant: string): string | null {
   return uses.length ? "Allows " + [...new Set(uses)].join("; ") : null;
 }
 
+/** The server rejects a grant set over the cap, so no action here may submit one. */
+const overCap = (grants: Grants) => grants.capabilities.length > EXTENSION_GRANT_CAPABILITIES_MAX;
+
 const toggled = <T,>(list: readonly T[], item: T, on: boolean) =>
   on ? (list.includes(item) ? list : [...list, item]) : list.filter((value) => value !== item);
 
@@ -77,6 +85,11 @@ function PermissionChoices(props: {
     onChange((current) => ({ ...current, capabilities: toggled(current.capabilities, grant, on) }));
   return (
     <>
+      {overCap(value) ? (
+        <p role="status" className="text-sm text-destructive">
+          {`An installation can hold at most ${EXTENSION_GRANT_CAPABILITIES_MAX} permissions; ${value.capabilities.length} are selected.`}
+        </p>
+      ) : null}
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">{props.legend}</legend>
         {projects.map((project) => (
@@ -169,22 +182,28 @@ function InstallationPermissions(props: {
           </p>
           <GrantList grants={missing} />
           <p className="text-sm text-muted-foreground">{PERMISSION_SUGGESTION_NOTE}</p>
-          <Button
-            variant="outline"
-            disabled={disabled}
-            onClick={() =>
-              // Additive on the server, so a grant another client just changed is never undone.
-              void act(() =>
-                manageInstalledExtension(environmentId, {
-                  id: item.id,
-                  action: "addGrants",
-                  grants: { capabilities: missing, projectIds: [] },
-                }),
-              )
-            }
-          >
-            Grant {missing.length} new permission{missing.length === 1 ? "" : "s"}
-          </Button>
+          {current.capabilities.length + missing.length > EXTENSION_GRANT_CAPABILITIES_MAX ? (
+            <p role="status" className="text-sm">
+              {`An installation can hold at most ${EXTENSION_GRANT_CAPABILITIES_MAX} permissions and this one has ${current.capabilities.length}. Use Edit permissions to remove ones it does not need, then grant these.`}
+            </p>
+          ) : (
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={() =>
+                // Additive on the server, so a grant another client just changed is never undone.
+                void act(() =>
+                  manageInstalledExtension(environmentId, {
+                    id: item.id,
+                    action: "addGrants",
+                    grants: { capabilities: missing, projectIds: [] },
+                  }),
+                )
+              }
+            >
+              Grant {missing.length} new permission{missing.length === 1 ? "" : "s"}
+            </Button>
+          )}
         </>
       ) : null}
       {draft ? (
@@ -201,7 +220,7 @@ function InstallationPermissions(props: {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              disabled={disabled}
+              disabled={disabled || overCap(draft)}
               onClick={() => void apply(draft).then((applied) => applied && setDraft(null))}
             >
               Apply selected permissions
@@ -289,7 +308,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
       </p>
       <div className="flex gap-2">
         <Button
-          disabled={!canChange || busy || !trusted || !path.trim()}
+          disabled={!canChange || busy || !trusted || !path.trim() || overCap(grants)}
           onClick={() =>
             void act(() =>
               installEnvironmentExtension(environmentId, {

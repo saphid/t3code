@@ -249,7 +249,7 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     });
     if (
       !Array.isArray(result.capabilities) ||
-      // raised 16 -> 32: first-party browser pack reached the cap with legitimately distinct grants; operator decision, no grant consolidation
+      // Mirrors EXTENSION_GRANT_CAPABILITIES_MAX in @t3tools/contracts.
       result.capabilities.length > 32 ||
       !Array.isArray(result.projectIds) ||
       result.projectIds.length > 64 ||
