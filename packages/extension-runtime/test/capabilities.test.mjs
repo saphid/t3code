@@ -7,7 +7,16 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import { createExtensionRuntime } from "../dist/index.js";
-import { FILE_PRESENTATION_API } from "@t3tools/extension-sdk/catalogue";
+import {
+  BROWSER_CAPTURE,
+  BROWSER_SESSIONS_API,
+  BROWSER_SURFACE,
+  FILE_PRESENTATION_API,
+  PRS_WRITE,
+  UI_KEYBINDINGS_API,
+  UI_KEYBINDINGS_GLOBAL,
+  VCS_ACTIONS_API,
+} from "@t3tools/extension-sdk/catalogue";
 
 const grant = "t3.workspace/read-text";
 const grants = { capabilities: [grant, "t3.file/open"], projectIds: ["project"] };
@@ -932,6 +941,36 @@ NodeTest.test(
       [],
     );
     NodeAssert.deepEqual(f.runtime.requiredGrants(provider.id), []);
+  },
+);
+
+NodeTest.test(
+  "required grants include the host grants a declared API's callers are checked for",
+  async (t) => {
+    const hosted = [BROWSER_SESSIONS_API, UI_KEYBINDINGS_API, VCS_ACTIONS_API];
+    const f = await fixture(t, {
+      apiProviders: hosted.map((api) => ({
+        providerId: "host:" + api.id,
+        definition: api,
+        invoke: () => null,
+      })),
+    });
+    const consumer = await f.install(
+      metadata("test.browser", {
+        provides: [],
+        requires: hosted.map((api) => ({ id: api.id, versionRange: "^" + api.version })),
+        dependencies: [],
+      }),
+      "export default {tools:[],apis:[]};",
+      { capabilities: [], projectIds: [] },
+    );
+    const required = f.runtime.requiredGrants(consumer.id);
+    for (const grant of [BROWSER_SURFACE, BROWSER_CAPTURE, UI_KEYBINDINGS_GLOBAL, PRS_WRITE])
+      NodeAssert.ok(required.includes(grant), grant + " is missing from " + required.join(", "));
+    // Granted exactly its required set, the installation holds the host-checked grants too.
+    await f.runtime.addGrants(consumer.id, { capabilities: required, projectIds: [] });
+    const held = f.runtime.list().find((item) => item.id === consumer.id).grants.capabilities;
+    NodeAssert.ok(held.includes(BROWSER_SURFACE) && held.includes(BROWSER_CAPTURE));
   },
 );
 

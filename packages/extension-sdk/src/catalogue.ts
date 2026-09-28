@@ -10119,3 +10119,18 @@ export const TERMINAL_SESSIONS_API_V1 = terminalSessionsApiV1.definition;
 export const TERMINAL_OUTPUT_API = terminalOutputApi.definition;
 export const TERMINAL_OUTPUT_EVENTS_API = terminalOutputEventsApi.definition;
 export const TERMINAL_CONTROL_API = terminalControlApi.definition;
+
+/**
+ * Grants a host checks when a caller uses a catalogue API that its methods'
+ * and streams' own `requiredGrants` cannot express, keyed by the API id a
+ * package lists in `requires`: the host-local browser capabilities that only
+ * work on a session this API's caller holds, the op-level global-shortcut
+ * grant, and a PR phase whose grant follows the input. A host deriving an
+ * installation's suggested grants adds these, so a package granted exactly
+ * that set can use what it declared.
+ */
+export const API_CALL_TIME_GRANTS: Readonly<Record<string, readonly string[]>> = {
+  [BROWSER_SESSIONS]: [BROWSER_SURFACE, BROWSER_CAPTURE],
+  [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL],
+  [VCS_ACTIONS]: [PRS_WRITE],
+};

@@ -6,7 +6,11 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { GENERIC_API_CATALOGUE, HOST_CAPABILITY_GRANTS } from "@t3tools/extension-sdk/catalogue";
+import {
+  API_CALL_TIME_GRANTS,
+  GENERIC_API_CATALOGUE,
+  HOST_CAPABILITY_GRANTS,
+} from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -38,13 +42,14 @@ const operationsOf = (api: (typeof GENERIC_API_CATALOGUE)[number]) => [
   ...(api.methods ?? []),
   ...(api.streams ?? []),
 ];
-/** Every grant a catalogue API checks, plus host-service grants; read-text has its own choice. */
+/** Every grant a catalogue API checks, plus host-checked grants; read-text has its own choice. */
 const GRANT_CHOICES = [
   ...new Set([
     ...GENERIC_API_CATALOGUE.flatMap((api) =>
       operationsOf(api).flatMap((operation) => operation.requiredGrants),
     ),
     ...HOST_CAPABILITY_GRANTS,
+    ...Object.values(API_CALL_TIME_GRANTS).flat(),
   ]),
 ].filter((grant) => grant !== WORKSPACE_READ_TEXT);
 
@@ -58,7 +63,11 @@ function grantUses(grant: string): string | null {
     return names.length ? [api.id + ": " + names.join(", ")] : [];
   });
   // The catalogue can list one API at several versions.
-  return uses.length ? "Allows " + [...new Set(uses)].join("; ") : null;
+  if (uses.length) return "Allows " + [...new Set(uses)].join("; ");
+  const checkedBy = Object.keys(API_CALL_TIME_GRANTS).filter((api) =>
+    API_CALL_TIME_GRANTS[api]!.includes(grant),
+  );
+  return checkedBy.length ? "Checked by " + checkedBy.join(", ") + " when it is called" : null;
 }
 
 /** The server rejects a grant set over the cap, so no action here may submit one. */

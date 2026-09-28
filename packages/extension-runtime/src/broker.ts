@@ -19,6 +19,7 @@ import {
   type ApiSelection,
   type ApiUnavailableReason,
 } from "@t3tools/extension-sdk/capabilities";
+import { API_CALL_TIME_GRANTS } from "@t3tools/extension-sdk/catalogue";
 import { resolveCapabilities } from "./resolution.js";
 import type { Installation } from "./index.js";
 
@@ -261,9 +262,10 @@ export function createApiBroker(options: {
   }
   /**
    * Every grant a method or stream of the installation's declared APIs checks,
-   * read from the provider each resolves to now. An approximation, not what
-   * the package calls: Settings offers it for explicit consent, never auto-grants.
-   * Grants a provider asks for dynamically and host services are not included.
+   * read from the provider each resolves to now, plus the grants the host
+   * checks when a required API is called (`API_CALL_TIME_GRANTS`). An
+   * approximation, not what the package calls: Settings offers it for explicit
+   * consent, never auto-grants.
    */
   function requiredGrants(record: Installation): string[] {
     const apis = resolution().apis;
@@ -276,8 +278,10 @@ export function createApiBroker(options: {
       for (const operation of [...(definition?.methods ?? []), ...(definition?.streams ?? [])])
         for (const grant of operation.requiredGrants) found.add(grant);
     };
-    for (const api of record.package.requires ?? [])
+    for (const api of record.package.requires ?? []) {
       add(api.id, apis.find((item) => item.id === api.id)?.providerId);
+      for (const grant of API_CALL_TIME_GRANTS[api.id] ?? []) found.add(grant);
+    }
     for (const dependency of record.package.dependencies ?? [])
       for (const api of dependency.apis) add(api.id, dependency.pluginId);
     return [...found].sort();
