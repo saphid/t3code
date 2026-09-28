@@ -105,6 +105,12 @@ class FakeTextArea {
   }
 }
 
+/** The tree's scrolling element, `height` tall; a fresh one each time it mounts. */
+class FakeViewport {
+  scrollTop = 0;
+  constructor(readonly clientHeight: number) {}
+}
+
 interface Disk {
   readonly files: Record<string, string>;
   /** Directory entries the tree snapshot lists next to the files. */
@@ -129,6 +135,8 @@ interface Disk {
   readonly previewSupported?: boolean;
   /** The host's `t3.ui/navigation` version; the SDK's own unless given. */
   readonly navigationVersion?: string;
+  /** Gives the tree a scrolling element this tall; it has none unless given. */
+  readonly viewportHeight?: number;
 }
 
 type Calls = {
@@ -340,16 +348,36 @@ async function mountPanel(disk: Disk) {
     ) : null;
   }
   const textarea = new FakeTextArea();
+  const viewports: FakeViewport[] = [];
+  /** Tree rows that were given DOM focus, by name. */
+  const focused: string[] = [];
   let root: ReactTestRenderer | undefined;
   await act(async () => {
     root = create(<App />, {
-      createNodeMock: (element) => (element.type === "textarea" ? textarea : null),
+      createNodeMock: (element) => {
+        if (element.type === "textarea") return textarea;
+        if (disk.viewportHeight === undefined) return null;
+        const props = element.props as { "aria-label"?: string; children?: unknown };
+        if (element.type === "ul" && props["aria-label"] === "Workspace files") {
+          const viewport = new FakeViewport(disk.viewportHeight);
+          viewports.push(viewport);
+          return viewport;
+        }
+        if (element.type === "button") {
+          const name = [props.children].flat().join("");
+          return { focus: () => focused.push(name) };
+        }
+        return null;
+      },
     });
   });
   const tree = root!;
   return {
     calls,
     textarea,
+    focused,
+    /** The tree's current scrolling element. */
+    viewport: () => viewports.at(-1)!,
     /** Remounts the panel from its persisted state, as a reload does. */
     async reload() {
       await act(async () => tree.update(<></>));
@@ -1296,6 +1324,137 @@ describe("a markdown file reopened at a revealed line", () => {
       expect(panel.textarea.carets).toEqual([10]);
       await act(async () => panel.button("Show rendered markdown")!.props.onClick());
       expect(mode()).toEqual({ rendered: true, editor: 0 });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-3 P2): the tree's window follows its scrolling
+// element when the element comes back, and a row revealed while it was gone
+// is scrolled to once it shows.
+describe("a long tree whose explorer is hidden and shown", () => {
+  const disk = () => {
+    const files: Record<string, string> = {};
+    for (let file = 0; file < 1000; file++) files[`f${String(file).padStart(3, "0")}.txt`] = "f";
+    return { files, viewportHeight: 240 };
+  };
+  const list = (panel: Panel) => panel.labelled("Workspace files")!;
+  /** Tops of the mounted rows that fall inside the viewport. */
+  const visibleTops = (panel: Panel) => {
+    const { scrollTop, clientHeight } = panel.viewport();
+    return list(panel)
+      .findAllByType("li")
+      .map((row) => (row.props.style as { top?: number } | undefined)?.top)
+      .filter((top): top is number => top !== undefined)
+      .filter((top) => top + 24 > scrollTop && top < scrollTop + clientHeight);
+  };
+  const toggle = (panel: Panel, label: string) =>
+    act(async () => panel.button(label)!.props.onClick());
+
+  it("shows the rows at its scroll position again", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      const viewport = panel.viewport();
+      viewport.scrollTop = 12_000;
+      await act(async () => list(panel).props.onScroll({ currentTarget: viewport }));
+      expect(visibleTops(panel)).toHaveLength(10);
+      await toggle(panel, "Hide file explorer");
+      await toggle(panel, "Show file explorer");
+      expect(panel.viewport()).not.toBe(viewport);
+      expect(panel.viewport().scrollTop).toBe(12_000);
+      expect(visibleTops(panel)).toHaveLength(10);
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("scrolls to a file opened while it was hidden", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      await toggle(panel, "Hide file explorer");
+      await act(async () => panel.navigation({ relativePath: "f999.txt" }));
+      await toggle(panel, "Show file explorer");
+      expect(visibleTops(panel)).toContain(999 * 24);
+      expect(panel.viewport().scrollTop).toBe(1000 * 24 - 240);
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-3 P2): the focused row going away moves keyboard
+// focus to the nearest row that remains, as native's tree does.
+describe("a tree whose focused row goes away", () => {
+  const rowNamed = (panel: Panel, name: string) =>
+    panel
+      .labelled("Workspace files")!
+      .findAllByType("button")
+      .find((row) => row.children.join("") === name)!;
+  const focus = (panel: Panel, name: string) =>
+    act(async () => rowNamed(panel, name).props.onFocus());
+  const arrowDown = async (panel: Panel) => {
+    let handled = false;
+    await act(async () =>
+      panel.labelled("Workspace files")!.props.onKeyDown({
+        key: "ArrowDown",
+        preventDefault: () => {
+          handled = true;
+        },
+      }),
+    );
+    return handled;
+  };
+  const refresh = (panel: Panel) =>
+    act(async () => panel.labelled("Refresh workspace files")!.props.onClick());
+
+  it("focuses the row now in its place when it is deleted or renamed", async () => {
+    const disk = { files: { "a.txt": "a", "b.txt": "b", "c.txt": "c" } as Record<string, string> };
+    const panel = await mountPanel({ ...disk, viewportHeight: 240 });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      await focus(panel, "b.txt");
+      delete disk.files["b.txt"];
+      await refresh(panel);
+      expect(panel.rows()).toEqual(["a.txt", "c.txt"]);
+      expect(panel.focused.at(-1)).toBe("c.txt");
+      // The keys carry on from there.
+      await focus(panel, "a.txt");
+      expect(await arrowDown(panel)).toBe(true);
+      expect(panel.focused.at(-1)).toBe("c.txt");
+      // A rename takes the same place when it sorts there.
+      delete disk.files["c.txt"];
+      disk.files["d.txt"] = "d";
+      await refresh(panel);
+      expect(panel.rows()).toEqual(["a.txt", "d.txt"]);
+      expect(panel.focused.at(-1)).toBe("d.txt");
+      // The last row going leaves focus on the one before it.
+      delete disk.files["d.txt"];
+      await refresh(panel);
+      expect(panel.focused.at(-1)).toBe("a.txt");
+      expect(await arrowDown(panel)).toBe(true);
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("focuses its folder when the folder closes over it", async () => {
+    const panel = await mountPanel({
+      directories: ["src"],
+      files: { "src/a.txt": "a", "src/b.txt": "b", "z.txt": "z" },
+      viewportHeight: 240,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "z.txt"));
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      await focus(panel, "b.txt");
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows()).toEqual(["▸ src/", "z.txt"]);
+      expect(panel.focused.at(-1)).toBe("▸ src/");
+      expect(await arrowDown(panel)).toBe(true);
+      expect(panel.focused.at(-1)).toBe("z.txt");
     } finally {
       await panel.unmount();
     }

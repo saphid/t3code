@@ -1390,6 +1390,32 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     setFocusedRow(path);
     tree.reveal(index);
   };
+  // Native parity (FileTreeController's focus reconciliation): when a refresh
+  // or collapse takes away the focused row, focus moves to its nearest open
+  // folder if it is only hidden, else to the row now in its place.
+  const lastFocusedIndex = useRef(0);
+  const revealFocusRow = tree.reveal;
+  useEffect(() => {
+    if (focusedRow === null) return;
+    const index = rowIndex.get(focusedRow);
+    if (index !== undefined) {
+      lastFocusedIndex.current = index;
+      return;
+    }
+    let next: number | undefined;
+    if (kindByPath.has(focusedRow))
+      for (
+        let path = parentPath(focusedRow);
+        path !== null && next === undefined;
+        path = parentPath(path)
+      )
+        next = rowIndex.get(path);
+    next ??= Math.min(lastFocusedIndex.current, rows.length - 1);
+    const path = rows[next]?.entry.path ?? null;
+    focusTarget.current = path;
+    setFocusedRow(path);
+    if (path !== null) revealFocusRow(next);
+  }, [focusedRow, rowIndex, rows, kindByPath, revealFocusRow]);
   // Tree keys, as native's: up/down/home/end move; right opens a folder or
   // enters it; left closes it or moves to its parent.
   const onTreeKeyDown = (event: KeyboardEvent) => {
@@ -2237,9 +2263,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                         draggable
                         onDragStart={(event) => startMentionDrag(event, row.entry.path)}
                         onFocus={() => setFocusedRow(row.entry.path)}
-                        onBlur={() =>
-                          setFocusedRow((current) => (current === row.entry.path ? null : current))
-                        }
+                        onBlur={(event) => {
+                          // A row removed while focused keeps the tree's focus
+                          // for the reconciliation above.
+                          if (!event.currentTarget.isConnected) return;
+                          setFocusedRow((current) => (current === row.entry.path ? null : current));
+                        }}
                         onClick={() => {
                           if (!row.expandable) {
                             select(row.entry.path);
