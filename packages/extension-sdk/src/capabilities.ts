@@ -136,7 +136,14 @@ export function resolveResumableStreams(host: {
     : null;
 }
 export type ApiMethodTypes = Record<string, { input: Json; output: Json }>;
-/** An optional method input member, a whole method, or a stream a minor release added after `baseline`. */
+/**
+ * A member a minor release added after `baseline`: a whole method (`method`
+ * alone), a whole stream (`stream`), an optional method input (`input`), or an
+ * optional method output or stream event member (`output`). `bindApi` and
+ * `bindStreamApi` guard methods, streams and inputs; outputs need no guard,
+ * because a consumer on the baseline already has to treat the member as
+ * possibly absent.
+ */
 export type ApiAddition =
   | {
       /** The release that added the member. */
@@ -152,6 +159,13 @@ export type ApiAddition =
       /** The release that added the stream. */
       readonly version: string;
       readonly stream: string;
+    }
+  | {
+      readonly version: string;
+      /** A method, or a stream whose event carries the member. */
+      readonly method: string;
+      /** Dotted output (or event) path, in the same form as `input`. */
+      readonly output: string;
     };
 /** Phantom method types accompany an immutable, serializable runtime descriptor. */
 export interface TypedApi<T extends ApiMethodTypes> {
@@ -180,31 +194,19 @@ function hasInput(value: unknown, path: readonly string[]): boolean {
   if (!head.endsWith("[]")) return hasInput(child, rest);
   return Array.isArray(child) && child.some((item) => hasInput(item, rest));
 }
-/**
- * `baseline` is the oldest version of this major that `requireApi` and
- * `bindApi` ask for by default. Set it when a minor release only adds
- * optional members, methods or streams, so existing consumers keep loading on
- * older hosts, and list every such member in `additions` (a new method is an
- * addition without `input`): a binding whose range admits a
- * version before an addition refuses calls that use it with
- * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
- * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
- * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
- * can use additions; any other range refuses them.
- */
-export function defineApi<T extends ApiMethodTypes>(
-  definition: ApiDefinition,
-  options: { readonly baseline?: string; readonly additions?: readonly ApiAddition[] } = {},
-): TypedApi<T> {
-  const validated = validateApiDefinition(definition);
+interface ApiNegotiation {
+  readonly baseline?: string;
+  readonly additions?: readonly ApiAddition[];
+}
+function negotiated(definition: ApiDefinition, options: ApiNegotiation): ApiNegotiation {
   if (options.baseline === undefined) {
     if (options.additions?.length) throw new Error("API additions need a baseline");
-    return { definition: validated };
+    return {};
   }
   // The guard only orders plain X.Y.Z versions; see semver.ts.
-  const version = parseVersion(validated.version);
+  const version = parseVersion(definition.version);
   if (!version)
-    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+    throw new Error("An API with a baseline needs a plain X.Y.Z version: " + definition.version);
   const baseline = parseVersion(options.baseline);
   if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
     throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
@@ -215,26 +217,59 @@ export function defineApi<T extends ApiMethodTypes>(
     const added = parseVersion(addition.version);
     if (!added)
       throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
+    const path =
+      "input" in addition ? addition.input : "output" in addition ? addition.output : undefined;
+    const owners =
+      "stream" in addition
+        ? []
+        : [
+            ...(definition.methods ?? []),
+            ...("output" in addition ? (definition.streams ?? []) : []),
+          ];
     if (
       compareVersions(added, baseline) <= 0 ||
       compareVersions(added, version) > 0 ||
       ("stream" in addition
-        ? !validated.streams?.some((stream) => stream.name === addition.stream)
-        : !validated.methods?.some((method) => method.name === addition.method) ||
-          (addition.input !== undefined &&
-            !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)))
+        ? !definition.streams?.some((stream) => stream.name === addition.stream)
+        : !owners.some((owner) => owner.name === addition.method)) ||
+      ("output" in addition && typeof path !== "string") ||
+      (path !== undefined &&
+        (typeof path !== "string" ||
+          !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(path)))
     )
       throw new Error("Invalid API addition: " + JSON.stringify(addition));
   }
-  return { definition: validated, baseline: options.baseline, additions };
+  return { baseline: options.baseline, additions };
 }
-/** Additions `versionRange` does not guarantee; see `defineApi`. */
+/**
+ * `baseline` is the oldest version of this major that `requireApi` and
+ * `bindApi` ask for by default. Set it when a minor release only adds
+ * optional members, methods or streams, so existing consumers keep loading on
+ * older hosts, and list every such member in `additions` (a new method is an
+ * addition without `input`): a binding whose range admits a version before a
+ * method, stream or input addition refuses calls that use it with
+ * `ApiVersionError`, so a pack cannot declare the baseline and ship the new
+ * member unprobed. The version, baseline and additions are plain `X.Y.Z`, and
+ * only `X.Y.Z`, `^X.Y.Z`, `~X.Y.Z`, `>=X.Y.Z` and `>=X.Y.Z <A.B.C` bindings
+ * can use additions; any other range refuses them.
+ */
+export function defineApi<T extends ApiMethodTypes>(
+  definition: ApiDefinition,
+  options: ApiNegotiation = {},
+): TypedApi<T> {
+  const validated = validateApiDefinition(definition);
+  return { definition: validated, ...negotiated(validated, options) };
+}
+type GuardedAddition = Exclude<ApiAddition, { readonly output: string }>;
+/** Guarded additions `versionRange` does not guarantee; see `defineApi`. */
 function unnegotiatedAdditions(
   api: { readonly additions?: readonly ApiAddition[] },
   versionRange: string,
-): readonly ApiAddition[] {
+): readonly GuardedAddition[] {
   const floor = rangeFloor(versionRange);
-  return (api.additions ?? []).filter((addition) => {
+  return (api.additions ?? []).filter((addition): addition is GuardedAddition => {
+    // Output additions need no guard; see `ApiAddition`.
+    if ("output" in addition) return false;
     const added = parseVersion(addition.version);
     return !floor || !added || compareVersions(floor, added) < 0;
   });
@@ -260,7 +295,7 @@ export function bindApi<T extends ApiMethodTypes>(
       signal: AbortSignal,
     ): Promise<T[K]["output"]> {
       const addition = unnegotiated.find(
-        (item): item is Extract<ApiAddition, { method: string }> =>
+        (item): item is Extract<GuardedAddition, { method: string }> =>
           "method" in item &&
           item.method === method &&
           (item.input === undefined || hasInput(input, item.input.split("."))),
@@ -283,7 +318,7 @@ export type ApiStreamTypes = Record<string, { input: Json; event: Json }>;
 /** Public stream types accompany the descriptor validated by the host at delivery. */
 export interface TypedStreamApi<T extends ApiStreamTypes> {
   readonly definition: ApiDefinition;
-  /** See `defineApi`; an API mixing methods and streams declares these there. */
+  /** See `defineApi`. */
   readonly baseline?: string;
   readonly additions?: readonly ApiAddition[];
   readonly streamTypes?: T;
@@ -291,12 +326,14 @@ export interface TypedStreamApi<T extends ApiStreamTypes> {
 export type TypedApiStreamFrame<T extends Json> = Omit<ApiStreamFrame, "value"> & {
   readonly value: T;
 };
+/** `baseline` and `additions` work as they do for `defineApi`. */
 export function defineStreamApi<T extends ApiStreamTypes>(
   definition: ApiDefinition,
+  options: ApiNegotiation = {},
 ): TypedStreamApi<T> {
   const validated = validateApiDefinition(definition);
   if (!validated.streams?.length) throw new Error("Expected API stream definitions");
-  return { definition: validated };
+  return { definition: validated, ...negotiated(validated, options) };
 }
 /**
  * Retain the host iterable so return(), cancellation and backpressure keep their ownership.

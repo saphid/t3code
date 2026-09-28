@@ -53,6 +53,7 @@ import {
   settlePrsDraft,
   verifyPrsDiffAssembly,
 } from "./prsViewModel.ts";
+import * as PrsViewModel from "./prsViewModel.ts";
 
 const sha256Hex = async (text) => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -773,10 +774,76 @@ NodeTest.test("prsActionPresentation: native names, pending words and disabled h
 
 NodeTest.test("enable-auto-merge offers the merge methods its label names", () => {
   const [arm] = prsWriteActionOffers(
-    { state: "open", isDraft: true, autoMergeEnabled: false },
+    { state: "open", isDraft: false, autoMergeEnabled: false },
     { actions: ["enable-auto-merge"], mergeMethods: ["squash", "merge"], updateMethods: [] },
   );
   NodeAssert.deepEqual(arm?.methods, ["squash", "merge"]);
+});
+
+NodeTest.test("merge and enable-auto-merge follow native eligibility; disable stays", () => {
+  const write = {
+    actions: ["merge", "enable-auto-merge", "disable-auto-merge"],
+    mergeMethods: ["merge", "squash"],
+    updateMethods: [],
+  };
+  const actions = (detail, options) =>
+    prsWriteActionOffers({ state: "open", ...detail }, write, options).map((o) => o.action);
+  NodeAssert.deepEqual(actions({ isDraft: true, autoMergeEnabled: false }), []);
+  NodeAssert.deepEqual(
+    actions({ isDraft: false, mergeability: "conflicting", autoMergeEnabled: false }),
+    [],
+  );
+  NodeAssert.deepEqual(actions({ isDraft: false, autoMergeEnabled: false }), [
+    "merge",
+    "enable-auto-merge",
+  ]);
+  // A repository that allows no offered method has nothing to merge with.
+  NodeAssert.deepEqual(
+    actions({
+      isDraft: false,
+      autoMergeEnabled: false,
+      mergeCapabilities: { merge: false, squash: false, rebase: true },
+    }),
+    [],
+  );
+  // The offered methods are the ones the repository allows.
+  const [merge] = prsWriteActionOffers(
+    {
+      state: "open",
+      isDraft: false,
+      mergeCapabilities: { merge: false, squash: true, rebase: true },
+    },
+    write,
+  );
+  NodeAssert.deepEqual(merge.methods, ["squash"]);
+  // Stack discovery holds single merges back; an armed auto-merge can still be disarmed.
+  NodeAssert.deepEqual(
+    actions({ isDraft: false, autoMergeEnabled: false }, { singleMergeAllowed: false }),
+    [],
+  );
+  NodeAssert.deepEqual(
+    actions(
+      { isDraft: true, mergeability: "conflicting", autoMergeEnabled: true },
+      { singleMergeAllowed: false },
+    ),
+    ["disable-auto-merge"],
+  );
+});
+
+NodeTest.test("prsSingleMergeAllowed: native's stack-discovery gate", () => {
+  const gate = (input) =>
+    PrsViewModel.prsSingleMergeAllowed({
+      supportsStackActions: true,
+      hasStack: false,
+      stackPending: false,
+      stackError: null,
+      ...input,
+    });
+  NodeAssert.equal(gate({}), true);
+  NodeAssert.equal(gate({ hasStack: true }), false);
+  NodeAssert.equal(gate({ stackPending: true }), false);
+  NodeAssert.equal(gate({ stackError: "boom" }), false);
+  NodeAssert.equal(gate({ supportsStackActions: false, hasStack: true }), true);
 });
 
 NodeTest.test("native hover help for status, checks, authors and armed auto-merge", () => {

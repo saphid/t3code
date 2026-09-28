@@ -217,16 +217,15 @@ var __t3Client = (() => {
       return hasInput(child, rest);
     return Array.isArray(child) && child.some((item) => hasInput(item, rest));
   }
-  function defineApi(definition, options = {}) {
-    const validated = validateApiDefinition(definition);
+  function negotiated(definition, options) {
     if (options.baseline === void 0) {
       if (options.additions?.length)
         throw new Error("API additions need a baseline");
-      return { definition: validated };
+      return {};
     }
-    const version = parseVersion(validated.version);
+    const version = parseVersion(definition.version);
     if (!version)
-      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + validated.version);
+      throw new Error("An API with a baseline needs a plain X.Y.Z version: " + definition.version);
     const baseline = parseVersion(options.baseline);
     if (!baseline || baseline[0] !== version[0] || compareVersions(baseline, version) > 0)
       throw new Error("API baseline must be an earlier plain X.Y.Z version of the same major");
@@ -237,14 +236,25 @@ var __t3Client = (() => {
       const added = parseVersion(addition.version);
       if (!added)
         throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
-      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || ("stream" in addition ? !validated.streams?.some((stream) => stream.name === addition.stream) : !validated.methods?.some((method) => method.name === addition.method) || addition.input !== void 0 && !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)))
+      const path3 = "input" in addition ? addition.input : "output" in addition ? addition.output : void 0;
+      const owners = "stream" in addition ? [] : [
+        ...definition.methods ?? [],
+        ..."output" in addition ? definition.streams ?? [] : []
+      ];
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || ("stream" in addition ? !definition.streams?.some((stream) => stream.name === addition.stream) : !owners.some((owner) => owner.name === addition.method)) || "output" in addition && typeof path3 !== "string" || path3 !== void 0 && (typeof path3 !== "string" || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(path3)))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
     }
-    return { definition: validated, baseline: options.baseline, additions };
+    return { baseline: options.baseline, additions };
+  }
+  function defineApi(definition, options = {}) {
+    const validated = validateApiDefinition(definition);
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function unnegotiatedAdditions(api, versionRange) {
     const floor = rangeFloor(versionRange);
     return (api.additions ?? []).filter((addition) => {
+      if ("output" in addition)
+        return false;
       const added = parseVersion(addition.version);
       return !floor || !added || compareVersions(floor, added) < 0;
     });
@@ -263,11 +273,11 @@ var __t3Client = (() => {
       }
     };
   }
-  function defineStreamApi(definition) {
+  function defineStreamApi(definition, options = {}) {
     const validated = validateApiDefinition(definition);
     if (!validated.streams?.length)
       throw new Error("Expected API stream definitions");
-    return { definition: validated };
+    return { definition: validated, ...negotiated(validated, options) };
   }
   function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     const unnegotiated = unnegotiatedAdditions(api, versionRange);
@@ -4400,7 +4410,7 @@ var __t3Client = (() => {
       detail: { type: ["string", "null"], maxLength: 1024 }
     }
   };
-  var prsListEntrySchema = {
+  var prsListEntrySchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4461,7 +4471,12 @@ var __t3Client = (() => {
       checksState: { enum: ["passing", "failing", "pending"] }
     }
   };
-  var prsListResultSchema = {
+  var prsObservedAtField = { type: "number", minimum: 0 };
+  var prsListEntrySchema = {
+    ...prsListEntrySchemaV1,
+    properties: { ...prsListEntrySchemaV1.properties, observedAt: prsObservedAtField }
+  };
+  var prsListResultSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: ["viewers", "providers", "entries", "errors", "truncated", "nextCursors"],
@@ -4472,7 +4487,7 @@ var __t3Client = (() => {
         maxProperties: 100
       },
       providers: { type: "array", maxItems: 100, items: prsProviderSummarySchema },
-      entries: { type: "array", maxItems: 100, items: prsListEntrySchema },
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchemaV1 },
       errors: {
         type: "array",
         maxItems: 100,
@@ -4489,6 +4504,13 @@ var __t3Client = (() => {
       },
       truncated: { type: "boolean" },
       nextCursors: prsCursorsSchema
+    }
+  };
+  var prsListResultSchema = {
+    ...prsListResultSchemaV1,
+    properties: {
+      ...prsListResultSchemaV1.properties,
+      entries: { type: "array", maxItems: 100, items: prsListEntrySchema }
     }
   };
   var prsReviewVerdictsSchema = {
@@ -4585,7 +4607,7 @@ var __t3Client = (() => {
       labels: { type: "boolean" }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1 = {
     type: "object",
     additionalProperties: false,
     required: [
@@ -4665,6 +4687,14 @@ var __t3Client = (() => {
       autoMergeEnabled: { type: "boolean" },
       autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1,
+    properties: {
+      ...prsDetailSchemaV1.properties,
+      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
+      observedAt: prsObservedAtField
     }
   };
   var prsCommentSchema = {
@@ -5067,174 +5097,186 @@ var __t3Client = (() => {
       newPath: { type: "string", minLength: 1, maxLength: 1024 }
     }
   };
-  var prsReadApi = defineStreamApi({
-    id: PRS_READ,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        outputSchema: prsCapabilitiesResultSchema
-      },
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["state"],
-          properties: {
-            state: { enum: ["all", "open", "closed", "merged"] },
-            involvement: { enum: ["all", "reviewing", "authored"] },
-            filters: prsListFiltersSchema,
-            host: prsHostField,
-            limit: { type: "integer", minimum: 1, maximum: 50 },
-            cursors: prsCursorsSchema,
-            query: { type: "string", minLength: 1, maxLength: 200 }
-          }
+  function prsReadDefinition(version, listResult, detail) {
+    return {
+      id: PRS_READ,
+      version,
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          outputSchema: prsCapabilitiesResultSchema
         },
-        outputSchema: prsListResultSchema
-      },
-      {
-        name: "listStats",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["refs"],
-          properties: {
-            refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
-          }
+        {
+          name: "list",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["state"],
+            properties: {
+              state: { enum: ["all", "open", "closed", "merged"] },
+              involvement: { enum: ["all", "reviewing", "authored"] },
+              filters: prsListFiltersSchema,
+              host: prsHostField,
+              limit: { type: "integer", minimum: 1, maximum: 50 },
+              cursors: prsCursorsSchema,
+              query: { type: "string", minLength: 1, maxLength: 200 }
+            }
+          },
+          outputSchema: listResult
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["stats"],
-          properties: {
-            stats: {
-              type: "array",
-              maxItems: 100,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["projectId", "repository", "number", "additions", "deletions"],
-                properties: {
-                  projectId: { type: "string", minLength: 1, maxLength: 160 },
-                  repository: prsRepositoryField,
-                  number: { type: "integer", minimum: 1 },
-                  additions: { type: "integer", minimum: 0 },
-                  deletions: { type: "integer", minimum: 0 }
+        {
+          name: "listStats",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["refs"],
+            properties: {
+              refs: { type: "array", minItems: 1, maxItems: 100, items: prsRefInputSchema }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["stats"],
+            properties: {
+              stats: {
+                type: "array",
+                maxItems: 100,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["projectId", "repository", "number", "additions", "deletions"],
+                  properties: {
+                    projectId: { type: "string", minLength: 1, maxLength: 160 },
+                    repository: prsRepositoryField,
+                    number: { type: "integer", minimum: 1 },
+                    additions: { type: "integer", minimum: 0 },
+                    deletions: { type: "integer", minimum: 0 }
+                  }
                 }
               }
             }
           }
+        },
+        {
+          name: "summary",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsSummarySchema
+        },
+        {
+          name: "detail",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: detail
+        },
+        {
+          name: "activity",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsActivitySchema
+        },
+        {
+          name: "threadComments",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["repository", "number", "threadId", "cursor"],
+            properties: {
+              host: prsHostField,
+              repository: prsRepositoryField,
+              number: { type: "integer", minimum: 1 },
+              threadId: { type: "string", minLength: 1, maxLength: 512 },
+              cursor: { type: "string", minLength: 1, maxLength: 4096 }
+            }
+          },
+          outputSchema: prsThreadCommentsResultSchema
+        },
+        {
+          name: "stack",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsStackSchema
+        },
+        {
+          name: "linkedThreads",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLinkedThreadsSchema
+        },
+        {
+          name: "reviewerCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsReviewerCandidateListSchema
+        },
+        {
+          name: "labelCandidates",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsRefInputSchema,
+          outputSchema: prsLabelCandidateListSchema
+        },
+        {
+          name: "invalidate",
+          effect: "read",
+          requiredGrants: [PRS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { reference: prsRefInputSchema }
+          },
+          outputSchema: prsEmptyOutputSchema
         }
-      },
-      {
-        name: "summary",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsSummarySchema
-      },
-      {
-        name: "detail",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsDetailSchema
-      },
-      {
-        name: "activity",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsActivitySchema
-      },
-      {
-        name: "threadComments",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["repository", "number", "threadId", "cursor"],
-          properties: {
-            host: prsHostField,
-            repository: prsRepositoryField,
-            number: { type: "integer", minimum: 1 },
-            threadId: { type: "string", minLength: 1, maxLength: 512 },
-            cursor: { type: "string", minLength: 1, maxLength: 4096 }
-          }
+      ],
+      streams: [
+        {
+          name: "streamDiff",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffInputSchema,
+          eventSchema: prsDiffStreamEventSchema
         },
-        outputSchema: prsThreadCommentsResultSchema
-      },
-      {
-        name: "stack",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsStackSchema
-      },
-      {
-        name: "linkedThreads",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLinkedThreadsSchema
-      },
-      {
-        name: "reviewerCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsReviewerCandidateListSchema
-      },
-      {
-        name: "labelCandidates",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsRefInputSchema,
-        outputSchema: prsLabelCandidateListSchema
-      },
-      {
-        name: "invalidate",
-        effect: "read",
-        requiredGrants: [PRS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { reference: prsRefInputSchema }
+        {
+          name: "streamDiffFileContents",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsDiffFileContentsInputSchema,
+          eventSchema: vcsDiffFileContentsStreamEventSchema
         },
-        outputSchema: prsEmptyOutputSchema
-      }
-    ],
-    streams: [
-      {
-        name: "streamDiff",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffInputSchema,
-        eventSchema: prsDiffStreamEventSchema
-      },
-      {
-        name: "streamDiffFileContents",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsDiffFileContentsInputSchema,
-        eventSchema: vcsDiffFileContentsStreamEventSchema
-      },
-      {
-        name: "subscribeRefreshes",
-        requiredGrants: [PRS_READ],
-        inputSchema: prsEmptyInputSchema,
-        eventSchema: prsRefreshedEventSchema
-      }
+        {
+          name: "subscribeRefreshes",
+          requiredGrants: [PRS_READ],
+          inputSchema: prsEmptyInputSchema,
+          eventSchema: prsRefreshedEventSchema
+        }
+      ]
+    };
+  }
+  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
+      { version: "1.1.0", method: "detail", output: "observedAt" },
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
     ]
   });
+  var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
+  var PRS_READ_API_V1 = prsReadApiV1.definition;
   var VCS_ACTIONS = "t3.vcs/actions";
   var vcsActionKindSchema = {
     enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
@@ -8034,6 +8076,7 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1.definition,
     prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
@@ -8100,6 +8143,27 @@ var __t3Client = (() => {
       return null;
     const { version, Tooltip: Tooltip2 } = member;
     return Number.isInteger(version) && version >= 1 && isComponentType(Tooltip2) ? member : null;
+  }
+  function isComponent(value) {
+    return typeof value === "function" || typeof value === "object" && value !== null && "$$typeof" in value;
+  }
+  function resolveFloatingLayer(host) {
+    const member = host.floatingLayer;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Popover } = member;
+    return typeof version === "number" && version >= 1 && isComponent(Popover) ? member : null;
+  }
+  function resolveFloatingDialog(host) {
+    const layer = resolveFloatingLayer(host);
+    return layer !== null && layer.version >= 2 && isComponent(layer.Dialog) ? layer.Dialog : null;
+  }
+  function resolvePullRequestPreferences(host) {
+    const member = host.pullRequestPreferences;
+    if (!member || typeof member !== "object")
+      return null;
+    const value = member;
+    return typeof value.version === "number" && value.version >= 1 && ["lastMergeMethod", "setLastMergeMethod", "legacyProjectMergeMethod", "subscribe"].every((key) => typeof value[key] === "function") ? member : null;
   }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
@@ -8329,6 +8393,42 @@ var __t3Client = (() => {
   function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
   }
+  async function copyText(text) {
+    const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
+    if (typeof clipboard?.writeText === "function")
+      return clipboard.writeText(text);
+    if (!copyWithSelection(text))
+      throw new Error("Clipboard unavailable");
+  }
+  function copyWithSelection(text) {
+    if (typeof document === "undefined" || typeof document.execCommand !== "function")
+      return false;
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.setAttribute("aria-hidden", "true");
+    Object.assign(textarea.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      opacity: "0",
+      fontSize: "16px"
+    });
+    const previouslyFocused = document.activeElement;
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      textarea.setSelectionRange(0, text.length);
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+      if (typeof previouslyFocused?.focus === "function")
+        previouslyFocused.focus();
+    }
+  }
   function Tooltip(props) {
     const { host, ...rest } = props;
     const tooltip = resolveTooltip(host);
@@ -8336,7 +8436,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react2 = __toESM(require_react(), 1);
+  var import_react3 = __toESM(require_react(), 1);
 
   // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
@@ -8993,7 +9093,177 @@ var __t3Client = (() => {
   }
 
   // prsPanel.tsx
+  var import_react2 = __toESM(require_react(), 1);
+
+  // mutationToasts.ts
   var import_react = __toESM(require_react(), 1);
+  function useMutationToasts(host, session, enabled, runFollowUp = () => {
+  }) {
+    const [toastsLive, setToastsLive] = (0, import_react.useState)(false);
+    const [followUpsLive, setFollowUpsLive] = (0, import_react.useState)(false);
+    const dead = (0, import_react.useRef)(false);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted && !dead.current) {
+            setToastsLive(
+              capabilities.operations.notify === true && capabilities.operations.update === true
+            );
+            setFollowUpsLive(capabilities.operations.awaitAction === true);
+          }
+        },
+        () => {
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    const markDead = () => {
+      if (dead.current || session.signal.aborted) return;
+      dead.current = true;
+      setToastsLive(false);
+    };
+    const resource = session.context.resource;
+    const target = {
+      ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
+      ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
+    };
+    const receiptSeen = {
+      signal: session.signal,
+      seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
+      onChange: (listener) => {
+        const offView = session.onVisibility(listener);
+        if (typeof document === "undefined" || typeof window === "undefined") return offView;
+        document.addEventListener("visibilitychange", listener);
+        window.addEventListener("focus", listener);
+        window.addEventListener("blur", listener);
+        return () => {
+          offView();
+          document.removeEventListener("visibilitychange", listener);
+          window.removeEventListener("focus", listener);
+          window.removeEventListener("blur", listener);
+        };
+      }
+    };
+    const dismiss = (notificationId) => {
+      void bindApi(uiNotificationsApi, host, session.context).invoke("dismiss", { notificationId }, session.signal).catch(() => {
+      });
+    };
+    const report = (patch, onReceiptLost) => {
+      if (!toastsLive || dead.current) return false;
+      void bindApi(uiNotificationsApi, host, session.context).invoke("notify", { ...patch, ...target }, session.signal).then(
+        ({ notificationId }) => {
+          if (dead.current) {
+            dismiss(notificationId);
+            onReceiptLost();
+            return;
+          }
+          if (patch.severity === "success")
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+        }
+      );
+      return true;
+    };
+    const begin = (label, onReceiptLost, startTitle) => {
+      if (!toastsLive || dead.current) return null;
+      const api = bindApi(uiNotificationsApi, host, session.context);
+      const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
+      });
+      const posted = api.invoke(
+        "notify",
+        {
+          ...mutationToastStart(label),
+          ...startTitle !== void 0 ? { title: startTitle } : {},
+          ...target
+        },
+        session.signal
+      ).then(
+        (result) => {
+          if (dead.current) dismiss(result.notificationId);
+          return result.notificationId;
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+          return null;
+        }
+      );
+      const settleInPlace = (notificationId, patch) => void api.invoke("update", { notificationId, ...patch }, session.signal).then(
+        ({ applied }) => {
+          if (!applied) {
+            onReceiptLost();
+            return;
+          }
+          if (patch.severity === "success")
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        (error) => {
+          onReceiptLost();
+          if (!isNotificationDismissal(error)) markDead();
+        }
+      );
+      return {
+        settle(result, followUp) {
+          void posted.then(async (notificationId) => {
+            if (notificationId === null) return;
+            if (dead.current) {
+              onReceiptLost();
+              dismiss(notificationId);
+              return;
+            }
+            if (result.ok && followUp && followUpsLive) {
+              const replaced = await postFollowUpReceipt(
+                {
+                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
+                  dismiss: dismissOrReject,
+                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
+                },
+                notificationId,
+                result.detail,
+                followUp,
+                {
+                  onPosted: (receiptId) => dismissReceiptAfterSeen(
+                    receiptSeen,
+                    MUTATION_TOAST_DISMISS_MS,
+                    () => dismiss(receiptId)
+                  ),
+                  run: runFollowUp
+                }
+              );
+              if (replaced) return;
+            }
+            settleInPlace(notificationId, mutationToastSettle(label, result));
+          });
+        },
+        settleWith(patch) {
+          void posted.then((notificationId) => {
+            if (notificationId === null) return;
+            if (dead.current) {
+              onReceiptLost();
+              dismiss(notificationId);
+              return;
+            }
+            settleInPlace(notificationId, patch);
+          });
+        }
+      };
+    };
+    return { begin, report };
+  }
 
   // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
@@ -9741,18 +10011,6 @@ ${ref.number}`;
         return null;
     }
   }
-  function prsChecksLabel(state2) {
-    switch (state2) {
-      case "passing":
-        return "Checks passing";
-      case "failing":
-        return "Checks failing";
-      case "pending":
-        return "Checks pending";
-      default:
-        return null;
-    }
-  }
   function prsStackLabel(stack) {
     if (stack === void 0) return null;
     return `Stack ${stack.position}/${stack.size} \xB7 ${stack.base}`;
@@ -9786,6 +10044,137 @@ ${ref.number}`;
       formatRelativeTime(entry.updatedAt, now)
     ];
     return parts.filter((part) => part !== null).join(" \xB7 ");
+  }
+  var OPEN_ON_HOST_LABELS = {
+    github: "Open on GitHub",
+    gitlab: "Open on GitLab",
+    forgejo: "Open on Forgejo",
+    bitbucket: "Open on Bitbucket",
+    "azure-devops": "Open on Azure DevOps"
+  };
+  function prsOpenOnHostLabel(provider) {
+    return OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
+  }
+  function prsRepositoryUrl(changeRequestUrl) {
+    let url;
+    try {
+      url = new URL(changeRequestUrl);
+    } catch {
+      return null;
+    }
+    const path3 = /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ?? /^(.*?)(?:\/pulls?\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+      url.pathname
+    )?.[1];
+    if (!path3) return null;
+    url.pathname = path3;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  }
+  var branchPath = (branch) => branch.split("/").map(encodeURIComponent).join("/");
+  function prsHeadRepositoryUrl(repositoryUrl, repository, headRepository) {
+    if (repositoryUrl === null || !headRepository || headRepository === repository)
+      return repositoryUrl;
+    return repositoryUrl.endsWith(`/${repository}`) ? `${repositoryUrl.slice(0, -repository.length)}${headRepository}` : null;
+  }
+  function prsBranchUrl(provider, repositoryUrl, branch) {
+    if (repositoryUrl === null) return null;
+    switch (provider) {
+      case "github":
+        return `${repositoryUrl}/tree/${branchPath(branch)}`;
+      case "forgejo":
+        return `${repositoryUrl}/src/branch/${branchPath(branch)}`;
+      case "gitlab":
+        return `${repositoryUrl}/-/tree/${branchPath(branch)}`;
+      case "bitbucket":
+        return `${repositoryUrl}/branch/${branchPath(branch)}`;
+      case "azure-devops":
+        return `${repositoryUrl}?version=GB${encodeURIComponent(branch)}`;
+      default:
+        return null;
+    }
+  }
+  function prsCommitUrl(provider, repositoryUrl, oid) {
+    if (repositoryUrl === null) return null;
+    switch (provider) {
+      case "github":
+      case "forgejo":
+      case "azure-devops":
+        return `${repositoryUrl}/commit/${encodeURIComponent(oid)}`;
+      case "gitlab":
+        return `${repositoryUrl}/-/commit/${encodeURIComponent(oid)}`;
+      case "bitbucket":
+        return `${repositoryUrl}/commits/${encodeURIComponent(oid)}`;
+      default:
+        return null;
+    }
+  }
+  function prsOpenRefusedLabel(reason) {
+    switch (reason) {
+      case "invalid-url":
+        return "Could not open the link \u2014 the host sent an invalid address.";
+      case "scheme-not-allowed":
+        return "Could not open the link \u2014 only http and https links open.";
+      case "opener-refused":
+        return "Could not open the link \u2014 the system refused it.";
+    }
+  }
+  var PRS_CHECKOUT_OPTIONS = [
+    {
+      mode: "worktree",
+      label: "In a separate worktree",
+      description: "Its own folder. Nothing you have open moves."
+    },
+    {
+      mode: "local",
+      label: "In this repository",
+      description: "Switches the branch you are working in, like `gh pr checkout`."
+    }
+  ];
+  function prsCheckoutLabel(pending) {
+    return pending ? "Checking out..." : "Check out";
+  }
+  function prsCheckoutReceipt(mode, outcome) {
+    if (!outcome.ok)
+      return {
+        tone: "error",
+        title: "Could not prepare the pull request checkout",
+        description: outcome.detail
+      };
+    if (!outcome.value.isOnPullRequestHead)
+      return {
+        tone: "warning",
+        title: "Checked out, but the latest commits are unconfirmed",
+        description: "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request."
+      };
+    return mode === "local" || outcome.value.worktreePath === null ? {
+      tone: "success",
+      title: "Checked out here",
+      description: "This repository is on the pull request's branch."
+    } : {
+      tone: "success",
+      title: "Checked out",
+      description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`
+    };
+  }
+  function prsBranchChips(detail, stacked) {
+    return {
+      base: {
+        text: detail.baseBranch,
+        tooltip: stacked ? `Stacked on ${detail.baseBranch}` : detail.baseBranch,
+        stacked
+      },
+      head: { text: detail.headBranch, tooltip: detail.headBranch },
+      arrowLabel: "receives changes from"
+    };
+  }
+  function prsStackedOnDefault(baseBranch, refs) {
+    const defaultRef = refs.find((ref) => ref.isDefault);
+    if (defaultRef === void 0) return false;
+    if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
+    const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
+    const defaultBranch = defaultRef.name.startsWith(remotePrefix) ? defaultRef.name.slice(remotePrefix.length) : defaultRef.name;
+    return defaultBranch !== baseBranch;
   }
   function prsMergeabilityLabel(mergeability) {
     switch (mergeability) {
@@ -10199,17 +10588,39 @@ ${ref.number}`;
     const armed = methodLabel === void 0 ? "Auto-merge" : `Auto-merge (${methodLabel.toLowerCase()})`;
     return `${armed}: the host will merge this on its own once its requirements are met`;
   }
-  function prsChecksTooltip(state2) {
+  function prsChecksIcon(state2) {
     switch (state2) {
       case "passing":
-        return "All checks have passed";
+        return { glyph: "\u2713", label: "All checks have passed", tone: "success" };
       case "failing":
-        return "Some checks were not successful";
+        return { glyph: "\u2715", label: "Some checks were not successful", tone: "destructive" };
       case "pending":
-        return "Some checks haven't completed yet";
+        return { glyph: "\u25CF", label: "Some checks haven't completed yet", tone: "warning" };
       default:
         return null;
     }
+  }
+  function prsChecksStateFromChecks(checks) {
+    if (checks.length === 0) return null;
+    const statuses = new Set(checks.map((check) => check.status));
+    if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+    if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+    return statuses.has("success") ? "passing" : null;
+  }
+  function prsCompareSnapshots(current, incoming) {
+    const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
+    if (merged !== 0) return merged;
+    const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+    if (updated !== 0) return updated;
+    if (current.observedAt === void 0 && incoming.observedAt === void 0)
+      return incoming.receivedAt - current.receivedAt;
+    return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+  }
+  function prsReconcileChecks(checks, detail, entry) {
+    const detailState = prsChecksStateFromChecks(checks);
+    const latest = entry?.checksState !== void 0 && prsCompareSnapshots(detail, entry) >= 0 ? entry.checksState : detailState;
+    const state2 = latest !== "failing" && checks.some((check) => check.status === "action-required") ? "pending" : latest;
+    return { state: state2, stale: state2 !== detailState };
   }
   function prsStackTooltip(stack) {
     if (stack === void 0) return null;
@@ -10238,7 +10649,10 @@ ${ref.number}`;
   function prsCheckTooltip(check) {
     return check.description ?? check.name;
   }
-  function prsWriteActionOffers(detail, write) {
+  function prsSingleMergeAllowed(input) {
+    return !input.supportsStackActions || !input.hasStack && !input.stackPending && input.stackError === null;
+  }
+  function prsWriteActionOffers(detail, write, options = {}) {
     const declared = new Set(write.actions);
     const offer = (action, extra) => declared.has(action) ? {
       action,
@@ -10247,10 +10661,13 @@ ${ref.number}`;
       ...extra?.methods !== void 0 ? { methods: extra.methods } : {},
       ...extra?.updateMethods !== void 0 ? { updateMethods: extra.updateMethods } : {}
     } : null;
+    const mergeCapabilities = detail.mergeCapabilities;
+    const mergeMethods = mergeCapabilities === void 0 ? write.mergeMethods : write.mergeMethods.filter((method) => mergeCapabilities[method]);
+    const canMerge = !detail.isDraft && detail.mergeability !== "conflicting" && mergeMethods.length > 0 && options.singleMergeAllowed !== false;
     const offers = [];
     if (detail.state === "open") {
       if (!detail.isDraft) {
-        const merge = offer("merge", { methods: write.mergeMethods });
+        const merge = canMerge ? offer("merge", { methods: mergeMethods }) : null;
         if (merge !== null) offers.push(merge);
         const draft = offer("draft");
         if (draft !== null) offers.push(draft);
@@ -10265,8 +10682,8 @@ ${ref.number}`;
       if (detail.autoMergeEnabled === true) {
         const disarm = offer("disable-auto-merge");
         if (disarm !== null) offers.push(disarm);
-      } else if (detail.autoMergeEnabled === false) {
-        const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
+      } else if (detail.autoMergeEnabled === false && canMerge) {
+        const arm = offer("enable-auto-merge", { methods: mergeMethods });
         if (arm !== null) offers.push(arm);
       }
       const close = offer("close");
@@ -10283,6 +10700,81 @@ ${ref.number}`;
       if (revert !== null) offers.push(revert);
     }
     return offers;
+  }
+  function prsAllowedMergeMethods(detail) {
+    return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+  }
+  function prsResolveMergeMethod(allowed, current, projectDefault, lastSelected) {
+    for (const method of [current, projectDefault, lastSelected]) {
+      const match = allowed.find((candidate) => candidate === method);
+      if (match !== void 0) return match;
+    }
+    return allowed[0] ?? "merge";
+  }
+  function prsCanMergeStack(detail, write) {
+    return detail.capabilities.stacks === true && detail.capabilities.stackActions === true && detail.capabilities.actions.includes("merge") && detail.viewerPermissions.actions.includes("merge") && prsAllowedMergeMethods(detail).length > 0 && write.operations["prs.runAction"] && write.actions.includes("merge");
+  }
+  function prsStackMergePlan(stack, number, mergeMethod) {
+    const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
+    const selected = position > 0 ? stack.layers[position - 1] : void 0;
+    const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
+    const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
+    const count = layers.length;
+    const input = {
+      number,
+      action: "merge",
+      mergeMethod,
+      stackNumber: stack.number,
+      expectedStackHeads: layers.flatMap(
+        (layer) => layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : []
+      )
+    };
+    return {
+      visible: selected?.state === "open",
+      disabled: selected?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
+      layers,
+      input,
+      label: "Merge stack",
+      tooltip: `Merge stack through #${number} into ${stack.base} (${count} ${count === 1 ? "pull request" : "pull requests"})`,
+      confirmTitle: `Merge ${count} pull requests?`,
+      confirmDescription: `Merge #${number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`,
+      blockedNote: unready ? "Every layer being merged must be open and ready for review." : null
+    };
+  }
+  function prsStackMergeReceipt(outcome) {
+    return outcome.ok ? {
+      tone: "success",
+      title: "Stack merge request completed",
+      description: "GitHub merged the stack or added it to its merge queue."
+    } : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
+  }
+  function prsCanRebaseStack(detail, write) {
+    return detail.capabilities.stacks === true && detail.capabilities.stackActions === true && detail.viewerPermissions.stackRebase === true && write.operations["prs.runAction"] && write.actions.includes("update-branch");
+  }
+  function prsStackRebasePlan(stack) {
+    const layers = stack.layers.filter((layer) => layer.state !== "merged");
+    const top = stack.layers.at(-1);
+    const count = layers.length;
+    const input = {
+      number: top?.number ?? 0,
+      action: "update-branch",
+      updateMethod: "rebase",
+      stackNumber: stack.number,
+      expectedStackHeads: layers.flatMap(
+        (layer) => layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : []
+      )
+    };
+    return {
+      disabled: count === 0 || top === void 0 || layers.some((layer) => layer.state !== "open" || !layer.headSha),
+      layers,
+      input,
+      label: "Rebase stack",
+      confirmTitle: `Rebase ${count} pull requests?`,
+      confirmDescription: `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`
+    };
+  }
+  function prsStackRebaseReceipt(outcome) {
+    return outcome.ok ? { tone: "success", title: "Stack rebased", description: null } : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
   }
   function prsWriteVerdictOptions(verdicts) {
     const order = ["comment", "approve", "request-changes"];
@@ -10343,6 +10835,21 @@ ${writeKey}`;
     background: "transparent",
     color: "inherit"
   };
+  var linkButton = {
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+    textDecoration: "underline",
+    textUnderlineOffset: 2
+  };
+  var oidStyle = {
+    fontFamily: "var(--font-mono, ui-monospace, monospace)",
+    color: muted,
+    fontSize: 11
+  };
   var noteStyle = {
     margin: 0,
     padding: "4px 10px",
@@ -10370,8 +10877,8 @@ ${writeKey}`;
   };
   var message = (error, fallback) => error instanceof Error ? error.message : fallback;
   function usePrsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10393,8 +10900,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function usePrsWriteCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10415,13 +10922,52 @@ ${writeKey}`;
     }, [host, session, enabled, tick]);
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
+  function useCheckoutSupport(host, session, enabled) {
+    const [supported, setSupported] = (0, import_react2.useState)(false);
+    (0, import_react2.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsActionsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted)
+            setSupported(
+              capabilities.detected && capabilities.operations["actions.preparePullRequestThread"] === true
+            );
+        },
+        () => {
+          if (!signal.aborted) setSupported(false);
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    return enabled && supported;
+  }
+  function useDefaultRefs(host, session, enabled, revision2) {
+    const [refs, setRefs] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(vcsRefsApi, host, session.context).invoke("list", { includeMatchingRemoteRefs: true, limit: 2 }, signal).then(
+        (result) => {
+          if (!signal.aborted) setRefs(result.refs);
+        },
+        () => {
+          if (!signal.aborted) setRefs(null);
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled, revision2]);
+    return enabled ? refs : null;
+  }
   function usePrsRefreshes(host, session, enabled) {
-    const [state2, setState] = (0, import_react.useState)({
+    const [state2, setState] = (0, import_react2.useState)({
       tick: 0,
       live: false,
       detail: null
     });
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10476,12 +11022,15 @@ ${writeKey}`;
     }, [host, session, enabled]);
     return state2;
   }
+  function stampEntries(entries, receivedAt) {
+    return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
+  }
   function usePrsList(host, session, enabled, input, revision2) {
-    const inputKey = (0, import_react.useMemo)(() => JSON.stringify(input), [input]);
+    const inputKey = (0, import_react2.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
-    const [state2, setState] = (0, import_react.useState)(null);
-    const continuation = (0, import_react.useRef)(null);
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)(null);
+    const continuation = (0, import_react2.useRef)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10496,6 +11045,7 @@ ${writeKey}`;
               // search hit) must leave the list rather than linger stale.
               // Continuation pages merge on their own path in loadMore.
               entries: result.entries,
+              receivedAt: stampEntries(result.entries, Date.now()),
               result,
               error: null,
               pending: false,
@@ -10508,6 +11058,8 @@ ${writeKey}`;
               key,
               inputKey,
               entries: prev?.inputKey === inputKey ? prev.entries : [],
+              // A failed re-read keeps rows only as old as the read they came from.
+              receivedAt: prev?.inputKey === inputKey ? prev.receivedAt : {},
               result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
@@ -10537,6 +11089,7 @@ ${writeKey}`;
               (prev) => prev === null || prev.key !== key ? prev : {
                 ...prev,
                 entries: mergePrsEntries(prev.entries, page.entries),
+                receivedAt: { ...prev.receivedAt, ...stampEntries(page.entries, Date.now()) },
                 result: page,
                 loadingMore: false
               }
@@ -10556,6 +11109,7 @@ ${writeKey}`;
     const sameQuestion = state2 !== null && state2.inputKey === inputKey;
     return {
       entries: sameQuestion ? state2.entries : [],
+      receivedAt: sameQuestion ? state2.receivedAt : {},
       result: sameQuestion ? state2.result : null,
       error: state2?.key === key ? state2.error : null,
       pending: state2?.key !== key || state2.pending,
@@ -10565,19 +11119,21 @@ ${writeKey}`;
   }
   var EMPTY_SECTIONS = {
     detail: null,
+    detailReceivedAt: 0,
     detailError: null,
     activity: null,
     activityError: null,
     linked: null,
     linkedError: null,
     stack: null,
-    stackError: null
+    stackError: null,
+    stackKey: null
   };
   function usePrsDetail(host, session, ref, operations, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [sections, setSections] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [sections, setSections] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (ref === null || refKey === null || key === null || operations === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10592,7 +11148,9 @@ ${writeKey}`;
                 key,
                 refKey,
                 [field]: value,
-                [errorField]: null
+                [errorField]: null,
+                ...field === "stack" ? { stackKey: key } : {},
+                ...field === "detail" ? { detailReceivedAt: Date.now() } : {}
               }));
           },
           (error) => {
@@ -10627,7 +11185,8 @@ ${writeKey}`;
       read("stack", "stackError", operations["prs.stack"], () => api.invoke("stack", ref, signal));
       return () => controller.abort();
     }, [host, session, ref, refKey, operations, key]);
-    return sections?.refKey === refKey && refKey !== null ? sections : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+    const current = sections?.refKey === refKey && refKey !== null ? sections : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+    return { ...current, stackFresh: key !== null && current.stackKey === key };
   }
   function prsDiffFailure(detail) {
     switch (detail.kind) {
@@ -10644,8 +11203,8 @@ ${writeKey}`;
   function usePrsDiff(host, session, ref, enabled, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [state2, setState] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled || ref === null || key === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10726,8 +11285,8 @@ ${writeKey}`;
     return { diff: value, loadMore };
   }
   function useDebounced(value, delay) {
-    const [debounced, setDebounced] = (0, import_react.useState)(value);
-    (0, import_react.useEffect)(() => {
+    const [debounced, setDebounced] = (0, import_react2.useState)(value);
+    (0, import_react2.useEffect)(() => {
       const timer = setTimeout(() => setDebounced(value), delay);
       return () => clearTimeout(timer);
     }, [value, delay]);
@@ -10761,10 +11320,279 @@ ${writeKey}`;
     const [text, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
   }
+  var CHECKS_TONES = {
+    success: "var(--success, #2da44e)",
+    destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
+    warning: "var(--warning, #b54708)"
+  };
+  var FOCUSABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,[tabindex]';
+  function tabbablesIn(root) {
+    if (typeof root.querySelectorAll !== "function") return [];
+    return [...root.querySelectorAll(FOCUSABLE)].filter(
+      (element) => element.tabIndex >= 0 && !element.matches(":disabled") && element.closest("[hidden],[inert]") === null && isRendered(element)
+    );
+  }
+  function isRendered(element) {
+    const view = element.ownerDocument.defaultView;
+    if (view === null) return true;
+    if (view.getComputedStyle(element).visibility !== "visible") return false;
+    for (let node = element; node !== null; node = node.parentElement) {
+      if (view.getComputedStyle(node).display === "none") return false;
+    }
+    return true;
+  }
+  function tabbableAfter(from, popup) {
+    const order = tabbablesIn(from.ownerDocument).filter(
+      (element) => popup === null || !popup.contains(element)
+    );
+    return order[order.indexOf(from) + 1] ?? null;
+  }
+  function ChecksControl(props) {
+    const { host, state: state2, checks, stale = false, loadChecks, onOpenLink } = props;
+    const icon = prsChecksIcon(state2);
+    const [open, setOpen] = (0, import_react2.useState)(false);
+    const [lazy, setLazy] = (0, import_react2.useState)({ status: "loading" });
+    const trigger = (0, import_react2.useRef)(null);
+    const popup = (0, import_react2.useRef)(null);
+    const [popupElement, setPopupElement] = (0, import_react2.useState)(null);
+    const attachPopup = (0, import_react2.useCallback)((element) => {
+      popup.current = element;
+      setPopupElement(element);
+    }, []);
+    (0, import_react2.useEffect)(() => {
+      if (!open || popupElement === null) return;
+      const timer = setTimeout(() => {
+        (tabbablesIn(popupElement)[0] ?? popupElement).focus();
+      }, 0);
+      return () => clearTimeout(timer);
+    }, [open, popupElement]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || checks !== void 0 || loadChecks === void 0) return;
+      const controller = new AbortController();
+      setLazy({ status: "loading" });
+      loadChecks(controller.signal).then(
+        (loaded) => {
+          if (!controller.signal.aborted) setLazy({ status: "ready", checks: loaded });
+        },
+        (error) => {
+          if (!controller.signal.aborted)
+            setLazy({ status: "error", detail: message(error, "Checks unavailable") });
+        }
+      );
+      return () => controller.abort();
+    }, [open]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
+      const onPress = (event) => {
+        const target = event.target;
+        if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setOpen(false);
+      };
+      document.addEventListener("mousedown", onPress);
+      return () => document.removeEventListener("mousedown", onPress);
+    }, [open]);
+    if (icon === null) return null;
+    const close = (focus = trigger.current) => {
+      setOpen(false);
+      focus?.focus();
+    };
+    const shown = checks !== void 0 ? { status: "ready", checks } : loadChecks !== void 0 ? lazy : null;
+    const summary = checks === void 0 || stale ? null : prsChecksSummary(checks);
+    const Popover = resolveFloatingLayer(host)?.Popover;
+    const popupProps = {
+      role: "dialog",
+      "aria-label": "Checks",
+      // Portaled or not, React delivers these through the row: keep them here.
+      onClick: (event) => event.stopPropagation(),
+      onKeyDown: (event) => {
+        event.stopPropagation();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          close();
+          return;
+        }
+        if (event.key !== "Tab" || popup.current === null) return;
+        event.preventDefault();
+        const items = tabbablesIn(popup.current);
+        const at = items.findIndex((item) => item === popup.current?.ownerDocument.activeElement);
+        const next = event.shiftKey ? at === -1 ? -1 : at - 1 : at + 1;
+        if (next >= 0 && next < items.length) items[next]?.focus();
+        else if (event.shiftKey || trigger.current === null) close();
+        else close(tabbableAfter(trigger.current, popup.current) ?? trigger.current);
+      },
+      onBlur: (event) => {
+        const inside = (node) => node != null && (popup.current?.contains(node) === true || trigger.current?.contains(node) === true);
+        if (event.relatedTarget !== null) {
+          if (!inside(event.relatedTarget)) setOpen(false);
+          return;
+        }
+        setTimeout(() => {
+          if (!inside(popup.current?.ownerDocument.activeElement)) setOpen(false);
+        }, 0);
+      },
+      tabIndex: -1,
+      style: {
+        width: 320,
+        maxWidth: "calc(100vw - 24px)",
+        padding: "8px 10px",
+        border,
+        borderRadius: 6,
+        fontSize: 12,
+        textAlign: "left",
+        cursor: "default",
+        color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+        background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+        boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
+      }
+    };
+    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", fontWeight: 600, fontSize: 13 }, children: icon.label }),
+      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", color: muted }, children: summary }),
+      stale ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "li",
+        {
+          style: { display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted }, children: prsCheckStatusLabel(check.status) }),
+            check.url !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                "aria-label": `Open check ${check.name}`,
+                onClick: () => check.url !== null && onOpenLink(check.url),
+                style: { ...linkButton, flexShrink: 0 },
+                children: "Details"
+              }
+            )
+          ]
+        },
+        `${index}:${check.name}`
+      )) }) : null
+    ] });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "span",
+        {
+          ref: trigger,
+          role: "button",
+          tabIndex: 0,
+          "aria-label": `Checks: ${icon.label}`,
+          "aria-haspopup": "dialog",
+          "aria-expanded": open,
+          onClick: (event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          },
+          onKeyDown: (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen((value) => !value);
+            } else if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              close();
+            }
+          },
+          style: {
+            fontSize: 11,
+            lineHeight: 1,
+            cursor: "pointer",
+            color: CHECKS_TONES[icon.tone]
+          },
+          children: icon.glyph
+        }
+      ),
+      open && (Popover !== void 0 && trigger.current !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        Popover,
+        {
+          ...popupProps,
+          anchor: trigger.current,
+          side: "bottom",
+          align: "start",
+          elementRef: attachPopup,
+          children: body
+        }
+      ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          ...popupProps,
+          ref: attachPopup,
+          style: { ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 },
+          children: body
+        }
+      ))
+    ] });
+  }
+  var chipStyle = {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontFamily: "var(--font-mono, ui-monospace, monospace)",
+    fontSize: 11
+  };
+  function CopyableCode(props) {
+    const { host, value, copyLabel, copiedLabel, onError } = props;
+    const [copied, setCopied] = (0, import_react2.useState)(false);
+    (0, import_react2.useEffect)(() => {
+      if (!copied) return;
+      const timer = setTimeout(() => setCopied(false), 1600);
+      return () => clearTimeout(timer);
+    }, [copied]);
+    const copy = () => {
+      copyText(value).then(
+        () => setCopied(true),
+        (error) => onError(message(error, "Copy failed"))
+      );
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: `${copied ? "Copied" : copyLabel}: ${value}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": copied ? copiedLabel : copyLabel,
+        onClick: copy,
+        style: { ...linkButton, textDecoration: "none", minWidth: 0, maxWidth: "100%" },
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, display: "block" }, children: copied ? "Copied" : value })
+      }
+    ) });
+  }
+  function BranchChips(props) {
+    const chips = prsBranchChips(props.detail, props.stacked);
+    const openControl = (text, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": `Open branch ${text} on host`,
+        onClick: () => props.onOpen(url),
+        style: { ...linkButton, textDecoration: "none", flexShrink: 0, fontSize: 11 },
+        children: "\u2197"
+      }
+    ) });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
+        chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
+        chips.base.text
+      ] }) }),
+      openControl(chips.base.text, props.baseUrl),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { display: "inline-flex", flex: 1, minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        CopyableCode,
+        {
+          host: props.host,
+          value: chips.head.text,
+          copyLabel: "Copy pull request branch",
+          copiedLabel: "Branch name copied",
+          onError: props.onCopyError
+        },
+        chips.head.text
+      ) }),
+      openControl(chips.head.text, props.headUrl)
+    ] });
+  }
   function PrListRow(props) {
-    const { host, entry, viewers, onSelect } = props;
+    const { host, entry, viewers, onSelect, loadChecks, onOpenLink } = props;
     const review = prsReviewLabel(entry.reviewDecision);
-    const checks = prsChecksLabel(entry.checksState);
     const stack = prsStackLabel(entry.stack);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "button",
@@ -10798,6 +11626,15 @@ ${writeKey}`;
                   whiteSpace: "nowrap"
                 },
                 children: entry.title
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              ChecksControl,
+              {
+                host,
+                state: entry.checksState,
+                loadChecks,
+                onOpenLink
               }
             ),
             entry.viewerReviewRequested && badge("Review requested", "open")
@@ -10834,14 +11671,15 @@ ${writeKey}`;
                   }
                 ),
                 review !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
-                checks !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsChecksTooltip(entry.checksState), children: badge(
-                  checks,
-                  entry.checksState === "passing" ? "open" : entry.checksState === "failing" ? "closed" : "muted"
-                ) }),
                 stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
               ]
             }
           ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
+          ] }),
           entry.labels.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "span",
             {
@@ -11061,8 +11899,8 @@ ${writeKey}`;
     );
   }
   function PrsFileSection({ row }) {
-    const [collapsed, setCollapsed] = (0, import_react.useState)(false);
-    const rows = (0, import_react.useMemo)(
+    const [collapsed, setCollapsed] = (0, import_react2.useState)(false);
+    const rows = (0, import_react2.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row),
       [collapsed, row]
     );
@@ -11218,6 +12056,240 @@ ${writeKey}`;
       )
     ] });
   }
+  function CheckoutMenu(props) {
+    const { host, pending, disabled, onPick } = props;
+    const [open, setOpen] = (0, import_react2.useState)(null);
+    const trigger = (0, import_react2.useRef)(null);
+    const items = (0, import_react2.useRef)([]);
+    (0, import_react2.useEffect)(() => {
+      if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
+    }, [open]);
+    const close = () => {
+      setOpen(null);
+      trigger.current?.focus();
+    };
+    const move = (step) => {
+      const focused = typeof document === "undefined" ? null : document.activeElement;
+      const at = items.current.findIndex((item) => item === focused);
+      const count = PRS_CHECKOUT_OPTIONS.length;
+      items.current[(at + step + count) % count]?.focus();
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Check out this pull request", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "button",
+        {
+          ref: trigger,
+          type: "button",
+          "aria-haspopup": "menu",
+          "aria-expanded": open !== null,
+          "aria-label": prsCheckoutLabel(pending),
+          disabled,
+          onClick: () => setOpen((value) => value === null ? "first" : null),
+          onKeyDown: (event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(event.key === "ArrowDown" ? "first" : "last");
+            }
+          },
+          style: { ...control, fontSize: 12, border },
+          children: [
+            prsCheckoutLabel(pending),
+            " \u25BE"
+          ]
+        }
+      ) }),
+      open !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "div",
+        {
+          role: "menu",
+          "aria-label": "Check out",
+          onKeyDown: (event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (event.key === "Tab") {
+              setOpen(null);
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              move(event.key === "ArrowDown" ? 1 : -1);
+            } else if (event.key === "Home" || event.key === "End") {
+              event.preventDefault();
+              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+            }
+          },
+          onBlur: (event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setOpen(null);
+          },
+          style: {
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 10,
+            minWidth: 260,
+            marginTop: 4,
+            padding: 4,
+            border,
+            borderRadius: 6,
+            background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
+          },
+          children: PRS_CHECKOUT_OPTIONS.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              ref: (element) => {
+                items.current[index] = element;
+              },
+              type: "button",
+              role: "menuitem",
+              onClick: () => {
+                close();
+                onPick(option.mode);
+              },
+              style: {
+                ...control,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                width: "100%",
+                textAlign: "left",
+                fontSize: 13
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: option.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 12, color: muted }, children: option.description })
+              ]
+            },
+            option.mode
+          ))
+        }
+      )
+    ] });
+  }
+  function ConfirmDialog(props) {
+    const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
+    const titleId = (0, import_react2.useId)();
+    const descriptionId = (0, import_react2.useId)();
+    const cancel = (0, import_react2.useRef)(null);
+    const confirm = (0, import_react2.useRef)(null);
+    const opener = (0, import_react2.useRef)(anchor);
+    const HostDialog = resolveFloatingDialog(host);
+    const hosted = HostDialog !== null;
+    (0, import_react2.useEffect)(() => {
+      if (hosted) return;
+      cancel.current?.focus();
+      const returnTo = opener.current;
+      return () => returnTo?.focus();
+    }, [hosted]);
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!pending) onCancel();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      const order = pending ? [] : [cancel.current, confirm.current].filter((item) => item !== null);
+      if (order.length === 0) return;
+      const focused = typeof document === "undefined" ? null : document.activeElement;
+      const at = order.findIndex((item) => item === focused);
+      const next = event.shiftKey ? at <= 0 ? order.length - 1 : at - 1 : (at + 1) % order.length;
+      order[next]?.focus();
+    };
+    const dialogProps = {
+      role: "dialog",
+      "aria-modal": true,
+      "aria-labelledby": titleId,
+      "aria-describedby": descriptionId,
+      onKeyDown
+    };
+    const surface = {
+      width: 360,
+      maxWidth: "calc(100vw - 24px)",
+      padding: "10px 12px",
+      border,
+      borderRadius: 8,
+      fontSize: 12,
+      color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+      background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+      boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)"
+    };
+    const actions = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          ref: cancel,
+          type: "button",
+          disabled: pending,
+          onClick: onCancel,
+          style: { ...control, fontSize: 12, border },
+          children: "Cancel"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "button",
+        {
+          ref: confirm,
+          type: "button",
+          disabled: pending,
+          onClick: onConfirm,
+          style: { ...control, fontSize: 12, border },
+          children: pending ? "Working\u2026" : confirmLabel
+        }
+      )
+    ] });
+    if (HostDialog !== null)
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        HostDialog,
+        {
+          title,
+          description,
+          dismissible: !pending,
+          onDismiss: onCancel,
+          initialFocus: cancel,
+          footer: actions,
+          children: props.children
+        }
+      );
+    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted }, children: description }),
+      props.children,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: actions })
+    ] });
+    const Popover = resolveFloatingLayer(host)?.Popover;
+    if (Popover !== void 0 && anchor !== null)
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Popover, { ...dialogProps, anchor, side: "bottom", align: "start", style: surface, children: body });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        ...dialogProps,
+        style: { ...surface, position: "absolute", top: 36, left: 10, zIndex: 20 },
+        children: body
+      }
+    );
+  }
+  function receiptToast(receipt2) {
+    return {
+      severity: receipt2.tone,
+      title: receipt2.title,
+      ...receipt2.description !== null ? { body: receipt2.description } : {}
+    };
+  }
+  function ReceiptLine({ receipt: receipt2 }) {
+    if (receipt2 === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: receipt2.tone === "error" ? "alert" : "status", style: { ...noteStyle, fontSize: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "strong",
+        {
+          style: {
+            color: receipt2.tone === "error" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : receipt2.tone === "warning" ? "var(--warning, #b54708)" : "inherit"
+          },
+          children: receipt2.title
+        }
+      ),
+      receipt2.description !== null ? ` \u2014 ${receipt2.description}` : ""
+    ] });
+  }
   function PrsComposer(props) {
     const { label, placeholder, value, pending, error, onChange, onSubmit } = props;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
@@ -11284,16 +12356,33 @@ ${writeKey}`;
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
     ] });
   }
+  var MERGE_METHODS = ["merge", "squash", "rebase"];
+  function useRememberedMergeMethod(host) {
+    const preferences = resolvePullRequestPreferences(host);
+    const [local, setLocal] = (0, import_react2.useState)(null);
+    const [, setChanged] = (0, import_react2.useState)(0);
+    (0, import_react2.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+    return {
+      last: preferences === null ? local : preferences.lastMergeMethod(),
+      legacy: (project) => preferences?.legacyProjectMergeMethod(project) ?? void 0,
+      remember: (value) => {
+        const method = MERGE_METHODS.find((candidate) => candidate === value);
+        if (method === void 0) return;
+        if (preferences === null) setLocal(method);
+        else preferences.setLastMergeMethod(method);
+      }
+    };
+  }
   function PullRequestsPanel(props) {
     const { host, session, visible, selected, onSelect } = props;
-    const [tick, setTick] = (0, import_react.useState)(0);
-    const [listState, setListState] = (0, import_react.useState)("open");
-    const [involvement, setInvolvement] = (0, import_react.useState)("all");
-    const [query, setQuery] = (0, import_react.useState)("");
-    const [refreshError, setRefreshError] = (0, import_react.useState)(null);
-    const [pagingThreads, setPagingThreads] = (0, import_react.useState)(/* @__PURE__ */ new Map());
-    const [pagedThreads, setPagedThreads] = (0, import_react.useState)(null);
-    const pagedGeneration = (0, import_react.useRef)({
+    const [tick, setTick] = (0, import_react2.useState)(0);
+    const [listState, setListState] = (0, import_react2.useState)("open");
+    const [involvement, setInvolvement] = (0, import_react2.useState)("all");
+    const [query, setQuery] = (0, import_react2.useState)("");
+    const [refreshError, setRefreshError] = (0, import_react2.useState)(null);
+    const [pagingThreads, setPagingThreads] = (0, import_react2.useState)(/* @__PURE__ */ new Map());
+    const [pagedThreads, setPagedThreads] = (0, import_react2.useState)(null);
+    const pagedGeneration = (0, import_react2.useRef)({
       scope: null,
       activity: null,
       generation: 0
@@ -11305,8 +12394,28 @@ ${writeKey}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [drafts, setDrafts] = (0, import_react.useState)({});
-    const [writeState, setWriteState] = (0, import_react.useState)(null);
+    const [drafts, setDrafts] = (0, import_react2.useState)({});
+    const [writeState, setWriteState] = (0, import_react2.useState)(null);
+    const rememberedMergeMethod = useRememberedMergeMethod(host);
+    const [openError, setOpenError] = (0, import_react2.useState)(null);
+    const [stackConfirm, setStackConfirm] = (0, import_react2.useState)(null);
+    const stackMergeOpener = (0, import_react2.useRef)(null);
+    const stackRebaseOpener = (0, import_react2.useRef)(null);
+    const [stackReceipt, setStackReceipt] = (0, import_react2.useState)(null);
+    const [handoff, setHandoff] = (0, import_react2.useState)(null);
+    const [handoffReceipt, setHandoffReceipt] = (0, import_react2.useState)(null);
+    const openOnHost = (url) => {
+      setOpenError(null);
+      void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
+        (receipt2) => {
+          if (!session.signal.aborted && receipt2.status === "refused")
+            setOpenError(prsOpenRefusedLabel(receipt2.reason));
+        },
+        (error) => {
+          if (!session.signal.aborted) setOpenError(message(error, "Could not open the link"));
+        }
+      );
+    };
     const refreshes = usePrsRefreshes(
       host,
       session,
@@ -11314,7 +12423,7 @@ ${writeKey}`;
     );
     const revision2 = `${tick}:${refreshes.tick}`;
     const debouncedQuery = useDebounced(query, 250);
-    const listInput = (0, import_react.useMemo)(
+    const listInput = (0, import_react2.useMemo)(
       () => prsListInput(listState, involvement, debouncedQuery),
       [listState, involvement, debouncedQuery]
     );
@@ -11352,10 +12461,60 @@ ${writeKey}`;
       ).finally(() => controller.abort());
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
+    const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const defaultRefs = useDefaultRefs(
+      host,
+      session,
+      visible && ready && selected !== null,
+      revision2
+    );
+    const toasts = useMutationToasts(host, session, visible && ready);
+    const beginReport = (label, startTitle, showInline) => {
+      let settled = null;
+      let lost = false;
+      const toast = toasts.begin(
+        label,
+        () => {
+          lost = true;
+          if (settled !== null) showInline(settled);
+        },
+        startTitle
+      );
+      return (receipt2) => {
+        settled = receipt2;
+        if (toast === null || lost) showInline(receipt2);
+        else toast.settleWith(receiptToast(receipt2));
+      };
+    };
+    const reportResult = (receipt2, showInline) => {
+      if (!toasts.report(receiptToast(receipt2), () => showInline(receipt2))) showInline(receipt2);
+    };
+    const startCheckout = (url, mode) => {
+      if (selectedKey === null || handoff !== null) return;
+      const refKey = selectedKey;
+      setHandoff(`checkout:${mode}`);
+      setHandoffReceipt(null);
+      const report = beginReport(
+        "Check out",
+        "Preparing the pull request checkout...",
+        (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
+      );
+      void bindApi(vcsActionsApi, host, session.context).invoke("preparePullRequestThread", { reference: url, mode }, session.signal).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({
+          ok: false,
+          detail: error instanceof Error ? error.message : null
+        })
+      ).then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        report(prsCheckoutReceipt(mode, outcome));
+      });
+    };
     const draftKey = (key) => prsDraftKey(selectedKey, key);
     const draft = (key) => drafts[draftKey(key)] ?? "";
     const setDraft = (key, value) => setDrafts((current) => ({ ...current, [draftKey(key)]: value }));
-    const runWrite = (key, invoke, settled) => {
+    const runWrite = (key, invoke, settled, onSettled) => {
       if (writeState?.pending) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11372,15 +12531,14 @@ ${writeKey}`;
               )
             );
           }
+          onSettled?.({ ok: true });
           runInvalidate();
         },
         (error) => {
-          if (!signal.aborted)
-            setWriteState({
-              key,
-              pending: false,
-              error: message(error, "Pull-request write failed")
-            });
+          if (signal.aborted) return;
+          const detail2 = message(error, "Pull-request write failed");
+          setWriteState({ key, pending: false, error: detail2 });
+          onSettled?.({ ok: false, detail: detail2 });
         }
       );
     };
@@ -11430,7 +12588,7 @@ ${writeKey}`;
     };
     const pagedScope = selectedKey === null ? null : `${revision2}
 ${selectedKey}`;
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       const current = pagedGeneration.current;
       if (current.scope !== pagedScope || current.activity !== sections.activity)
         pagedGeneration.current = {
@@ -11501,15 +12659,83 @@ ${thread.id}`;
     };
     const detail = sections.detail;
     const activity = sections.activity;
+    const singleMergeAllowed = prsSingleMergeAllowed({
+      supportsStackActions: ops?.["prs.stack"] === true && detail?.capabilities.stacks === true && detail.capabilities.stackActions === true,
+      hasStack: sections.stack !== null && sections.stack.layers.length > 0,
+      stackPending: !sections.stackFresh,
+      stackError: sections.stackError
+    });
+    const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+    const selectedEntry = selectedKey === null ? void 0 : list.entries.find((entry) => prsRefKey(entry) === selectedKey);
+    const checksRollup = detail === null ? null : prsReconcileChecks(
+      detail.checks,
+      { ...detail, receivedAt: sections.detailReceivedAt },
+      selectedEntry === void 0 || selectedKey === null ? void 0 : { ...selectedEntry, receivedAt: list.receivedAt[selectedKey] ?? 0 }
+    );
+    const checksHeading = detail === null || checksRollup === null ? null : checksRollup.stale ? prsChecksIcon(checksRollup.state)?.label ?? "No checks reported" : prsChecksSummary(detail.checks);
+    const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
+    const mergeMethod = prsResolveMergeMethod(
+      allowedMergeMethods,
+      draft("method:merge") || null,
+      detail === null ? void 0 : detail.preferredMergeMethod ?? rememberedMergeMethod.legacy({
+        environmentId: session.context.resource.environmentId,
+        projectId: detail.projectId
+      }),
+      rememberedMergeMethod.last
+    );
+    const pickMergeMethod = (value) => {
+      setDraft("method:merge", value);
+      rememberedMergeMethod.remember(value);
+    };
+    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, mergeMethod) : null;
+    const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
+    const openStackConfirm = (action) => {
+      if (selectedKey === null) return;
+      const opener = action === "merge" ? stackMergeOpener : stackRebaseOpener;
+      setStackConfirm({ refKey: selectedKey, action, opener: opener.current });
+    };
+    const confirmPlan = stackConfirm === null || stackConfirm.refKey !== selectedKey ? null : stackConfirm.running ?? (stackConfirm.action === "merge" ? stackMerge : stackRebase);
+    const confirming = confirmPlan !== null ? stackConfirm : null;
+    const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
+    const runStackAction = () => {
+      if (selected === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
+        return;
+      const ref = selected;
+      const refKey = selectedKey;
+      const { action } = confirming;
+      setStackConfirm({ ...confirming, running: confirmPlan });
+      setStackReceipt(null);
+      runWrite(
+        `stack:${action}`,
+        (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
+        void 0,
+        (outcome) => {
+          setStackConfirm(null);
+          reportResult(
+            action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
+            (receipt2) => setStackReceipt({ refKey, receipt: receipt2 })
+          );
+        }
+      );
+    };
+    const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
+    const closeConfirmation = () => setStackConfirm(null);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
         "aria-label": "Pull requests",
-        style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
+        style: {
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          position: "relative"
+        },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "div",
             {
+              inert: confirming !== null,
               style: {
                 display: "flex",
                 alignItems: "center",
@@ -11570,7 +12796,7 @@ ${thread.id}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { inert: confirming !== null, style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
             gate.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Reading pull-request capabilities\u2026" }),
             gate.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
               "Pull requests unavailable \u2014 ",
@@ -11610,6 +12836,16 @@ ${thread.id}`;
                     host,
                     entry: prEntry,
                     viewers: list.result?.viewers ?? {},
+                    loadChecks: (signal) => bindApi(prsReadApi, host, session.context).invoke(
+                      "detail",
+                      {
+                        host: prEntry.host,
+                        repository: prEntry.repository,
+                        number: prEntry.number
+                      },
+                      AbortSignal.any([signal, session.signal])
+                    ).then((read) => read.checks),
+                    onOpenLink: openOnHost,
                     onSelect: () => onSelect({
                       host: prEntry.host,
                       repository: prEntry.repository,
@@ -11659,15 +12895,67 @@ ${thread.id}`;
                         children: [
                           stateBadge(host, detail),
                           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.repository, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
-                            detail.repository,
-                            "#",
-                            detail.number
-                          ] }) })
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            Tooltip,
+                            {
+                              host,
+                              side: "top",
+                              label: repositoryUrl !== null ? `Open ${detail.repository} repository` : detail.repository,
+                              children: repositoryUrl !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                "button",
+                                {
+                                  type: "button",
+                                  onClick: () => openOnHost(repositoryUrl),
+                                  style: { ...linkButton, color: muted, fontSize: 12 },
+                                  children: detail.repository
+                                }
+                              ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: detail.repository })
+                            }
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsOpenOnHostLabel(detail.provider), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                            "button",
+                            {
+                              type: "button",
+                              "aria-label": `Open pull request #${detail.number} on host`,
+                              onClick: () => openOnHost(detail.url),
+                              style: { ...linkButton, fontSize: 12 },
+                              children: [
+                                "#",
+                                detail.number,
+                                " \u2197"
+                              ]
+                            }
+                          ) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            ChecksControl,
+                            {
+                              host,
+                              state: checksRollup?.state,
+                              checks: detail.checks,
+                              stale: checksRollup?.stale === true,
+                              onOpenLink: openOnHost
+                            }
+                          ),
+                          canCheckout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { marginLeft: "auto" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            CheckoutMenu,
+                            {
+                              host,
+                              pending: handoff?.startsWith("checkout") === true,
+                              disabled: handoff !== null,
+                              onPick: (mode) => startCheckout(detail.url, mode)
+                            }
+                          ) })
                         ]
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url })
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      ReceiptLine,
+                      {
+                        receipt: handoffReceipt?.refKey === selectedKey ? handoffReceipt.receipt : null
+                      }
+                    ),
+                    openError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, padding: "2px 0", fontSize: 12 }, children: openError })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
                     metaRow(
@@ -11676,15 +12964,26 @@ ${thread.id}`;
                     ),
                     metaRow(
                       "Branches",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.headBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                          detail.headRepositoryNameWithOwner ?? detail.headBranch,
-                          ":",
-                          detail.headBranch
-                        ] }) }),
-                        " \u2192 ",
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.baseBranch, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: detail.baseBranch }) })
-                      ] })
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        BranchChips,
+                        {
+                          host,
+                          detail,
+                          stacked: prsStackedOnDefault(detail.baseBranch, defaultRefs ?? []),
+                          baseUrl: prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch),
+                          headUrl: prsBranchUrl(
+                            detail.provider,
+                            prsHeadRepositoryUrl(
+                              repositoryUrl,
+                              detail.repository,
+                              detail.headRepositoryNameWithOwner
+                            ),
+                            detail.headBranch
+                          ),
+                          onOpen: openOnHost,
+                          onCopyError: setOpenError
+                        }
+                      )
                     ),
                     metaRow(
                       "Changes",
@@ -11754,15 +13053,15 @@ ${thread.id}`;
                     },
                     children: [
                       writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, padding: 0 }, children: "This host takes no pull-request actions." }),
-                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                         PrsActionButton,
                         {
                           host,
                           offer,
                           disabled: writeState?.pending === true,
                           pendingAction: writeState?.pending === true && writeState.key.startsWith("action:") ? writeState.key.slice("action:".length) : null,
-                          method: draft(`method:${offer.action}`) || (offer.methods ?? offer.updateMethods ?? [])[0] || "",
-                          onMethodChange: (value) => setDraft(`method:${offer.action}`, value),
+                          method: offer.methods !== void 0 ? mergeMethod : draft(`method:${offer.action}`) || offer.updateMethods?.[0] || "",
+                          onMethodChange: (value) => offer.methods !== void 0 ? pickMergeMethod(value) : setDraft(`method:${offer.action}`, value),
                           onRun: runPrAction
                         },
                         offer.action
@@ -11774,6 +13073,12 @@ ${thread.id}`;
                         }
                       )
                     ]
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  ReceiptLine,
+                  {
+                    receipt: stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null
                   }
                 ),
                 sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.stackError }),
@@ -11802,12 +13107,69 @@ ${thread.id}`;
                       ]
                     },
                     layer.number
-                  )) })
+                  )) }),
+                  (stackMerge !== null && stackMerge.visible || stackRebase !== null) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        padding: "2px 10px"
+                      },
+                      children: [
+                        stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          Tooltip,
+                          {
+                            host,
+                            side: "top",
+                            label: stackMerge.tooltip,
+                            showWhenDisabled: true,
+                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              "button",
+                              {
+                                type: "button",
+                                disabled: stackMerge.disabled || writeState?.pending === true,
+                                ref: stackMergeOpener,
+                                onClick: () => openStackConfirm("merge"),
+                                style: { ...control, fontSize: 12, border },
+                                children: stackMerge.label
+                              }
+                            )
+                          }
+                        ),
+                        stackMerge !== null && stackMerge.visible && allowedMergeMethods.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "select",
+                          {
+                            "aria-label": "Merge stack method",
+                            value: mergeMethod,
+                            disabled: writeState?.pending === true,
+                            onChange: (event) => pickMergeMethod(event.target.value),
+                            style: { ...control, fontSize: 12, padding: "2px 4px" },
+                            children: allowedMergeMethods.map((method) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: method, children: method }, method))
+                          }
+                        ),
+                        stackRebase !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            disabled: stackRebase.disabled || writeState?.pending === true,
+                            ref: stackRebaseOpener,
+                            onClick: () => openStackConfirm("rebase"),
+                            style: { ...control, fontSize: 12, border },
+                            children: stackRebase.label
+                          }
+                        ),
+                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
+                      ]
+                    }
+                  )
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Checks", style: { paddingBottom: 4 }, children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
                     "Checks",
-                    detail !== null && prsChecksSummary(detail.checks) !== null ? ` \u2014 ${prsChecksSummary(detail.checks)}` : ""
+                    checksHeading !== null ? ` \u2014 ${checksHeading}` : ""
                   ] }),
                   detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No checks reported." }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -11928,26 +13290,37 @@ ${thread.id}`) === activity,
                       activity.commits.length,
                       ")"
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        "span",
-                        {
-                          style: {
-                            fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                            color: muted,
-                            fontSize: 11
-                          },
-                          children: commit.oid.slice(0, 8)
-                        }
-                      ),
-                      " ",
-                      commit.messageHeadline,
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => {
+                      const url = commitUrl(commit.oid);
+                      const short = commit.oid.slice(0, 8);
+                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
+                        url === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: oidStyle, children: short }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          Tooltip,
+                          {
+                            host,
+                            side: "top",
+                            label: prsOpenOnHostLabel(detail?.provider ?? "unknown"),
+                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              "button",
+                              {
+                                type: "button",
+                                "aria-label": `Open commit ${short} on host`,
+                                onClick: () => openOnHost(url),
+                                style: { ...linkButton, ...oidStyle },
+                                children: short
+                              }
+                            )
+                          }
+                        ),
                         " ",
-                        "\xB7 ",
-                        formatRelativeTime(commit.committedDate)
-                      ] })
-                    ] }, commit.oid)) })
+                        commit.messageHeadline,
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                          " ",
+                          "\xB7 ",
+                          formatRelativeTime(commit.committedDate)
+                        ] })
+                      ] }, commit.oid);
+                    }) })
                   ] }),
                   activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
                 ] }),
@@ -11965,7 +13338,26 @@ ${thread.id}`) === activity,
                 prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
             ] })
-          ] })
+          ] }),
+          confirming !== null && confirmPlan !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            ConfirmDialog,
+            {
+              host,
+              anchor: confirming.opener,
+              title: confirmPlan.confirmTitle,
+              description: confirmPlan.confirmDescription,
+              confirmLabel: confirmPlan.label,
+              pending: stackActionPending,
+              onCancel: closeConfirmation,
+              onConfirm: runStackAction,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: confirmPlan.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+                "#",
+                layer.number,
+                " ",
+                layer.title ?? layer.headBranch
+              ] }, layer.number)) })
+            }
+          )
         ]
       }
     );
@@ -11987,8 +13379,8 @@ ${thread.id}`) === activity,
     ) && (record.selectedPath === void 0 || typeof record.selectedPath === "string") && (record.selectedLane === void 0 || typeof record.selectedLane === "string" && LANES.has(record.selectedLane)) && (record.view === void 0 || typeof record.view === "string" && VIEWS.has(record.view)) && (record.prHost === void 0 || typeof record.prHost === "string") && (record.prRepository === void 0 || typeof record.prRepository === "string") && (record.prNumber === void 0 || typeof record.prNumber === "number");
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12010,8 +13402,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusStream(host, session, visible, tick) {
-    const [model, setModel] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [model, setModel] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12068,8 +13460,8 @@ ${thread.id}`) === activity,
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
   function useVcsActionsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12091,8 +13483,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useChangesList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12118,8 +13510,8 @@ ${thread.id}`) === activity,
     return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12142,8 +13534,8 @@ ${thread.id}`) === activity,
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   function useRemotesList(host, session, visible, enabled, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !enabled || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12166,8 +13558,8 @@ ${thread.id}`) === activity,
     return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [vars, setVars] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12209,130 +13601,6 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  function useMutationToasts(host, session, enabled, runFollowUp) {
-    const [toastsLive, setToastsLive] = (0, import_react2.useState)(false);
-    const [followUpsLive, setFollowUpsLive] = (0, import_react2.useState)(false);
-    const dead = (0, import_react2.useRef)(false);
-    (0, import_react2.useEffect)(() => {
-      if (!enabled) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
-        (capabilities) => {
-          if (!signal.aborted && !dead.current) {
-            setToastsLive(
-              capabilities.operations.notify === true && capabilities.operations.update === true
-            );
-            setFollowUpsLive(capabilities.operations.awaitAction === true);
-          }
-        },
-        () => {
-        }
-      );
-      return () => controller.abort();
-    }, [host, session, enabled]);
-    const markDead = () => {
-      if (dead.current || session.signal.aborted) return;
-      dead.current = true;
-      setToastsLive(false);
-    };
-    const begin = (label, onReceiptLost) => {
-      if (!toastsLive || dead.current) return null;
-      const api = bindApi(uiNotificationsApi, host, session.context);
-      const resource = session.context.resource;
-      const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
-      });
-      const dismiss = (notificationId) => {
-        void dismissOrReject(notificationId).catch(() => {
-        });
-      };
-      const target = {
-        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
-        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
-      };
-      const posted = api.invoke("notify", { ...mutationToastStart(label), ...target }, session.signal).then(
-        (result) => {
-          if (dead.current) dismiss(result.notificationId);
-          return result.notificationId;
-        },
-        () => {
-          markDead();
-          onReceiptLost();
-          return null;
-        }
-      );
-      const receiptSeen = {
-        signal: session.signal,
-        seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
-        onChange: (listener) => {
-          const offView = session.onVisibility(listener);
-          if (typeof document === "undefined" || typeof window === "undefined") return offView;
-          document.addEventListener("visibilitychange", listener);
-          window.addEventListener("focus", listener);
-          window.addEventListener("blur", listener);
-          return () => {
-            offView();
-            document.removeEventListener("visibilitychange", listener);
-            window.removeEventListener("focus", listener);
-            window.removeEventListener("blur", listener);
-          };
-        }
-      };
-      const settleInPlace = (notificationId, result) => void api.invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal).then(
-        ({ applied }) => {
-          if (!applied) {
-            onReceiptLost();
-            return;
-          }
-          if (result.ok)
-            dismissReceiptAfterSeen(
-              receiptSeen,
-              MUTATION_TOAST_DISMISS_MS,
-              () => dismiss(notificationId)
-            );
-        },
-        (error) => {
-          onReceiptLost();
-          if (!isNotificationDismissal(error)) markDead();
-        }
-      );
-      return {
-        settle(result, followUp) {
-          void posted.then(async (notificationId) => {
-            if (notificationId === null) return;
-            if (dead.current) {
-              onReceiptLost();
-              dismiss(notificationId);
-              return;
-            }
-            if (result.ok && followUp && followUpsLive) {
-              const replaced = await postFollowUpReceipt(
-                {
-                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
-                  dismiss: dismissOrReject,
-                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
-                },
-                notificationId,
-                result.detail,
-                followUp,
-                {
-                  onPosted: (receiptId) => dismissReceiptAfterSeen(
-                    receiptSeen,
-                    MUTATION_TOAST_DISMISS_MS,
-                    () => dismiss(receiptId)
-                  ),
-                  run: runFollowUp
-                }
-              );
-              if (replaced) return;
-            }
-            settleInPlace(notificationId, result);
-          });
-        }
-      };
-    };
-    return { begin };
-  }
   var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var control2 = {
@@ -12347,48 +13615,48 @@ ${thread.id}`) === activity,
   };
   function VersionControlView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react2.useState)(session.visible);
-    const [tick, setTick] = (0, import_react2.useState)(0);
-    const [refreshError, setRefreshError] = (0, import_react2.useState)(null);
-    const [mutation, setMutation] = (0, import_react2.useState)(IDLE_MUTATION);
-    const [mutationSerial, setMutationSerial] = (0, import_react2.useState)(0);
-    const [commitMessage, setCommitMessage] = (0, import_react2.useState)("");
-    const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
-    const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
-    const [pendingConfirm, setPendingConfirm] = (0, import_react2.useState)(null);
-    const [pendingDiscard, setPendingDiscard] = (0, import_react2.useState)(null);
-    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react2.useState)(null);
-    const [stacked, setStacked] = (0, import_react2.useState)(null);
-    const [newRefName, setNewRefName] = (0, import_react2.useState)("");
-    const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
-    const [publishOpen, setPublishOpen] = (0, import_react2.useState)(false);
-    const [publishProvider, setPublishProvider] = (0, import_react2.useState)("github");
-    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react2.useState)("");
-    const [publishVisibility, setPublishVisibility] = (0, import_react2.useState)("private");
-    const [publishRemoteName, setPublishRemoteName] = (0, import_react2.useState)("origin");
-    const [publishProtocol, setPublishProtocol] = (0, import_react2.useState)("ssh");
-    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react2.useState)(false);
-    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react2.useState)(
+    const [visible, setVisible] = (0, import_react3.useState)(session.visible);
+    const [tick, setTick] = (0, import_react3.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react3.useState)(null);
+    const [mutation, setMutation] = (0, import_react3.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react3.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react3.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react3.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react3.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react3.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react3.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react3.useState)(null);
+    const [stacked, setStacked] = (0, import_react3.useState)(null);
+    const [newRefName, setNewRefName] = (0, import_react3.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react3.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react3.useState)(false);
+    const [publishProvider, setPublishProvider] = (0, import_react3.useState)("github");
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react3.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react3.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react3.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react3.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react3.useState)(false);
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react3.useState)(
       /* @__PURE__ */ new Set()
     );
-    const inFlight = (0, import_react2.useRef)(false);
-    (0, import_react2.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const inFlight = (0, import_react3.useRef)(false);
+    (0, import_react3.useEffect)(() => session.onVisibility(setVisible), [session]);
     const themeVars = useThemeVars(host, session, visible);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [selection, setSelection] = (0, import_react2.useState)(
+    const [selection, setSelection] = (0, import_react3.useState)(
       () => restored?.selectedPath && restored.selectedLane && LANES.has(restored.selectedLane) ? { path: restored.selectedPath, lane: restored.selectedLane } : null
     );
-    const [view, setView] = (0, import_react2.useState)(
+    const [view, setView] = (0, import_react3.useState)(
       restored?.view === "repository" ? "repository" : "pull-requests"
     );
-    const [selectedPr, setSelectedPr] = (0, import_react2.useState)(
+    const [selectedPr, setSelectedPr] = (0, import_react3.useState)(
       () => restored?.prRepository !== void 0 && typeof restored.prNumber === "number" ? {
         repository: restored.prRepository,
         number: restored.prNumber,
         ...restored.prHost !== void 0 && restored.prHost !== "" ? { host: restored.prHost } : {}
       } : null
     );
-    const savedState = (0, import_react2.useRef)({ ...restored });
+    const savedState = (0, import_react3.useRef)({ ...restored });
     const persist = (patch) => {
       const next = { ...savedState.current, ...patch };
       for (const key of Object.keys(next)) if (next[key] === void 0) delete next[key];
@@ -12396,7 +13664,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const runFollowUpRef = (0, import_react2.useRef)(() => {
+    const runFollowUpRef = (0, import_react3.useRef)(() => {
     });
     const { begin: beginToast } = useMutationToasts(
       host,
@@ -12431,15 +13699,15 @@ ${thread.id}`) === activity,
       isRepo && ops?.["repository.listRemotes"] === true,
       listRevision
     );
-    const lanes = (0, import_react2.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    const lanes = (0, import_react3.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
-    const rows = (0, import_react2.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const remoteList = (0, import_react2.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
-    const worktrees = (0, import_react2.useMemo)(() => worktreeRows(rows), [rows]);
+    const rows = (0, import_react3.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const remoteList = (0, import_react3.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react3.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
@@ -12462,7 +13730,7 @@ ${thread.id}`) === activity,
       repository: publishRepositoryPath,
       remoteName: publishRemoteName
     });
-    const stackedOffers = (0, import_react2.useMemo)(
+    const stackedOffers = (0, import_react3.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
     );
@@ -12726,7 +13994,7 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       runFollowUpRef.current = (action) => {
         switchView("repository");
         setStackedChoice(action);
@@ -13964,7 +15232,9 @@ ${thread.id}`) === activity,
       requireApi(vcsRefsApi),
       requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
       requireApi(uiThemeApi),
-      requireApi(uiNotificationsApi)
+      requireApi(uiNotificationsApi),
+      // Open-on-host links hand URLs to the reader's own client.
+      requireApi(uiExternalApi)
     ],
     surfaces: [
       {

@@ -197,9 +197,12 @@ export interface GitFetchPullRequestBranchInput {
   branch: string;
 }
 
-export interface GitFetchPullRequestHeadCommitInput {
+export interface GitFetchCommitInput {
   cwd: string;
-  prNumber: number;
+  /** An `https://` or SSH repository URL; anything else is refused. */
+  url: string;
+  /** A full ref name, such as `refs/pull/<n>/head`. */
+  ref: string;
 }
 
 export interface GitResolveCommitInput {
@@ -334,9 +337,9 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
-    readonly fetchPullRequestHeadCommit: (
-      input: GitFetchPullRequestHeadCommitInput,
+    /** Fetches `ref` from `url` into FETCH_HEAD only, writing no branch or remote-tracking ref. */
+    readonly fetchCommit: (
+      input: GitFetchCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
     readonly resolveCommit: (
       input: GitResolveCommitInput,

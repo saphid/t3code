@@ -12,7 +12,13 @@ The PR browser consumes the `t3.prs/read` grant:
   involvement, debounced search, `limit`-paged "Load more") keyed on
   `prs.list` rows — state/decision/checks/labels/branches per row;
 - a detail pane (`prs.summary` + `prs.detail`): title/body, state,
-  author, branches, checks with verdict, review decision;
+  author, branches, checks with verdict, review decision. The checks glyph
+  on a row and in the header opens native's checks popover (a row reads its
+  checks only when opened, and keyboard focus moves into it and on past it
+  as native's does); the list rollup wins only when its row is the newer
+  snapshot, ordered as native orders them (merged, update time, the host's
+  `observedAt` read time from `t3.prs/read@1.1.0`, then arrival), and then
+  marks the detail's checks as out of date;
 - review threads and comments via `prs.activity`, with
   `prs.threadComments` paging when a thread arrives truncated;
 - linked orchestration threads via `prs.linkedThreads` (display only —
@@ -24,9 +30,39 @@ The PR browser consumes the `t3.prs/read` grant:
 - freshness via `prs.subscribeRefreshes` and an explicit Refresh that
   calls `prs.invalidate` then re-reads the list;
 - the PR's stack via `prs.stack`, shown as a Stack section with its base
-  and layers when the host supports it;
+  and layers when the host supports it, plus native's Merge stack: this
+  layer and every unmerged layer below it, pinned to the heads the reader
+  saw (`runAction` `merge` with `stackNumber`/`expectedStackHeads`), offered
+  only when the host does stack actions, host and viewer may merge, the
+  repository allows a method, and the stack read is fresh — confirmed in
+  native's centred modal dialog (the host floating layer's `Dialog`; older
+  hosts get it against its opener) before it runs, with the merge method
+  chosen beside it. Merge methods resolve as native's do: this PR's pick,
+  the project's setting (`preferredMergeMethod` on `prs.detail@1.1.0`) or
+  the project's legacy client-local override, then the last pick, which
+  lives in the host's `pullRequestPreferences` — native's own stored
+  choice — or, on hosts without them, for the panel's lifetime. Native's
+  Rebase stack rides the same write
+  (`update-branch`, `rebase`) through the top layer with every unmerged head
+  pinned, offered when the viewer may rebase the stack. While a stack lookup
+  is pending, failed, or finds a stack, the single-PR merge and auto-merge
+  are held back as native does;
 - `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
   unwired — nothing in the panel needs them yet;
+- the head branch chip copies its branch, as native's does, including on
+  remote clients served over plain HTTP;
+- open-on-host links for the repository, the PR number, each branch (a ↗
+  beside its chip) and each commit, handed to the reader's own client through
+  `t3.ui/external` (`t3.ui/external.open` grant); a refusal or a denied
+  grant is named under the header rather than swallowed;
+- Check out (`t3.vcs/actions` `preparePullRequestThread`, offered only when
+  the workspace's driver reports it): native's menu — "In a separate
+  worktree" or "In this repository" — with native's loading toast settling
+  to where the checkout landed, a stale checkout, or the host's own refusal.
+  Stack merges and rebases report only their result, as one toast; without
+  a toast provider (or when delivery is lost) the same words show inline. No thread
+  opens alongside it: no extension contract creates one, so the worktree
+  option does not promise one either;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
   thread resolve/unresolve, each gated on the write capability probe's
   per-operation flags.

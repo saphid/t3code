@@ -29,6 +29,7 @@ import {
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -3218,22 +3219,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { commitSha };
   });
 
-  const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
-    Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
-      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
-      // branch, which is the only way to read it while that branch is checked out somewhere.
+  const fetchCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchCommit"] = Effect.fn("fetchCommit")(
+    function* (input) {
+      // Only transports that reach a hosting service: a `file://`, `ext::` or bare-path URL from a
+      // provider would read the local disk or run a command. A leading `-` would be an option.
+      const url = input.url;
+      const fetchable = !/^-|\s/u.test(url) && (/^https:\/\//iu.test(url) || isSshRemoteUrl(url));
+      if (!fetchable || !input.ref.startsWith("refs/") || input.ref.includes(":")) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.fetchCommit",
+          command: "git fetch",
+          cwd: input.cwd,
+          detail: "Refusing to fetch from a repository URL that is not HTTPS or SSH.",
+        });
+      }
+      // A URL rather than a remote, and no refspec destination: the commit lands only in FETCH_HEAD
+      // (per worktree), so no remote-tracking ref moves and a branch checked out elsewhere can
+      // still be read.
       yield* executeGit(
-        "GitVcsDriver.fetchPullRequestHeadCommit",
+        "GitVcsDriver.fetchCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
-        {
-          fallbackErrorDetail: "git fetch pull request head failed",
-        },
+        ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", url, input.ref],
+        { fallbackErrorDetail: "git fetch failed" },
       );
-
       return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
-    });
+    },
+  );
 
   const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
     Effect.fn("refreshCheckedOutBranch")(function* (input) {
@@ -3676,7 +3687,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, createWorktree(input, options)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
-    fetchPullRequestHeadCommit,
+    fetchCommit,
     resolveCommit,
     refreshCheckedOutBranch: (input) =>
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),

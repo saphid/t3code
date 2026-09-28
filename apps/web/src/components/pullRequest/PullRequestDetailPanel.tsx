@@ -64,17 +64,13 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useClientSettings } from "~/hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  selectProjectGroupingSettings,
-} from "~/logicalProject";
+import { selectProjectGroupingSettings } from "~/logicalProject";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
+import { legacyProjectMergeMethod } from "./legacyMergeMethod";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
@@ -893,32 +889,28 @@ export function PullRequestDetailPanel({
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
   }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
-  // Project settings stored the override under the sidebar group's key, which a duplicate row
-  // borrows from its siblings, so the project alone does not always name the same key.
-  const legacyProjectDefaultMergeMethod = useMemo(() => {
-    if (projectDefaultMergeMethod !== undefined) return undefined;
-    const project = projects.find(
-      (candidate) =>
-        candidate.environmentId === environmentId && candidate.id === reference.projectId,
-    );
-    if (!project) return undefined;
-    const projectKey =
-      buildPhysicalToLogicalProjectKeyMap({
-        projects,
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-      }).get(derivePhysicalProjectKey(project)) ??
-      deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    return legacyMergeMethodOverrides[projectKey];
-  }, [
-    environmentId,
-    legacyMergeMethodOverrides,
-    primaryEnvironmentId,
-    projectDefaultMergeMethod,
-    projectGroupingSettings,
-    projects,
-    reference.projectId,
-  ]);
+  const legacyProjectDefaultMergeMethod = useMemo(
+    () =>
+      projectDefaultMergeMethod !== undefined
+        ? undefined
+        : legacyProjectMergeMethod({
+            projects,
+            grouping: projectGroupingSettings,
+            overrides: legacyMergeMethodOverrides,
+            primaryEnvironmentId,
+            environmentId,
+            projectId: reference.projectId,
+          }),
+    [
+      environmentId,
+      legacyMergeMethodOverrides,
+      primaryEnvironmentId,
+      projectDefaultMergeMethod,
+      projectGroupingSettings,
+      projects,
+      reference.projectId,
+    ],
+  );
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
@@ -1273,14 +1265,14 @@ export function PullRequestDetailPanel({
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
-    // success, because everything else about the handoff did happen.
+    // The host could not confirm or apply the pull request's latest commits (unreadable head,
+    // local work, divergence), so the thread may open behind the pull request. Said once, in
+    // place of the success, because everything else about the handoff did happen.
     const staleCheckoutToast = {
       type: "warning",
-      title: "Checked out, but not on the latest commits",
+      title: "Checked out, but the latest commits are unconfirmed",
       description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
+        "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
     } as const;
     if (task === null) {
       toastManager.update(

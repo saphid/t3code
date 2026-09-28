@@ -14,6 +14,9 @@
 import {
   prsReadApi,
   prsWriteApi,
+  uiExternalApi,
+  vcsActionsApi,
+  vcsRefsApi,
   type PrsActivity,
   type PrsCapabilitiesResult,
   type PrsCheck,
@@ -31,14 +34,22 @@ import {
   type PrsWriteMergeMethod,
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
+  type VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
-import { Tooltip } from "@t3tools/extension-sdk/authoring";
+import { copyText, Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
-import type { ClientHost } from "@t3tools/extension-sdk/environment";
-import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-
 import {
+  resolveFloatingDialog,
+  resolveFloatingLayer,
+  resolvePullRequestPreferences,
+  type ClientHost,
+} from "@t3tools/extension-sdk/environment";
+import type { ViewSession } from "@t3tools/extension-sdk/host";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+
+import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
+import {
+  PRS_CHECKOUT_OPTIONS,
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
   collectPrsDiffStream,
@@ -50,8 +61,27 @@ import {
   mergePrsDiffSegment,
   mergePrsEntries,
   prsActorLabel,
+  prsAllowedMergeMethods,
   prsAuthoredByViewer,
-  prsChecksLabel,
+  prsCanMergeStack,
+  prsResolveMergeMethod,
+  prsCanRebaseStack,
+  prsStackRebasePlan,
+  prsStackRebaseReceipt,
+  prsStackMergePlan,
+  prsStackMergeReceipt,
+  prsBranchUrl,
+  prsCheckoutLabel,
+  prsCheckoutReceipt,
+  prsCommitUrl,
+  prsHeadRepositoryUrl,
+  prsOpenOnHostLabel,
+  prsOpenRefusedLabel,
+  prsRepositoryUrl,
+  prsBranchChips,
+  prsStackedOnDefault,
+  prsChecksIcon,
+  prsReconcileChecks,
   prsChecksSummary,
   prsCheckStatusLabel,
   prsDraftKey,
@@ -76,11 +106,11 @@ import {
   prsActorTooltip,
   prsArmedAutoMergeTooltip,
   prsCheckTooltip,
-  prsChecksTooltip,
   prsConflictTooltip,
   prsReviewTooltip,
   prsStackTooltip,
   prsWriteActionOffers,
+  prsSingleMergeAllowed,
   prsWriteGate,
   prsWriteUnavailableNote,
   prsWriteVerdictOptions,
@@ -89,7 +119,9 @@ import {
   type DiffFileRow,
   type PrsDiffDelivery,
   type PrsInvolvement,
+  type PrsCheckoutMode,
   type PrsListState,
+  type PrsReceipt,
   type PrsWriteActionOffer,
 } from "./prsViewModel.js";
 
@@ -123,6 +155,24 @@ const inputStyle = {
   borderRadius: 5,
   background: "transparent",
   color: "inherit",
+} as const;
+
+/** An inline link that opens on the host: text-coloured until hovered, like native's. */
+const linkButton = {
+  padding: 0,
+  border: "none",
+  background: "transparent",
+  color: "inherit",
+  font: "inherit",
+  cursor: "pointer",
+  textDecoration: "underline",
+  textUnderlineOffset: 2,
+} as const;
+
+const oidStyle = {
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  color: muted,
+  fontSize: 11,
 } as const;
 
 const noteStyle = {
@@ -243,6 +293,68 @@ function usePrsWriteCapabilities(
 }
 
 /**
+ * Whether this workspace can prepare a pull-request checkout
+ * (`t3.vcs/actions` `preparePullRequestThread`). A failed probe — no git,
+ * a denied grant — simply leaves the checkout offer out.
+ */
+function useCheckoutSupport(host: ClientHost, session: ViewSession, enabled: boolean) {
+  const [supported, setSupported] = useState(false);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void bindApi(vcsActionsApi, host, session.context)
+      .invoke("getCapabilities", {}, signal)
+      .then(
+        (capabilities) => {
+          if (!signal.aborted)
+            setSupported(
+              capabilities.detected &&
+                capabilities.operations["actions.preparePullRequestThread"] === true,
+            );
+        },
+        () => {
+          if (!signal.aborted) setSupported(false);
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled]);
+  return enabled && supported;
+}
+
+/**
+ * The workspace's current and default refs (`t3.vcs/refs`), which native
+ * reads to tell a stacked base from the default branch. A failed read shows
+ * no badge rather than a guess.
+ */
+function useDefaultRefs(
+  host: ClientHost,
+  session: ViewSession,
+  enabled: boolean,
+  revision: string,
+) {
+  const [refs, setRefs] = useState<readonly VcsRefEntry[] | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    // listRefs keeps the current ref first and a known default second.
+    void bindApi(vcsRefsApi, host, session.context)
+      .invoke("list", { includeMatchingRemoteRefs: true, limit: 2 }, signal)
+      .then(
+        (result) => {
+          if (!signal.aborted) setRefs(result.refs);
+        },
+        () => {
+          if (!signal.aborted) setRefs(null);
+        },
+      );
+    return () => controller.abort();
+  }, [host, session, enabled, revision]);
+  return enabled ? refs : null;
+}
+
+/**
  * Host-driven freshness via `prs.subscribeRefreshes` — the panel never
  * polls. Each `refreshed` frame bumps the tick that re-reads list and
  * detail; `closed` frames resubscribe with the same bounded retry the
@@ -315,10 +427,19 @@ interface PrsListModel {
   /** Query identity without the refresh tick — same question, newer ask. */
   readonly inputKey: string;
   readonly entries: readonly PrsListEntry[];
+  /** Client arrival time of the successful read each row came from, by `prsRefKey`. */
+  readonly receivedAt: Readonly<Record<string, number>>;
   readonly result: PrsListResult | null;
   readonly error: string | null;
   readonly pending: boolean;
   readonly loadingMore: boolean;
+}
+
+function stampEntries(
+  entries: readonly PrsListEntry[],
+  receivedAt: number,
+): Readonly<Record<string, number>> {
+  return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
 }
 
 /**
@@ -361,6 +482,7 @@ function usePrsList(
               // search hit) must leave the list rather than linger stale.
               // Continuation pages merge on their own path in loadMore.
               entries: result.entries,
+              receivedAt: stampEntries(result.entries, Date.now()),
               result,
               error: null,
               pending: false,
@@ -373,6 +495,8 @@ function usePrsList(
               key,
               inputKey,
               entries: prev?.inputKey === inputKey ? prev.entries : [],
+              // A failed re-read keeps rows only as old as the read they came from.
+              receivedAt: prev?.inputKey === inputKey ? prev.receivedAt : {},
               result: prev?.inputKey === inputKey ? prev.result : null,
               error: message(error, "Pull requests unavailable"),
               pending: false,
@@ -414,6 +538,7 @@ function usePrsList(
                 : {
                     ...prev,
                     entries: mergePrsEntries(prev.entries, page.entries),
+                    receivedAt: { ...prev.receivedAt, ...stampEntries(page.entries, Date.now()) },
                     result: page,
                     loadingMore: false,
                   },
@@ -437,6 +562,7 @@ function usePrsList(
   const sameQuestion = state !== null && state.inputKey === inputKey;
   return {
     entries: sameQuestion ? state.entries : [],
+    receivedAt: sameQuestion ? state.receivedAt : {},
     result: sameQuestion ? state.result : null,
     error: state?.key === key ? state.error : null,
     pending: state?.key !== key || state.pending,
@@ -450,6 +576,8 @@ interface PrsDetailSections {
   /** PR identity — retention and display never cross this boundary. */
   refKey: string;
   detail: PrsDetail | null;
+  /** Client arrival time of the detail read that answered `detail`. */
+  detailReceivedAt: number;
   detailError: string | null;
   activity: PrsActivity | null;
   activityError: string | null;
@@ -457,10 +585,17 @@ interface PrsDetailSections {
   linkedError: string | null;
   stack: PrsStack | null;
   stackError: string | null;
+  /**
+   * The detail key the stack was last read for. The stack section keeps its
+   * last answer across a refresh, so this — not the shared `key`, which any
+   * sibling read advances — is what says the stack is fresh.
+   */
+  stackKey: string | null;
 }
 
 const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
   detail: null,
+  detailReceivedAt: 0,
   detailError: null,
   activity: null,
   activityError: null,
@@ -468,6 +603,7 @@ const EMPTY_SECTIONS: Omit<PrsDetailSections, "key" | "refKey"> = {
   linkedError: null,
   stack: null,
   stackError: null,
+  stackKey: null,
 };
 
 /**
@@ -511,6 +647,8 @@ function usePrsDetail(
               refKey,
               [field]: value,
               [errorField]: null,
+              ...(field === "stack" ? { stackKey: key } : {}),
+              ...(field === "detail" ? { detailReceivedAt: Date.now() } : {}),
             }));
         },
         (error: unknown) => {
@@ -537,9 +675,13 @@ function usePrsDetail(
     return () => controller.abort();
     // ref identity is folded into key.
   }, [host, session, ref, refKey, operations, key]);
-  return sections?.refKey === refKey && refKey !== null
-    ? sections
-    : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+  const current =
+    sections?.refKey === refKey && refKey !== null
+      ? sections
+      : { key: key ?? "", refKey: refKey ?? "", ...EMPTY_SECTIONS };
+  // Only a stack read that answered this very key is fresh: a retained stack
+  // may be one refresh old while its re-read is still in flight.
+  return { ...current, stackFresh: key !== null && current.stackKey === key };
 }
 
 type PrsDiffState =
@@ -724,15 +866,394 @@ function stateBadge(
   );
 }
 
+const CHECKS_TONES = {
+  success: "var(--success, #2da44e)",
+  destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
+  warning: "var(--warning, #b54708)",
+} as const;
+
+type LazyChecks =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly checks: readonly PrsCheck[] }
+  | { readonly status: "error"; readonly detail: string };
+
+const FOCUSABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,[tabindex]';
+
+/**
+ * The controls Tab visits inside `root`, in document order: focusable ones
+ * whose tabIndex keeps them in the Tab order, and that no disabled state,
+ * `hidden` or `inert` ancestor, or computed `display: none` or
+ * `visibility: hidden`, takes out of it.
+ */
+function tabbablesIn(root: Element | Document): HTMLElement[] {
+  if (typeof root.querySelectorAll !== "function") return [];
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.matches(":disabled") &&
+      element.closest("[hidden],[inert]") === null &&
+      isRendered(element),
+  );
+}
+
+function isRendered(element: HTMLElement): boolean {
+  const view = element.ownerDocument.defaultView;
+  if (view === null) return true;
+  if (view.getComputedStyle(element).visibility !== "visible") return false;
+  for (let node: Element | null = element; node !== null; node = node.parentElement) {
+    if (view.getComputedStyle(node).display === "none") return false;
+  }
+  return true;
+}
+
+/**
+ * Where Tab goes after `from` once the popover it opened closes: the popover
+ * is portaled to the end of the page, so the next control is the one after
+ * its trigger, not after the popover.
+ */
+function tabbableAfter(from: HTMLElement, popup: HTMLElement | null): HTMLElement | null {
+  const order = tabbablesIn(from.ownerDocument).filter(
+    (element) => popup === null || !popup.contains(element),
+  );
+  return order[order.indexOf(from) + 1] ?? null;
+}
+
+/**
+ * Native's checks indicator and the popover it opens, on a list row and in
+ * the detail header. The header passes the checks it holds; a row passes
+ * `loadChecks`, read only once the popover opens. The trigger is a
+ * focusable span, not a button — a row is itself a button — and it stops
+ * its click and Enter/Space so opening the checks never selects the row.
+ * Focus moves as native's popover moves it: into the popover once it is
+ * placed, Tab through its links and on past its trigger, Shift-Tab back to
+ * the trigger, and focus leaving it closes it.
+ */
+export function ChecksControl(props: {
+  host: ClientHost;
+  state: "passing" | "failing" | "pending" | null | undefined;
+  checks?: readonly PrsCheck[];
+  stale?: boolean;
+  loadChecks?: (signal: AbortSignal) => Promise<readonly PrsCheck[]>;
+  onOpenLink: (url: string) => void;
+}) {
+  const { host, state, checks, stale = false, loadChecks, onOpenLink } = props;
+  const icon = prsChecksIcon(state);
+  const [open, setOpen] = useState(false);
+  const [lazy, setLazy] = useState<LazyChecks>({ status: "loading" });
+  const trigger = useRef<HTMLSpanElement | null>(null);
+  const popup = useRef<HTMLDivElement | null>(null);
+  const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
+  const attachPopup = useCallback((element: HTMLDivElement | null) => {
+    popup.current = element;
+    setPopupElement(element);
+  }, []);
+  useEffect(() => {
+    if (!open || popupElement === null) return;
+    // After the host has placed it: an unplaced popover is hidden and cannot take focus.
+    const timer = setTimeout(() => {
+      (tabbablesIn(popupElement)[0] ?? popupElement).focus();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [open, popupElement]);
+  useEffect(() => {
+    if (!open || checks !== undefined || loadChecks === undefined) return;
+    const controller = new AbortController();
+    setLazy({ status: "loading" });
+    loadChecks(controller.signal).then(
+      (loaded) => {
+        if (!controller.signal.aborted) setLazy({ status: "ready", checks: loaded });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          setLazy({ status: "error", detail: message(error, "Checks unavailable") });
+      },
+    );
+    return () => controller.abort();
+    // loadChecks is rebuilt every render; the read belongs to the opening.
+  }, [open]);
+  useEffect(() => {
+    if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
+    const onPress = (event: Event) => {
+      const target = event.target as Node | null;
+      if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onPress);
+    return () => document.removeEventListener("mousedown", onPress);
+  }, [open]);
+  if (icon === null) return null;
+  const close = (focus: HTMLElement | null = trigger.current) => {
+    setOpen(false);
+    focus?.focus();
+  };
+  const shown: LazyChecks | null =
+    checks !== undefined ? { status: "ready", checks } : loadChecks !== undefined ? lazy : null;
+  const summary = checks === undefined || stale ? null : prsChecksSummary(checks);
+  const Popover = resolveFloatingLayer(host)?.Popover;
+  const popupProps = {
+    role: "dialog",
+    "aria-label": "Checks",
+    // Portaled or not, React delivers these through the row: keep them here.
+    onClick: (event: { stopPropagation: () => void }) => event.stopPropagation(),
+    onKeyDown: (event: {
+      key: string;
+      shiftKey: boolean;
+      stopPropagation: () => void;
+      preventDefault: () => void;
+    }) => {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab" || popup.current === null) return;
+      event.preventDefault();
+      const items = tabbablesIn(popup.current);
+      const at = items.findIndex((item) => item === popup.current?.ownerDocument.activeElement);
+      const next = event.shiftKey ? (at === -1 ? -1 : at - 1) : at + 1;
+      if (next >= 0 && next < items.length) items[next]?.focus();
+      else if (event.shiftKey || trigger.current === null) close();
+      else close(tabbableAfter(trigger.current, popup.current) ?? trigger.current);
+    },
+    onBlur: (event: { relatedTarget: EventTarget | null }) => {
+      const inside = (node: unknown) =>
+        node != null &&
+        (popup.current?.contains(node as Node) === true ||
+          trigger.current?.contains(node as Node) === true);
+      if (event.relatedTarget !== null) {
+        if (!inside(event.relatedTarget)) setOpen(false);
+        return;
+      }
+      // No target: focus fell to the page, or the window lost it and will bring it back here.
+      setTimeout(() => {
+        if (!inside(popup.current?.ownerDocument.activeElement)) setOpen(false);
+      }, 0);
+    },
+    tabIndex: -1,
+    style: {
+      width: 320,
+      maxWidth: "calc(100vw - 24px)",
+      padding: "8px 10px",
+      border,
+      borderRadius: 6,
+      fontSize: 12,
+      textAlign: "left",
+      cursor: "default",
+      color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+      background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+      boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+    },
+  } as const;
+  const body = (
+    <>
+      <p style={{ margin: "0 0 6px", fontWeight: 600, fontSize: 13 }}>{icon.label}</p>
+      {summary !== null && <p style={{ margin: "0 0 6px", color: muted }}>{summary}</p>}
+      {stale ? (
+        <p style={{ margin: 0, color: muted }}>
+          Check details are out of date. Refresh the pull request to update them.
+        </p>
+      ) : shown?.status === "loading" ? (
+        <p style={{ margin: 0, color: muted }}>Loading checks…</p>
+      ) : shown?.status === "error" ? (
+        <p style={{ margin: 0, color: muted }}>{shown.detail}</p>
+      ) : shown?.status === "ready" && shown.checks.length === 0 ? (
+        <p style={{ margin: 0, color: muted }}>No checks reported</p>
+      ) : shown?.status === "ready" ? (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {shown.checks.map((check, index) => (
+            <li
+              key={`${index}:${check.name}`}
+              style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" }}
+            >
+              <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{check.name}</span>
+              <span style={{ flexShrink: 0, color: muted }}>
+                {prsCheckStatusLabel(check.status)}
+              </span>
+              {check.url !== null && (
+                <button
+                  type="button"
+                  aria-label={`Open check ${check.name}`}
+                  onClick={() => check.url !== null && onOpenLink(check.url)}
+                  style={{ ...linkButton, flexShrink: 0 }}
+                >
+                  Details
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+  return (
+    <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <span
+        ref={trigger}
+        role="button"
+        tabIndex={0}
+        aria-label={`Checks: ${icon.label}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen((value) => !value);
+          } else if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
+        style={{
+          fontSize: 11,
+          lineHeight: 1,
+          cursor: "pointer",
+          color: CHECKS_TONES[icon.tone],
+        }}
+      >
+        {icon.glyph}
+      </span>
+      {open &&
+        (Popover !== undefined && trigger.current !== null ? (
+          <Popover
+            {...popupProps}
+            anchor={trigger.current}
+            side="bottom"
+            align="start"
+            elementRef={attachPopup}
+          >
+            {body}
+          </Popover>
+        ) : (
+          <div
+            {...popupProps}
+            ref={attachPopup}
+            style={{ ...popupProps.style, position: "absolute", top: "100%", left: 0, zIndex: 10 }}
+          >
+            {body}
+          </div>
+        ))}
+    </span>
+  );
+}
+
+const chipStyle = {
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 11,
+} as const;
+
+/**
+ * Native's `PullRequestCopyableCode`: the chip copies its value, says so for
+ * 1.6 s, and its tooltip names the action. A failed copy is reported.
+ */
+function CopyableCode(props: {
+  host: ClientHost;
+  value: string;
+  copyLabel: string;
+  copiedLabel: string;
+  onError: (detail: string) => void;
+}) {
+  const { host, value, copyLabel, copiedLabel, onError } = props;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copy = () => {
+    copyText(value).then(
+      () => setCopied(true),
+      (error: unknown) => onError(message(error, "Copy failed")),
+    );
+  };
+  return (
+    <Tooltip host={host} side="top" label={`${copied ? "Copied" : copyLabel}: ${value}`}>
+      <button
+        type="button"
+        aria-label={copied ? copiedLabel : copyLabel}
+        onClick={copy}
+        style={{ ...linkButton, textDecoration: "none", minWidth: 0, maxWidth: "100%" }}
+      >
+        <code style={{ ...chipStyle, display: "block" }}>{copied ? "Copied" : value}</code>
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Native's `base ← head` chips; the base keeps up to 45% so a long head
+ * cannot squeeze it out. The head copies its branch as native's does;
+ * opening a branch on the host is its own ↗ control beside the chip.
+ */
+function BranchChips(props: {
+  host: ClientHost;
+  detail: { readonly baseBranch: string; readonly headBranch: string };
+  stacked: boolean;
+  baseUrl: string | null;
+  headUrl: string | null;
+  onOpen: (url: string) => void;
+  onCopyError: (detail: string) => void;
+}) {
+  const chips = prsBranchChips(props.detail, props.stacked);
+  const openControl = (text: string, url: string | null) =>
+    url === null ? null : (
+      <Tooltip host={props.host} side="top" label={`Open ${text} on host`}>
+        <button
+          type="button"
+          aria-label={`Open branch ${text} on host`}
+          onClick={() => props.onOpen(url)}
+          style={{ ...linkButton, textDecoration: "none", flexShrink: 0, fontSize: 11 }}
+        >
+          ↗
+        </button>
+      </Tooltip>
+    );
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }}>
+      <Tooltip host={props.host} side="top" label={chips.base.tooltip}>
+        <code style={{ ...chipStyle, maxWidth: "45%", flexShrink: 0 }}>
+          {chips.base.stacked && <span aria-label="Stacked pull request">⧉ </span>}
+          {chips.base.text}
+        </code>
+      </Tooltip>
+      {openControl(chips.base.text, props.baseUrl)}
+      <span role="img" aria-label={chips.arrowLabel} style={{ flexShrink: 0 }}>
+        ←
+      </span>
+      <span style={{ display: "inline-flex", flex: 1, minWidth: 0 }}>
+        <CopyableCode
+          key={chips.head.text}
+          host={props.host}
+          value={chips.head.text}
+          copyLabel="Copy pull request branch"
+          copiedLabel="Branch name copied"
+          onError={props.onCopyError}
+        />
+      </span>
+      {openControl(chips.head.text, props.headUrl)}
+    </span>
+  );
+}
+
 export function PrListRow(props: {
   host: ClientHost;
   entry: PrsListEntry;
   viewers: Readonly<Record<string, string>>;
   onSelect: () => void;
+  loadChecks: (signal: AbortSignal) => Promise<readonly PrsCheck[]>;
+  onOpenLink: (url: string) => void;
 }) {
-  const { host, entry, viewers, onSelect } = props;
+  const { host, entry, viewers, onSelect, loadChecks, onOpenLink } = props;
   const review = prsReviewLabel(entry.reviewDecision);
-  const checks = prsChecksLabel(entry.checksState);
   const stack = prsStackLabel(entry.stack);
   return (
     <li>
@@ -766,6 +1287,12 @@ export function PrListRow(props: {
           >
             {entry.title}
           </span>
+          <ChecksControl
+            host={host}
+            state={entry.checksState}
+            loadChecks={loadChecks}
+            onOpenLink={onOpenLink}
+          />
           {entry.viewerReviewRequested && badge("Review requested", "open")}
         </span>
         <span
@@ -798,23 +1325,18 @@ export function PrListRow(props: {
               {badge(review, review === "Approved" ? "open" : "closed")}
             </Tooltip>
           )}
-          {checks !== null && (
-            <Tooltip host={host} side="top" label={prsChecksTooltip(entry.checksState)}>
-              {badge(
-                checks,
-                entry.checksState === "passing"
-                  ? "open"
-                  : entry.checksState === "failing"
-                    ? "closed"
-                    : "muted",
-              )}
-            </Tooltip>
-          )}
           {stack !== null && (
             <Tooltip host={host} side="top" label={prsStackTooltip(entry.stack)}>
               {badge(stack, "merged")}
             </Tooltip>
           )}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }}>
+          <code style={{ ...chipStyle, color: muted }}>{entry.headBranch}</code>
+          <span style={{ flexShrink: 0, color: muted, fontSize: 11 }}>→</span>
+          <code style={{ ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }}>
+            {entry.baseBranch}
+          </code>
         </span>
         {entry.labels.length > 0 && (
           <span
@@ -1310,6 +1832,290 @@ export function PrsActionButton(props: {
 }
 
 /**
+ * Native's Check out menu: a trigger that names the running checkout, and
+ * the two places a checkout can land. ArrowDown/ArrowUp on the trigger open
+ * it on the first/last option, arrow keys move between the options, Escape
+ * closes back onto the trigger, and Tab or leaving the menu closes it.
+ */
+function CheckoutMenu(props: {
+  host: ClientHost;
+  pending: boolean;
+  disabled: boolean;
+  onPick: (mode: PrsCheckoutMode) => void;
+}) {
+  const { host, pending, disabled, onPick } = props;
+  const [open, setOpen] = useState<"first" | "last" | null>(null);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const items = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
+  }, [open]);
+  const close = () => {
+    setOpen(null);
+    trigger.current?.focus();
+  };
+  const move = (step: number) => {
+    const focused = typeof document === "undefined" ? null : document.activeElement;
+    const at = items.current.findIndex((item) => item === focused);
+    const count = PRS_CHECKOUT_OPTIONS.length;
+    items.current[(at + step + count) % count]?.focus();
+  };
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <Tooltip host={host} side="top" label="Check out this pull request">
+        <button
+          ref={trigger}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open !== null}
+          aria-label={prsCheckoutLabel(pending)}
+          disabled={disabled}
+          onClick={() => setOpen((value) => (value === null ? "first" : null))}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(event.key === "ArrowDown" ? "first" : "last");
+            }
+          }}
+          style={{ ...control, fontSize: 12, border }}
+        >
+          {prsCheckoutLabel(pending)} ▾
+        </button>
+      </Tooltip>
+      {open !== null && (
+        <div
+          role="menu"
+          aria-label="Check out"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              close();
+            } else if (event.key === "Tab") {
+              // Focus moves on as Tab would; the menu just goes away.
+              setOpen(null);
+            } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              move(event.key === "ArrowDown" ? 1 : -1);
+            } else if (event.key === "Home" || event.key === "End") {
+              event.preventDefault();
+              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+            }
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(null);
+          }}
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 10,
+            minWidth: 260,
+            marginTop: 4,
+            padding: 4,
+            border,
+            borderRadius: 6,
+            background:
+              "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+          }}
+        >
+          {PRS_CHECKOUT_OPTIONS.map((option, index) => (
+            <button
+              key={option.mode}
+              ref={(element) => {
+                items.current[index] = element;
+              }}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close();
+                onPick(option.mode);
+              }}
+              style={{
+                ...control,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                width: "100%",
+                textAlign: "left",
+                fontSize: 13,
+              }}
+            >
+              <span>{option.label}</span>
+              <span style={{ fontSize: 12, color: muted }}>{option.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Native's confirmation Dialog: modal, labelled by its title and described by
+ * its description, first focus on Cancel (never the destructive action), Tab
+ * held inside, Escape or Cancel closing it and handing focus back to the
+ * control that opened it. A running write cannot be dismissed. Hosts with a
+ * modal dialog (floating layer 2) show native's own, centred over an inert
+ * client; older hosts get it against its opener on their floating layer, or
+ * in place, where the caller makes the panel behind it inert.
+ */
+function ConfirmDialog(props: {
+  host: ClientHost;
+  anchor: HTMLElement | null;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  children?: ReactNode;
+}) {
+  const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
+  const titleId = useId();
+  const descriptionId = useId();
+  const cancel = useRef<HTMLButtonElement | null>(null);
+  const confirm = useRef<HTMLButtonElement | null>(null);
+  const opener = useRef(anchor);
+  const HostDialog = resolveFloatingDialog(host);
+  const hosted = HostDialog !== null;
+  useEffect(() => {
+    // The host dialog places and returns focus itself.
+    if (hosted) return;
+    cancel.current?.focus();
+    const returnTo = opener.current;
+    return () => returnTo?.focus();
+  }, [hosted]);
+  const onKeyDown = (event: { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!pending) onCancel();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    const order = pending ? [] : [cancel.current, confirm.current].filter((item) => item !== null);
+    if (order.length === 0) return;
+    const focused = typeof document === "undefined" ? null : document.activeElement;
+    const at = order.findIndex((item) => item === focused);
+    const next = event.shiftKey ? (at <= 0 ? order.length - 1 : at - 1) : (at + 1) % order.length;
+    order[next]?.focus();
+  };
+  const dialogProps = {
+    role: "dialog",
+    "aria-modal": true,
+    "aria-labelledby": titleId,
+    "aria-describedby": descriptionId,
+    onKeyDown,
+  } as const;
+  const surface = {
+    width: 360,
+    maxWidth: "calc(100vw - 24px)",
+    padding: "10px 12px",
+    border,
+    borderRadius: 8,
+    fontSize: 12,
+    color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+    background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+    boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)",
+  } as const;
+  const actions = (
+    <>
+      <button
+        ref={cancel}
+        type="button"
+        disabled={pending}
+        onClick={onCancel}
+        style={{ ...control, fontSize: 12, border }}
+      >
+        Cancel
+      </button>
+      <button
+        ref={confirm}
+        type="button"
+        disabled={pending}
+        onClick={onConfirm}
+        style={{ ...control, fontSize: 12, border }}
+      >
+        {pending ? "Working…" : confirmLabel}
+      </button>
+    </>
+  );
+  if (HostDialog !== null)
+    return (
+      <HostDialog
+        title={title}
+        description={description}
+        dismissible={!pending}
+        onDismiss={onCancel}
+        initialFocus={cancel}
+        footer={actions}
+      >
+        {props.children}
+      </HostDialog>
+    );
+  const body = (
+    <>
+      <strong id={titleId} style={{ fontSize: 13 }}>
+        {title}
+      </strong>
+      <p id={descriptionId} style={{ margin: "4px 0", color: muted }}>
+        {description}
+      </p>
+      {props.children}
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
+        {actions}
+      </div>
+    </>
+  );
+  const Popover = resolveFloatingLayer(host)?.Popover;
+  if (Popover !== undefined && anchor !== null)
+    return (
+      <Popover {...dialogProps} anchor={anchor} side="bottom" align="start" style={surface}>
+        {body}
+      </Popover>
+    );
+  return (
+    <div
+      {...dialogProps}
+      style={{ ...surface, position: "absolute", top: 36, left: 10, zIndex: 20 }}
+    >
+      {body}
+    </div>
+  );
+}
+
+/** A receipt in toast form: the tone is the severity, the description the body. */
+function receiptToast(receipt: PrsReceipt): MutationToastPatch {
+  return {
+    severity: receipt.tone,
+    title: receipt.title,
+    ...(receipt.description !== null ? { body: receipt.description } : {}),
+  };
+}
+
+function ReceiptLine({ receipt }: { receipt: PrsReceipt | null }) {
+  if (receipt === null) return null;
+  return (
+    <p role={receipt.tone === "error" ? "alert" : "status"} style={{ ...noteStyle, fontSize: 12 }}>
+      <strong
+        style={{
+          color:
+            receipt.tone === "error"
+              ? "var(--t3-version-control-error, var(--destructive, #b42318))"
+              : receipt.tone === "warning"
+                ? "var(--warning, #b54708)"
+                : "inherit",
+        }}
+      >
+        {receipt.title}
+      </strong>
+      {receipt.description !== null ? ` — ${receipt.description}` : ""}
+    </p>
+  );
+}
+
+/**
  * Textarea + submit shared by the comment composer, the review bar and
  * thread replies. The draft lives in the panel, not here — a refresh
  * reprobe unmounts the whole ready subtree, and a composer-local
@@ -1408,6 +2214,33 @@ function PrsReviewComposer(props: {
 
 /* ---------------- panel ---------------- */
 
+const MERGE_METHODS: readonly PrsWriteMergeMethod[] = ["merge", "squash", "rebase"];
+
+/**
+ * Native's last-selected merge method, for change requests with no pick of
+ * their own, and the per-project method older releases kept on this client.
+ * Both live in the host's client-local preferences, the native panel's own
+ * storage, so a pick survives remounts and reloads and is shared with the
+ * native panel. Hosts without them keep the pick for this panel's lifetime.
+ */
+function useRememberedMergeMethod(host: ClientHost) {
+  const preferences = resolvePullRequestPreferences(host);
+  const [local, setLocal] = useState<PrsWriteMergeMethod | null>(null);
+  const [, setChanged] = useState(0);
+  useEffect(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+  return {
+    last: preferences === null ? local : preferences.lastMergeMethod(),
+    legacy: (project: { readonly environmentId: string; readonly projectId: string }) =>
+      preferences?.legacyProjectMergeMethod(project) ?? undefined,
+    remember: (value: string) => {
+      const method = MERGE_METHODS.find((candidate) => candidate === value);
+      if (method === undefined) return;
+      if (preferences === null) setLocal(method);
+      else preferences.setLastMergeMethod(method);
+    },
+  };
+}
+
 export function PullRequestsPanel(props: {
   host: ClientHost;
   session: ViewSession;
@@ -1474,6 +2307,45 @@ export function PullRequestsPanel(props: {
    */
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
+  const rememberedMergeMethod = useRememberedMergeMethod(host);
+  const [openError, setOpenError] = useState<string | null>(null);
+  // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
+  // the last one's receipt, bound to the PR it answered.
+  // An armed stack merge (the PR it was armed on) and its last receipt.
+  const [stackConfirm, setStackConfirm] = useState<{
+    readonly refKey: string;
+    readonly action: "merge" | "rebase";
+    readonly opener: HTMLElement | null;
+    /** The plan a running write was started with: native keeps its dialog until it settles. */
+    readonly running?: ReturnType<typeof prsStackMergePlan> | ReturnType<typeof prsStackRebasePlan>;
+  } | null>(null);
+  const stackMergeOpener = useRef<HTMLButtonElement | null>(null);
+  const stackRebaseOpener = useRef<HTMLButtonElement | null>(null);
+  const [stackReceipt, setStackReceipt] = useState<{
+    readonly refKey: string;
+    readonly receipt: PrsReceipt;
+  } | null>(null);
+  const [handoff, setHandoff] = useState<string | null>(null);
+  const [handoffReceipt, setHandoffReceipt] = useState<{
+    readonly refKey: string;
+    readonly receipt: PrsReceipt;
+  } | null>(null);
+
+  /** Hands a host URL to the reader's own client (`t3.ui/external`); a refusal is said by name. */
+  const openOnHost = (url: string) => {
+    setOpenError(null);
+    void bindApi(uiExternalApi, host, session.context)
+      .invoke("open", { url }, session.signal)
+      .then(
+        (receipt) => {
+          if (!session.signal.aborted && receipt.status === "refused")
+            setOpenError(prsOpenRefusedLabel(receipt.reason));
+        },
+        (error) => {
+          if (!session.signal.aborted) setOpenError(message(error, "Could not open the link"));
+        },
+      );
+  };
 
   const refreshes = usePrsRefreshes(
     host,
@@ -1530,6 +2402,69 @@ export function PullRequestsPanel(props: {
   };
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
+  const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+  const defaultRefs = useDefaultRefs(
+    host,
+    session,
+    visible && ready && selected !== null,
+    revision,
+  );
+  const toasts = useMutationToasts(host, session, visible && ready);
+  /**
+   * Starts one outcome's report: native's toast when the host delivers
+   * them, else — or once delivery is lost — the inline receipt.
+   */
+  const beginReport = (
+    label: string,
+    startTitle: string | undefined,
+    showInline: (receipt: PrsReceipt) => void,
+  ) => {
+    let settled: PrsReceipt | null = null;
+    let lost = false;
+    const toast = toasts.begin(
+      label,
+      () => {
+        lost = true;
+        if (settled !== null) showInline(settled);
+      },
+      startTitle,
+    );
+    return (receipt: PrsReceipt) => {
+      settled = receipt;
+      if (toast === null || lost) showInline(receipt);
+      else toast.settleWith(receiptToast(receipt));
+    };
+  };
+
+  /** Native's stack actions show their result alone: one toast, or inline without them. */
+  const reportResult = (receipt: PrsReceipt, showInline: (receipt: PrsReceipt) => void) => {
+    if (!toasts.report(receiptToast(receipt), () => showInline(receipt))) showInline(receipt);
+  };
+
+  /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
+  const startCheckout = (url: string, mode: PrsCheckoutMode) => {
+    if (selectedKey === null || handoff !== null) return;
+    const refKey = selectedKey;
+    setHandoff(`checkout:${mode}`);
+    setHandoffReceipt(null);
+    const report = beginReport("Check out", "Preparing the pull request checkout...", (receipt) =>
+      setHandoffReceipt({ refKey, receipt }),
+    );
+    void bindApi(vcsActionsApi, host, session.context)
+      .invoke("preparePullRequestThread", { reference: url, mode }, session.signal)
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({
+          ok: false as const,
+          detail: error instanceof Error ? error.message : null,
+        }),
+      )
+      .then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        report(prsCheckoutReceipt(mode, outcome));
+      });
+  };
   const draftKey = (key: string) => prsDraftKey(selectedKey, key);
   const draft = (key: string) => drafts[draftKey(key)] ?? "";
   const setDraft = (key: string, value: string) =>
@@ -1548,6 +2483,9 @@ export function PullRequestsPanel(props: {
     key: string,
     invoke: (signal: AbortSignal) => Promise<unknown>,
     settled?: readonly { readonly key: string; readonly submitted: string }[],
+    onSettled?: (
+      outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string },
+    ) => void,
   ) => {
     if (writeState?.pending) return;
     const controller = new AbortController();
@@ -1565,15 +2503,14 @@ export function PullRequestsPanel(props: {
             ),
           );
         }
+        onSettled?.({ ok: true });
         runInvalidate();
       },
       (error) => {
-        if (!signal.aborted)
-          setWriteState({
-            key,
-            pending: false,
-            error: message(error, "Pull-request write failed"),
-          });
+        if (signal.aborted) return;
+        const detail = message(error, "Pull-request write failed");
+        setWriteState({ key, pending: false, error: detail });
+        onSettled?.({ ok: false, detail });
       },
     );
   };
@@ -1733,13 +2670,135 @@ export function PullRequestsPanel(props: {
 
   const detail = sections.detail;
   const activity = sections.activity;
+  // On a stack layer a plain merge would land this layer alone into its base,
+  // so single merges wait until the stack lookup says there is no stack.
+  const singleMergeAllowed = prsSingleMergeAllowed({
+    supportsStackActions:
+      ops?.["prs.stack"] === true &&
+      detail?.capabilities.stacks === true &&
+      detail.capabilities.stackActions === true,
+    hasStack: sections.stack !== null && sections.stack.layers.length > 0,
+    stackPending: !sections.stackFresh,
+    stackError: sections.stackError,
+  });
+  const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
+  // The list row for this PR may be a newer snapshot, with a newer checks rollup.
+  const selectedEntry =
+    selectedKey === null
+      ? undefined
+      : list.entries.find((entry) => prsRefKey(entry) === selectedKey);
+  const checksRollup =
+    detail === null
+      ? null
+      : prsReconcileChecks(
+          detail.checks,
+          { ...detail, receivedAt: sections.detailReceivedAt },
+          selectedEntry === undefined || selectedKey === null
+            ? undefined
+            : { ...selectedEntry, receivedAt: list.receivedAt[selectedKey] ?? 0 },
+        );
+  const checksHeading =
+    detail === null || checksRollup === null
+      ? null
+      : checksRollup.stale
+        ? (prsChecksIcon(checksRollup.state)?.label ?? "No checks reported")
+        : prsChecksSummary(detail.checks);
+  const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
+  // One method for merge, auto-merge and the stack merge, resolved as native does.
+  const mergeMethod = prsResolveMergeMethod(
+    allowedMergeMethods,
+    draft("method:merge") || null,
+    detail === null
+      ? undefined
+      : (detail.preferredMergeMethod ??
+          rememberedMergeMethod.legacy({
+            environmentId: session.context.resource.environmentId,
+            projectId: detail.projectId,
+          })),
+    rememberedMergeMethod.last,
+  );
+  const pickMergeMethod = (value: string) => {
+    setDraft("method:merge", value);
+    rememberedMergeMethod.remember(value);
+  };
+  // Native requires a fresh stack read: a stack that failed to re-read, or whose
+  // re-read is still in flight, offers no merge.
+  const stackMerge =
+    detail !== null &&
+    selected !== null &&
+    sections.stack !== null &&
+    sections.stackFresh &&
+    sections.stackError === null &&
+    write.kind === "ready" &&
+    prsCanMergeStack(detail, write)
+      ? prsStackMergePlan(sections.stack, selected.number, mergeMethod)
+      : null;
+  // Native's Rebase stack: the same fresh-stack rule, gated on the viewer's own permission.
+  const stackRebase =
+    detail !== null &&
+    sections.stack !== null &&
+    sections.stack.layers.length > 0 &&
+    sections.stackFresh &&
+    sections.stackError === null &&
+    write.kind === "ready" &&
+    prsCanRebaseStack(detail, write)
+      ? prsStackRebasePlan(sections.stack)
+      : null;
+  const openStackConfirm = (action: "merge" | "rebase") => {
+    if (selectedKey === null) return;
+    const opener = action === "merge" ? stackMergeOpener : stackRebaseOpener;
+    setStackConfirm({ refKey: selectedKey, action, opener: opener.current });
+  };
+  const confirmPlan =
+    stackConfirm === null || stackConfirm.refKey !== selectedKey
+      ? null
+      : (stackConfirm.running ?? (stackConfirm.action === "merge" ? stackMerge : stackRebase));
+  const confirming = confirmPlan !== null ? stackConfirm : null;
+  const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
+  const runStackAction = () => {
+    if (
+      selected === null ||
+      selectedKey === null ||
+      confirming === null ||
+      confirmPlan === null ||
+      confirmPlan.disabled
+    )
+      return;
+    const ref = selected;
+    const refKey = selectedKey;
+    const { action } = confirming;
+    setStackConfirm({ ...confirming, running: confirmPlan });
+    setStackReceipt(null);
+    runWrite(
+      `stack:${action}`,
+      (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
+      undefined,
+      (outcome) => {
+        setStackConfirm(null);
+        reportResult(
+          action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
+          (receipt) => setStackReceipt({ refKey, receipt }),
+        );
+      },
+    );
+  };
+  const commitUrl = (oid: string) =>
+    detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
+  const closeConfirmation = () => setStackConfirm(null);
 
   return (
     <div
       aria-label="Pull requests"
-      style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+      }}
     >
       <div
+        inert={confirming !== null}
         style={{
           display: "flex",
           alignItems: "center",
@@ -1811,7 +2870,7 @@ export function PullRequestsPanel(props: {
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div inert={confirming !== null} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {gate.kind === "loading" && (
           <p role="note" style={noteStyle}>
             Reading pull-request capabilities…
@@ -1888,6 +2947,20 @@ export function PullRequestsPanel(props: {
                       host={host}
                       entry={prEntry}
                       viewers={list.result?.viewers ?? {}}
+                      loadChecks={(signal) =>
+                        bindApi(prsReadApi, host, session.context)
+                          .invoke(
+                            "detail",
+                            {
+                              host: prEntry.host,
+                              repository: prEntry.repository,
+                              number: prEntry.number,
+                            },
+                            AbortSignal.any([signal, session.signal]),
+                          )
+                          .then((read) => read.checks)
+                      }
+                      onOpenLink={openOnHost}
                       onSelect={() =>
                         onSelect({
                           host: prEntry.host,
@@ -1959,13 +3032,66 @@ export function PullRequestsPanel(props: {
                             {detail.title}
                           </strong>
                         </Tooltip>
-                        <Tooltip host={host} side="top" label={detail.repository}>
-                          <span style={{ color: muted, fontSize: 12 }}>
-                            {detail.repository}#{detail.number}
-                          </span>
+                        <Tooltip
+                          host={host}
+                          side="top"
+                          label={
+                            repositoryUrl !== null
+                              ? `Open ${detail.repository} repository`
+                              : detail.repository
+                          }
+                        >
+                          {repositoryUrl !== null ? (
+                            <button
+                              type="button"
+                              onClick={() => openOnHost(repositoryUrl)}
+                              style={{ ...linkButton, color: muted, fontSize: 12 }}
+                            >
+                              {detail.repository}
+                            </button>
+                          ) : (
+                            <span style={{ color: muted, fontSize: 12 }}>{detail.repository}</span>
+                          )}
                         </Tooltip>
+                        <Tooltip host={host} side="top" label={prsOpenOnHostLabel(detail.provider)}>
+                          <button
+                            type="button"
+                            aria-label={`Open pull request #${detail.number} on host`}
+                            onClick={() => openOnHost(detail.url)}
+                            style={{ ...linkButton, fontSize: 12 }}
+                          >
+                            #{detail.number} ↗
+                          </button>
+                        </Tooltip>
+                        <ChecksControl
+                          host={host}
+                          state={checksRollup?.state}
+                          checks={detail.checks}
+                          stale={checksRollup?.stale === true}
+                          onOpenLink={openOnHost}
+                        />
+                        {canCheckout && (
+                          <span style={{ marginLeft: "auto" }}>
+                            <CheckoutMenu
+                              host={host}
+                              pending={handoff?.startsWith("checkout") === true}
+                              disabled={handoff !== null}
+                              onPick={(mode) => startCheckout(detail.url, mode)}
+                            />
+                          </span>
+                        )}
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
+                      <ReceiptLine
+                        receipt={
+                          handoffReceipt?.refKey === selectedKey ? handoffReceipt.receipt : null
+                        }
+                      />
+                      {openError !== null && (
+                        <p role="alert" style={{ ...noteStyle, padding: "2px 0", fontSize: 12 }}>
+                          {openError}
+                        </p>
+                      )}
                     </div>
                     <div style={{ padding: "4px 10px" }}>
                       {metaRow(
@@ -1976,18 +3102,23 @@ export function PullRequestsPanel(props: {
                       )}
                       {metaRow(
                         "Branches",
-                        <>
-                          <Tooltip host={host} side="top" label={detail.headBranch}>
-                            <span>
-                              {detail.headRepositoryNameWithOwner ?? detail.headBranch}:
-                              {detail.headBranch}
-                            </span>
-                          </Tooltip>
-                          {" → "}
-                          <Tooltip host={host} side="top" label={detail.baseBranch}>
-                            <span>{detail.baseBranch}</span>
-                          </Tooltip>
-                        </>,
+                        <BranchChips
+                          host={host}
+                          detail={detail}
+                          stacked={prsStackedOnDefault(detail.baseBranch, defaultRefs ?? [])}
+                          baseUrl={prsBranchUrl(detail.provider, repositoryUrl, detail.baseBranch)}
+                          headUrl={prsBranchUrl(
+                            detail.provider,
+                            prsHeadRepositoryUrl(
+                              repositoryUrl,
+                              detail.repository,
+                              detail.headRepositoryNameWithOwner,
+                            ),
+                            detail.headBranch,
+                          )}
+                          onOpen={openOnHost}
+                          onCopyError={setOpenError}
+                        />,
                       )}
                       {metaRow(
                         "Changes",
@@ -2081,7 +3212,7 @@ export function PullRequestsPanel(props: {
                       </p>
                     )}
                     {writeOps?.["prs.runAction"] === true &&
-                      prsWriteActionOffers(detail, write).map((offer) => (
+                      prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => (
                         <PrsActionButton
                           key={offer.action}
                           host={host}
@@ -2093,11 +3224,15 @@ export function PullRequestsPanel(props: {
                               : null
                           }
                           method={
-                            draft(`method:${offer.action}`) ||
-                            (offer.methods ?? offer.updateMethods ?? [])[0] ||
-                            ""
+                            offer.methods !== undefined
+                              ? mergeMethod
+                              : draft(`method:${offer.action}`) || offer.updateMethods?.[0] || ""
                           }
-                          onMethodChange={(value) => setDraft(`method:${offer.action}`, value)}
+                          onMethodChange={(value) =>
+                            offer.methods !== undefined
+                              ? pickMergeMethod(value)
+                              : setDraft(`method:${offer.action}`, value)
+                          }
                           onRun={runPrAction}
                         />
                       ))}
@@ -2113,6 +3248,10 @@ export function PullRequestsPanel(props: {
                   </section>
                 )}
 
+                {/* Outside the Stack section: a merged stack can vanish on the next read. */}
+                <ReceiptLine
+                  receipt={stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null}
+                />
                 {sections.stackError !== null && (
                   <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                     {sections.stackError}
@@ -2139,15 +3278,78 @@ export function PullRequestsPanel(props: {
                         </li>
                       ))}
                     </ul>
+                    {((stackMerge !== null && stackMerge.visible) || stackRebase !== null) && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          flexWrap: "wrap",
+                          padding: "2px 10px",
+                        }}
+                      >
+                        {stackMerge !== null && stackMerge.visible && (
+                          <Tooltip
+                            host={host}
+                            side="top"
+                            label={stackMerge.tooltip}
+                            showWhenDisabled
+                          >
+                            <button
+                              type="button"
+                              disabled={stackMerge.disabled || writeState?.pending === true}
+                              ref={stackMergeOpener}
+                              onClick={() => openStackConfirm("merge")}
+                              style={{ ...control, fontSize: 12, border }}
+                            >
+                              {stackMerge.label}
+                            </button>
+                          </Tooltip>
+                        )}
+                        {stackMerge !== null &&
+                          stackMerge.visible &&
+                          allowedMergeMethods.length > 1 && (
+                            <select
+                              aria-label="Merge stack method"
+                              value={mergeMethod}
+                              disabled={writeState?.pending === true}
+                              onChange={(event) => pickMergeMethod(event.target.value)}
+                              style={{ ...control, fontSize: 12, padding: "2px 4px" }}
+                            >
+                              {allowedMergeMethods.map((method) => (
+                                <option key={method} value={method}>
+                                  {method}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        {stackRebase !== null && (
+                          <button
+                            type="button"
+                            disabled={stackRebase.disabled || writeState?.pending === true}
+                            ref={stackRebaseOpener}
+                            onClick={() => openStackConfirm("rebase")}
+                            style={{ ...control, fontSize: 12, border }}
+                          >
+                            {stackRebase.label}
+                          </button>
+                        )}
+                        {stackMerge !== null &&
+                          stackMerge.visible &&
+                          stackMerge.blockedNote !== null && (
+                            <span style={{ color: muted, fontSize: 12 }}>
+                              {stackMerge.blockedNote}
+                            </span>
+                          )}
+                      </div>
+                    )}
                   </section>
                 )}
 
                 <section aria-label="Checks" style={{ paddingBottom: 4 }}>
                   <h3 style={headingStyle}>
                     Checks
-                    {detail !== null && prsChecksSummary(detail.checks) !== null
-                      ? ` — ${prsChecksSummary(detail.checks)}`
-                      : ""}
+                    {checksHeading !== null ? ` — ${checksHeading}` : ""}
                   </h3>
                   {detail !== null && detail.checks.length === 0 && (
                     <p style={{ ...noteStyle, fontSize: 12 }}>No checks reported.</p>
@@ -2334,24 +3536,37 @@ export function PullRequestsPanel(props: {
                       <section aria-label="Commits" style={{ paddingBottom: 4 }}>
                         <h3 style={headingStyle}>Commits ({activity.commits.length})</h3>
                         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                          {activity.commits.map((commit) => (
-                            <li key={commit.oid} style={{ padding: "2px 10px", fontSize: 12 }}>
-                              <span
-                                style={{
-                                  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                                  color: muted,
-                                  fontSize: 11,
-                                }}
-                              >
-                                {commit.oid.slice(0, 8)}
-                              </span>{" "}
-                              {commit.messageHeadline}
-                              <span style={{ color: muted, fontSize: 11 }}>
-                                {" "}
-                                · {formatRelativeTime(commit.committedDate)}
-                              </span>
-                            </li>
-                          ))}
+                          {activity.commits.map((commit) => {
+                            const url = commitUrl(commit.oid);
+                            const short = commit.oid.slice(0, 8);
+                            return (
+                              <li key={commit.oid} style={{ padding: "2px 10px", fontSize: 12 }}>
+                                {url === null ? (
+                                  <span style={oidStyle}>{short}</span>
+                                ) : (
+                                  <Tooltip
+                                    host={host}
+                                    side="top"
+                                    label={prsOpenOnHostLabel(detail?.provider ?? "unknown")}
+                                  >
+                                    <button
+                                      type="button"
+                                      aria-label={`Open commit ${short} on host`}
+                                      onClick={() => openOnHost(url)}
+                                      style={{ ...linkButton, ...oidStyle }}
+                                    >
+                                      {short}
+                                    </button>
+                                  </Tooltip>
+                                )}{" "}
+                                {commit.messageHeadline}
+                                <span style={{ color: muted, fontSize: 11 }}>
+                                  {" "}
+                                  · {formatRelativeTime(commit.committedDate)}
+                                </span>
+                              </li>
+                            );
+                          })}
                         </ul>
                       </section>
                     )}
@@ -2383,6 +3598,26 @@ export function PullRequestsPanel(props: {
           </>
         )}
       </div>
+      {confirming !== null && confirmPlan !== null && (
+        <ConfirmDialog
+          host={host}
+          anchor={confirming.opener}
+          title={confirmPlan.confirmTitle}
+          description={confirmPlan.confirmDescription}
+          confirmLabel={confirmPlan.label}
+          pending={stackActionPending}
+          onCancel={closeConfirmation}
+          onConfirm={runStackAction}
+        >
+          <ul style={{ listStyle: "none", margin: "4px 0", padding: 0 }}>
+            {confirmPlan.layers.map((layer) => (
+              <li key={layer.number}>
+                #{layer.number} {layer.title ?? layer.headBranch}
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

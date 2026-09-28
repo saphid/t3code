@@ -33,13 +33,17 @@ import type {
   PrsOmittedFileStat,
   PrsProviderSummary,
   PrsReviewThread,
+  PrsStack,
   PrsStackMembership,
+  PrsWriteActionInput,
   PrsWriteActionKind,
   PrsWriteCapabilitiesResult,
   PrsWriteMergeMethod,
   PrsWriteOperationsSupport,
   PrsWriteUpdateMethod,
   PrsWriteVerdict,
+  VcsActionPrepareThreadResult,
+  VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
 
 /* ---------------- capability gate ---------------- */
@@ -293,7 +297,225 @@ export function prsRowMeta(entry: PrsListEntry, now?: number): string {
   return parts.filter((part) => part !== null).join(" · ");
 }
 
+/* ---------------- open on host ---------------- */
+
+const OPEN_ON_HOST_LABELS: Readonly<Record<string, string>> = {
+  github: "Open on GitHub",
+  gitlab: "Open on GitLab",
+  forgejo: "Open on Forgejo",
+  bitbucket: "Open on Bitbucket",
+  "azure-devops": "Open on Azure DevOps",
+};
+
+/** Named for the host rather than "externally": the point is where you will land. */
+export function prsOpenOnHostLabel(provider: string): string {
+  return OPEN_ON_HOST_LABELS[provider] ?? "Open on host";
+}
+
+/** The repository root behind a change-request URL (native `changeRequestRepositoryUrl`). */
+export function prsRepositoryUrl(changeRequestUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(changeRequestUrl);
+  } catch {
+    return null;
+  }
+  const path =
+    /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
+    /^(.*?)(?:\/pulls?\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+      url.pathname,
+    )?.[1];
+  if (!path) return null;
+  url.pathname = path;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+const branchPath = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
+
+/**
+ * Where a head branch lives: the fork's repository when the change request
+ * comes from one, the base repository otherwise.
+ */
+export function prsHeadRepositoryUrl(
+  repositoryUrl: string | null,
+  repository: string,
+  headRepository: string | null | undefined,
+): string | null {
+  if (repositoryUrl === null || !headRepository || headRepository === repository)
+    return repositoryUrl;
+  return repositoryUrl.endsWith(`/${repository}`)
+    ? `${repositoryUrl.slice(0, -repository.length)}${headRepository}`
+    : null;
+}
+
+/** A branch's page on its host; null where the host's layout is not known. */
+export function prsBranchUrl(
+  provider: string,
+  repositoryUrl: string | null,
+  branch: string,
+): string | null {
+  if (repositoryUrl === null) return null;
+  switch (provider) {
+    case "github":
+      return `${repositoryUrl}/tree/${branchPath(branch)}`;
+    case "forgejo":
+      return `${repositoryUrl}/src/branch/${branchPath(branch)}`;
+    case "gitlab":
+      return `${repositoryUrl}/-/tree/${branchPath(branch)}`;
+    case "bitbucket":
+      return `${repositoryUrl}/branch/${branchPath(branch)}`;
+    case "azure-devops":
+      return `${repositoryUrl}?version=GB${encodeURIComponent(branch)}`;
+    default:
+      return null;
+  }
+}
+
+/** A commit's page on its host; null where the host's layout is not known. */
+export function prsCommitUrl(
+  provider: string,
+  repositoryUrl: string | null,
+  oid: string,
+): string | null {
+  if (repositoryUrl === null) return null;
+  switch (provider) {
+    case "github":
+    case "forgejo":
+    case "azure-devops":
+      return `${repositoryUrl}/commit/${encodeURIComponent(oid)}`;
+    case "gitlab":
+      return `${repositoryUrl}/-/commit/${encodeURIComponent(oid)}`;
+    case "bitbucket":
+      return `${repositoryUrl}/commits/${encodeURIComponent(oid)}`;
+    default:
+      return null;
+  }
+}
+
+/** A `t3.ui/external` refusal, said by its closed reason. */
+export function prsOpenRefusedLabel(
+  reason: "invalid-url" | "scheme-not-allowed" | "opener-refused",
+): string {
+  switch (reason) {
+    case "invalid-url":
+      return "Could not open the link — the host sent an invalid address.";
+    case "scheme-not-allowed":
+      return "Could not open the link — only http and https links open.";
+    case "opener-refused":
+      return "Could not open the link — the system refused it.";
+  }
+}
+
+/* ---------------- checkout ---------------- */
+
+export type PrsCheckoutMode = "worktree" | "local";
+
+/**
+ * Native's checkout menu. The worktree option drops native's "and thread":
+ * `t3.vcs/actions` prepares the checkout but no extension contract opens a
+ * thread, so the pack does not claim one.
+ */
+export const PRS_CHECKOUT_OPTIONS: readonly {
+  readonly mode: PrsCheckoutMode;
+  readonly label: string;
+  readonly description: string;
+}[] = [
+  {
+    mode: "worktree",
+    label: "In a separate worktree",
+    description: "Its own folder. Nothing you have open moves.",
+  },
+  {
+    mode: "local",
+    label: "In this repository",
+    description: "Switches the branch you are working in, like `gh pr checkout`.",
+  },
+];
+
+export function prsCheckoutLabel(pending: boolean): string {
+  return pending ? "Checking out..." : "Check out";
+}
+
+export interface PrsReceipt {
+  readonly tone: "success" | "warning" | "error";
+  readonly title: string;
+  readonly description: string | null;
+}
+
+/** Native's checkout toasts as one receipt: where it landed, stale, or the host's own refusal. */
+export function prsCheckoutReceipt(
+  mode: PrsCheckoutMode,
+  outcome:
+    | { readonly ok: true; readonly value: VcsActionPrepareThreadResult }
+    | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  if (!outcome.ok)
+    return {
+      tone: "error",
+      title: "Could not prepare the pull request checkout",
+      description: outcome.detail,
+    };
+  if (!outcome.value.isOnPullRequestHead)
+    return {
+      tone: "warning",
+      title: "Checked out, but the latest commits are unconfirmed",
+      description:
+        "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+    };
+  return mode === "local" || outcome.value.worktreePath === null
+    ? {
+        tone: "success",
+        title: "Checked out here",
+        description: "This repository is on the pull request's branch.",
+      }
+    : {
+        tone: "success",
+        title: "Checked out",
+        description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`,
+      };
+}
+
 /* ---------------- detail projections ---------------- */
+
+/**
+ * Native's header branch chips: `base ← head` in mono, each name on hover,
+ * the arrow named for screen readers. A stacked base says so on hover.
+ */
+export function prsBranchChips(
+  detail: { readonly baseBranch: string; readonly headBranch: string },
+  stacked: boolean,
+) {
+  return {
+    base: {
+      text: detail.baseBranch,
+      tooltip: stacked ? `Stacked on ${detail.baseBranch}` : detail.baseBranch,
+      stacked,
+    },
+    head: { text: detail.headBranch, tooltip: detail.headBranch },
+    arrowLabel: "receives changes from",
+  };
+}
+
+/**
+ * Native's `isStackedPullRequestBase`: the base is stacked when it is not the
+ * repository's default branch (a remote default drops its remote prefix).
+ * No known default ref, no badge. Host stack membership is shown apart.
+ */
+export function prsStackedOnDefault(
+  baseBranch: string,
+  refs: readonly Pick<VcsRefEntry, "name" | "isDefault" | "isRemote" | "remoteName">[],
+): boolean {
+  const defaultRef = refs.find((ref) => ref.isDefault);
+  if (defaultRef === undefined) return false;
+  if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
+  const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
+  const defaultBranch = defaultRef.name.startsWith(remotePrefix)
+    ? defaultRef.name.slice(remotePrefix.length)
+    : defaultRef.name;
+  return defaultBranch !== baseBranch;
+}
 
 export function prsMergeabilityLabel(
   mergeability: "mergeable" | "conflicting" | "unknown" | undefined,
@@ -958,6 +1180,93 @@ export function prsChecksTooltip(
   }
 }
 
+export type PrsChecksState = "passing" | "failing" | "pending";
+
+/**
+ * The checks glyph native draws on a row and in the detail header: one
+ * icon per rollup, its accessible name and tooltip native's headline.
+ * Null where the host reported no rollup — no tick nobody earned.
+ */
+export function prsChecksIcon(state: PrsChecksState | null | undefined): {
+  readonly glyph: string;
+  readonly label: string;
+  readonly tone: "success" | "destructive" | "warning";
+} | null {
+  switch (state) {
+    case "passing":
+      return { glyph: "✓", label: "All checks have passed", tone: "success" };
+    case "failing":
+      return { glyph: "✕", label: "Some checks were not successful", tone: "destructive" };
+    case "pending":
+      return { glyph: "●", label: "Some checks haven't completed yet", tone: "warning" };
+    default:
+      return null;
+  }
+}
+
+/** A detail's checks rolled up as the list row's field would be (native `pullRequestChecksState`). */
+export function prsChecksStateFromChecks(
+  checks: readonly Pick<PrsCheck, "status">[],
+): PrsChecksState | null {
+  if (checks.length === 0) return null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
+
+/**
+ * One dated read of a pull request: the detail, or its list row. `observedAt`
+ * is the host's read-start time (`t3.prs/read@1.1.0`), `receivedAt` the
+ * client's arrival time for that successful read.
+ */
+export interface PrsSnapshotStamp {
+  readonly state: "open" | "closed" | "merged";
+  readonly updatedAt: string;
+  readonly observedAt?: number;
+  readonly receivedAt: number;
+}
+
+/**
+ * Positive when `incoming` is newer than `current`, as native orders pull
+ * request snapshots: merged is final, then the host's update time, then its
+ * read-start time (a snapshot without one never beats a stamped read), and
+ * only when neither carries one, the client's arrival time.
+ */
+export function prsCompareSnapshots(current: PrsSnapshotStamp, incoming: PrsSnapshotStamp): number {
+  const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
+  if (merged !== 0) return merged;
+  const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
+  if (updated !== 0) return updated;
+  if (current.observedAt === undefined && incoming.observedAt === undefined)
+    return incoming.receivedAt - current.receivedAt;
+  return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+}
+
+/**
+ * The header's checks rollup, reconciled as native's is: the list row's
+ * rollup wins only when that row is the newer snapshot (ties go to the row,
+ * as native's do), except that a run awaiting approval keeps it pending
+ * unless something failed (list rollups can omit those runs). `stale` says
+ * the detail's own checks no longer back the rollup.
+ */
+export function prsReconcileChecks(
+  checks: readonly Pick<PrsCheck, "status">[],
+  detail: PrsSnapshotStamp,
+  entry: (PrsSnapshotStamp & { readonly checksState?: PrsChecksState }) | undefined,
+): { readonly state: PrsChecksState | null; readonly stale: boolean } {
+  const detailState = prsChecksStateFromChecks(checks);
+  const latest =
+    entry?.checksState !== undefined && prsCompareSnapshots(detail, entry) >= 0
+      ? entry.checksState
+      : detailState;
+  const state =
+    latest !== "failing" && checks.some((check) => check.status === "action-required")
+      ? "pending"
+      : latest;
+  return { state, stale: state !== detailState };
+}
+
 /**
  * Native's stack-membership help. List membership only ever comes from the
  * host's own stack graph (GitHub stacks), never a base-branch chain, so this
@@ -1016,15 +1325,38 @@ export interface PrsWriteActionOffer {
 }
 
 /**
+ * Native's `allowsSinglePullRequestMerge`: a host with stack actions must
+ * finish stack discovery before offering a single-PR merge or auto-merge,
+ * since on a stack layer that would merge the layer alone into its base.
+ */
+export function prsSingleMergeAllowed(input: {
+  readonly supportsStackActions: boolean;
+  readonly hasStack: boolean;
+  readonly stackPending: boolean;
+  readonly stackError: string | null;
+}): boolean {
+  return (
+    !input.supportsStackActions ||
+    (!input.hasStack && !input.stackPending && input.stackError === null)
+  );
+}
+
+/**
  * The actions bar for a loaded detail: state decides which writes are
  * even sensible (a closed change request has no merge to offer), then the
  * host's declared `actions` intersects that set — nothing is drawn that
  * the provider did not claim, which is the native panel's own rule.
+ * Merging and arming auto-merge follow native eligibility: never on a
+ * draft or conflicting change request, only with a method the repository
+ * allows, and only once stack discovery allows a single merge. Disarming
+ * an armed auto-merge is always offered.
  */
 export function prsWriteActionOffers(
   detail: {
     readonly state: "open" | "closed" | "merged";
     readonly isDraft: boolean;
+    readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+    readonly mergeCapabilities?: Readonly<Record<PrsWriteMergeMethod, boolean>>;
     readonly baseComparison?: "ahead" | "behind" | "diverged" | "up-to-date" | string;
     readonly autoMergeEnabled?: boolean;
     readonly workflowApprovalsRequired?: number;
@@ -1034,6 +1366,7 @@ export function prsWriteActionOffers(
     readonly mergeMethods: readonly PrsWriteMergeMethod[];
     readonly updateMethods: readonly PrsWriteUpdateMethod[];
   },
+  options: { readonly singleMergeAllowed?: boolean } = {},
 ): readonly PrsWriteActionOffer[] {
   const declared = new Set(write.actions);
   const offer = (
@@ -1049,10 +1382,20 @@ export function prsWriteActionOffers(
           ...(extra?.updateMethods !== undefined ? { updateMethods: extra.updateMethods } : {}),
         }
       : null;
+  const mergeCapabilities = detail.mergeCapabilities;
+  const mergeMethods =
+    mergeCapabilities === undefined
+      ? write.mergeMethods
+      : write.mergeMethods.filter((method) => mergeCapabilities[method]);
+  const canMerge =
+    !detail.isDraft &&
+    detail.mergeability !== "conflicting" &&
+    mergeMethods.length > 0 &&
+    options.singleMergeAllowed !== false;
   const offers: PrsWriteActionOffer[] = [];
   if (detail.state === "open") {
     if (!detail.isDraft) {
-      const merge = offer("merge", { methods: write.mergeMethods });
+      const merge = canMerge ? offer("merge", { methods: mergeMethods }) : null;
       if (merge !== null) offers.push(merge);
       const draft = offer("draft");
       if (draft !== null) offers.push(draft);
@@ -1067,8 +1410,8 @@ export function prsWriteActionOffers(
     if (detail.autoMergeEnabled === true) {
       const disarm = offer("disable-auto-merge");
       if (disarm !== null) offers.push(disarm);
-    } else if (detail.autoMergeEnabled === false) {
-      const arm = offer("enable-auto-merge", { methods: write.mergeMethods });
+    } else if (detail.autoMergeEnabled === false && canMerge) {
+      const arm = offer("enable-auto-merge", { methods: mergeMethods });
       if (arm !== null) offers.push(arm);
     }
     const close = offer("close");
@@ -1085,6 +1428,181 @@ export function prsWriteActionOffers(
     if (revert !== null) offers.push(revert);
   }
   return offers;
+}
+
+/* ---------------- stack merge ---------------- */
+
+/** The strategies the host offers, narrowed to the ones the repository allows (native order). */
+export function prsAllowedMergeMethods(detail: {
+  readonly capabilities: { readonly mergeMethods: readonly PrsWriteMergeMethod[] };
+  readonly mergeCapabilities: Readonly<Record<PrsWriteMergeMethod, boolean>>;
+}): readonly PrsWriteMergeMethod[] {
+  return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+}
+
+/**
+ * Native's `resolvePullRequestMergeMethod`: the method picked for this change
+ * request, else the project's setting, else the last method picked, each only
+ * if the repository allows it; else the first allowed.
+ */
+export function prsResolveMergeMethod(
+  allowed: readonly PrsWriteMergeMethod[],
+  current: string | null,
+  projectDefault: PrsWriteMergeMethod | undefined,
+  lastSelected: string | null,
+): PrsWriteMergeMethod {
+  for (const method of [current, projectDefault, lastSelected]) {
+    const match = allowed.find((candidate) => candidate === method);
+    if (match !== undefined) return match;
+  }
+  return allowed[0] ?? "merge";
+}
+
+/**
+ * Native's `canMerge` for the stack menu: the host does stacks and stack
+ * actions, both the host and this viewer may merge, the repository allows a
+ * method, and the write probe declares the action.
+ */
+export function prsCanMergeStack(
+  detail: {
+    readonly capabilities: {
+      readonly actions: readonly string[];
+      readonly mergeMethods: readonly PrsWriteMergeMethod[];
+      readonly stacks?: boolean;
+      readonly stackActions?: boolean;
+    };
+    readonly viewerPermissions: { readonly actions: readonly string[] };
+    readonly mergeCapabilities: Readonly<Record<PrsWriteMergeMethod, boolean>>;
+  },
+  write: {
+    readonly operations: { readonly "prs.runAction": boolean };
+    readonly actions: readonly PrsWriteActionKind[];
+  },
+): boolean {
+  return (
+    detail.capabilities.stacks === true &&
+    detail.capabilities.stackActions === true &&
+    detail.capabilities.actions.includes("merge") &&
+    detail.viewerPermissions.actions.includes("merge") &&
+    prsAllowedMergeMethods(detail).length > 0 &&
+    write.operations["prs.runAction"] &&
+    write.actions.includes("merge")
+  );
+}
+
+/**
+ * Native's Merge stack (PullRequestStackMenu): this layer and every
+ * unmerged layer below it, each pinned to the head the reader saw so a
+ * moved branch fails rather than merges unseen code.
+ */
+export function prsStackMergePlan(stack: PrsStack, number: number, mergeMethod: string) {
+  const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
+  const selected = position > 0 ? stack.layers[position - 1] : undefined;
+  const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
+  const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
+  const count = layers.length;
+  const input: Omit<PrsWriteActionInput, "repository" | "host"> = {
+    number,
+    action: "merge",
+    mergeMethod: mergeMethod as PrsWriteMergeMethod,
+    stackNumber: stack.number,
+    expectedStackHeads: layers.flatMap((layer) =>
+      layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+    ),
+  };
+  return {
+    visible: selected?.state === "open",
+    disabled:
+      selected?.state !== "open" ||
+      count === 0 ||
+      unready ||
+      layers.some((layer) => !layer.headSha),
+    layers,
+    input,
+    label: "Merge stack",
+    tooltip: `Merge stack through #${number} into ${stack.base} (${count} ${
+      count === 1 ? "pull request" : "pull requests"
+    })`,
+    confirmTitle: `Merge ${count} pull requests?`,
+    confirmDescription: `Merge #${number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`,
+    blockedNote: unready ? "Every layer being merged must be open and ready for review." : null,
+  };
+}
+
+/** Native's stack-merge toasts as a receipt. */
+export function prsStackMergeReceipt(
+  outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  return outcome.ok
+    ? {
+        tone: "success",
+        title: "Stack merge request completed",
+        description: "GitHub merged the stack or added it to its merge queue.",
+      }
+    : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
+}
+
+/**
+ * Native's `canRebase` for the stack menu: the host does stack actions, this
+ * viewer may rebase the stack, and the write probe declares `update-branch`.
+ */
+export function prsCanRebaseStack(
+  detail: {
+    readonly capabilities: { readonly stacks?: boolean; readonly stackActions?: boolean };
+    readonly viewerPermissions: { readonly stackRebase?: boolean };
+  },
+  write: {
+    readonly operations: { readonly "prs.runAction": boolean };
+    readonly actions: readonly PrsWriteActionKind[];
+  },
+): boolean {
+  return (
+    detail.capabilities.stacks === true &&
+    detail.capabilities.stackActions === true &&
+    detail.viewerPermissions.stackRebase === true &&
+    write.operations["prs.runAction"] &&
+    write.actions.includes("update-branch")
+  );
+}
+
+/**
+ * Native's Rebase stack (PullRequestStackMenu): every unmerged layer, bottom
+ * to top onto the stack base, requested through the top layer with each head
+ * pinned. A closed layer or a head the host did not report disables it.
+ */
+export function prsStackRebasePlan(stack: PrsStack) {
+  const layers = stack.layers.filter((layer) => layer.state !== "merged");
+  const top = stack.layers.at(-1);
+  const count = layers.length;
+  const input: Omit<PrsWriteActionInput, "repository" | "host"> = {
+    number: top?.number ?? 0,
+    action: "update-branch",
+    updateMethod: "rebase",
+    stackNumber: stack.number,
+    expectedStackHeads: layers.flatMap((layer) =>
+      layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+    ),
+  };
+  return {
+    disabled:
+      count === 0 ||
+      top === undefined ||
+      layers.some((layer) => layer.state !== "open" || !layer.headSha),
+    layers,
+    input,
+    label: "Rebase stack",
+    confirmTitle: `Rebase ${count} pull requests?`,
+    confirmDescription: `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`,
+  };
+}
+
+/** Native's stack-rebase toasts as a receipt. */
+export function prsStackRebaseReceipt(
+  outcome: { readonly ok: true } | { readonly ok: false; readonly detail: string | null },
+): PrsReceipt {
+  return outcome.ok
+    ? { tone: "success", title: "Stack rebased", description: null }
+    : { tone: "error", title: "Stack operation did not complete", description: outcome.detail };
 }
 
 /** Review verdicts the host accepts, as picker options in the native order. */

@@ -1,6 +1,7 @@
 import {
   prsReadApi,
   prsWriteApi,
+  uiExternalApi,
   uiNotificationsApi,
   uiThemeApi,
   vcsActionsApi,
@@ -29,7 +30,6 @@ import {
   IDLE_MUTATION,
   IDLE_STACKED_PROGRESS,
   COMMIT_FOLLOW_UP,
-  MUTATION_TOAST_DISMISS_MS,
   PUBLISH_PROVIDERS,
   applyStackedEvent,
   applyStatusEvent,
@@ -42,16 +42,11 @@ import {
   describeStackedResult,
   discardAction,
   discardReceipt,
-  dismissReceiptAfterSeen,
   entryMutation,
-  isNotificationDismissal,
   laneCount,
   laneMutation,
   laneTitle,
   lanesFromChanges,
-  mutationToastSettle,
-  mutationToastStart,
-  postFollowUpReceipt,
   stackedChooserReason,
   nextThemeVars,
   numstatFor,
@@ -95,6 +90,7 @@ import {
   type StatusModel,
 } from "./viewModel.js";
 import { PullRequestsPanel } from "./prsPanel.js";
+import { useMutationToasts } from "./mutationToasts.js";
 
 const manifestId = "t3.version-control";
 
@@ -467,196 +463,6 @@ function useThemeVars(
     return () => controller.abort();
   }, [host, session, visible]);
   return vars;
-}
-
-/**
- * `t3.ui/notifications` consumer. Native repository mutations report through
- * toast progress (GitActionsControl): a loading toast on start, the same
- * notification updated to success or error on settle — never an inline row.
- * The grant-free `getCapabilities` probe names a provider-less host before
- * any write; a `notify` failure latches the adapter off (a denied grant
- * never recovers within a session). Every delivery loss — rejected `notify`,
- * rejected or unapplied `update` — hands that mutation's receipt back to the
- * inline row through `onReceiptLost`, and a `notification-expired` update
- * (a user-dismissed loading toast) does so without killing the adapter.
- * A success with a follow-up (native's toast CTA) posts a fresh receipt
- * carrying the button instead, since `update` cannot add actions.
- */
-interface MutationToast {
-  readonly settle: (
-    result: { readonly ok: boolean; readonly detail: string },
-    followUp?: MutationFollowUp | null,
-  ) => void;
-}
-
-function useMutationToasts(
-  host: ClientHost,
-  session: ViewSession,
-  enabled: boolean,
-  runFollowUp: (action: VcsActionKind) => void,
-): {
-  readonly begin: (label: string, onReceiptLost: () => void) => MutationToast | null;
-} {
-  const [toastsLive, setToastsLive] = useState(false);
-  const [followUpsLive, setFollowUpsLive] = useState(false);
-  const dead = useRef(false);
-  useEffect(() => {
-    if (!enabled) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(uiNotificationsApi, host, session.context)
-      .invoke("getCapabilities", {}, signal)
-      .then(
-        (capabilities) => {
-          // A latched-dead adapter stays dead across re-probes — a denied
-          // grant never recovers within a session.
-          if (!signal.aborted && !dead.current) {
-            setToastsLive(
-              capabilities.operations.notify === true && capabilities.operations.update === true,
-            );
-            setFollowUpsLive(capabilities.operations.awaitAction === true);
-          }
-        },
-        () => {},
-      );
-    return () => controller.abort();
-  }, [host, session, enabled]);
-
-  const markDead = () => {
-    if (dead.current || session.signal.aborted) return;
-    dead.current = true;
-    setToastsLive(false);
-  };
-
-  const begin = (label: string, onReceiptLost: () => void): MutationToast | null => {
-    if (!toastsLive || dead.current) return null;
-    const api = bindApi(uiNotificationsApi, host, session.context);
-    const resource = session.context.resource;
-    // The follow-up receipt awaits its loading-toast retraction so a failed
-    // dismiss falls back to the in-place update; everything else is
-    // fire-and-forget.
-    const dismissOrReject = (notificationId: string): Promise<void> =>
-      api.invoke("dismiss", { notificationId }, session.signal).then(() => {});
-    const dismiss = (notificationId: string) => {
-      void dismissOrReject(notificationId).catch(() => {});
-    };
-    // A thread-anchored toast paints only while its thread is active — the
-    // native threadToastData behavior. Targeting fields may only name this
-    // context's own scope.
-    const target = {
-      ...(resource.threadId !== undefined
-        ? { anchor: "thread" as const, threadId: resource.threadId }
-        : {}),
-      ...(resource.projectId !== undefined ? { projectId: resource.projectId } : {}),
-    };
-    const posted = api
-      .invoke("notify", { ...mutationToastStart(label), ...target }, session.signal)
-      .then(
-        (result) => {
-          // A resolution landing after the adapter died posts a loading
-          // toast nothing will update — retract it on arrival.
-          if (dead.current) dismiss(result.notificationId);
-          return result.notificationId;
-        },
-        () => {
-          markDead();
-          onReceiptLost();
-          return null;
-        },
-      );
-    // The contract's `update` carries no duration, so success receipts are
-    // dismissed on a timer — but an unseen receipt must not expire.
-    // dismissReceiptAfterSeen mirrors native's dismissAfterVisibleMs: the
-    // clock runs only while the receipt can be read — the view is shown
-    // and the document is visible and focused. DOM globals are absent only
-    // where nothing can paint, so the view's own visibility decides there.
-    const receiptSeen = {
-      signal: session.signal,
-      seen: () =>
-        session.visible &&
-        (typeof document === "undefined" ||
-          typeof window === "undefined" ||
-          (document.visibilityState === "visible" && document.hasFocus())),
-      onChange: (listener: () => void) => {
-        const offView = session.onVisibility(listener);
-        if (typeof document === "undefined" || typeof window === "undefined") return offView;
-        document.addEventListener("visibilitychange", listener);
-        window.addEventListener("focus", listener);
-        window.addEventListener("blur", listener);
-        return () => {
-          offView();
-          document.removeEventListener("visibilitychange", listener);
-          window.removeEventListener("focus", listener);
-          window.removeEventListener("blur", listener);
-        };
-      },
-    };
-    const settleInPlace = (
-      notificationId: string,
-      result: { readonly ok: boolean; readonly detail: string },
-    ) =>
-      void api
-        .invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal)
-        .then(
-          ({ applied }) => {
-            if (!applied) {
-              // The notification never took the patch — the outcome
-              // returns to the inline row so it is not silently lost.
-              onReceiptLost();
-              return;
-            }
-            if (result.ok)
-              dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
-                dismiss(notificationId),
-              );
-          },
-          (error) => {
-            onReceiptLost();
-            // A dismissed toast reports notification-expired — the
-            // provider still works, only this receipt goes inline. Any
-            // other rejection is delivery loss and latches the adapter.
-            if (!isNotificationDismissal(error)) markDead();
-          },
-        );
-    return {
-      settle(result, followUp) {
-        void posted.then(async (notificationId) => {
-          if (notificationId === null) return;
-          if (dead.current) {
-            // The adapter died after this toast posted — retract the
-            // orphaned loading toast and hand the receipt to the row.
-            onReceiptLost();
-            dismiss(notificationId);
-            return;
-          }
-          // Native's success toast carries its CTA (Push after a commit).
-          if (result.ok && followUp && followUpsLive) {
-            const replaced = await postFollowUpReceipt(
-              {
-                notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
-                dismiss: dismissOrReject,
-                awaitAction: (id) =>
-                  api.invoke("awaitAction", { notificationId: id }, session.signal),
-              },
-              notificationId,
-              result.detail,
-              followUp,
-              {
-                onPosted: (receiptId) =>
-                  dismissReceiptAfterSeen(receiptSeen, MUTATION_TOAST_DISMISS_MS, () =>
-                    dismiss(receiptId),
-                  ),
-                run: runFollowUp,
-              },
-            );
-            if (replaced) return;
-          }
-          settleInPlace(notificationId, result);
-        });
-      },
-    };
-  };
-  return { begin };
 }
 
 // Every theme-backed value chains a `--t3-version-control-*` hop (published
@@ -2455,6 +2261,8 @@ export default defineExtension({
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
     requireApi(uiThemeApi),
     requireApi(uiNotificationsApi),
+    // Open-on-host links hand URLs to the reader's own client.
+    requireApi(uiExternalApi),
   ],
   surfaces: [
     {

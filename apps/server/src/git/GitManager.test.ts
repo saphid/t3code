@@ -75,6 +75,11 @@ interface FakeGhScenario {
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
+  /**
+   * Mirror gh 2.94's `pr checkout` against origin's `refs/pull/<n>/head`: `--force` hard-resets
+   * the branch onto the pull head, otherwise gh only fast-forwards it.
+   */
+  syncCheckoutWithPullHead?: boolean;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -287,6 +292,28 @@ function configureVisibleRemoteUrlWithLocalRewrite(
   });
 }
 
+const PULL_REQUEST_REPOSITORY_URL = "https://github.com/pingdotgg/codething-mvp.git";
+
+// What the fake provider reports as the clone URLs of the pull requests' repository.
+const pullRequestRepositoryCloneUrls = {
+  "pingdotgg/codething-mvp": {
+    url: PULL_REQUEST_REPOSITORY_URL,
+    sshUrl: "git@github.com:pingdotgg/codething-mvp.git",
+  },
+};
+
+// Points the provider-reported repository URL at a local bare repository, as a user's own
+// `insteadOf` rewrite would, without touching any remote.
+function servePullRequestRepository(
+  cwd: string,
+  localRemotePath: string,
+  url = PULL_REQUEST_REPOSITORY_URL,
+) {
+  return runGit(cwd, ["config", "--add", `url.${localRemotePath}.insteadOf`, url]).pipe(
+    Effect.asVoid,
+  );
+}
+
 function createTextGeneration(
   overrides: Partial<FakeGitTextGeneration> = {},
 ): TextGeneration.TextGeneration["Service"] {
@@ -444,7 +471,39 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.try({
         try: () => {
           const headBranch = scenario.pullRequest?.headRefName;
-          if (headBranch) {
+          if (headBranch && scenario.syncCheckoutWithPullHead) {
+            const force = args.includes("--force");
+            runGitSyncForFakeGh(input.cwd, [
+              "fetch",
+              "origin",
+              `refs/pull/${scenario.pullRequest?.number}/head`,
+            ]);
+            const current = NodeChildProcess.spawnSync("git", ["branch", "--show-current"], {
+              cwd: input.cwd,
+              encoding: "utf8",
+            }).stdout.trim();
+            const exists =
+              NodeChildProcess.spawnSync(
+                "git",
+                ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
+                { cwd: input.cwd },
+              ).status === 0;
+            if (!exists) {
+              runGitSyncForFakeGh(input.cwd, ["checkout", "-b", headBranch, "FETCH_HEAD"]);
+            } else {
+              if (current !== headBranch) {
+                runGitSyncForFakeGh(input.cwd, [
+                  "checkout",
+                  ...(force ? ["--force"] : []),
+                  headBranch,
+                ]);
+              }
+              runGitSyncForFakeGh(
+                input.cwd,
+                force ? ["reset", "--hard", "FETCH_HEAD"] : ["merge", "--ff-only", "FETCH_HEAD"],
+              );
+            }
+          } else if (headBranch) {
             const existingBranch = NodeChildProcess.spawnSync(
               "git",
               ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
@@ -4411,9 +4470,780 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.worktreePath).toBeNull();
       const branch = (yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim();
       expect(branch).toBe("feature/pr-local");
-      expect(ghCalls).toContain("pr checkout 64 --force");
+      expect(ghCalls).toContain("pr checkout 64");
     }),
   );
+
+  // A real repository and remote; the fake gh replays gh 2.94's own checkout, in which
+  // `--force` hard-resets the PR branch onto the pull head.
+  const setUpLocalCheckoutPullRequest = (number: number, headBranch: string) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR first"]);
+      const firstCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      // The pull head moves on without this checkout.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "second\n");
+      yield* runGit(repoDir, ["commit", "-am", "PR second"]);
+      const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", `HEAD:refs/pull/${number}/head`]);
+      yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number,
+            title: "Safe checkout PR",
+            url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+            baseRefName: "main",
+            headRefName: headBranch,
+            state: "open",
+          },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
+          syncCheckoutWithPullHead: true,
+        },
+      });
+      return { repoDir, manager, ghCalls, firstCommit, pullHead };
+    });
+
+  it.effect("local PR checkout refuses, and keeps tracked edits, when the tree is dirty", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager } = yield* setUpLocalCheckoutPullRequest(91, "feature/pr-dirty");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "my unsaved edit\n");
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("uncommitted changes");
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "README.md"), "utf8")).toBe(
+        "my unsaved edit\n",
+      );
+    }),
+  );
+
+  it.effect(
+    "local PR checkout refuses, and keeps local commits, when the PR branch has diverged",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpLocalCheckoutPullRequest(
+          92,
+          "feature/pr-diverged",
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "92",
+          mode: "local",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("commits that are not on pull request #92");
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "refs/heads/feature/pr-diverged"])).stdout.trim(),
+        ).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect("local PR checkout fast-forwards a clean PR branch without forcing", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, ghCalls, pullHead } = yield* setUpLocalCheckoutPullRequest(
+        93,
+        "feature/pr-behind",
+      );
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "93",
+        mode: "local",
+      });
+
+      expect(result).toMatchObject({
+        branch: "feature/pr-behind",
+        worktreePath: null,
+        isOnPullRequestHead: true,
+      });
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      expect(ghCalls).toContain("pr checkout 93");
+      expect(ghCalls.some((call) => call.includes("--force"))).toBe(false);
+    }),
+  );
+
+  // A host that publishes no `refs/pull/<n>/head` or checks the pull request out on a branch of
+  // its own name (Forgejo's `pulls/<n>`): the scripted provider only switches to the local
+  // branch, as Bitbucket and Forgejo do for a branch that already exists, without moving it.
+  const setUpSwitchOnlyPullRequest = (input: {
+    readonly kind?: "github" | "gitlab" | "bitbucket";
+    readonly number: number;
+    readonly headBranch: string;
+    readonly localBranch?: string;
+    readonly publishPullRef?: boolean;
+    readonly pushHeadBranch?: boolean;
+    readonly afterCheckout?: (cwd: string) => void;
+  }) =>
+    Effect.gen(function* () {
+      const localBranch = input.localBranch ?? input.headBranch;
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", localBranch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR first"]);
+      const firstCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "second\n");
+      yield* runGit(repoDir, ["commit", "-am", "PR second"]);
+      const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      if (input.pushHeadBranch !== false) {
+        yield* runGit(repoDir, ["push", "origin", `HEAD:refs/heads/${input.headBranch}`]);
+      }
+      if (input.publishPullRef === true) {
+        yield* runGit(repoDir, ["push", "origin", `HEAD:refs/pull/${input.number}/head`]);
+      }
+      yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const kind = input.kind ?? "github";
+      const host = { github: "github.com", gitlab: "gitlab.com", bitbucket: "bitbucket.org" }[kind];
+      const pullPath = { github: "pull", gitlab: "-/merge_requests", bitbucket: "pull-requests" }[
+        kind
+      ];
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        `https://${host}/owner/repo.git`,
+        remoteDir,
+      );
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        kind,
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: kind,
+            number: input.number,
+            title: "Switch-only checkout PR",
+            url: `https://${host}/owner/repo/${pullPath}/${input.number}`,
+            baseRefName: "main",
+            headRefName: input.headBranch,
+            state: "open" as const,
+            updatedAt: Option.none(),
+          }),
+        getRepositoryCloneUrls: (lookup) =>
+          Effect.succeed({
+            nameWithOwner: lookup.repository,
+            url: `https://${host}/owner/repo.git`,
+            sshUrl: `git@${host}:owner/repo.git`,
+          }),
+        checkoutChangeRequest: (checkout) =>
+          Effect.sync(() => {
+            runGitSyncForFakeGh(checkout.cwd, ["checkout", localBranch]);
+            input.afterCheckout?.(checkout.cwd);
+          }),
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      return { repoDir, manager, firstCommit, pullHead };
+    });
+
+  it.effect(
+    "local PR checkout fast-forwards a branch the provider left behind on a host without pull refs",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 94,
+          headBranch: "feature/pr-switch-only",
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "94",
+          mode: "local",
+        });
+
+        expect(result.isOnPullRequestHead).toBe(true);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect(
+    "local PR checkout refuses a branch with commits the PR lacks on a host without pull refs",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
+          number: 95,
+          headBranch: "feature/pr-switch-diverged",
+        });
+        yield* runGit(repoDir, ["checkout", "feature/pr-switch-diverged"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const outcome = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "95",
+          mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => error.message,
+            onSuccess: () => "checked out",
+          }),
+        );
+
+        expect(outcome).toContain("commits that are not on pull request #95");
+        expect(
+          (yield* runGit(repoDir, [
+            "rev-parse",
+            "refs/heads/feature/pr-switch-diverged",
+          ])).stdout.trim(),
+        ).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect(
+    "a refused local PR checkout puts back the branch's upstream the provider changed",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
+          number: 99,
+          headBranch: "feature/pr-retracked",
+          // As Bitbucket's checkout does before switching to the branch.
+          afterCheckout: (cwd) =>
+            runGitSyncForFakeGh(cwd, [
+              "branch",
+              "--set-upstream-to=origin/feature/pr-retracked",
+              "feature/pr-retracked",
+            ]),
+        });
+        yield* runGit(repoDir, ["checkout", "feature/pr-retracked"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/main", "feature/pr-retracked"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const outcome = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "99",
+          mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => error.message,
+            onSuccess: () => "checked out",
+          }),
+        );
+
+        expect(outcome).toContain("commits that are not on pull request #99");
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        expect(
+          (yield* runGit(repoDir, ["config", "--get-all", "branch.feature/pr-retracked.merge"]))
+            .stdout,
+        ).toBe("refs/heads/main\n");
+      }),
+  );
+
+  it.effect("local PR checkout does not claim the head when the head cannot be read", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, firstCommit } = yield* setUpSwitchOnlyPullRequest({
+        number: 96,
+        headBranch: "feature/pr-switch-unreadable",
+        pushHeadBranch: false,
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "96",
+        mode: "local",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(firstCommit);
+    }),
+  );
+
+  it.effect(
+    "local PR checkout verifies a differently named checkout branch against the pull ref",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 97,
+          headBranch: "feature/pr-renamed",
+          localBranch: "pulls/97",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "97",
+          mode: "local",
+        });
+
+        expect(result).toMatchObject({ branch: "pulls/97", isOnPullRequestHead: true });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect(
+    "local PR checkout refuses, and keeps, local commits on a differently named checkout branch",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpSwitchOnlyPullRequest({
+          number: 98,
+          headBranch: "feature/pr-renamed-ahead",
+          localBranch: "pulls/98",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, ["checkout", "pulls/98"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const outcome = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "98",
+          mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => error.message,
+            onSuccess: () => "checked out",
+          }),
+        );
+
+        expect(outcome).toContain("The local branch pulls/98 has commits");
+        expect((yield* runGit(repoDir, ["rev-parse", "pulls/98"])).stdout.trim()).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect(
+    "local PR checkout ignores a divergent local branch named after the head when the provider checks out another",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          number: 197,
+          headBranch: "feature/source",
+          localBranch: "pulls/197",
+          publishPullRef: true,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, ["checkout", "-b", "feature/source"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "unrelated.txt"), "unrelated local work\n");
+        yield* runGit(repoDir, ["add", "unrelated.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Unrelated local source-name branch"]);
+        const unrelated = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const outcome = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "197",
+          mode: "local",
+        }).pipe(
+          Effect.match({
+            onFailure: (error) => ({ error: error.message }),
+            onSuccess: (result) => result,
+          }),
+        );
+
+        expect(outcome).toMatchObject({ branch: "pulls/197", isOnPullRequestHead: true });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+        expect((yield* runGit(repoDir, ["rev-parse", "feature/source"])).stdout.trim()).toBe(
+          unrelated,
+        );
+      }),
+  );
+
+  it.effect("PR checkout on GitLab and Bitbucket is reported unverified and never advanced", () =>
+    Effect.gen(function* () {
+      for (const [index, kind] of (["gitlab", "bitbucket"] as const).entries()) {
+        const local = yield* setUpSwitchOnlyPullRequest({
+          kind,
+          number: 300 + index,
+          headBranch: `feature/${kind}-local`,
+          publishPullRef: true,
+        });
+        const localResult = yield* preparePullRequestThread(local.manager, {
+          cwd: local.repoDir,
+          reference: String(300 + index),
+          mode: "local",
+        });
+        expect(localResult.isOnPullRequestHead).toBe(false);
+        expect((yield* runGit(local.repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          local.firstCommit,
+        );
+
+        const reused = yield* setUpSwitchOnlyPullRequest({
+          kind,
+          number: 310 + index,
+          headBranch: `feature/${kind}-reused`,
+          publishPullRef: true,
+        });
+        const worktreePath = NodePath.join(
+          reused.repoDir,
+          "..",
+          `${kind}-reused-${NodePath.basename(reused.repoDir)}`,
+        );
+        yield* runGit(reused.repoDir, ["worktree", "add", worktreePath, `feature/${kind}-reused`]);
+        const reusedResult = yield* preparePullRequestThread(reused.manager, {
+          cwd: reused.repoDir,
+          reference: String(310 + index),
+          mode: "worktree",
+        });
+        expect(reusedResult).toMatchObject({ isOnPullRequestHead: false });
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          reused.firstCommit,
+        );
+      }
+    }),
+  );
+
+  // Azure pull request IDs are organization-wide, but `az repos show --repository repo` resolves
+  // the bare name in the checkout's own project. Here the checkout belongs to ProjectA, the pull
+  // request and its already-open worktree to ProjectB, and ProjectA has its own `repo` with a
+  // same-named branch holding unrelated work.
+  it.effect(
+    "reused Azure PR worktree is not moved onto another project's same-named repository",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const anchorDir = yield* createBareRemote();
+        const projectADir = yield* createBareRemote();
+        const projectBDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", anchorDir]);
+        yield* runGit(repoDir, ["remote", "add", "project-a", projectADir]);
+        yield* runGit(repoDir, ["remote", "add", "project-b", projectBDir]);
+        for (const remote of ["origin", "project-a", "project-b"]) {
+          yield* runGit(repoDir, ["push", remote, "main"]);
+        }
+        yield* runGit(repoDir, ["checkout", "-b", "feature/right-pr"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "right.txt"), "wanted PR\n");
+        yield* runGit(repoDir, ["add", "right.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Wanted PR"]);
+        const wanted = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "project-b", "HEAD:refs/heads/feature/right-pr"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "another project's work\n");
+        yield* runGit(repoDir, ["add", "wrong.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Unrelated descendant in ProjectA"]);
+        yield* runGit(repoDir, ["push", "project-a", "HEAD:refs/heads/feature/right-pr"]);
+        yield* runGit(repoDir, ["reset", "--hard", wanted]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://dev.azure.com/org/ProjectA/_git/anchor",
+          anchorDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "project-a",
+          "https://dev.azure.com/org/ProjectA/_git/repo",
+          projectADir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "project-b",
+          "https://dev.azure.com/org/ProjectB/_git/repo",
+          projectBDir,
+        );
+        const worktreePath = NodePath.join(
+          repoDir,
+          "..",
+          `azure-reused-${NodePath.basename(repoDir)}`,
+        );
+        yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/right-pr"]);
+        const { service } = createGitHubCliWithFakeGh();
+        const base = yield* GitHubSourceControlProvider.make.pipe(
+          Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+        );
+        const provider: SourceControlProvider["Service"] = {
+          ...base,
+          kind: "azure-devops",
+          getChangeRequest: () =>
+            Effect.succeed({
+              provider: "azure-devops" as const,
+              number: 198,
+              title: "Wanted ProjectB PR",
+              url: "https://dev.azure.com/org/ProjectB/_git/repo/pullrequest/198",
+              baseRefName: "main",
+              headRefName: "feature/right-pr",
+              state: "open" as const,
+              isCrossRepository: false,
+              updatedAt: Option.none(),
+            }),
+          getRepositoryCloneUrls: () =>
+            Effect.succeed({
+              nameWithOwner: "ProjectA/repo",
+              url: "https://dev.azure.com/org/ProjectA/_git/repo",
+              sshUrl: "https://dev.azure.com/org/ProjectA/_git/repo",
+            }),
+          checkoutChangeRequest: () => Effect.die("A reused worktree is never checked out again"),
+        };
+        const { manager } = yield* makeManager({ sourceControlProvider: provider });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "https://dev.azure.com/org/ProjectB/_git/repo/pullrequest/198",
+          mode: "worktree",
+        });
+
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(wanted);
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
+  );
+
+  // origin is a fork holding a different pull request under the same number as the upstream one
+  // the provider resolved. The provider reports `upstreamUrl` (or `reportedUrl`) for it.
+  const setUpCollidingPullRequestNumbers = (input: {
+    readonly repository: string;
+    readonly originUrl: string;
+    readonly upstreamUrl: string;
+    readonly visibleRemotes: boolean;
+    readonly originSecondaryUrl?: string;
+    readonly reportedUrl?: string;
+    // Like gh: a lookup that does not name the pull request's host answers for this URL instead.
+    readonly unqualifiedLookupUrl?: string;
+    readonly reportedNameWithOwner?: string;
+  }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/right-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "right.txt"), "wanted PR\n");
+      yield* runGit(repoDir, ["add", "right.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Wanted PR"]);
+      const wanted = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, [
+        "push",
+        "upstream",
+        "HEAD:refs/heads/feature/right-pr",
+        "HEAD:refs/pull/198/head",
+      ]);
+      yield* runGit(repoDir, ["checkout", "-b", "wrong-origin-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "unrelated PR in origin\n");
+      yield* runGit(repoDir, ["add", "wrong.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Different PR sharing the number"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/198/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      if (input.visibleRemotes) {
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          input.originUrl,
+          originDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          input.upstreamUrl,
+          upstreamDir,
+        );
+      } else {
+        yield* servePullRequestRepository(repoDir, upstreamDir, input.upstreamUrl);
+      }
+      if (input.originSecondaryUrl !== undefined) {
+        yield* runGit(repoDir, ["config", "--add", "remote.origin.url", input.originSecondaryUrl]);
+      }
+      const reportedUrl = (input.reportedUrl ?? input.upstreamUrl).replace(
+        "{upstream}",
+        upstreamDir,
+      );
+      const pullRequestUrl = `${input.upstreamUrl.replace(/\.git$/u, "")}/pull/198`;
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: "github" as const,
+            number: 198,
+            title: "Wanted upstream PR",
+            url: pullRequestUrl,
+            baseRefName: "main",
+            headRefName: "feature/right-pr",
+            state: "open" as const,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: input.repository,
+            headRepositoryOwnerLogin: input.repository.split("/")[0] ?? null,
+            updatedAt: Option.none(),
+          }),
+        getRepositoryCloneUrls: (lookup) => {
+          if (lookup.repository !== input.repository) return base.getRepositoryCloneUrls(lookup);
+          const url =
+            input.unqualifiedLookupUrl !== undefined && lookup.host !== new URL(pullRequestUrl).host
+              ? input.unqualifiedLookupUrl
+              : reportedUrl;
+          return Effect.succeed({
+            nameWithOwner: input.reportedNameWithOwner ?? input.repository,
+            url,
+            sshUrl: url,
+          });
+        },
+        checkoutChangeRequest: (checkout) =>
+          Effect.sync(() => runGitSyncForFakeGh(checkout.cwd, ["checkout", "feature/right-pr"])),
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: pullRequestUrl,
+        mode: "local",
+      });
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      return { result, head, wanted };
+    });
+
+  it.effect("local PR checkout reads the head from the URL the provider reports", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "upstream/repo",
+        originUrl: "https://github.com/fork/repo.git",
+        upstreamUrl: "https://github.com/upstream/repo.git",
+        visibleRemotes: true,
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout needs no remote configured for the pull request's repository", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "upstream/repo",
+        originUrl: "https://github.com/fork/repo.git",
+        upstreamUrl: "https://github.com/upstream/repo.git",
+        visibleRemotes: false,
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout keeps servers on different HTTPS ports apart", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "team/repo",
+        originUrl: "https://forge.example:9443/team/repo.git",
+        upstreamUrl: "https://forge.example:8443/team/repo.git",
+        visibleRemotes: true,
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout looks the repository up on the pull request's own host", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "team/repo",
+        originUrl: "https://github.com/team/repo.git",
+        upstreamUrl: "https://forge.example/team/repo.git",
+        visibleRemotes: true,
+        unqualifiedLookupUrl: "https://github.com/team/repo.git",
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  it.effect("local PR checkout does not trust clone URLs on another host", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "team/repo",
+        originUrl: "https://github.com/team/repo.git",
+        upstreamUrl: "https://forge.example/team/repo.git",
+        visibleRemotes: true,
+        reportedUrl: "https://github.com/team/repo.git",
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(false);
+    }),
+  );
+
+  it.effect("local PR checkout does not trust a lookup that names another repository", () =>
+    Effect.gen(function* () {
+      const { result } = yield* setUpCollidingPullRequestNumbers({
+        repository: "upstream/repo",
+        originUrl: "https://github.com/fork/repo.git",
+        upstreamUrl: "https://github.com/upstream/repo.git",
+        visibleRemotes: true,
+        reportedNameWithOwner: "fork/repo",
+      });
+
+      expect(result.isOnPullRequestHead).toBe(false);
+    }),
+  );
+
+  it.effect("local PR checkout ignores a remote that only lists the repository second", () =>
+    Effect.gen(function* () {
+      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+        repository: "upstream/repo",
+        originUrl: "https://github.com/fork/repo.git",
+        upstreamUrl: "https://github.com/upstream/repo.git",
+        visibleRemotes: true,
+        originSecondaryUrl: "https://github.com/upstream/repo.git",
+      });
+
+      expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(true);
+    }),
+  );
+
+  for (const reportedUrl of ["file://{upstream}", "{upstream}", "ext::git %S {upstream}"]) {
+    it.effect(`local PR checkout does not fetch from a provider URL like ${reportedUrl}`, () =>
+      Effect.gen(function* () {
+        const { result } = yield* setUpCollidingPullRequestNumbers({
+          repository: "upstream/repo",
+          originUrl: "https://github.com/fork/repo.git",
+          upstreamUrl: "https://github.com/upstream/repo.git",
+          visibleRemotes: true,
+          reportedUrl,
+        });
+
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
+    );
+  }
 
   it.effect(
     "restores same-repository upstream tracking after local PR checkout without a remote ref",
@@ -4912,6 +5742,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-stale"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
@@ -4944,6 +5775,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRefName: "feature/pr-reused-stale",
             state: "open",
           },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
         },
       });
 
@@ -4961,12 +5793,84 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("warns without Git's output when a reused PR worktree cannot be refreshed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-locked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
+      yield* runGit(repoDir, ["add", "stale.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Reused stale PR branch"]);
+      const staleHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const worktreePath = NodePath.join(
+        repoDir,
+        "..",
+        `pr-reused-locked-${NodePath.basename(repoDir)}`,
+      );
+      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "-b", "author-push", "origin/feature/pr-reused-locked"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
+      yield* runGit(repoDir, ["add", "authored.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
+      yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-reused-locked"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      // A stale ref lock, as a crashed Git leaves behind: the fast-forward itself fails.
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "refs", "heads", "feature", "pr-reused-locked.lock"),
+        "",
+      );
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 85,
+            title: "Reused locked PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/85",
+            baseRefName: "main",
+            headRefName: "feature/pr-reused-locked",
+            state: "open",
+          },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
+        },
+      });
+      const logs: Array<ReadonlyArray<unknown>> = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        logs.push(Array.isArray(message) ? message : [message]);
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "85",
+        mode: "worktree",
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(staleHead);
+      const warning = logs.find((parts) =>
+        String(parts[0]).includes("reused worktree refresh failed"),
+      );
+      expect(warning?.[1]).toMatchObject({
+        localBranch: "feature/pr-reused-locked",
+        operation: "GitVcsDriver.refreshCheckedOutBranch.move",
+      });
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.stringify(warning)).not.toContain(".lock");
+    }),
+  );
+
   it.effect("runs the setup script when a reused PR worktree moves onto the new head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-setup"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "reused-setup.txt"), "reused setup\n");
@@ -4999,6 +5903,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRefName: "feature/pr-reused-setup",
             state: "open",
           },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
         },
         setupScriptRunner: {
           runForThread: (setupInput) =>
@@ -5032,6 +5937,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-current"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "reused-current.txt"), "reused current\n");
@@ -5058,6 +5964,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRefName: "feature/pr-reused-current",
             state: "open",
           },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
         },
         setupScriptRunner: {
           runForThread: (setupInput) =>
@@ -5087,6 +5994,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-force-pushed"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "force-pushed.txt"), "first\n");
@@ -5132,6 +6040,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRefName: "feature/pr-force-pushed",
             state: "open",
           },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
         },
       });
 
@@ -5325,6 +6234,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/90/head"]);
       yield* runGit(repoDir, ["checkout", "main"]);
       yield* runGit(repoDir, ["branch", "-D", "feature/pr-ref-only"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
 
       const { manager } = yield* makeManager({
         ghScenario: {
@@ -5336,6 +6251,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRefName: "feature/pr-ref-only",
             state: "open",
           },
+          repositoryCloneUrls: pullRequestRepositoryCloneUrls,
         },
       });
 
@@ -5369,6 +6285,63 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       expect(result.isOnPullRequestHead).toBe(true);
       expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
+    }),
+  );
+
+  it.effect("leaves a reused PR worktree alone when its upstream is all that names a head", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/right-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "right.txt"), "wanted PR\n");
+      yield* runGit(repoDir, ["add", "right.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Wanted PR"]);
+      const wanted = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      // origin's same-named branch is somebody else's descendant of it.
+      yield* runGit(repoDir, ["checkout", "-b", "unrelated"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "unrelated\n");
+      yield* runGit(repoDir, ["add", "wrong.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Unrelated descendant"]);
+      yield* runGit(repoDir, ["push", "origin", "unrelated:refs/heads/feature/right-pr"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, [
+        "branch",
+        "--set-upstream-to=origin/feature/right-pr",
+        "feature/right-pr",
+      ]);
+      const worktreePath = NodePath.join(
+        repoDir,
+        "..",
+        `pr-upstream-${NodePath.basename(repoDir)}`,
+      );
+      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/right-pr"]);
+
+      // The provider cannot report a URL for the pull request's repository.
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 199,
+            title: "Upstream-only PR",
+            url: "https://github.com/upstream/repo/pull/199",
+            baseRefName: "main",
+            headRefName: "feature/right-pr",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "199",
+        mode: "worktree",
+      });
+
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(false);
     }),
   );
 
