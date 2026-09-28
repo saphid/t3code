@@ -87,38 +87,27 @@ export function mintGate(supportedKinds: readonly string[]): Failure | null {
 }
 
 /**
- * The minted `url` is server-relative ("resolve against the environment
- * origin"). The SDK hands a plugin no environment origin, so — like the files
- * plugin's media lease — it resolves against the document this view runs in.
- * That is the environment only when the client is served from it: a
- * non-HTTP document (the desktop app's `t3code://` renderer) or a result on a
- * different origin is named, never handed to the engine as a dead link.
+ * The host resolves the minted URL against the environment's HTTP origin, so
+ * it loads from any client — the desktop app's `t3code://` renderer and
+ * app.t3.codes included. A host that still hands back the server-relative
+ * form resolves against this view's document, which is the environment only
+ * when the client is served from it; anything that is not then an HTTP URL is
+ * named, never handed to the engine as a dead link.
  */
 export function resolveLeaseUrl(
   minted: string,
   documentUrl: string | undefined,
 ): { readonly ok: true; readonly url: string } | Failure {
-  let base: URL;
+  let resolved: URL;
   try {
-    base = new URL(documentUrl ?? "");
+    resolved = new URL(minted, documentUrl);
   } catch {
     return fail("foreign-origin", FOREIGN_ORIGIN_NO_BASE);
   }
-  if (base.protocol !== "http:" && base.protocol !== "https:")
+  if (resolved.protocol !== "http:" && resolved.protocol !== "https:")
     return fail(
       "foreign-origin",
-      `Cannot open workspace files from this client — it is served from ${base.protocol}//${base.host}, not the environment's web address, and plugins are not told that address.`,
-    );
-  let resolved: URL;
-  try {
-    resolved = new URL(minted, base);
-  } catch {
-    return fail("unavailable", "Cannot open the file — the environment returned an invalid URL.");
-  }
-  if (resolved.origin !== base.origin)
-    return fail(
-      "foreign-origin",
-      "Cannot open the file — the environment returned a URL on a different origin.",
+      `Cannot open workspace files from this client — the file resolved to ${resolved.protocol}//${resolved.host}, not the environment's web address.`,
     );
   return { ok: true, url: resolved.href };
 }
@@ -127,7 +116,7 @@ const FOREIGN_ORIGIN_NO_BASE =
   "Cannot open workspace files from this client — it has no web address to resolve the file against.";
 
 export const FOREIGN_ORIGIN_UNREACHABLE =
-  "Cannot open the file — the minted URL did not load on this client's origin (this client is not served by the environment).";
+  "Cannot open the file — its preview URL did not load from this client (the environment may be unreachable).";
 
 const LEASE_DENIALS: ReadonlyArray<{
   readonly name: string;
@@ -197,9 +186,9 @@ export interface LeaseCalls {
 
 /**
  * Mint + resolve + preflight. The preflight fetch runs from this document —
- * the same origin rule the files plugin's document preview uses — so a
- * foreign-origin client lands in the named state instead of an engine 404
- * page. The body is discarded; the engine fetches the page itself.
+ * as the files plugin's document preview does — so an unreachable URL lands
+ * in the named state instead of an engine 404 page. The body is discarded;
+ * the engine fetches the page itself.
  */
 export async function mintWorkspaceFileUrl(input: {
   readonly lease: LeaseCalls;
@@ -211,10 +200,6 @@ export async function mintWorkspaceFileUrl(input: {
 }): Promise<FileOpenResult> {
   const ref = fileLeaseRef(input.threadId, input.relativePath);
   if (!ref.ok) return ref;
-  // Origin first: a client that cannot address the environment should not
-  // hold a minted token it can never use.
-  const originCheck = resolveLeaseUrl("/", input.documentUrl);
-  if (!originCheck.ok) return originCheck;
   let minted: { readonly url: string; readonly expiresAt: number };
   try {
     const capabilities = await input.lease.getCapabilities(input.signal);

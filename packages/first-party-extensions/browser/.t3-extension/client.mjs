@@ -15123,32 +15123,21 @@ ${ind(d)}}`;
     );
   }
   function resolveLeaseUrl(minted, documentUrl) {
-    let base;
+    let resolved;
     try {
-      base = new URL(documentUrl ?? "");
+      resolved = new URL(minted, documentUrl);
     } catch {
       return fail6("foreign-origin", FOREIGN_ORIGIN_NO_BASE);
     }
-    if (base.protocol !== "http:" && base.protocol !== "https:")
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:")
       return fail6(
         "foreign-origin",
-        `Cannot open workspace files from this client \u2014 it is served from ${base.protocol}//${base.host}, not the environment's web address, and plugins are not told that address.`
-      );
-    let resolved;
-    try {
-      resolved = new URL(minted, base);
-    } catch {
-      return fail6("unavailable", "Cannot open the file \u2014 the environment returned an invalid URL.");
-    }
-    if (resolved.origin !== base.origin)
-      return fail6(
-        "foreign-origin",
-        "Cannot open the file \u2014 the environment returned a URL on a different origin."
+        `Cannot open workspace files from this client \u2014 the file resolved to ${resolved.protocol}//${resolved.host}, not the environment's web address.`
       );
     return { ok: true, url: resolved.href };
   }
   var FOREIGN_ORIGIN_NO_BASE = "Cannot open workspace files from this client \u2014 it has no web address to resolve the file against.";
-  var FOREIGN_ORIGIN_UNREACHABLE = "Cannot open the file \u2014 the minted URL did not load on this client's origin (this client is not served by the environment).";
+  var FOREIGN_ORIGIN_UNREACHABLE = "Cannot open the file \u2014 its preview URL did not load from this client (the environment may be unreachable).";
   var LEASE_DENIALS = [
     {
       name: "ResourceLeaseGrantDeniedError",
@@ -15200,8 +15189,6 @@ ${ind(d)}}`;
   async function mintWorkspaceFileUrl(input) {
     const ref = fileLeaseRef(input.threadId, input.relativePath);
     if (!ref.ok) return ref;
-    const originCheck = resolveLeaseUrl("/", input.documentUrl);
-    if (!originCheck.ok) return originCheck;
     let minted;
     try {
       const capabilities = await input.lease.getCapabilities(input.signal);
