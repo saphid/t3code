@@ -30,6 +30,7 @@ import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AddressInput, committedAddress } from "./addressInput.js";
 import { AnnotateButton } from "./annotateButton.js";
 import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
@@ -1103,17 +1104,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         {held && live && (
           <ProfileBadge host={host} session={live} api={profilesApi} signal={session.signal} />
         )}
-        <input
-          type="text"
-          aria-label="Address"
-          placeholder="Search or enter address"
-          ref={addressRef}
+        <AddressInput
+          inputRef={addressRef}
           value={address}
-          onChange={(event) => setAddress(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") submit(address);
-            if (event.key === "Escape") event.currentTarget.blur();
-          }}
+          committed={committedAddress({
+            fileSource,
+            pageUrl: live ? (live.navigation.url ?? live.requestedUrl ?? null) : null,
+            target: currentUrl(state),
+          })}
+          onValueChange={setAddress}
+          onSubmit={submit}
           style={{
             flex: 1,
             minWidth: 0,
