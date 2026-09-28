@@ -1450,16 +1450,18 @@ it("a handoff through the broker outlives the ordinary API deadline", async () =
   const dir = await NodeFSP.realpath(
     await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "vcs-handoff-broker-")),
   );
-  const started = Deferred.makeUnsafe<void>();
-  const release = Deferred.makeUnsafe<void>();
+  let markStarted = () => {};
+  const started = new Promise<void>((resolve) => (markStarted = resolve));
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
   const t = makeProvider({
     prHandoffClient: {
       available: () => Effect.succeed(true),
       start: () =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Deferred.await(release)),
-          Effect.as({ status: "drafted" as const }),
-        ),
+        Effect.promise(() => {
+          markStarted();
+          return released;
+        }).pipe(Effect.as({ status: "drafted" as const })),
     },
   });
   const root: HostApiRootAuthority = {
@@ -1508,9 +1510,9 @@ it("a handoff through the broker outlives the ordinary API deadline", async () =
             (value) => ({ value }),
             (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
           );
-        await Effect.runPromise(Deferred.await(started));
+        await started;
         vi.advanceTimersByTime(ORDINARY_API_DEADLINE_MS * 4);
-        await Effect.runPromise(Deferred.succeed(release, undefined));
+        release();
         expect(await handoff).toEqual({ value: { status: "drafted" } });
       } finally {
         vi.useRealTimers();
