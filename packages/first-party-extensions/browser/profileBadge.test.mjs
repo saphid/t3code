@@ -80,8 +80,12 @@ const settle = async () => {
 /** A fresh copy per answer, as a real transport delivers. */
 const clone = (value) => structuredClone(value);
 
-/** A `changes` event: the list, or null while no desktop is connected. */
-const change = (list) => ({ list: list === null ? null : clone(list) });
+/** A desktop is connected but has not published its list yet. */
+const PENDING = Symbol("pending");
+
+/** A `changes` event: the list, null while no desktop is connected, or loading. */
+const change = (list) =>
+  list === PENDING ? { list: null, pending: true } : { list: list === null ? null : clone(list) };
 
 /**
  * A stubbed `t3.browser/profiles`. With `stream`, `watch` opens a `changes`
@@ -460,6 +464,22 @@ NodeTest.describe("when no desktop can answer for profiles", () => {
       NodeAssert.equal(fake.subscriptions.length, 1);
     },
   );
+
+  NodeTest.it("a view told no desktop shows loading when one connects, then its list", async () => {
+    const fake = fakeProfiles({ stream: true, list: null });
+    const mounted = await mountSection("work", fake);
+    NodeAssert.equal(mounted.note(), DESKTOP_REQUIRED_NOTE);
+
+    await fake.change(PENDING);
+    NodeAssert.equal(mounted.note(), "Loading profiles…");
+    NodeAssert.equal(mounted.badge(), null);
+    NodeAssert.equal(mounted.openIn(), false);
+
+    await fake.change(LIST);
+    NodeAssert.equal(mounted.note(), null);
+    NodeAssert.equal(mounted.badge(), "Work account");
+    NodeAssert.equal(fake.subscriptions.length, 1);
+  });
 
   NodeTest.it("a desktop with no profiles yet is not reported as missing", async () => {
     const fake = fakeProfiles({

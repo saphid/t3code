@@ -396,12 +396,12 @@ export function createBrowserProfilesApiProvider(
     });
 
   /**
-   * `changes`: the environment's current list, then each different one —
+   * `changes`: the environment's current state, then each different one —
    * `{ list: null }` while no desktop is connected, so a web-only client
    * learns that at once and hears when a desktop arrives or the last one
-   * leaves. A desktop that is connected but has not published yet sends
-   * nothing, so the view stays loading rather than saying there is none.
-   * Never a value equal to the last one sent.
+   * leaves; `{ list: null, pending: true }` while a connected desktop has
+   * not published yet, so a view shows loading rather than "no desktop" or
+   * an old list. Never a value equal to the last one sent.
    */
   const subscribe = (
     name: string,
@@ -440,25 +440,25 @@ export function createBrowserProfilesApiProvider(
     const events = Stream.unwrap(
       Effect.map(resolve(context), (scope) =>
         dependencies.engineHosts.profileChanges.pipe(
-          Stream.filter(
-            (state): state is BrowserEngineHosts.BrowserEngineProfileList | null =>
-              state !== "pending",
-          ),
           // A host that reconnects republishes; an equal list is not news.
-          Stream.changesWith(BrowserEngineHosts.sameProfileList),
-          // Authority and scope are rechecked before each list is delivered.
-          Stream.mapEffect((list) =>
+          Stream.changesWith((a, b) =>
+            a === "pending" || b === "pending" ? a === b : BrowserEngineHosts.sameProfileList(a, b),
+          ),
+          // Authority and scope are rechecked before each state is delivered.
+          Stream.mapEffect((state) =>
             Effect.gen(function* () {
               yield* Effect.tryPromise({ try: () => assertAuthority(), catch: revoked });
               yield* resolve(scope.context);
-              return list;
+              return state;
             }),
           ),
-          Stream.map((list, index): ApiStreamEvent => ({
+          Stream.map((state, index): ApiStreamEvent => ({
             type: index === 0 ? "snapshot" : "data",
-            value: {
-              list: list === null ? null : projectList(list),
-            } satisfies BrowserProfileChange,
+            value: (state === "pending"
+              ? { list: null, pending: true }
+              : {
+                  list: state === null ? null : projectList(state),
+                }) satisfies BrowserProfileChange,
           })),
         ),
       ),
