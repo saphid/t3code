@@ -7785,8 +7785,10 @@ var __t3Client = (() => {
     if (!member || typeof member !== "object")
       return null;
     const { version, Diff, File } = member;
-    const isComponent = (value) => typeof value === "function" || typeof value === "object" && value !== null && "$$typeof" in value;
     return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File) ? member : null;
+  }
+  function isComponent(value) {
+    return typeof value === "function" || typeof value === "object" && value !== null && "$$typeof" in value;
   }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))

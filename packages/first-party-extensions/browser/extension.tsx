@@ -69,7 +69,9 @@ import {
   type PageTarget,
   type PageVerb,
 } from "./pageControls.js";
+import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
+import { panelPopover, type PanelFloating } from "./popover.js";
 import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
 import { profileFailureMessage, reopenRequest } from "./profiles.js";
 import {
@@ -452,11 +454,27 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     lease: surfaceLease,
     denial: surfaceDenial,
     shown: surfaceShown,
+    overlayZIndex,
   } = useBrowserSurfaceSlot(host, session, {
     session: held,
     visible: visible && held !== null,
     cornerRadius: 8,
   });
+  const layers = floatingLayers(overlayZIndex);
+  const Popover = useMemo(() => panelPopover(host, layers.transient), [host, layers.transient]);
+  const floating = useMemo<PanelFloating>(
+    () => ({
+      Popover,
+      style: {
+        color: "var(--t3-browser-text, var(--foreground, #20252d))",
+        background: "var(--t3-browser-canvas, var(--background, #fff))",
+        fontFamily: "var(--font-sans, system-ui, sans-serif)",
+        fontSize: 13,
+        ...themeVars,
+      },
+    }),
+    [Popover, themeVars],
+  );
 
   /**
    * Remote-pixel fallback: hosts that cannot composite a native surface
@@ -975,7 +993,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           with a 1px canvas gap on focus-visible, matching the native address
           wrapper instead of the browser default 1px auto outline. */}
       <style>
-        {`[data-t3-browser-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       <header
         style={{
@@ -1123,6 +1141,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
+          floating={floating}
+          visible={visible}
         >
           {held && live && (
             <ProfileSection
@@ -1226,7 +1246,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               style={{ position: "absolute", inset: 0 }}
             />
           )}
-          <ZoomIndicator key={held.tabId} zoomFactor={live?.zoomFactor ?? null} />
+          <ZoomIndicator
+            key={held.tabId}
+            zoomFactor={live?.zoomFactor ?? null}
+            anchor={contentElement}
+            floating={floating}
+            visible={visible}
+          />
           {rails.displayed && (
             <>
               {/*
@@ -1243,12 +1269,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 setting={rails.displayed}
                 pending={viewportPending}
                 onCommit={commitViewportChange}
+                zIndex={layers.deviceChrome}
               />
               <ViewportDeviceFrame
                 slot={contentSize}
                 setting={rails.displayed}
                 fallbackSlot={FALLBACK_RESPONSIVE_VIEWPORT_SIZE}
                 zoomFactor={pageZoom}
+                zIndex={layers.deviceChrome}
               />
               <ViewportResizeRails
                 layout={deviceViewportLayout(viewportSlot, rails.displayed, pageZoom)}

@@ -17,6 +17,7 @@ import {
   type PageAppearance,
   type PageVerb,
 } from "./pageControls.js";
+import type { PanelFloating } from "./popover.js";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -44,8 +45,19 @@ const ZOOM_INDICATOR_MS = 1500;
  * changes. The first reported value never flashes, and there is no animation
  * — the pill appears and disappears.
  */
-export function ZoomIndicator(props: { zoomFactor: number | null }) {
-  const { zoomFactor } = props;
+export function ZoomIndicator(props: {
+  zoomFactor: number | null;
+  /** The page area; the pill sits inside its top-right corner. */
+  anchor: HTMLElement | null;
+  floating: PanelFloating;
+  /**
+   * Whether the panel is shown. The pill portals out of the panel, so it
+   * renders only while shown; its timer runs on while hidden, as native's
+   * in-panel pill does.
+   */
+  visible: boolean;
+}) {
+  const { zoomFactor, anchor, floating, visible } = props;
   const [shown, setShown] = useState<number | null>(null);
   const last = useRef(zoomFactor);
   useEffect(() => {
@@ -60,16 +72,17 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
     const timer = setTimeout(() => setShown(null), ZOOM_INDICATOR_MS);
     return () => clearTimeout(timer);
   }, [zoomFactor]);
-  if (shown === null) return null;
+  if (shown === null || !visible) return null;
+  const { Popover } = floating;
   return (
-    <div
+    <Popover
+      anchor={anchor}
+      side="inset"
+      offset={12}
       role="status"
       aria-label="Page zoom"
       style={{
-        position: "absolute",
-        top: 12,
-        right: 12,
-        zIndex: 2,
+        ...floating.style,
         pointerEvents: "none",
         padding: "3px 10px",
         borderRadius: 999,
@@ -80,7 +93,7 @@ export function ZoomIndicator(props: { zoomFactor: number | null }) {
       }}
     >
       {zoomPercent(shown)}
-    </div>
+    </Popover>
   );
 }
 
@@ -97,16 +110,27 @@ export function PageMenu(props: {
   run: (verb: PageVerb) => void;
   /** One ladder step from the last requested factor (shared with the chords). */
   zoomStep: (direction: "in" | "out") => void;
+  floating: PanelFloating;
+  /**
+   * Whether the panel is shown. The menu portals out of the panel, so hiding
+   * the retained panel must close it; it stays closed when the panel returns.
+   */
+  visible: boolean;
   /** Rendered under the page items while open; profile actions do not need a live page. */
   children?: ReactNode;
 }) {
-  const { host, session, blockReason, run, zoomStep, children } = props;
+  const { host, session, blockReason, run, zoomStep, floating, visible, children } = props;
   const [open, setOpen] = useState(false);
+  if (open && !visible) setOpen(false);
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
+  // The host layer portals the menu out of `root`, so it is checked on its own.
+  const menu = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!root.current?.contains(target) && !menu.current?.contains(target)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -125,11 +149,13 @@ export function PageMenu(props: {
   // Null until the engine reports it: the item stays disabled rather than guessing.
   const devToolsOpen = session?.devToolsOpen ?? null;
   const pictureInPicture = session?.pictureInPicture ?? null;
+  const { Popover } = floating;
 
   return (
     <div ref={root} style={{ position: "relative" }}>
       <Tooltip host={host} label="More">
         <button
+          ref={setTrigger}
           type="button"
           aria-label="Preview menu"
           aria-haspopup="menu"
@@ -142,14 +168,16 @@ export function PageMenu(props: {
         </button>
       </Tooltip>
       {open && (
-        <div
+        <Popover
+          anchor={trigger}
+          elementRef={(element) => {
+            menu.current = element;
+          }}
           role="menu"
           aria-label="Page"
+          data-t3-browser-popover=""
           style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 6px)",
-            zIndex: 3,
+            ...floating.style,
             minWidth: 220,
             display: "grid",
             gap: 8,
@@ -280,7 +308,7 @@ export function PageMenu(props: {
             {pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
           </button>
           {children}
-        </div>
+        </Popover>
       )}
     </div>
   );

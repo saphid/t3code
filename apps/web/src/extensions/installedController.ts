@@ -12,6 +12,7 @@ import {
   type ClientFactory,
   type ClientCodeView,
   type ClientTooltip,
+  type ClientFloatingLayer,
   type ClientHost,
   type EnvironmentPackage,
   type GlobalCommandsHandle,
@@ -202,6 +203,8 @@ export function createInstalledExtensionController(options: {
   readonly codeView?: ClientCodeView;
   /** Host-rendered tooltip handed to every installed client; absent on hosts without one. */
   readonly tooltip?: ClientTooltip;
+  /** Host floating layer handed to every installed client; absent on hosts without one. */
+  readonly floatingLayer?: ClientFloatingLayer;
 }) {
   const active = new Map<string, { signature: string; stop: () => void }>();
   // One epoch per live registration — a re-registered installation gets a new
@@ -533,6 +536,7 @@ export function createInstalledExtensionController(options: {
               ...(keybindings ? { keybindings } : {}),
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),
+              ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
             };
             const extension = (factory as ClientFactory)(clientHost);
             if (canonical(extension.manifest) !== canonical(item.package.manifest))

@@ -18,6 +18,7 @@ import {
   BROWSER_SURFACE,
   BROWSER_SURFACE_REQUIRED_GRANTS,
   BROWSER_SURFACE_VERSION,
+  BROWSER_SURFACE_Z_INDEX,
   type BrowserSurfaceAcquireResult,
   type BrowserSurfaceDenialReason,
   type BrowserSurfaceEndReason,
@@ -401,7 +402,7 @@ export function createBrowserSurfaceBridge(
               listeners.delete(listener);
             };
           },
-          present(rect, visible, cornerRadius = 0, zIndex = 30) {
+          present(rect, visible, cornerRadius = 0, zIndex = BROWSER_SURFACE_Z_INDEX) {
             if (state.kind === "ended") return "ended";
             if (!composite) return "uncomposited";
             if (
