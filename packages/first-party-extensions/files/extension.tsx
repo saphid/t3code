@@ -1337,6 +1337,22 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const [renderMarkdown, setRenderMarkdown] = useState(() =>
     restoredRenderMarkdown(session.restoreState),
   );
+  // Native parity (FilePreviewPanel): a pending line reveal shows the source,
+  // since the line only exists there, until the user chooses the rendered
+  // view for that request. That choice is not saved, so a reload reveals the
+  // line again.
+  const [renderedOverReveal, setRenderedOverReveal] = useState<typeof revealRequest>(null);
+  const revealPending =
+    revealRequest !== null &&
+    revealRequest.path === selected &&
+    !(
+      renderedOverReveal?.path === revealRequest.path && renderedOverReveal.id === revealRequest.id
+    );
+  const markdownRendered = renderMarkdown && !revealPending;
+  const toggleMarkdown = () => {
+    setRenderMarkdown(!markdownRendered);
+    if (!markdownRendered) setRenderedOverReveal(revealRequest);
+  };
   // Native parity (FilePreviewPanel): the explorer beside an open file can be
   // hidden; the choice persists with the view, as the rendered-markdown one does.
   const [explorerOpen, setExplorerOpen] = useState(() =>
@@ -1560,9 +1576,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     // A plain selection also cancels any reveal still pending for another path.
     if (line !== undefined && line > 0) {
       setRevealRequest({ path, line, id: ++revealSequence.current });
-      // A line target can only reveal in the source surface — the rendered
-      // preview has no line geometry to scroll to.
-      setRenderMarkdown(false);
     } else {
       setRevealRequest(null);
     }
@@ -1700,7 +1713,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     openIn: openInPanel,
     toggleMarkdown: () => {
       if (selected !== null && isMarkdownPath(selected) && selectedKind === "text")
-        setRenderMarkdown((value) => !value);
+        toggleMarkdown();
       else if (selected !== null && leasePreviewMode(selected) === "html") toggleHtml();
     },
   });
@@ -1714,8 +1727,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         null)
       : null;
   const markdownBlocks = useMemo(
-    () => (renderMarkdown && markdownText !== null ? parseMarkdown(markdownText) : null),
-    [renderMarkdown, markdownText],
+    () => (markdownRendered && markdownText !== null ? parseMarkdown(markdownText) : null),
+    [markdownRendered, markdownText],
   );
 
   useEffect(() => {
@@ -1783,7 +1796,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           },
           revealLine: (line) => {
             setRevealRequest({ path: selected, line, id: ++revealSequence.current });
-            setRenderMarkdown(false);
           },
         };
 
@@ -2206,14 +2218,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {isMarkdownPath(selected) && selectedKind === "text" && (
             <Tooltip
               host={host}
-              label={renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+              label={markdownRendered ? "Show markdown source" : "Show rendered markdown"}
             >
-              <button
-                type="button"
-                aria-pressed={renderMarkdown}
-                onClick={() => setRenderMarkdown((value) => !value)}
-              >
-                {renderMarkdown ? "Show markdown source" : "Show rendered markdown"}
+              <button type="button" aria-pressed={markdownRendered} onClick={toggleMarkdown}>
+                {markdownRendered ? "Show markdown source" : "Show rendered markdown"}
               </button>
             </Tooltip>
           )}

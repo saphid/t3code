@@ -1128,3 +1128,32 @@ describe("a line revealed after the view opened", () => {
     }
   });
 });
+
+// Review repro (gaps-files-2 P2): a restored line reveal outranks a restored
+// rendered-markdown preference, as native's reveal does, until the user
+// chooses the rendered view again.
+describe("a markdown file reopened at a revealed line", () => {
+  it("shows the source at that line, then renders when asked", async () => {
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+    const panel = await mountPanel({ files: { "notes.md": "# one\ntwo\nthree" } });
+    const mode = () => ({
+      rendered: !!panel.button("Show markdown source"),
+      editor: panel.editors(),
+    });
+    try {
+      await act(async () => panel.navigation({ relativePath: "notes.md", line: 3 }));
+      expect(panel.textarea.carets.at(-1)).toBe(10);
+      await act(async () => panel.button("Show rendered markdown")!.props.onClick());
+      expect(mode()).toEqual({ rendered: true, editor: 0 });
+      panel.textarea.carets.length = 0;
+      await panel.reload();
+      expect(mode()).toEqual({ rendered: false, editor: 1 });
+      expect(panel.textarea.carets).toEqual([10]);
+      await act(async () => panel.button("Show rendered markdown")!.props.onClick());
+      expect(mode()).toEqual({ rendered: true, editor: 0 });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
