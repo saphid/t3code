@@ -21,6 +21,7 @@ import {
   type BrowserEngineCommandRejection,
   type BrowserEngineHostClaimInput,
   type BrowserEngineHostCommandResultInput,
+  type BrowserEngineHostProfilesInput,
   type BrowserEngineHostReleaseInput,
   type BrowserEngineHostReportInput,
   type BrowserEngineHostStreamEvent,
@@ -39,6 +40,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as PreviewManager from "./Manager.ts";
 
@@ -95,12 +97,32 @@ export type BrowserEngineProfileDispatchOutcome =
 
 type HostAnswer = BrowserEngineHostCommandResultInput["result"] | { readonly outcome: "unknown" };
 
+/** A host's published profile list, without the host id. */
+export type BrowserEngineProfileList = Omit<BrowserEngineHostProfilesInput, "hostConnectionId">;
+
 interface HostConnection {
   readonly hostConnectionId: string;
   readonly socketId: string;
   readonly queue: Queue.Queue<BrowserEngineHostStreamEvent, Cause.Done>;
   readonly pending: Map<string, Deferred.Deferred<HostAnswer>>;
+  /** The host's last published profile list; null until it publishes. */
+  profiles: BrowserEngineProfileList | null;
 }
+
+/** Same ids, names, order and default. */
+export const sameProfileList = (
+  a: BrowserEngineProfileList | null,
+  b: BrowserEngineProfileList | null,
+) =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.defaultProfileId === b.defaultProfileId &&
+    a.profiles.length === b.profiles.length &&
+    a.profiles.every(
+      (profile, index) =>
+        profile.id === b.profiles[index]!.id && profile.name === b.profiles[index]!.name,
+    ));
 
 export class BrowserEngineHosts extends Context.Service<
   BrowserEngineHosts,
@@ -124,6 +146,18 @@ export class BrowserEngineHosts extends Context.Service<
       socket: BrowserEngineHostSocket,
       input: BrowserEngineHostCommandResultInput,
     ) => Effect.Effect<void, BrowserEngineHostError>;
+    /** Records a host's current profile list. */
+    readonly publishProfiles: (
+      socket: BrowserEngineHostSocket,
+      input: BrowserEngineHostProfilesInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    /**
+     * The environment's profile list — the one `dispatchProfile` would ask,
+     * i.e. the earliest registered host that has published — starting with
+     * the current value. Null while no host has published. Consecutive values
+     * always differ.
+     */
+    readonly profileChanges: Stream.Stream<BrowserEngineProfileList | null>;
     /** Sends a command to the owning host and waits for its bounded acknowledgement. */
     readonly dispatch: (
       input: BrowserEngineDispatchInput,
@@ -153,6 +187,21 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const hosts = yield* Ref.make(new Map<string, HostConnection>());
   const importAckTimeoutMs = yield* ImportAckTimeoutMs;
+  const profileList = yield* SubscriptionRef.make<BrowserEngineProfileList | null>(null);
+  /** Recomputes the environment's list after a host published or left. */
+  const refreshProfiles = Effect.flatMap(Ref.get(hosts), (current) => {
+    let next: BrowserEngineProfileList | null = null;
+    for (const host of current.values()) {
+      if (host.profiles !== null) {
+        next = host.profiles;
+        break;
+      }
+    }
+    // An equal list is not published, so subscribers never see a repeat.
+    return SubscriptionRef.updateSome(profileList, (previous) =>
+      sameProfileList(previous, next) ? Option.none() : Option.some(next),
+    );
+  });
   const randomId = crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const desktopRequired = new BrowserEngineHostError({
@@ -188,6 +237,7 @@ const make = Effect.gen(function* () {
       }
       host.pending.clear();
       yield* preview.releaseEngineHost(host.hostConnectionId);
+      yield* refreshProfiles;
       yield* Queue.shutdown(host.queue);
     });
 
@@ -205,6 +255,7 @@ const make = Effect.gen(function* () {
                   socketId: socket.socketId,
                   queue,
                   pending: new Map(),
+                  profiles: null,
                 };
                 yield* Queue.offer(queue, { type: "registered", hostConnectionId });
                 yield* Ref.update(hosts, (current) => new Map(current).set(hostConnectionId, host));
@@ -234,6 +285,12 @@ const make = Effect.gen(function* () {
       if (deferred === undefined) return Effect.void;
       host.pending.delete(input.commandId);
       return Deferred.succeed(deferred, input.result).pipe(Effect.asVoid);
+    });
+
+  const publishProfiles: BrowserEngineHosts["Service"]["publishProfiles"] = (socket, input) =>
+    Effect.flatMap(authorizeHost(socket, input.hostConnectionId), (host) => {
+      host.profiles = { profiles: input.profiles, defaultProfileId: input.defaultProfileId };
+      return refreshProfiles;
     });
 
   /**
@@ -342,6 +399,8 @@ const make = Effect.gen(function* () {
     release,
     report,
     commandResult,
+    publishProfiles,
+    profileChanges: SubscriptionRef.changes(profileList),
     dispatch,
     dispatchProfile,
     hasHost: Effect.map(Ref.get(hosts), (current) => current.size > 0),

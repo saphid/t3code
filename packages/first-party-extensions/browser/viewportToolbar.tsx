@@ -125,13 +125,18 @@ export type AspectLockTab = { readonly tabId: string; readonly serverEpoch: stri
  * The view's aspect-ratio locks, one per runtime tab like native's
  * per-webview flag: adopting another tab or closing its device toolbar
  * leaves every other tab's lock alone. Transient view state, never saved. A
- * tab outside the snapshot `tabs` has ended and holds no lock; its entry is
- * dropped with the next change.
+ * tab is live while the stream's `tabs` list it or the view holds it: an
+ * accepted receipt makes a tab held before its first upsert arrives, and the
+ * view drops the held tab once its session is removed. A tab that is neither
+ * has ended and holds no lock; its entry is dropped with the next change.
  */
-export function useAspectLocks(tabs: readonly { readonly tabId: string }[]) {
+export function useAspectLocks(
+  tabs: readonly { readonly tabId: string }[],
+  held: AspectLockTab | null,
+) {
   // Locked tab id → the server epoch it was locked under.
   const [locks, setLocks] = useState<ReadonlyMap<string, string>>(() => new Map());
-  const live = (tabId: string) => tabs.some((tab) => tab.tabId === tabId);
+  const live = (tabId: string) => held?.tabId === tabId || tabs.some((tab) => tab.tabId === tabId);
   return {
     isLocked: (tab: AspectLockTab | null) =>
       tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),

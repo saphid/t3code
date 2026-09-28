@@ -18,6 +18,7 @@ import {
   BROWSER_PROFILES,
   BROWSER_SESSIONS,
   browserProfilesApi,
+  browserProfilesApiV1,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
@@ -943,5 +944,138 @@ describe("browser profiles grants through the broker", () => {
       Effect.scoped,
       Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     ),
+  );
+});
+
+describe("browser profiles changes stream (1.1.0)", () => {
+  const LIST = {
+    profiles: [
+      { id: "default", name: "Default" },
+      { id: "work", name: "Work" },
+    ],
+    defaultProfileId: "default",
+  };
+  const RENAMED = {
+    ...LIST,
+    profiles: [LIST.profiles[0]!, { id: "work", name: "Client work" }],
+  };
+
+  /** Opens `changes` as the broker would; `next` pulls one event. */
+  const openChanges = (provider: HostApiProvider, metadata = meta(provider)) =>
+    Effect.sync(() => {
+      const iterator = provider.subscribe!("changes", {}, context(), signal, metadata)[
+        Symbol.asyncIterator
+      ]();
+      return {
+        next: Effect.promise(() => iterator.next()),
+        close: Effect.promise(async () => {
+          await iterator.return?.();
+        }),
+      };
+    });
+
+  const publish = (
+    engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+    hostConnectionId: string,
+    list: typeof LIST,
+  ) => engineHosts.publishProfiles(DESKTOP_SOCKET, { hostConnectionId, ...list });
+
+  it.effect("declares the stream under the list grant, with 1.0.0 kept frozen", () =>
+    Effect.sync(() => {
+      expect(browserProfilesApi.definition.version).toBe("1.1.0");
+      expect(browserProfilesApi.baseline).toBe("1.0.0");
+      expect(browserProfilesApi.definition.streams).toEqual([
+        expect.objectContaining({ name: "changes", requiredGrants: [BROWSER_PROFILES] }),
+      ]);
+      expect(browserProfilesApiV1.definition.version).toBe("1.0.0");
+      expect(browserProfilesApiV1.definition.streams).toBeUndefined();
+      expect(browserProfilesApiV1.definition.methods).toEqual(
+        browserProfilesApi.definition.methods,
+      );
+    }),
+  );
+
+  it.effect("starts from the published list, then sends each change and no repeats", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      yield* publish(engineHosts, host.hostConnectionId(), LIST);
+      const changes = yield* openChanges(profiles);
+      expect(yield* changes.next).toEqual({
+        done: false,
+        value: { type: "snapshot", value: LIST },
+      });
+      // An unchanged publication (another settings edit) sends nothing: the
+      // next event is the rename that follows it.
+      yield* publish(engineHosts, host.hostConnectionId(), LIST);
+      yield* publish(engineHosts, host.hostConnectionId(), RENAMED);
+      expect(yield* changes.next).toEqual({ done: false, value: { type: "data", value: RENAMED } });
+      const deleted = { ...LIST, profiles: [LIST.profiles[0]!] };
+      yield* publish(engineHosts, host.hostConnectionId(), deleted);
+      expect(yield* changes.next).toEqual({ done: false, value: { type: "data", value: deleted } });
+      const newDefault = { ...deleted, defaultProfileId: "default-2" };
+      yield* publish(engineHosts, host.hostConnectionId(), newDefault);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: newDefault });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("a subscriber opened before the desktop publishes gets the first list", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const changes = yield* openChanges(profiles);
+      const first = yield* Effect.forkChild(changes.next);
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      yield* publish(engineHosts, host.hostConnectionId(), LIST);
+      expect((yield* Fiber.join(first)).value).toEqual({ type: "snapshot", value: LIST });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("a desktop that reconnects with the same list sends nothing new", () =>
+    Effect.gen(function* () {
+      const { profiles, engineHosts } = yield* harness;
+      const first = yield* attachProfileHost(engineHosts, () => "silent");
+      yield* publish(engineHosts, first.hostConnectionId(), LIST);
+      const changes = yield* openChanges(profiles);
+      yield* changes.next;
+      yield* Fiber.interrupt(first.fiber);
+      const second = yield* attachProfileHost(engineHosts, () => "silent");
+      yield* publish(engineHosts, second.hostConnectionId(), LIST);
+      yield* publish(engineHosts, second.hostConnectionId(), RENAMED);
+      expect((yield* changes.next).value).toEqual({ type: "data", value: RENAMED });
+      yield* changes.close;
+    }),
+  );
+
+  it.effect("only the registered desktop socket can publish", () =>
+    Effect.gen(function* () {
+      const { engineHosts } = yield* harness;
+      const host = yield* attachProfileHost(engineHosts, () => "silent");
+      const foreign = yield* Effect.flip(
+        engineHosts.publishProfiles(
+          { socketId: "other-ws", grantMethod: "desktop-bootstrap" },
+          { hostConnectionId: host.hostConnectionId(), ...LIST },
+        ),
+      );
+      expect(foreign.reason).toBe("host-not-registered");
+      const web = yield* Effect.flip(
+        engineHosts.publishProfiles(
+          { socketId: "desktop-ws", grantMethod: undefined },
+          { hostConnectionId: host.hostConnectionId(), ...LIST },
+        ),
+      );
+      expect(web.reason).toBe("desktop-required");
+    }),
+  );
+
+  it.effect("refuses a caller without read authority, and unknown streams", () =>
+    Effect.gen(function* () {
+      const { profiles } = yield* harness;
+      expect(() =>
+        profiles.subscribe!("changes", {}, context(), signal, meta(profiles, [])),
+      ).toThrow();
+      expect(() => profiles.subscribe!("events", {}, context(), signal, meta(profiles))).toThrow();
+    }),
   );
 });

@@ -17,8 +17,9 @@ export function committedAddress(input: {
  * The address field, like native's: unfocused it shows `committed`, so it
  * follows guest navigation, redirects and Back/Forward; focusing starts the
  * edit from that address, and live navigation never overwrites the draft
- * being typed. Enter submits the draft; Escape cancels the edit — the draft
- * returns to `committed` and focus leaves the field.
+ * being typed. Enter submits a non-blank draft, trimmed, and leaves the field,
+ * so it follows wherever the page goes next (a redirect included); Escape
+ * cancels the edit — the draft returns to `committed` and focus leaves.
  */
 export function AddressInput(props: {
   readonly value: string;
@@ -44,7 +45,13 @@ export function AddressInput(props: {
       }}
       onBlur={() => setFocused(false)}
       onKeyDown={(event) => {
-        if (event.key === "Enter") onSubmit(value);
+        if (event.key === "Enter") {
+          event.preventDefault();
+          const next = value.trim();
+          if (next.length === 0) return;
+          onSubmit(next);
+          event.currentTarget.blur();
+        }
         if (event.key === "Escape") {
           event.preventDefault();
           onValueChange(committed);

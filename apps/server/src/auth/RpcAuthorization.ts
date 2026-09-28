@@ -167,6 +167,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.browserEngineHostRelease]: AuthOrchestrationOperateScope,
   [WS_METHODS.browserEngineHostReport]: AuthOrchestrationOperateScope,
   [WS_METHODS.browserEngineHostCommandResult]: AuthOrchestrationOperateScope,
+  [WS_METHODS.browserEngineHostProfiles]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceConfigure]: AuthOrchestrationOperateScope,

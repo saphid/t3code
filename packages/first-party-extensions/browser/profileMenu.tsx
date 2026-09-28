@@ -7,8 +7,9 @@
  * line, and pending work is static text — no spinner.
  */
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
-import { bindApi } from "@t3tools/extension-sdk/capabilities";
+import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import {
+  BROWSER_PROFILES,
   browserProfilesApi,
   type BrowserImportSourceSummary,
   type BrowserProfileList,
@@ -16,7 +17,8 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
-import { useEffect, useState } from "react";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   clearResultMessage,
@@ -27,11 +29,45 @@ import {
   profileLabel,
   sessionProfileId,
   type ProfileAction,
+  type ProfileListStore,
 } from "./profiles.js";
 
-export const bindProfilesApi = (host: ClientHost, context: ViewContext) =>
-  bindApi(browserProfilesApi, host, context);
+/** `t3.browser/profiles` 1.1.0 added the `changes` stream. */
+const CHANGES_RANGE = "^1.1.0";
+
+/**
+ * The profiles API at its 1.0.0 baseline, plus `watch`: the `changes` stream
+ * when the host's selected provider serves it, else null.
+ */
+export const bindProfilesApi = (
+  host: Pick<ClientHost, "invokeApi" | "subscribeApi" | "discoverApis">,
+  context: ViewContext,
+) => ({
+  ...bindApi(browserProfilesApi, host, context),
+  async watch(signal: AbortSignal): Promise<AsyncIterable<BrowserProfileList> | null> {
+    const selected = (await host.discoverApis(context, signal)).find(
+      (api) => api.id === BROWSER_PROFILES && api.selected,
+    );
+    if (selected === undefined || !satisfiesSemverRange(selected.version, CHANGES_RANGE)) {
+      return null;
+    }
+    const frames = bindStreamApi(browserProfilesApi, host, context, CHANGES_RANGE).subscribe(
+      "changes",
+      {},
+      signal,
+    );
+    return (async function* () {
+      for await (const frame of frames) {
+        if (frame.type === "closed") return;
+        yield frame.value;
+      }
+    })();
+  },
+});
 type ProfilesApi = ReturnType<typeof bindProfilesApi>;
+
+const useProfileList = (profiles: ProfileListStore) =>
+  useSyncExternalStore(profiles.subscribe, profiles.getSnapshot);
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -67,48 +103,26 @@ const firstProfile = (sources: readonly BrowserImportSourceSummary[], sourceId: 
 
 /**
  * Native's profile badge beside the address bar: names the tab's profile,
- * which is otherwise invisible, when it is not the default. Profiles and the
- * default are desktop settings with no change stream, so the list is re-read
- * whenever they may have changed: per held profile, each time the panel is
- * shown again, and when the window regains focus (Settings, in this window
- * or another, takes it away). A refused read shows no badge (the page menu's
- * profile group names the refusal).
+ * which is otherwise invisible, when it is not the default. The list comes
+ * from the view's shared store (see `createProfileListStore`), refreshed per
+ * held profile and each time the panel is shown again. A refused read shows
+ * no badge (the page menu's profile group names the refusal).
  */
 export function ProfileBadge(props: {
   host: Pick<ClientHost, "React" | "tooltip">;
   session: BrowserSession;
-  api: ProfilesApi;
-  signal: AbortSignal;
+  profiles: ProfileListStore;
   visible: boolean;
 }) {
-  const { host, session, api, signal, visible } = props;
+  const { host, session, profiles, visible } = props;
   const profileId = sessionProfileId(session);
-  const [list, setList] = useState<BrowserProfileList | null>(null);
+  const { list } = useProfileList(profiles);
   useEffect(() => {
-    if (!visible) return;
-    // Only the newest read may land; an older answer is an older list.
-    let read = 0;
-    const refresh = () => {
-      const current = ++read;
-      void api.invoke("list", {}, signal).then(
-        (value) => {
-          if (current === read) setList(value);
-        },
-        () => {
-          if (current === read) setList(null);
-        },
-      );
-    };
-    refresh();
-    window.addEventListener("focus", refresh);
-    return () => {
-      read = -1;
-      window.removeEventListener("focus", refresh);
-    };
-    // Re-read per held profile: one created after this view mounted would
-    // otherwise read as "Removed profile".
+    // Per held profile: one created after the last read would otherwise
+    // read as "Removed profile" on a host without the stream.
+    if (visible) profiles.refresh();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [api, signal, profileId, visible]);
+  }, [profiles, profileId, visible]);
   const name = profileBadgeName(list, profileId);
   if (name === null) return null;
   // Capped like native's `max-w-28`: an unbounded badge would take its width
@@ -139,35 +153,22 @@ export function ProfileBadge(props: {
 export function ProfileSection(props: {
   session: BrowserSession;
   api: ProfilesApi;
+  profiles: ProfileListStore;
   signal: AbortSignal;
   /** Opens the current page in a new session under `profileId` (a profile is fixed at open). */
   onOpenInProfile: (profileId: string) => void;
   /** Puts a finished action's named result on the panel's status line. */
   report: (message: string) => void;
 }) {
-  const { session, api, signal, onOpenInProfile, report } = props;
+  const { session, api, profiles, signal, onOpenInProfile, report } = props;
   const profileId = sessionProfileId(session);
-  const [list, setList] = useState<BrowserProfileList | null>(null);
-  const [listNote, setListNote] = useState<string | null>(null);
+  const { list, error } = useProfileList(profiles);
+  const listNote = list === null && error !== null ? profileFailureMessage("list", error) : null;
   const [busy, setBusy] = useState<ProfileAction | null>(null);
   const [importer, setImporter] = useState<Importer>({ kind: "closed" });
 
-  // One read per menu open: the list is the desktop's settings, which can
-  // change between opens.
-  useEffect(() => {
-    let live = true;
-    void api.invoke("list", {}, signal).then(
-      (value) => {
-        if (live) setList(value);
-      },
-      (error: unknown) => {
-        if (live) setListNote(profileFailureMessage("list", error));
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [api, signal]);
+  // Opening the menu refreshes the shared list (a read on hosts without the stream).
+  useEffect(() => profiles.refresh(), [profiles]);
 
   const name = profileLabel(list, profileId);
 

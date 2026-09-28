@@ -1,6 +1,7 @@
 /**
- * `t3.browser/profiles@1.0.0` — browser profiles and their privileged
- * maintenance (list/open, clear cookies, clear cache, cookie import).
+ * `t3.browser/profiles@1.1.0` — browser profiles and their privileged
+ * maintenance (list/open, clear cookies, clear cache, cookie import), and the
+ * `changes` stream of the list the desktop publishes.
  *
  * Profiles are partitions the desktop app owns, so every method is executed
  * by the environment's authenticated desktop engine host
@@ -31,6 +32,7 @@ import {
   type BrowserProfileList,
   type BrowserSessionReceipt,
 } from "@t3tools/extension-sdk/catalogue";
+import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -40,6 +42,7 @@ import type {
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
@@ -97,7 +100,10 @@ const publicImportFailure = (reason: string): BrowserImportFailureReason => {
 export function createBrowserProfilesApiProvider(
   dependencies: Parameters<typeof makeExtensionScopeResolver>[0] & {
     readonly preview: Pick<PreviewManager.PreviewManager["Service"], "open" | "listDetails">;
-    readonly engineHosts: Pick<BrowserEngineHosts.BrowserEngineHosts["Service"], "dispatchProfile">;
+    readonly engineHosts: Pick<
+      BrowserEngineHosts.BrowserEngineHosts["Service"],
+      "dispatchProfile" | "profileChanges"
+    >;
     /** The host's import wait (`BrowserEngineHosts.ImportAckTimeoutMs`). */
     readonly importAckTimeoutMs: number;
     /** Shared with the sessions provider so projected favicon refs resolve there. */
@@ -378,10 +384,81 @@ export function createBrowserProfilesApiProvider(
       }
     });
 
+  /**
+   * `changes`: the list the desktop last published, then each different one.
+   * Nothing is sent until a desktop has published, nothing while none is
+   * connected, and never a list equal to the last one sent.
+   */
+  const subscribe = (
+    name: string,
+    input: unknown,
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+    resumeCursor?: string,
+  ): AsyncIterable<ApiStreamEvent> => {
+    const operation = `${OPERATION}.changes`;
+    if (name !== "changes") throw failure(operation, "Browser profiles stream is unavailable.");
+    if (resumeCursor !== undefined) {
+      throw failure(operation, "Browser profiles stream does not support resume cursors.");
+    }
+    if (
+      input === null ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      Object.keys(input).length > 0
+    ) {
+      throw named(
+        operation,
+        "BrowserProfileInputError",
+        "changes input fails the declared schema.",
+      );
+    }
+    const assertAuthority = metadata.assertAuthority;
+    if (!authorized(metadata.principal, false) || !assertAuthority) {
+      throw failure(operation, "Browser profiles authority is unavailable.");
+    }
+    const revoked = () => failure(operation, "Browser profiles authority was revoked.");
+    const aborted = Effect.callback<void>((resume) => {
+      if (signal.aborted) return resume(Effect.void);
+      signal.addEventListener("abort", () => resume(Effect.void), { once: true });
+    });
+    const events = Stream.unwrap(
+      Effect.map(resolve(context), (scope) =>
+        dependencies.engineHosts.profileChanges.pipe(
+          Stream.filter(
+            (list): list is BrowserEngineHosts.BrowserEngineProfileList => list !== null,
+          ),
+          // A host that reconnects republishes; an equal list is not news.
+          Stream.changesWith<BrowserEngineHosts.BrowserEngineProfileList>(
+            BrowserEngineHosts.sameProfileList,
+          ),
+          // Authority and scope are rechecked before each list is delivered.
+          Stream.mapEffect((list) =>
+            Effect.gen(function* () {
+              yield* Effect.tryPromise({ try: () => assertAuthority(), catch: revoked });
+              yield* resolve(scope.context);
+              return list;
+            }),
+          ),
+          Stream.map((list, index): ApiStreamEvent => ({
+            type: index === 0 ? "snapshot" : "data",
+            value: {
+              profiles: list.profiles.map((profile) => ({ id: profile.id, name: profile.name })),
+              defaultProfileId: list.defaultProfileId,
+            } satisfies BrowserProfileList,
+          })),
+        ),
+      ),
+    ).pipe(Stream.interruptWhen(aborted));
+    return Stream.toAsyncIterable(events);
+  };
+
   return {
     providerId: "t3.host-browser-profiles",
     definition: browserProfilesApi.definition,
     requiresRootAuthority: true,
+    subscribe,
     // Import waits on a confirmation and possibly a keychain prompt; the
     // broker's default deadline would cut the user off mid-decision.
     deadlineMs: (method) =>

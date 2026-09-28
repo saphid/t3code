@@ -290,12 +290,12 @@ NodeTest.describe("device toolbar aspect-ratio lock", () => {
  * The panel's lock state across tabs it adopts through its tab strip: the
  * hook as the panel holds it, fed the snapshot's tabs.
  */
-function mountLocks(tabs) {
+function mountLocks(tabs, held = null) {
   let current = tabs;
   const hook = {};
   let renderer;
   function Probe() {
-    hook.locks = useAspectLocks(current);
+    hook.locks = useAspectLocks(current, held);
     return null;
   }
   act(() => {
@@ -356,5 +356,58 @@ NodeTest.describe("aspect-ratio lock per tab", () => {
     const restarted = { ...B, serverEpoch: "epoch-2" };
     locks.snapshot([restarted]);
     NodeAssert.equal(locks.isLocked(restarted), false);
+  });
+
+  NodeTest.it("locks a held tab whose first stream upsert has not arrived yet", () => {
+    // Receipt adoption holds the tab before the stream lists it.
+    const locks = mountLocks([], A);
+    locks.set(A, true);
+    NodeAssert.equal(locks.isLocked(A), true);
+    // The upsert lands: the same lock, unchanged.
+    locks.snapshot([A]);
+    NodeAssert.equal(locks.isLocked(A), true);
+  });
+});
+
+/**
+ * The toolbar driven by the panel's lock hook for a held tab the stream has
+ * not listed yet, as right after an accepted receipt.
+ */
+function mountHeldToolbar(held, setting) {
+  let renderer;
+  function Panel() {
+    const locks = useAspectLocks([], held);
+    return React.createElement(BrowserViewportToolbar, {
+      host: { React },
+      setting,
+      pending: false,
+      aspectLocked: locks.isLocked(held),
+      onAspectLockedChange: (locked) => locks.setLocked(held, locked),
+      onCommit: () => new Promise(() => {}),
+    });
+  }
+  act(() => {
+    renderer = create(React.createElement(Panel));
+  });
+  return {
+    find: (label) => renderer.root.find((node) => node.props["aria-label"] === label),
+    /** The lock button's pressed state, whichever label it carries now. */
+    lockPressed: () =>
+      renderer.root.find((node) => node.type === "button" && "aria-pressed" in node.props).props[
+        "aria-pressed"
+      ],
+  };
+}
+
+NodeTest.describe("aspect-ratio lock before the first upsert", () => {
+  NodeTest.it("the first click locks and the first edit keeps the shape", () => {
+    const toolbar = mountHeldToolbar({ tabId: "tab-new", serverEpoch: "epoch-1" }, IPHONE_SE);
+    click(toolbar, "Lock viewport aspect ratio", "Viewport width");
+    NodeAssert.equal(toolbar.lockPressed(), true);
+    typeInto(toolbar, "Viewport width", "420");
+    NodeAssert.equal(
+      toolbar.find("Viewport height").props.value,
+      String(Math.round((420 * 667) / 375)),
+    );
   });
 });

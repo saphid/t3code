@@ -84,6 +84,11 @@ export function createPreviewEnvironmentAtoms<R, E>(
       tag: WS_METHODS.browserEngineHostCommandResult,
       scheduler: engineHostScheduler,
     }),
+    engineHostProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-profiles",
+      tag: WS_METHODS.browserEngineHostProfiles,
+      scheduler: engineHostScheduler,
+    }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",
       tag: WS_METHODS.previewOpen,

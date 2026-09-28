@@ -247,23 +247,26 @@ var __t3Client = (() => {
       const added = parseVersion(addition.version);
       if (!added)
         throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
-      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version2) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version2) > 0 || ("stream" in addition ? !validated.streams?.some((stream) => stream.name === addition.stream) : !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
     }
     return { definition: validated, baseline: options.baseline, additions };
+  }
+  function unnegotiatedAdditions(api, versionRange) {
+    const floor = rangeFloor(versionRange);
+    return (api.additions ?? []).filter((addition) => {
+      const added = parseVersion(addition.version);
+      return !floor || !added || compareVersions(floor, added) < 0;
+    });
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client2, context2, versionRange = defaultVersionRange(api)) {
-    const floor = rangeFloor(versionRange);
-    const unnegotiated = (api.additions ?? []).filter((addition) => {
-      const added = parseVersion(addition.version);
-      return !floor || !added || compareVersions(floor, added) < 0;
-    });
+    const unnegotiated = unnegotiatedAdditions(api, versionRange);
     return {
       invoke(method, input, signal) {
-        const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
+        const addition = unnegotiated.find((item) => "method" in item && item.method === method && hasInput(input, item.input.split(".")));
         if (addition)
           return Promise.reject(new ApiVersionError(`${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`));
         return client2.invokeApi({ id: api.definition.id, versionRange, method, input, context: context2 }, signal);
@@ -277,8 +280,12 @@ var __t3Client = (() => {
     return { definition: validated };
   }
   function bindStreamApi(api, client2, context2, versionRange = defaultVersionRange(api)) {
+    const unnegotiated = unnegotiatedAdditions(api, versionRange);
     return {
       subscribe(name, input, signal, options) {
+        const addition = unnegotiated.find((item) => "stream" in item && item.stream === name);
+        if (addition)
+          throw new ApiVersionError(`${api.definition.id} stream ${name} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`);
         return client2.subscribeApi({
           id: api.definition.id,
           versionRange,
@@ -6362,100 +6369,97 @@ var __t3Client = (() => {
   };
   var browserImportLabel = { type: "string", minLength: 1, maxLength: 128 };
   var browserImportHandle = { type: "string", minLength: 1, maxLength: 16 };
-  var browserProfilesApi = defineApi({
-    id: BROWSER_PROFILES,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [BROWSER_PROFILES],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
+  var browserProfileListSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["profiles", "defaultProfileId"],
+    properties: {
+      profiles: {
+        type: "array",
+        maxItems: 26,
+        items: {
           type: "object",
           additionalProperties: false,
-          required: ["profiles", "defaultProfileId"],
+          required: ["id", "name"],
           properties: {
-            profiles: {
-              type: "array",
-              maxItems: 26,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "name"],
-                properties: {
-                  id: browserProfileId,
-                  name: { type: "string", minLength: 1, maxLength: 48 }
-                }
-              }
-            },
-            defaultProfileId: browserProfileId
+            id: browserProfileId,
+            name: { type: "string", minLength: 1, maxLength: 48 }
           }
         }
       },
-      {
-        name: "open",
-        effect: "write",
-        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["profileId"],
-          properties: {
-            profileId: browserProfileId,
-            url: browserSessionUrl,
-            viewport: browserSessionViewport
-          }
-        },
-        outputSchema: browserSessionReceiptOf(browserSessionObject)
+      defaultProfileId: browserProfileId
+    }
+  };
+  var browserProfilesMethods = [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_PROFILES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: browserProfileListSchema
+    },
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId"],
+        properties: {
+          profileId: browserProfileId,
+          url: browserSessionUrl,
+          viewport: browserSessionViewport
+        }
       },
-      {
-        name: "clearCookies",
-        effect: "write",
-        requiredGrants: [BROWSER_CLEAR_COOKIES],
-        inputSchema: browserProfileTargetInput,
-        outputSchema: browserProfileClearResult
-      },
-      {
-        name: "clearCache",
-        effect: "write",
-        requiredGrants: [BROWSER_CLEAR_CACHE],
-        inputSchema: browserProfileTargetInput,
-        outputSchema: browserProfileClearResult
-      },
-      {
-        name: "listImportSources",
-        effect: "read",
-        requiredGrants: [BROWSER_IMPORT_COOKIES],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["sources"],
-          properties: {
-            sources: {
-              type: "array",
-              maxItems: 16,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "name", "profiles"],
-                properties: {
-                  id: browserImportLabel,
-                  name: browserImportLabel,
-                  unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
-                  profiles: {
-                    type: "array",
-                    maxItems: 32,
-                    items: {
-                      type: "object",
-                      additionalProperties: false,
-                      required: ["handle", "name"],
-                      properties: {
-                        handle: browserImportHandle,
-                        name: browserImportLabel,
-                        cookieCount: { type: "integer", minimum: 0 }
-                      }
+      outputSchema: browserSessionReceiptOf(browserSessionObject)
+    },
+    {
+      name: "clearCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_COOKIES],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "clearCache",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_CACHE],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "listImportSources",
+      effect: "read",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sources"],
+        properties: {
+          sources: {
+            type: "array",
+            maxItems: 16,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name", "profiles"],
+              properties: {
+                id: browserImportLabel,
+                name: browserImportLabel,
+                unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+                profiles: {
+                  type: "array",
+                  maxItems: 32,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["handle", "name"],
+                    properties: {
+                      handle: browserImportHandle,
+                      name: browserImportLabel,
+                      cookieCount: { type: "integer", minimum: 0 }
                     }
                   }
                 }
@@ -6463,65 +6467,88 @@ var __t3Client = (() => {
             }
           }
         }
+      }
+    },
+    {
+      name: "importCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId", "sourceId", "sourceProfile"],
+        properties: {
+          profileId: browserProfileId,
+          sourceId: browserImportLabel,
+          sourceProfile: browserImportHandle
+        }
       },
-      {
-        name: "importCookies",
-        effect: "write",
-        requiredGrants: [BROWSER_IMPORT_COOKIES],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["profileId", "sourceId", "sourceProfile"],
-          properties: {
-            profileId: browserProfileId,
-            sourceId: browserImportLabel,
-            sourceProfile: browserImportHandle
-          }
-        },
-        outputSchema: {
-          oneOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId", "imported", "skipped"],
-              properties: {
-                outcome: { const: "imported" },
-                profileId: browserProfileId,
-                imported: { type: "integer", minimum: 0 },
-                skipped: { type: "integer", minimum: 0 }
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId"],
-              properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId", "reason"],
-              properties: {
-                outcome: { const: "failed" },
-                profileId: browserProfileId,
-                reason: {
-                  enum: [
-                    ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
-                    "keychainUnavailable",
-                    "unknownSource",
-                    "unknownSourceProfile",
-                    "sessionUnavailable",
-                    "readFailed"
-                  ]
-                }
+      outputSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "imported", "skipped"],
+            properties: {
+              outcome: { const: "imported" },
+              profileId: browserProfileId,
+              imported: { type: "integer", minimum: 0 },
+              skipped: { type: "integer", minimum: 0 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId"],
+            properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "reason"],
+            properties: {
+              outcome: { const: "failed" },
+              profileId: browserProfileId,
+              reason: {
+                enum: [
+                  ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                  "keychainUnavailable",
+                  "unknownSource",
+                  "unknownSourceProfile",
+                  "sessionUnavailable",
+                  "readFailed"
+                ]
               }
             }
-          ]
-        }
+          }
+        ]
       }
-    ]
+    }
+  ];
+  var browserProfilesApi = defineApi(
+    {
+      id: BROWSER_PROFILES,
+      version: "1.1.0",
+      methods: browserProfilesMethods,
+      streams: [
+        {
+          name: "changes",
+          requiredGrants: [BROWSER_PROFILES],
+          inputSchema: browserSessionEmptyInput,
+          eventSchema: browserProfileListSchema
+        }
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; probe before subscribing.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "changes" }] }
+  );
+  var browserProfilesApiV1 = defineApi({
+    id: BROWSER_PROFILES,
+    version: "1.0.0",
+    methods: browserProfilesMethods
   });
   var BROWSER_PROFILES_API = browserProfilesApi.definition;
+  var BROWSER_PROFILES_API_V1 = browserProfilesApiV1.definition;
   var BROWSER_FRAMES = "t3.browser/frames";
   var BROWSER_FRAMES_VERSION = "1.0.0";
   var browserFrameSessionIdentity = {
@@ -7740,6 +7767,7 @@ var __t3Client = (() => {
     browserSessionsApiV1_1.definition,
     browserSessionsApiV1.definition,
     browserProfilesApi.definition,
+    browserProfilesApiV1.definition,
     browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,
@@ -8488,7 +8516,13 @@ var __t3Client = (() => {
         },
         onBlur: () => setFocused(false),
         onKeyDown: (event) => {
-          if (event.key === "Enter") onSubmit(value);
+          if (event.key === "Enter") {
+            event.preventDefault();
+            const next = value.trim();
+            if (next.length === 0) return;
+            onSubmit(next);
+            event.currentTarget.blur();
+          }
           if (event.key === "Escape") {
             event.preventDefault();
             onValueChange(committed);
@@ -15982,10 +16016,88 @@ ${ind(d)}}`;
     const profileId = sessionProfileId(previous);
     return profileId === DEFAULT_PROFILE_ID ? { api: "sessions", input: { url } } : { api: "profiles", input: { profileId, url } };
   }
+  function sameProfileList(a, b) {
+    return a === b || a !== null && b !== null && a.defaultProfileId === b.defaultProfileId && a.profiles.length === b.profiles.length && a.profiles.every(
+      (profile, index) => profile.id === b.profiles[index].id && profile.name === b.profiles[index].name
+    );
+  }
+  function createProfileListStore(source, signal) {
+    let snapshot = { list: null, error: null };
+    let mode = "idle";
+    let read = 0;
+    const listeners2 = /* @__PURE__ */ new Set();
+    const set = (next) => {
+      if (sameProfileList(snapshot.list, next.list) && snapshot.error === next.error) return;
+      snapshot = sameProfileList(snapshot.list, next.list) ? { ...next, list: snapshot.list } : next;
+      for (const listener of listeners2) listener();
+    };
+    const readList = () => {
+      const current = ++read;
+      void source.invoke("list", {}, signal).then(
+        (list) => {
+          if (current === read && mode === "reads") set({ list, error: null });
+        },
+        (error) => {
+          if (current === read && mode === "reads") set({ list: null, error });
+        }
+      );
+    };
+    const watch = async () => {
+      mode = "probing";
+      const changes = await source.watch(signal).catch(() => null);
+      if (signal.aborted) return;
+      if (changes === null) {
+        mode = "reads";
+        readList();
+        return;
+      }
+      mode = "live";
+      try {
+        for await (const list of changes) set({ list, error: null });
+      } catch {
+      }
+      if (!signal.aborted) mode = "idle";
+    };
+    return {
+      subscribe(listener) {
+        listeners2.add(listener);
+        return () => listeners2.delete(listener);
+      },
+      getSnapshot: () => snapshot,
+      refresh() {
+        if (signal.aborted) return;
+        if (mode === "idle") void watch();
+        else if (mode === "reads") readList();
+      }
+    };
+  }
 
   // profileMenu.tsx
   var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
-  var bindProfilesApi = (host, context2) => bindApi(browserProfilesApi, host, context2);
+  var CHANGES_RANGE = "^1.1.0";
+  var bindProfilesApi = (host, context2) => ({
+    ...bindApi(browserProfilesApi, host, context2),
+    async watch(signal) {
+      const selected = (await host.discoverApis(context2, signal)).find(
+        (api) => api.id === BROWSER_PROFILES && api.selected
+      );
+      if (selected === void 0 || !satisfiesSemverRange(selected.version, CHANGES_RANGE)) {
+        return null;
+      }
+      const frames = bindStreamApi(browserProfilesApi, host, context2, CHANGES_RANGE).subscribe(
+        "changes",
+        {},
+        signal
+      );
+      return (async function* () {
+        for await (const frame of frames) {
+          if (frame.type === "closed") return;
+          yield frame.value;
+        }
+      })();
+    }
+  });
+  var useProfileList = (profiles) => (0, import_react6.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
   var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var control2 = {
@@ -16004,30 +16116,12 @@ ${ind(d)}}`;
   };
   var firstProfile = (sources, sourceId) => sources.find((source) => source.id === sourceId)?.profiles[0]?.handle ?? "";
   function ProfileBadge(props) {
-    const { host, session, api, signal, visible } = props;
+    const { host, session, profiles, visible } = props;
     const profileId = sessionProfileId(session);
-    const [list, setList] = (0, import_react6.useState)(null);
+    const { list } = useProfileList(profiles);
     (0, import_react6.useEffect)(() => {
-      if (!visible) return;
-      let read = 0;
-      const refresh = () => {
-        const current = ++read;
-        void api.invoke("list", {}, signal).then(
-          (value) => {
-            if (current === read) setList(value);
-          },
-          () => {
-            if (current === read) setList(null);
-          }
-        );
-      };
-      refresh();
-      window.addEventListener("focus", refresh);
-      return () => {
-        read = -1;
-        window.removeEventListener("focus", refresh);
-      };
-    }, [api, signal, profileId, visible]);
+      if (visible) profiles.refresh();
+    }, [profiles, profileId, visible]);
     const name = profileBadgeName(list, profileId);
     if (name === null) return null;
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: name, children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
@@ -16051,32 +16145,19 @@ ${ind(d)}}`;
     ) });
   }
   function ProfileSection(props) {
-    const { session, api, signal, onOpenInProfile, report } = props;
+    const { session, api, profiles, signal, onOpenInProfile, report } = props;
     const profileId = sessionProfileId(session);
-    const [list, setList] = (0, import_react6.useState)(null);
-    const [listNote, setListNote] = (0, import_react6.useState)(null);
+    const { list, error } = useProfileList(profiles);
+    const listNote = list === null && error !== null ? profileFailureMessage("list", error) : null;
     const [busy, setBusy] = (0, import_react6.useState)(null);
     const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
-    (0, import_react6.useEffect)(() => {
-      let live = true;
-      void api.invoke("list", {}, signal).then(
-        (value) => {
-          if (live) setList(value);
-        },
-        (error) => {
-          if (live) setListNote(profileFailureMessage("list", error));
-        }
-      );
-      return () => {
-        live = false;
-      };
-    }, [api, signal]);
+    (0, import_react6.useEffect)(() => profiles.refresh(), [profiles]);
     const name = profileLabel(list, profileId);
     const clear = (kind) => {
       setBusy(kind);
       void api.invoke(kind, { profileId }, signal).then(
         (result2) => report(clearResultMessage(result2, kind, name)),
-        (error) => report(profileFailureMessage(kind, error))
+        (error2) => report(profileFailureMessage(kind, error2))
       ).finally(() => setBusy(null));
     };
     const openImporter = () => {
@@ -16092,7 +16173,7 @@ ${ind(d)}}`;
             handle: firstProfile(usable, sourceId)
           });
         },
-        (error) => setImporter({ kind: "failed", message: profileFailureMessage("listImportSources", error) })
+        (error2) => setImporter({ kind: "failed", message: profileFailureMessage("listImportSources", error2) })
       );
     };
     const runImport = (sourceId, handle) => {
@@ -16102,7 +16183,7 @@ ${ind(d)}}`;
           report(importResultMessage(result2, name));
           if (result2.outcome === "imported") setImporter({ kind: "closed" });
         },
-        (error) => report(profileFailureMessage("importCookies", error))
+        (error2) => report(profileFailureMessage("importCookies", error2))
       ).finally(() => setBusy(null));
     };
     const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
@@ -16713,9 +16794,9 @@ ${ind(d)}}`;
       }
     );
   }
-  function useAspectLocks(tabs) {
+  function useAspectLocks(tabs, held) {
     const [locks, setLocks] = (0, import_react7.useState)(() => /* @__PURE__ */ new Map());
-    const live = (tabId) => tabs.some((tab) => tab.tabId === tabId);
+    const live = (tabId) => held?.tabId === tabId || tabs.some((tab) => tab.tabId === tabId);
     return {
       isLocked: (tab) => tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
       setLocked: (tab, locked) => setLocks((current) => {
@@ -17416,6 +17497,10 @@ ${ind(d)}}`;
     const viewportCommitter = (0, import_react8.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
     const profilesApi = (0, import_react8.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
+    const profiles = (0, import_react8.useMemo)(
+      () => createProfileListStore(profilesApi, session.signal),
+      [profilesApi, session.signal]
+    );
     const localServers = useLocalServers(host, session, visible && held === null);
     const [projectHistoryState, setProjectHistoryState] = (0, import_react8.useState)({
       kind: "loading"
@@ -17644,7 +17729,7 @@ ${ind(d)}}`;
     const viewportSlot = contentSize ?? FALLBACK_RESPONSIVE_VIEWPORT_SIZE;
     const pageZoom = live?.zoomFactor ?? 1;
     const fixedViewport = viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
-    const aspectLocks = useAspectLocks(tabs);
+    const aspectLocks = useAspectLocks(tabs, held);
     const aspectLocked = aspectLocks.isLocked(held);
     const rails = useViewportRails({
       setting: fixedViewport,
@@ -18030,16 +18115,7 @@ ${titledTitle}`;
                     style: buttonStyle
                   }
                 ),
-                held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  ProfileBadge,
-                  {
-                    host,
-                    session: live,
-                    api: profilesApi,
-                    signal: session.signal,
-                    visible
-                  }
-                ),
+                held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ProfileBadge, { host, session: live, profiles, visible }),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   AddressInput,
                   {
@@ -18099,6 +18175,7 @@ ${titledTitle}`;
                       {
                         session: live,
                         api: profilesApi,
+                        profiles,
                         signal: session.signal,
                         onOpenInProfile: openInProfile,
                         report: setNotice

@@ -135,6 +135,31 @@ NodeTest.describe("address field keys", () => {
     NodeAssert.deepEqual(address.submits, ["localhost:3000"]);
   });
 
+  NodeTest.it("Enter leaves the field, which then shows where a redirect lands", () => {
+    const address = mountAddress("https://example.com/");
+    address.focus();
+    address.type("localhost:3000");
+    const enter = address.key("Enter");
+    NodeAssert.equal(enter.blurred, true);
+    NodeAssert.equal(enter.defaultPrevented, true);
+    address.navigate("http://localhost:3000/landing");
+    NodeAssert.equal(address.value(), "http://localhost:3000/landing");
+  });
+
+  NodeTest.it("Enter submits the trimmed draft; a blank one submits nothing and stays", () => {
+    const address = mountAddress("https://example.com/");
+    address.focus();
+    address.type("  localhost:3000  ");
+    address.key("Enter");
+    NodeAssert.deepEqual(address.submits, ["localhost:3000"]);
+    address.focus();
+    address.type("   ");
+    const enter = address.key("Enter");
+    NodeAssert.deepEqual(address.submits, ["localhost:3000"]);
+    NodeAssert.equal(enter.blurred, false);
+    NodeAssert.equal(address.value(), "   ");
+  });
+
   NodeTest.it("follows guest navigation, redirects and history while unfocused", () => {
     const address = mountAddress("https://a.test/");
     address.navigate("https://b.test/");

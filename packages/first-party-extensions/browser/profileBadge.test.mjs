@@ -1,7 +1,9 @@
 /**
- * The chrome-row profile badge over the REAL profileMenu.tsx, bundled by
- * esbuild into the system tmpdir and rendered with react-test-renderer
- * against a stubbed `t3.browser/profiles` list.
+ * The chrome-row profile badge and the page menu's profile group over the
+ * REAL profileMenu.tsx and profiles.ts, bundled by esbuild into the system
+ * tmpdir and rendered with react-test-renderer against a stubbed
+ * `t3.browser/profiles`: a host serving the 1.1.0 `changes` stream, and an
+ * older one answering reads only.
  */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFSP from "node:fs/promises";
@@ -20,10 +22,19 @@ const packageDir = NodeURL.fileURLToPath(new URL(".", import.meta.url));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 let ProfileBadge;
+let ProfileSection;
+let createProfileListStore;
 
 NodeTest.before(async () => {
   const built = await build({
-    entryPoints: [NodePath.join(packageDir, "profileMenu.tsx")],
+    stdin: {
+      contents: [
+        'export { ProfileBadge, ProfileSection } from "./profileMenu.tsx";',
+        'export { createProfileListStore } from "./profiles.ts";',
+      ].join("\n"),
+      resolveDir: packageDir,
+      loader: "ts",
+    },
     bundle: true,
     write: false,
     jsx: "automatic",
@@ -45,7 +56,9 @@ NodeTest.before(async () => {
   const bundlePath = NodePath.join(bundleDir, "bundle.mjs");
   try {
     await NodeFSP.writeFile(bundlePath, built.outputFiles[0].text);
-    ({ ProfileBadge } = await import(NodeURL.pathToFileURL(bundlePath).href));
+    ({ ProfileBadge, ProfileSection, createProfileListStore } = await import(
+      NodeURL.pathToFileURL(bundlePath).href
+    ));
   } finally {
     await NodeFSP.rm(bundleDir, { recursive: true, force: true });
   }
@@ -59,156 +72,292 @@ const LIST = {
   ],
 };
 
-/** Renders the badge for a session in `profileId`, the list read settled. */
-async function badgeFor(profileId, list = Promise.resolve(LIST)) {
-  const api = {
-    invoke: (method) => (method === "list" ? list : Promise.reject(new Error(method))),
+/** Lets pending promise callbacks and stream pulls run. */
+const settle = async () => {
+  for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+};
+
+/** A fresh copy per answer, as a real transport delivers. */
+const clone = (value) => structuredClone(value);
+
+/**
+ * A stubbed `t3.browser/profiles`. With `stream`, `watch` opens a `changes`
+ * subscription that starts with the current list, as the server does;
+ * without it the host predates 1.1.0 and only answers reads.
+ */
+function fakeProfiles({ stream, list = LIST, refuse = null }) {
+  let current = list;
+  const reads = [];
+  const subscriptions = [];
+  const source = {
+    invoke(method) {
+      reads.push(method);
+      if (method !== "list") return Promise.reject(new Error(method));
+      return refuse === null ? Promise.resolve(clone(current)) : Promise.reject(refuse);
+    },
+    async watch() {
+      if (!stream) return null;
+      const queue = [clone(current)];
+      let wake = null;
+      let ended = false;
+      const subscription = {
+        push(value) {
+          queue.push(clone(value));
+          wake?.();
+        },
+        end() {
+          ended = true;
+          wake?.();
+        },
+      };
+      subscriptions.push(subscription);
+      const pull = async () => {
+        if (queue.length === 0 && !ended) await new Promise((resolve) => (wake = resolve));
+        return queue.length === 0 ? pull.done : queue.shift();
+      };
+      pull.done = Symbol("done");
+      return (async function* () {
+        for (let next = await pull(); next !== pull.done; next = await pull()) yield next;
+      })();
+    },
   };
+  return {
+    source,
+    reads,
+    subscriptions,
+    /** The desktop's settings change; open streams are told. */
+    async change(next) {
+      current = next;
+      await act(async () => {
+        for (const subscription of subscriptions) subscription.push(next);
+        await settle();
+      });
+    },
+    /** Settings change while no stream is open to hear it. */
+    setQuietly(next) {
+      current = next;
+    },
+  };
+}
+
+// Node has no window; one stands in so window-focus behaviour is observable.
+globalThis.window ??= new EventTarget();
+
+const text = (node) =>
+  node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
+
+/**
+ * Mounts one badge and keeps it mounted, under a Profiler counting its
+ * commits. The view's store and the `api` binding both come from `fake`.
+ */
+async function mountBadge(profileId, fake) {
+  const signal = new AbortController().signal;
+  const profiles = createProfileListStore(fake.source, signal);
+  let commits = 0;
   let renderer;
-  await act(async () => {
-    renderer = create(
+  const element = (visible) =>
+    React.createElement(
+      React.Profiler,
+      { id: "badge", onRender: () => (commits += 1) },
       React.createElement(ProfileBadge, {
         host: { React },
         session: profileId === undefined ? {} : { profileId },
-        api,
-        signal: new AbortController().signal,
-        visible: true,
+        api: fake.source,
+        signal,
+        profiles,
+        visible,
       }),
     );
-  });
-  await act(async () => {
-    await list.catch(() => {});
-  });
-  const badge = renderer.root.findAll(
-    (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
-  );
-  return badge.length === 0 ? null : badge[0];
-}
-
-// The badge re-reads when the client window regains focus (Settings may be
-// another window); node has no window, so stand one in.
-globalThis.window ??= new EventTarget();
-
-/**
- * Mounts one badge and keeps it mounted: `setList` changes what the next
- * read answers, `rerender` passes new props to the same instance.
- */
-async function mountBadge(profileId, list) {
-  let current = list;
-  const reads = [];
-  const api = {
-    invoke: (method) => {
-      reads.push(method);
-      return method === "list" ? Promise.resolve(current) : Promise.reject(new Error(method));
-    },
-  };
-  const signal = new AbortController().signal;
-  const session = { profileId };
-  let renderer;
-  const element = (visible) =>
-    React.createElement(ProfileBadge, { host: { React }, session, api, signal, visible });
   await act(async () => {
     renderer = create(element(true));
+    await settle();
   });
-  const badge = () => {
-    const found = renderer.root.findAll(
-      (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
-    );
-    return found.length === 0 ? null : text(found[0]);
-  };
   return {
-    reads,
-    badge,
-    setList(next) {
-      current = next;
+    commits: () => commits,
+    badge() {
+      const found = renderer.root.findAll(
+        (node) => node.type === "span" && node.props["data-t3-browser-profile-badge"] === true,
+      );
+      return found.length === 0 ? null : text(found[0]);
     },
     async focusWindow() {
       await act(async () => {
         globalThis.window.dispatchEvent(new Event("focus"));
+        await settle();
       });
     },
     async rerender(visible) {
       await act(async () => {
         renderer.update(element(visible));
+        await settle();
       });
     },
   };
 }
 
-const text = (node) =>
-  node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
+const RENAMED = { ...LIST, profiles: [LIST.profiles[0], { id: "work", name: "Client work" }] };
 
-NodeTest.describe("profile badge", () => {
-  NodeTest.it("names a tab in another profile", async () => {
-    const badge = await badgeFor("work");
-    NodeAssert.ok(badge);
-    NodeAssert.equal(text(badge), "Work account");
-  });
-
-  NodeTest.it("stays hidden for the default profile, set or implied", async () => {
-    NodeAssert.equal(await badgeFor("default"), null);
-    NodeAssert.equal(await badgeFor(undefined), null);
-  });
-
-  NodeTest.it("follows the configured default, not the built-in one", async () => {
-    const badge = await badgeFor("default", Promise.resolve({ ...LIST, defaultProfileId: "work" }));
-    NodeAssert.ok(badge);
-    NodeAssert.equal(text(badge), "Default");
-  });
-
-  NodeTest.it("reads a deleted profile as Removed profile", async () => {
-    const badge = await badgeFor("gone");
-    NodeAssert.ok(badge);
-    NodeAssert.equal(text(badge), "Removed profile");
-  });
-
-  NodeTest.it("shows nothing when the list is refused", async () => {
-    NodeAssert.equal(
-      await badgeFor(
-        "work",
-        Promise.reject(new Error("API capability denied: t3.browser/profiles")),
-      ),
-      null,
-    );
-  });
-
-  NodeTest.describe("follows profile settings without a remount or a new profile", () => {
-    NodeTest.it("renames the held profile when the window regains focus", async () => {
-      const mounted = await mountBadge("work", LIST);
+for (const stream of [true, false]) {
+  NodeTest.describe(`profile badge (${stream ? "changes stream" : "reads only"})`, () => {
+    NodeTest.it("names a tab in another profile", async () => {
+      const mounted = await mountBadge("work", fakeProfiles({ stream }));
       NodeAssert.equal(mounted.badge(), "Work account");
-      mounted.setList({
-        ...LIST,
-        profiles: [LIST.profiles[0], { id: "work", name: "Client work" }],
+    });
+
+    NodeTest.it("stays hidden for the default profile, set or implied", async () => {
+      NodeAssert.equal((await mountBadge("default", fakeProfiles({ stream }))).badge(), null);
+      NodeAssert.equal((await mountBadge(undefined, fakeProfiles({ stream }))).badge(), null);
+    });
+
+    NodeTest.it("follows the configured default, not the built-in one", async () => {
+      const list = { ...LIST, defaultProfileId: "work" };
+      NodeAssert.equal(
+        (await mountBadge("default", fakeProfiles({ stream, list }))).badge(),
+        "Default",
+      );
+    });
+
+    NodeTest.it("reads a deleted profile as Removed profile", async () => {
+      NodeAssert.equal(
+        (await mountBadge("gone", fakeProfiles({ stream }))).badge(),
+        "Removed profile",
+      );
+    });
+  });
+}
+
+NodeTest.it("shows nothing when the list is refused", async () => {
+  const refuse = new Error("API capability denied: t3.browser/profiles");
+  NodeAssert.equal(
+    (await mountBadge("work", fakeProfiles({ stream: false, refuse }))).badge(),
+    null,
+  );
+});
+
+NodeTest.describe("on a host with the changes stream", () => {
+  NodeTest.it("renames the held profile with no focus, show or profile switch", async () => {
+    const fake = fakeProfiles({ stream: true });
+    const mounted = await mountBadge("work", fake);
+    await fake.change(RENAMED);
+    NodeAssert.equal(mounted.badge(), "Client work");
+    NodeAssert.deepEqual(fake.reads, []);
+  });
+
+  NodeTest.it("reads a profile deleted in Settings as Removed profile, unprompted", async () => {
+    const fake = fakeProfiles({ stream: true });
+    const mounted = await mountBadge("work", fake);
+    await fake.change({ ...LIST, profiles: [LIST.profiles[0]] });
+    NodeAssert.equal(mounted.badge(), "Removed profile");
+  });
+
+  NodeTest.it("hides once the held profile becomes the default, and back", async () => {
+    const fake = fakeProfiles({ stream: true });
+    const mounted = await mountBadge("work", fake);
+    await fake.change({ ...LIST, defaultProfileId: "work" });
+    NodeAssert.equal(mounted.badge(), null);
+    await fake.change(LIST);
+    NodeAssert.equal(mounted.badge(), "Work account");
+  });
+
+  NodeTest.it("commits nothing for an unchanged list or a window focus", async () => {
+    const fake = fakeProfiles({ stream: true });
+    const mounted = await mountBadge("work", fake);
+    const settled = mounted.commits();
+    // A fresh copy of the same list, as a re-sent snapshot arrives.
+    await fake.change(LIST);
+    await mounted.focusWindow();
+    await mounted.focusWindow();
+    await mounted.focusWindow();
+    NodeAssert.equal(mounted.commits(), settled);
+    NodeAssert.deepEqual(fake.reads, []);
+  });
+
+  NodeTest.it(
+    "a dropped stream reopens on the next show and starts from its snapshot",
+    async () => {
+      const fake = fakeProfiles({ stream: true });
+      const mounted = await mountBadge("work", fake);
+      NodeAssert.equal(fake.subscriptions.length, 1);
+      await act(async () => {
+        fake.subscriptions[0].end();
+        await settle();
       });
-      await mounted.focusWindow();
-      NodeAssert.equal(mounted.badge(), "Client work");
-    });
-
-    NodeTest.it("reads a profile deleted in Settings as Removed profile", async () => {
-      const mounted = await mountBadge("work", LIST);
-      mounted.setList({ ...LIST, profiles: [LIST.profiles[0]] });
-      await mounted.focusWindow();
-      NodeAssert.equal(mounted.badge(), "Removed profile");
-    });
-
-    NodeTest.it("hides once the held profile becomes the default, and back", async () => {
-      const mounted = await mountBadge("work", LIST);
-      mounted.setList({ ...LIST, defaultProfileId: "work" });
-      await mounted.focusWindow();
-      NodeAssert.equal(mounted.badge(), null);
-      mounted.setList(LIST);
-      await mounted.focusWindow();
-      NodeAssert.equal(mounted.badge(), "Work account");
-    });
-
-    NodeTest.it("re-reads when the panel is shown again, not while hidden", async () => {
-      const mounted = await mountBadge("work", LIST);
-      mounted.setList({ ...LIST, defaultProfileId: "work" });
+      fake.setQuietly(RENAMED);
       await mounted.rerender(false);
-      const hiddenReads = mounted.reads.length;
       await mounted.rerender(true);
-      NodeAssert.equal(mounted.reads.length, hiddenReads + 1);
-      NodeAssert.equal(mounted.badge(), null);
+      NodeAssert.equal(fake.subscriptions.length, 2);
+      NodeAssert.equal(mounted.badge(), "Client work");
+      NodeAssert.deepEqual(fake.reads, []);
+    },
+  );
+
+  NodeTest.it("the page menu shares the badge's list instead of reading its own", async () => {
+    const fake = fakeProfiles({ stream: true });
+    const signal = new AbortController().signal;
+    const profiles = createProfileListStore(fake.source, signal);
+    let renderer;
+    const props = { api: fake.source, signal, profiles, onOpenInProfile() {}, report() {} };
+    await act(async () => {
+      renderer = create(
+        React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(ProfileBadge, {
+            host: { React },
+            session: { profileId: "work" },
+            visible: true,
+            ...props,
+          }),
+          React.createElement(ProfileSection, { session: { profileId: "work" }, ...props }),
+        ),
+      );
+      await settle();
     });
+    await fake.change(RENAMED);
+    const heading = renderer.root.find(
+      (node) =>
+        node.type === "span" &&
+        typeof node.children[0] === "string" &&
+        node.children[0] === "Profile: ",
+    );
+    NodeAssert.equal(text(heading), "Profile: Client work");
+    NodeAssert.equal(fake.subscriptions.length, 1);
+    NodeAssert.deepEqual(fake.reads, []);
+  });
+});
+
+NodeTest.describe("on a host without the changes stream", () => {
+  NodeTest.it("re-reads when the panel is shown again, not while hidden", async () => {
+    const fake = fakeProfiles({ stream: false });
+    const mounted = await mountBadge("work", fake);
+    fake.setQuietly({ ...LIST, defaultProfileId: "work" });
+    await mounted.rerender(false);
+    const hiddenReads = fake.reads.length;
+    await mounted.rerender(true);
+    NodeAssert.equal(fake.reads.length, hiddenReads + 1);
+    NodeAssert.equal(mounted.badge(), null);
+  });
+
+  NodeTest.it("does not read, or commit, on window focus", async () => {
+    const fake = fakeProfiles({ stream: false });
+    const mounted = await mountBadge("work", fake);
+    const reads = fake.reads.length;
+    const settled = mounted.commits();
+    fake.setQuietly(RENAMED);
+    await mounted.focusWindow();
+    NodeAssert.equal(fake.reads.length, reads);
+    NodeAssert.equal(mounted.commits(), settled);
+    NodeAssert.equal(mounted.badge(), "Work account");
+  });
+
+  NodeTest.it("an unchanged re-read on show commits nothing", async () => {
+    const fake = fakeProfiles({ stream: false });
+    const mounted = await mountBadge("work", fake);
+    await mounted.rerender(false);
+    const settled = mounted.commits();
+    await mounted.rerender(true);
+    // The show itself is one commit; the unchanged answer adds none.
+    NodeAssert.equal(mounted.commits(), settled + 1);
+    NodeAssert.equal(mounted.badge(), "Work account");
   });
 });

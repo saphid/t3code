@@ -72,7 +72,10 @@ The panel renders through public contracts only:
   signs every page in that profile out, as the native menu does. Import
   targets the session's profile and the desktop asks the user to confirm
   before reading the other browser; only counts come back. Importing into a
-  new profile stays in Settings → Integrations → Browser.
+  new profile stays in Settings → Integrations → Browser. The badge and the
+  menu share one profile list: a host serving `t3.browser/profiles` 1.1.0
+  pushes each rename, deletion or default change over its `changes` stream;
+  an older host is read again when the panel is shown or the menu opens.
 - `t3.browser/capture` (host capability on `ClientHost.browserCapture`;
   `t3.browser/sessions` + `t3.browser/capture` grants) backs the header's
   two capture buttons: screenshot the page, or pick an element with the

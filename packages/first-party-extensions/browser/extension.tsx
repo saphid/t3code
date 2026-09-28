@@ -74,7 +74,7 @@ import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { panelPopover, type PanelFloating } from "./popover.js";
 import { bindProfilesApi, ProfileBadge, ProfileSection } from "./profileMenu.js";
-import { profileFailureMessage, reopenRequest } from "./profiles.js";
+import { createProfileListStore, profileFailureMessage, reopenRequest } from "./profiles.js";
 import {
   BrowserViewportToolbar,
   ViewportDeviceFrame,
@@ -296,8 +296,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [viewportPending, setViewportPending] = useState(false);
   const viewportCommitter = useRef<ViewportCommitter | null>(null);
   const themeVars = useThemeVars(host, session, visible);
-  // Stable per view: the profile group reads the list once per menu open.
   const profilesApi = useMemo(() => bindProfilesApi(host, session.context), [host, session]);
+  // One list per view for the badge and the page menu.
+  const profiles = useMemo(
+    () => createProfileListStore(profilesApi, session.signal),
+    [profilesApi, session.signal],
+  );
   const localServers = useLocalServers(host, session, visible && held === null);
   // Project-shared history (`t3.browser/history`); the view's own list stands
   // in until it arrives and whenever the contract cannot serve it.
@@ -588,7 +592,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const pageZoom = live?.zoomFactor ?? 1;
   const fixedViewport =
     viewportSetting !== null && viewportSetting._tag !== "fill" ? viewportSetting : null;
-  const aspectLocks = useAspectLocks(tabs);
+  const aspectLocks = useAspectLocks(tabs, held);
   const aspectLocked = aspectLocks.isLocked(held);
   const rails = useViewportRails({
     setting: fixedViewport,
@@ -1095,13 +1099,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           style={buttonStyle}
         />
         {held && live && (
-          <ProfileBadge
-            host={host}
-            session={live}
-            api={profilesApi}
-            signal={session.signal}
-            visible={visible}
-          />
+          <ProfileBadge host={host} session={live} profiles={profiles} visible={visible} />
         )}
         <AddressInput
           inputRef={addressRef}
@@ -1158,6 +1156,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             <ProfileSection
               session={live}
               api={profilesApi}
+              profiles={profiles}
               signal={session.signal}
               onOpenInProfile={openInProfile}
               report={setNotice}

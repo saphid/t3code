@@ -230,23 +230,26 @@ var __t3Client = (() => {
       const added = parseVersion(addition.version);
       if (!added)
         throw new Error("An API addition needs a plain X.Y.Z version: " + JSON.stringify(addition));
-      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input))
+      if (compareVersions(added, baseline) <= 0 || compareVersions(added, version) > 0 || ("stream" in addition ? !validated.streams?.some((stream) => stream.name === addition.stream) : !validated.methods?.some((method) => method.name === addition.method) || !/^[A-Za-z_$][\w$]*(\[\])?(\.[A-Za-z_$][\w$]*(\[\])?)*$/.test(addition.input)))
         throw new Error("Invalid API addition: " + JSON.stringify(addition));
     }
     return { definition: validated, baseline: options.baseline, additions };
+  }
+  function unnegotiatedAdditions(api, versionRange) {
+    const floor = rangeFloor(versionRange);
+    return (api.additions ?? []).filter((addition) => {
+      const added = parseVersion(addition.version);
+      return !floor || !added || compareVersions(floor, added) < 0;
+    });
   }
   function defaultVersionRange(api) {
     return "^" + (api.baseline ?? api.definition.version);
   }
   function bindApi(api, client, context, versionRange = defaultVersionRange(api)) {
-    const floor = rangeFloor(versionRange);
-    const unnegotiated = (api.additions ?? []).filter((addition) => {
-      const added = parseVersion(addition.version);
-      return !floor || !added || compareVersions(floor, added) < 0;
-    });
+    const unnegotiated = unnegotiatedAdditions(api, versionRange);
     return {
       invoke(method, input, signal) {
-        const addition = unnegotiated.find((item) => item.method === method && hasInput(input, item.input.split(".")));
+        const addition = unnegotiated.find((item) => "method" in item && item.method === method && hasInput(input, item.input.split(".")));
         if (addition)
           return Promise.reject(new ApiVersionError(`${api.definition.id}#${method} ${addition.input} needs ^${addition.version}, but this binding asks for ${versionRange}; probe the host version, then bind at ^${addition.version}`));
         return client.invokeApi({ id: api.definition.id, versionRange, method, input, context }, signal);
@@ -6330,100 +6333,97 @@ var __t3Client = (() => {
   };
   var browserImportLabel = { type: "string", minLength: 1, maxLength: 128 };
   var browserImportHandle = { type: "string", minLength: 1, maxLength: 16 };
-  var browserProfilesApi = defineApi({
-    id: BROWSER_PROFILES,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "list",
-        effect: "read",
-        requiredGrants: [BROWSER_PROFILES],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
+  var browserProfileListSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["profiles", "defaultProfileId"],
+    properties: {
+      profiles: {
+        type: "array",
+        maxItems: 26,
+        items: {
           type: "object",
           additionalProperties: false,
-          required: ["profiles", "defaultProfileId"],
+          required: ["id", "name"],
           properties: {
-            profiles: {
-              type: "array",
-              maxItems: 26,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "name"],
-                properties: {
-                  id: browserProfileId,
-                  name: { type: "string", minLength: 1, maxLength: 48 }
-                }
-              }
-            },
-            defaultProfileId: browserProfileId
+            id: browserProfileId,
+            name: { type: "string", minLength: 1, maxLength: 48 }
           }
         }
       },
-      {
-        name: "open",
-        effect: "write",
-        requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["profileId"],
-          properties: {
-            profileId: browserProfileId,
-            url: browserSessionUrl,
-            viewport: browserSessionViewport
-          }
-        },
-        outputSchema: browserSessionReceiptOf(browserSessionObject)
+      defaultProfileId: browserProfileId
+    }
+  };
+  var browserProfilesMethods = [
+    {
+      name: "list",
+      effect: "read",
+      requiredGrants: [BROWSER_PROFILES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: browserProfileListSchema
+    },
+    {
+      name: "open",
+      effect: "write",
+      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId"],
+        properties: {
+          profileId: browserProfileId,
+          url: browserSessionUrl,
+          viewport: browserSessionViewport
+        }
       },
-      {
-        name: "clearCookies",
-        effect: "write",
-        requiredGrants: [BROWSER_CLEAR_COOKIES],
-        inputSchema: browserProfileTargetInput,
-        outputSchema: browserProfileClearResult
-      },
-      {
-        name: "clearCache",
-        effect: "write",
-        requiredGrants: [BROWSER_CLEAR_CACHE],
-        inputSchema: browserProfileTargetInput,
-        outputSchema: browserProfileClearResult
-      },
-      {
-        name: "listImportSources",
-        effect: "read",
-        requiredGrants: [BROWSER_IMPORT_COOKIES],
-        inputSchema: browserSessionEmptyInput,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["sources"],
-          properties: {
-            sources: {
-              type: "array",
-              maxItems: 16,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                required: ["id", "name", "profiles"],
-                properties: {
-                  id: browserImportLabel,
-                  name: browserImportLabel,
-                  unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
-                  profiles: {
-                    type: "array",
-                    maxItems: 32,
-                    items: {
-                      type: "object",
-                      additionalProperties: false,
-                      required: ["handle", "name"],
-                      properties: {
-                        handle: browserImportHandle,
-                        name: browserImportLabel,
-                        cookieCount: { type: "integer", minimum: 0 }
-                      }
+      outputSchema: browserSessionReceiptOf(browserSessionObject)
+    },
+    {
+      name: "clearCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_COOKIES],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "clearCache",
+      effect: "write",
+      requiredGrants: [BROWSER_CLEAR_CACHE],
+      inputSchema: browserProfileTargetInput,
+      outputSchema: browserProfileClearResult
+    },
+    {
+      name: "listImportSources",
+      effect: "read",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: browserSessionEmptyInput,
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sources"],
+        properties: {
+          sources: {
+            type: "array",
+            maxItems: 16,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "name", "profiles"],
+              properties: {
+                id: browserImportLabel,
+                name: browserImportLabel,
+                unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+                profiles: {
+                  type: "array",
+                  maxItems: 32,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["handle", "name"],
+                    properties: {
+                      handle: browserImportHandle,
+                      name: browserImportLabel,
+                      cookieCount: { type: "integer", minimum: 0 }
                     }
                   }
                 }
@@ -6431,65 +6431,88 @@ var __t3Client = (() => {
             }
           }
         }
+      }
+    },
+    {
+      name: "importCookies",
+      effect: "write",
+      requiredGrants: [BROWSER_IMPORT_COOKIES],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId", "sourceId", "sourceProfile"],
+        properties: {
+          profileId: browserProfileId,
+          sourceId: browserImportLabel,
+          sourceProfile: browserImportHandle
+        }
       },
-      {
-        name: "importCookies",
-        effect: "write",
-        requiredGrants: [BROWSER_IMPORT_COOKIES],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["profileId", "sourceId", "sourceProfile"],
-          properties: {
-            profileId: browserProfileId,
-            sourceId: browserImportLabel,
-            sourceProfile: browserImportHandle
-          }
-        },
-        outputSchema: {
-          oneOf: [
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId", "imported", "skipped"],
-              properties: {
-                outcome: { const: "imported" },
-                profileId: browserProfileId,
-                imported: { type: "integer", minimum: 0 },
-                skipped: { type: "integer", minimum: 0 }
-              }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId"],
-              properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
-            },
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["outcome", "profileId", "reason"],
-              properties: {
-                outcome: { const: "failed" },
-                profileId: browserProfileId,
-                reason: {
-                  enum: [
-                    ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
-                    "keychainUnavailable",
-                    "unknownSource",
-                    "unknownSourceProfile",
-                    "sessionUnavailable",
-                    "readFailed"
-                  ]
-                }
+      outputSchema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "imported", "skipped"],
+            properties: {
+              outcome: { const: "imported" },
+              profileId: browserProfileId,
+              imported: { type: "integer", minimum: 0 },
+              skipped: { type: "integer", minimum: 0 }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId"],
+            properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["outcome", "profileId", "reason"],
+            properties: {
+              outcome: { const: "failed" },
+              profileId: browserProfileId,
+              reason: {
+                enum: [
+                  ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                  "keychainUnavailable",
+                  "unknownSource",
+                  "unknownSourceProfile",
+                  "sessionUnavailable",
+                  "readFailed"
+                ]
               }
             }
-          ]
-        }
+          }
+        ]
       }
-    ]
+    }
+  ];
+  var browserProfilesApi = defineApi(
+    {
+      id: BROWSER_PROFILES,
+      version: "1.1.0",
+      methods: browserProfilesMethods,
+      streams: [
+        {
+          name: "changes",
+          requiredGrants: [BROWSER_PROFILES],
+          inputSchema: browserSessionEmptyInput,
+          eventSchema: browserProfileListSchema
+        }
+      ]
+    },
+    // Consumers keep loading on a 1.0.0 host; probe before subscribing.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "changes" }] }
+  );
+  var browserProfilesApiV1 = defineApi({
+    id: BROWSER_PROFILES,
+    version: "1.0.0",
+    methods: browserProfilesMethods
   });
   var BROWSER_PROFILES_API = browserProfilesApi.definition;
+  var BROWSER_PROFILES_API_V1 = browserProfilesApiV1.definition;
   var BROWSER_FRAMES = "t3.browser/frames";
   var BROWSER_FRAMES_VERSION = "1.0.0";
   var browserFrameSessionIdentity = {
@@ -7695,6 +7718,7 @@ var __t3Client = (() => {
     browserSessionsApiV1_1.definition,
     browserSessionsApiV1.definition,
     browserProfilesApi.definition,
+    browserProfilesApiV1.definition,
     browserFramesApi.definition,
     workspaceFilesApi.definition,
     workspaceTreeApi.definition,

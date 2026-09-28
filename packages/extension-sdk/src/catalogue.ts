@@ -6485,6 +6485,12 @@ export const BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
  * An unknown profile fails `BrowserProfileNotFound`. `unknown` means the host
  * did not answer within the bound (disconnect, or an unanswered import
  * prompt) and the effect cannot be proven either way.
+ *
+ * 1.1.0 adds the `changes` stream (`t3.browser/profiles` grant): the current
+ * list as a `snapshot` once the desktop has reported it, then a `data` event
+ * each time a profile is added, renamed or removed or the default changes.
+ * An unchanged list is never re-sent. The baseline stays 1.0.0, so a pack
+ * probes the host version before binding the stream at `^1.1.0`.
  * --------------------------------------------------------------------- */
 export const BROWSER_PROFILES = "t3.browser/profiles";
 export const BROWSER_CLEAR_COOKIES = "t3.browser/clear-cookies";
@@ -6574,7 +6580,7 @@ const browserProfileClearResult = {
 const browserImportLabel = { type: "string", minLength: 1, maxLength: 128 } as const;
 const browserImportHandle = { type: "string", minLength: 1, maxLength: 16 } as const;
 
-export const browserProfilesApi = defineApi<{
+type BrowserProfilesMethods = {
   list: { input: Record<string, never>; output: BrowserProfileList };
   open: { input: BrowserProfileOpenInput; output: BrowserSessionReceipt };
   clearCookies: { input: BrowserProfileTarget; output: BrowserProfileClearResult };
@@ -6584,100 +6590,101 @@ export const browserProfilesApi = defineApi<{
     output: { readonly sources: readonly BrowserImportSourceSummary[] };
   };
   importCookies: { input: BrowserImportCookiesInput; output: BrowserImportCookiesResult };
-}>({
-  id: BROWSER_PROFILES,
-  version: "1.0.0",
-  methods: [
-    {
-      name: "list",
-      effect: "read",
-      requiredGrants: [BROWSER_PROFILES],
-      inputSchema: browserSessionEmptyInput,
-      outputSchema: {
+};
+type BrowserProfilesStreams = {
+  changes: { input: Record<string, never>; event: BrowserProfileList };
+};
+const browserProfileListSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["profiles", "defaultProfileId"],
+  properties: {
+    profiles: {
+      type: "array",
+      maxItems: 26,
+      items: {
         type: "object",
         additionalProperties: false,
-        required: ["profiles", "defaultProfileId"],
+        required: ["id", "name"],
         properties: {
-          profiles: {
-            type: "array",
-            maxItems: 26,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["id", "name"],
-              properties: {
-                id: browserProfileId,
-                name: { type: "string", minLength: 1, maxLength: 48 },
-              },
-            },
-          },
-          defaultProfileId: browserProfileId,
+          id: browserProfileId,
+          name: { type: "string", minLength: 1, maxLength: 48 },
         },
       },
     },
-    {
-      name: "open",
-      effect: "write",
-      requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["profileId"],
-        properties: {
-          profileId: browserProfileId,
-          url: browserSessionUrl,
-          viewport: browserSessionViewport,
-        },
+    defaultProfileId: browserProfileId,
+  },
+} as const;
+const browserProfilesMethods: readonly ApiMethod[] = [
+  {
+    name: "list",
+    effect: "read",
+    requiredGrants: [BROWSER_PROFILES],
+    inputSchema: browserSessionEmptyInput,
+    outputSchema: browserProfileListSchema,
+  },
+  {
+    name: "open",
+    effect: "write",
+    requiredGrants: [BROWSER_SESSIONS, BROWSER_OPERATE, BROWSER_PROFILES],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["profileId"],
+      properties: {
+        profileId: browserProfileId,
+        url: browserSessionUrl,
+        viewport: browserSessionViewport,
       },
-      outputSchema: browserSessionReceiptOf(browserSessionObject),
     },
-    {
-      name: "clearCookies",
-      effect: "write",
-      requiredGrants: [BROWSER_CLEAR_COOKIES],
-      inputSchema: browserProfileTargetInput,
-      outputSchema: browserProfileClearResult,
-    },
-    {
-      name: "clearCache",
-      effect: "write",
-      requiredGrants: [BROWSER_CLEAR_CACHE],
-      inputSchema: browserProfileTargetInput,
-      outputSchema: browserProfileClearResult,
-    },
-    {
-      name: "listImportSources",
-      effect: "read",
-      requiredGrants: [BROWSER_IMPORT_COOKIES],
-      inputSchema: browserSessionEmptyInput,
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["sources"],
-        properties: {
-          sources: {
-            type: "array",
-            maxItems: 16,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["id", "name", "profiles"],
-              properties: {
-                id: browserImportLabel,
-                name: browserImportLabel,
-                unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
-                profiles: {
-                  type: "array",
-                  maxItems: 32,
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    required: ["handle", "name"],
-                    properties: {
-                      handle: browserImportHandle,
-                      name: browserImportLabel,
-                      cookieCount: { type: "integer", minimum: 0 },
-                    },
+    outputSchema: browserSessionReceiptOf(browserSessionObject),
+  },
+  {
+    name: "clearCookies",
+    effect: "write",
+    requiredGrants: [BROWSER_CLEAR_COOKIES],
+    inputSchema: browserProfileTargetInput,
+    outputSchema: browserProfileClearResult,
+  },
+  {
+    name: "clearCache",
+    effect: "write",
+    requiredGrants: [BROWSER_CLEAR_CACHE],
+    inputSchema: browserProfileTargetInput,
+    outputSchema: browserProfileClearResult,
+  },
+  {
+    name: "listImportSources",
+    effect: "read",
+    requiredGrants: [BROWSER_IMPORT_COOKIES],
+    inputSchema: browserSessionEmptyInput,
+    outputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["sources"],
+      properties: {
+        sources: {
+          type: "array",
+          maxItems: 16,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "name", "profiles"],
+            properties: {
+              id: browserImportLabel,
+              name: browserImportLabel,
+              unavailable: { enum: [...BROWSER_IMPORT_UNAVAILABLE_REASONS] },
+              profiles: {
+                type: "array",
+                maxItems: 32,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["handle", "name"],
+                  properties: {
+                    handle: browserImportHandle,
+                    name: browserImportLabel,
+                    cookieCount: { type: "integer", minimum: 0 },
                   },
                 },
               },
@@ -6686,64 +6693,93 @@ export const browserProfilesApi = defineApi<{
         },
       },
     },
-    {
-      name: "importCookies",
-      effect: "write",
-      requiredGrants: [BROWSER_IMPORT_COOKIES],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["profileId", "sourceId", "sourceProfile"],
-        properties: {
-          profileId: browserProfileId,
-          sourceId: browserImportLabel,
-          sourceProfile: browserImportHandle,
-        },
-      },
-      outputSchema: {
-        oneOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["outcome", "profileId", "imported", "skipped"],
-            properties: {
-              outcome: { const: "imported" },
-              profileId: browserProfileId,
-              imported: { type: "integer", minimum: 0 },
-              skipped: { type: "integer", minimum: 0 },
-            },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["outcome", "profileId"],
-            properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId },
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            required: ["outcome", "profileId", "reason"],
-            properties: {
-              outcome: { const: "failed" },
-              profileId: browserProfileId,
-              reason: {
-                enum: [
-                  ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
-                  "keychainUnavailable",
-                  "unknownSource",
-                  "unknownSourceProfile",
-                  "sessionUnavailable",
-                  "readFailed",
-                ],
-              },
-            },
-          },
-        ],
+  },
+  {
+    name: "importCookies",
+    effect: "write",
+    requiredGrants: [BROWSER_IMPORT_COOKIES],
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["profileId", "sourceId", "sourceProfile"],
+      properties: {
+        profileId: browserProfileId,
+        sourceId: browserImportLabel,
+        sourceProfile: browserImportHandle,
       },
     },
-  ],
+    outputSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "profileId", "imported", "skipped"],
+          properties: {
+            outcome: { const: "imported" },
+            profileId: browserProfileId,
+            imported: { type: "integer", minimum: 0 },
+            skipped: { type: "integer", minimum: 0 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "profileId"],
+          properties: { outcome: { enum: ["declined", "unknown"] }, profileId: browserProfileId },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["outcome", "profileId", "reason"],
+          properties: {
+            outcome: { const: "failed" },
+            profileId: browserProfileId,
+            reason: {
+              enum: [
+                ...BROWSER_IMPORT_UNAVAILABLE_REASONS,
+                "keychainUnavailable",
+                "unknownSource",
+                "unknownSourceProfile",
+                "sessionUnavailable",
+                "readFailed",
+              ],
+            },
+          },
+        },
+      ],
+    },
+  },
+];
+/**
+ * Newest version first; 1.0.0 stays frozen below so providers and consumers
+ * built against it keep canonical equality.
+ */
+export const browserProfilesApi: TypedApi<BrowserProfilesMethods> &
+  TypedStreamApi<BrowserProfilesStreams> = defineApi<BrowserProfilesMethods>(
+  {
+    id: BROWSER_PROFILES,
+    version: "1.1.0",
+    methods: browserProfilesMethods,
+    streams: [
+      {
+        name: "changes",
+        requiredGrants: [BROWSER_PROFILES],
+        inputSchema: browserSessionEmptyInput,
+        eventSchema: browserProfileListSchema,
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before subscribing.
+  { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "changes" }] },
+);
+/** Frozen published 1.0.0 definition — no `changes` stream. */
+export const browserProfilesApiV1 = defineApi<BrowserProfilesMethods>({
+  id: BROWSER_PROFILES,
+  version: "1.0.0",
+  methods: browserProfilesMethods,
 });
 export const BROWSER_PROFILES_API = browserProfilesApi.definition;
+export const BROWSER_PROFILES_API_V1 = browserProfilesApiV1.definition;
 
 /* ------------------------------------------------------------------------
  * t3.browser/frames — remote pixel transport for a browser session
@@ -9159,6 +9195,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   browserSessionsApiV1_1.definition,
   browserSessionsApiV1.definition,
   browserProfilesApi.definition,
+  browserProfilesApiV1.definition,
   browserFramesApi.definition,
   workspaceFilesApi.definition,
   workspaceTreeApi.definition,
