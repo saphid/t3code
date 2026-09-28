@@ -6,7 +6,7 @@ import { resumableApiFrames } from "./installedApiFrames";
 
 const mocks = vi.hoisted(() => ({
   payloads: [] as unknown[],
-  seam: { connectionId: "conn-live" as string | undefined },
+  seam: { connectionId: "conn-live" as string | undefined, connecting: false },
 }));
 
 vi.mock("@t3tools/client-runtime/state/extensions", () => ({
@@ -20,14 +20,19 @@ vi.mock("@t3tools/client-runtime/state/extensions", () => ({
     }),
 }));
 
-// The seam has registered: a client-routed call would be stamped with this id.
+// A registered seam stamps client-routed calls with its id; a connecting one
+// holds them until it registers (here, until the caller gives up).
 vi.mock("./clientProviderConnection", () => ({
   currentClientConnectionId: () => mocks.seam.connectionId,
   withClientConnectionIdFrames: async function* (
     _env: string,
-    _signal: AbortSignal,
+    signal: AbortSignal,
     open: (id: string | undefined) => AsyncIterable<unknown>,
   ) {
+    if (mocks.seam.connecting) {
+      await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      signal.throwIfAborted();
+    }
     yield* open(mocks.seam.connectionId);
   },
 }));
@@ -53,6 +58,7 @@ const payload = {
 beforeEach(() => {
   mocks.payloads.length = 0;
   mocks.seam.connectionId = "conn-live";
+  mocks.seam.connecting = false;
 });
 
 describe("resumableApiFrames", () => {
@@ -63,5 +69,23 @@ describe("resumableApiFrames", () => {
 
     expect(frames).toEqual([{ value: { kind: "snapshot" } }]);
     expect(mocks.payloads).toEqual([payload]);
+  });
+
+  it("opens while the client-provider seam is still connecting", async () => {
+    mocks.seam.connecting = true;
+    mocks.seam.connectionId = undefined;
+    const controller = new AbortController();
+    const iterator = resumableApiFrames(ENV, payload, controller.signal)[Symbol.asyncIterator]();
+    const first = iterator.next().then(
+      (result) => result,
+      () => null,
+    );
+    // Let the open run through the connection lookup and a frame arrive.
+    for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    const opened = [...mocks.payloads];
+    controller.abort();
+    await first;
+
+    expect(opened).toEqual([payload]);
   });
 });

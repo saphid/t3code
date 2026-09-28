@@ -8,7 +8,6 @@ import * as Stream from "effect/Stream";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { withClientConnectionIdFrames } from "./clientProviderConnection";
 
 /**
  * A pull-driven iterator retains only the stream's bounded window: the RPC
@@ -52,7 +51,8 @@ export async function* authenticatedApiFrames(
 
 /**
  * `ClientHost.resumableStreams` transport. The allowlisted streams are
- * server-provided, so the payload carries no client connection hint: an
+ * server-provided, so the payload carries no client connection hint and the
+ * first open does not wait for the client-provider seam to register: an
  * environment-keyed hint read at resubscription could belong to an earlier
  * transport session. A client-routed stream needs a registration receipt
  * matched to each new session before it can be allowlisted here.
@@ -62,10 +62,8 @@ export function resumableApiFrames(
   payload: ExtensionApiSubscribeInput,
   signal: AbortSignal,
 ) {
-  return withClientConnectionIdFrames(environmentId, signal, () =>
-    authenticatedApiFrames(
-      environmentResumableExtensionApiStream(environmentId, () => payload),
-      signal,
-    ),
+  return authenticatedApiFrames(
+    environmentResumableExtensionApiStream(environmentId, () => payload),
+    signal,
   );
 }
