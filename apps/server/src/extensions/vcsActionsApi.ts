@@ -688,45 +688,18 @@ export function createVcsActionsApiProvider(
            * the method returns `actionId` immediately, so this preflight is
            * the check that actually precedes the mutation. Anything denied
            * here lands as a named `action_failed`, never a silent action.
+           *
+           * Detached checks use only live host state (caller-chain grants,
+           * scope re-resolve). `metadata.assertAuthority` is scoped to the
+           * invocation — the broker retires it once `actionId` returns — so
+           * the broker's own pre/post checks around this call cover it.
            */
-          const preflight = Effect.tryPromise({
-            try: () => metadata.assertAuthority?.() ?? Promise.resolve(),
-            catch: () =>
-              failure("vcs.actions.run", "VCS authority was revoked before the action ran."),
-          }).pipe(
-            Effect.andThen(
-              createsPr
-                ? requireChainGrant("vcs.actions.run", PRS_WRITE, context, metadata)
-                : Effect.void,
-            ),
-            Effect.andThen(resolve(scope.context)),
-            Effect.asVoid,
-          );
-          /**
-           * Post-service recheck — the broker's invoke post-check wraps
-           * only the early `actionId` return, so the detached fiber itself
-           * re-runs authority + the full caller-chain grant check + scope
-           * re-resolve once native work completes (the resourcesLease
-           * precedent's post half). A denial lands AFTER the phase
-           * terminal as `closed{authorization-revoked}` — git effects
-           * already persisted, so the event names the check that failed
-           * rather than a phase — and the link/refresh tail is skipped:
-           * revoked authority does not get to keep mutating.
-           */
-          const postCheck = Effect.tryPromise({
-            try: () => metadata.assertAuthority?.() ?? Promise.resolve(),
-            catch: () =>
-              failure("vcs.actions.run", "VCS authority was revoked after the action ran."),
-          }).pipe(
-            Effect.andThen(
-              createsPr
-                ? requireChainGrant("vcs.actions.run", PRS_WRITE, context, metadata)
-                : Effect.void,
-            ),
-            Effect.andThen(resolve(scope.context)),
-            Effect.asVoid,
-          );
-          const work = preflight.pipe(
+          const recheck = (
+            createsPr
+              ? requireChainGrant("vcs.actions.run", PRS_WRITE, context, metadata)
+              : Effect.void
+          ).pipe(Effect.andThen(resolve(scope.context)), Effect.asVoid);
+          const work = recheck.pipe(
             Effect.andThen(
               dependencies.gitWorkflow.runStackedAction(
                 {
@@ -759,8 +732,12 @@ export function createVcsActionsApiProvider(
                   }
                   markDone(record);
                 }),
+              // The recheck runs again once native work completes: the broker's
+              // post-check wraps only the early `actionId` return. A denial
+              // lands after the phase terminal as `closed{authorization-revoked}`
+              // (git effects already persisted) and skips the link/refresh tail.
               onSuccess: (result) =>
-                postCheck.pipe(
+                recheck.pipe(
                   Effect.matchCauseEffect({
                     onFailure: () =>
                       Effect.sync(() => {

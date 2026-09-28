@@ -606,6 +606,38 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     }),
   );
 
+  it.effect("runs detached work after the broker retires the invocation's assertion", () =>
+    Effect.gen(function* () {
+      // The broker aborts a unary invocation's `assertAuthority` once the
+      // call settles; the composite outlives the call, so it must not reuse it.
+      const t = makeProvider({ grants: [PRS_WRITE] });
+      let settled = false;
+      const metadata = {
+        ...meta(t.provider),
+        assertAuthority: async () => {
+          if (settled) throw new Error("API invocation closed");
+        },
+      };
+      const started = (yield* Effect.promise(async () => {
+        const result = await t.provider.invoke(
+          "run",
+          { action: "commit_push_pr", commitMessage: "ship it" },
+          makeContext(),
+          signal,
+          metadata,
+        );
+        settled = true;
+        return result;
+      })) as { actionId: string };
+      const events = yield* collectProgress(t.provider, started.actionId);
+      const kinds = events.map((event) => (event.value as { kind: string }).kind);
+      expect(kinds).not.toContain("action_failed");
+      expect(kinds).not.toContain("closed");
+      expect(t.runCalls).toHaveLength(1);
+      expect(yield* Deferred.await(t.refreshed)).toBe(ROOT);
+    }),
+  );
+
   it.effect("surfaces a denied in-flight grant recheck as a named action_failed", () =>
     Effect.gen(function* () {
       // The pre-run chain check passes; the forked work's preflight recheck
