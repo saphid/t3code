@@ -91,6 +91,7 @@ function harness(
     ),
     discoverApis: vi.fn(async () => []),
     register,
+    policyChanged: vi.fn(),
     changed: (snapshot: InstalledSnapshot) => snapshots.push(snapshot),
   };
   const controller = createInstalledExtensionController({ ...options, ...extra });
@@ -526,6 +527,8 @@ it("retires live clients when the environment answers with an invalid catalogue"
     expect(h.snapshots.at(-1)?.installations).toEqual([]);
     expect(h.stop).toHaveBeenCalledTimes(1);
     expect(h.controller.installationEpoch(installation.id)).toBeNull();
+    // Its API policy is retired with it, so presentation falls back natively.
+    expect(h.options.policyChanged).toHaveBeenLastCalledWith(null);
   } finally {
     h.controller.dispose();
   }

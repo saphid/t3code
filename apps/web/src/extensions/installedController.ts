@@ -138,10 +138,12 @@ export function createInstalledExtensionController(options: {
       reason?: ApiUnavailableReason;
     }[];
   }>;
-  readonly policyChanged?: (policy: {
-    apiSelections: readonly ApiSelection[];
-    apiResolution: readonly { id: string; providerId?: string; reason?: ApiUnavailableReason }[];
-  }) => void;
+  readonly policyChanged?: (
+    policy: {
+      apiSelections: readonly ApiSelection[];
+      apiResolution: readonly { id: string; providerId?: string; reason?: ApiUnavailableReason }[];
+    } | null,
+  ) => void;
   readonly client: (
     id: string,
     hash: string,
@@ -645,8 +647,9 @@ export function createInstalledExtensionController(options: {
       } catch (error) {
         if (!live()) return;
         // The environment answered with a catalogue that fails validation:
-        // nothing in it can be trusted, so retire every registration.
+        // nothing in it can be trusted, so retire every registration and its API policy.
         clear();
+        options.policyChanged?.(null);
         publish({
           installations: [],
           supportsCatalogueChanges: snapshot.supportsCatalogueChanges === true,
