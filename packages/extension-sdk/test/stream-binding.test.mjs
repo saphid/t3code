@@ -186,6 +186,12 @@ NodeTest.test(
     );
     NodeAssert.equal(resolveResumableStreams(v1, "t3.terminal/sessions#list"), null);
     NodeAssert.equal(resolveResumableStreams(v2, "t3.terminal/sessions#list"), v2.resumableStreams);
+    const v3 = { resumableStreams: { version: 3, subscribeApi() {} } };
+    NodeAssert.equal(resolveResumableStreams(v2, "t3.workspace/changes#subscribeChanges"), null);
+    NodeAssert.equal(
+      resolveResumableStreams(v3, "t3.workspace/changes#subscribeChanges"),
+      v3.resumableStreams,
+    );
     for (const stream of ["independent.consumer#changes", "toString"])
       NodeAssert.equal(resolveResumableStreams(v2, stream), null);
 

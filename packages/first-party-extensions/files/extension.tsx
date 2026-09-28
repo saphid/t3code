@@ -16,7 +16,6 @@ import {
   workspaceResourcesApi,
   workspaceSearchApi,
   workspaceTreeApi,
-  type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import {
   defineExtension,
@@ -71,6 +70,7 @@ import {
 } from "./saveCoordinator.js";
 import { useFileEditor } from "./editorSession.js";
 import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
+import { useWorkspaceTree } from "./workspaceTree.js";
 import {
   collectResourceRead,
   contentMatchSegments,
@@ -139,81 +139,6 @@ const TREE_ROW_HEIGHT = 24;
 // root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
 // contract is unavailable the hop never resolves and the legacy chain renders.
 // `font-*` vars are not theme roles and keep their plain host references.
-
-const emptyEntries: readonly TreeEntry[] = [];
-
-/** Finite `t3.workspace/tree` snapshot consumed to completion, then swapped in. */
-function useWorkspaceTree(host: ClientHost, session: ViewSession) {
-  const [snapshot, setSnapshot] = useState<{
-    entries: readonly TreeEntry[];
-    status: string;
-    revision: number;
-    truncated: boolean;
-  } | null>(null);
-  const [refresh, setRefresh] = useState(0);
-  const [visible, setVisible] = useState(session.visible);
-  useEffect(() => session.onVisibility(setVisible), [session]);
-  useEffect(() => {
-    if (!visible) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    void (async () => {
-      try {
-        const next: TreeEntry[] = [];
-        let completed = false;
-        let truncated = false;
-        const stream = bindStreamApi(workspaceTreeApi, host, session.context).subscribe(
-          "snapshot",
-          {},
-          signal,
-        );
-        for await (const frame of stream) {
-          signal.throwIfAborted();
-          const event: WorkspaceTreeEvent = frame.value;
-          if (event.kind === "chunk") {
-            if (event.entries.length > 200)
-              throw new Error("Workspace tree chunk exceeded 200 entries.");
-            next.push(...event.entries);
-            if (next.length > 25000)
-              throw new Error("Workspace tree exceeded the 25,000-entry limit.");
-            truncated = truncated || event.truncated;
-          } else if (event.kind === "complete") {
-            if (event.entryCount !== next.length)
-              throw new Error("Workspace tree snapshot count was inconsistent.");
-            truncated = truncated || event.truncated;
-            completed = true;
-            break;
-          } else throw new Error("Workspace tree returned an unknown snapshot event.");
-        }
-        if (!completed) throw new Error("Workspace tree snapshot ended before completion.");
-        setSnapshot({
-          entries: next,
-          revision: refresh,
-          truncated,
-          status: truncated ? "Files ready (index truncated)" : "Files ready",
-        });
-      } catch (error) {
-        if (!signal.aborted)
-          setSnapshot((previous) => ({
-            entries: previous?.entries ?? emptyEntries,
-            revision: refresh,
-            truncated: previous?.truncated ?? false,
-            status: error instanceof Error ? error.message : "Workspace tree unavailable",
-          }));
-      }
-    })();
-    return () => controller.abort();
-  }, [host, refresh, session, visible]);
-  return {
-    entries: snapshot?.entries ?? emptyEntries,
-    status: snapshot?.revision === refresh ? snapshot.status : "Loading files",
-    truncated: snapshot?.revision === refresh ? snapshot.truncated : false,
-    revision: refresh,
-    pending: snapshot?.revision !== refresh,
-    visible,
-    refresh: () => setRefresh((value) => value + 1),
-  };
-}
 
 /**
  * Workspace media preview via `t3.resources/lease`. Selecting a
@@ -1260,9 +1185,14 @@ const toolbarControl = {
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
-  const { entries, status, refresh, revision, pending, visible, truncated } = useWorkspaceTree(
+  const [visible, setVisible] = useState(session.visible);
+  useEffect(() => session.onVisibility(setVisible), [session]);
+  const changes = useWorkspaceChanges(host, session, visible);
+  const { entries, status, refresh, revision, pending, truncated } = useWorkspaceTree(
     host,
     session,
+    visible,
+    changes,
   );
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
@@ -1343,7 +1273,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     visible && !awaitingHtmlChoice,
   );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
-  const changes = useWorkspaceChanges(host, session, visible);
   // Native parity: a bump while the selected file's save state is latched
   // (dirty/saving/conflict/error) stays pending instead of clobbering local
   // edits; when the latch opens the pending seq fires one catch-up refresh.

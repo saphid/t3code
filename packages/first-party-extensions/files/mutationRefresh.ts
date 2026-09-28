@@ -9,7 +9,7 @@
  */
 
 import { workspaceChangesApi } from "@t3tools/extension-sdk/catalogue";
-import { bindStreamApi } from "@t3tools/extension-sdk/capabilities";
+import { bindStreamApi, resolveResumableStreams } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useRef, useState } from "react";
@@ -24,20 +24,28 @@ const CHANGES_ERROR_RETRY_MS = 1000;
  * `connecting` (first frame not yet delivered), `live` (frames flowing),
  * `degraded` (a subscription attempt failed or ended without frames — the
  * panel keeps retrying, but manual refresh is the only working path until
- * the stream recovers).
+ * the stream recovers), `offline` (the host is waiting for the environment's
+ * connection; only on hosts that resume this stream).
  */
-export type WorkspaceChangesStatus = "idle" | "connecting" | "live" | "degraded";
+export type WorkspaceChangesStatus = "idle" | "connecting" | "live" | "degraded" | "offline";
 
 export function useWorkspaceChanges(
   host: ClientHost,
   session: ViewSession,
   visible: boolean,
   options?: { readonly retryMs?: number; readonly errorRetryMs?: number },
-): { readonly mutationSeq: number | null; readonly status: WorkspaceChangesStatus } {
+): {
+  readonly mutationSeq: number | null;
+  readonly status: WorkspaceChangesStatus;
+  /** Counts the connections that came back after `offline`: each one is a cue to reload. */
+  readonly resumed: number;
+} {
   const [mutationSeq, setMutationSeq] = useState<number | null>(null);
-  const [streamStatus, setStreamStatus] = useState<"connecting" | "live" | "degraded">(
-    "connecting",
-  );
+  const [streamStatus, setStreamStatus] =
+    useState<Exclude<WorkspaceChangesStatus, "idle">>("connecting");
+  const [resumed, setResumed] = useState(0);
+  // Outlives a resubscribe: a view hidden while offline still owes its reload.
+  const suspendedRef = useRef(false);
   const threadId = session.context.resource.threadId;
   const retryMs = options?.retryMs ?? CHANGES_RETRY_MS;
   const errorRetryMs = options?.errorRetryMs ?? CHANGES_ERROR_RETRY_MS;
@@ -59,6 +67,15 @@ export function useWorkspaceChanges(
         }, ms);
         signal.addEventListener("abort", onAbort, { once: true });
       });
+    // A host that resumes this stream follows the environment's connection:
+    // it reports each wait for one, and the snapshot that ends it proves the
+    // connection is back.
+    const resumable = resolveResumableStreams(host, "t3.workspace/changes#subscribeChanges");
+    const onSuspended = () => {
+      if (signal.aborted) return;
+      suspendedRef.current = true;
+      setStreamStatus("offline");
+    };
     void (async () => {
       while (!signal.aborted) {
         let retry = retryMs;
@@ -67,9 +84,14 @@ export function useWorkspaceChanges(
             "subscribeChanges",
             { threadId },
             signal,
+            resumable ? { resume: "fresh-snapshot", onSuspended } : undefined,
           );
           for await (const frame of stream) {
             if (frame.value.kind === "closed") break;
+            if (suspendedRef.current) {
+              suspendedRef.current = false;
+              setResumed((value) => value + 1);
+            }
             setStreamStatus("live");
             setMutationSeq(frame.value.mutationSeq);
           }
@@ -86,7 +108,7 @@ export function useWorkspaceChanges(
     })();
     return () => controller.abort();
   }, [host, session, active, threadId, retryMs, errorRetryMs]);
-  return { mutationSeq, status: active ? streamStatus : "idle" };
+  return { mutationSeq, status: active ? streamStatus : "idle", resumed };
 }
 
 /**
