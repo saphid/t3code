@@ -294,12 +294,11 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
    */
   isOnPullRequestHead: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
   /**
-   * False when the branch could not be set to track the pull request's head branch, so it keeps
-   * whatever upstream it had, if any.
+   * False when setting the branch to track the pull request's head branch failed, so it keeps
+   * whatever upstream it had, if any. Absent when unknown: nothing was attempted, or an older
+   * server answered.
    */
-  isTrackingPullRequestHead: Schema.Boolean.pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed(true)),
-  ),
+  isTrackingPullRequestHead: Schema.optionalKey(Schema.Boolean),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
 

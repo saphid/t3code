@@ -5674,6 +5674,42 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("local PR checkout of an unnamed fork reports its tracking as unknown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 84,
+            title: "Deleted fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/84",
+            baseRefName: "main",
+            headRefName: "feature/pr-deleted-fork",
+            state: "open",
+            isCrossRepository: true,
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "84",
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/pr-deleted-fork");
+      expect(result).not.toHaveProperty("isTrackingPullRequestHead");
+      expect(
+        (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"], true)).exitCode,
+      ).not.toBe(0);
+    }),
+  );
+
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
   // answers each clone-URL lookup with `cloneUrl(lookup)`.

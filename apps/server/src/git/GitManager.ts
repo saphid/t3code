@@ -915,7 +915,7 @@ export const make = Effect.gen(function* () {
     ) {
       const remoteName = yield* resolvePullRequestHeadRemoteName(cwd, pullRequest);
       if (remoteName === null) {
-        return;
+        return false;
       }
       yield* gitCore.fetchRemoteTrackingBranch({
         cwd,
@@ -928,6 +928,7 @@ export const make = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
+      return true;
     },
   );
 
@@ -1002,15 +1003,16 @@ export const make = Effect.gen(function* () {
     localBranch = pullRequest.headBranch,
   ) =>
     configurePullRequestHeadUpstreamBase(cwd, pullRequest, localBranch).pipe(
-      Effect.as(true),
-      // False reaches the client as a warning: the branch keeps whatever upstream it had, if any.
+      // Spread into the result. Absent when there was no head repository to track, false when
+      // configuring failed: the client warns only then, as the branch keeps whatever it had.
+      Effect.map((configured) => (configured ? { isTrackingPullRequestHead: true } : {})),
       Effect.catch((error) =>
         Effect.logWarning("GitManager.configurePullRequestHeadUpstream failed", {
           cwd,
           localBranch,
           headBranch: pullRequest.headBranch,
           cause: error,
-        }).pipe(Effect.as(false)),
+        }).pipe(Effect.as({ isTrackingPullRequestHead: false })),
       ),
     );
 
@@ -2581,7 +2583,7 @@ export const make = Effect.gen(function* () {
           return yield* Effect.failCause(checkout.cause);
         }
         const details = yield* gitCore.statusDetails(input.cwd);
-        const isTrackingPullRequestHead = yield* configurePullRequestHeadUpstream(
+        const tracking = yield* configurePullRequestHeadUpstream(
           input.cwd,
           pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
@@ -2601,7 +2603,7 @@ export const make = Effect.gen(function* () {
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
           isOnPullRequestHead: refreshed.onTarget,
-          isTrackingPullRequestHead,
+          ...tracking,
         };
       }
 
@@ -2644,7 +2646,7 @@ export const make = Effect.gen(function* () {
             branch: localPullRequestBranch,
             worktreePath,
             isOnPullRequestHead: false,
-            isTrackingPullRequestHead: yield* ensureExistingWorktreeUpstream(worktreePath),
+            ...(yield* ensureExistingWorktreeUpstream(worktreePath)),
           };
         }
 
@@ -2658,7 +2660,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
           );
 
-        const isTrackingPullRequestHead = yield* ensureExistingWorktreeUpstream(worktreePath);
+        const tracking = yield* ensureExistingWorktreeUpstream(worktreePath);
 
         // Only the head read back from the pull request's own repository. The branch's upstream
         // does not name it: configuring it is best-effort, so it can still point at whatever the
@@ -2700,7 +2702,7 @@ export const make = Effect.gen(function* () {
           branch: localPullRequestBranch,
           worktreePath,
           isOnPullRequestHead: refreshed.onTarget,
-          isTrackingPullRequestHead,
+          ...tracking,
         };
       });
 
@@ -2794,9 +2796,7 @@ export const make = Effect.gen(function* () {
           ),
         },
       );
-      const isTrackingPullRequestHead = yield* ensureExistingWorktreeUpstream(
-        worktree.worktree.path,
-      );
+      const tracking = yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
@@ -2804,7 +2804,7 @@ export const make = Effect.gen(function* () {
         branch: worktree.worktree.refName,
         worktreePath: worktree.worktree.path,
         isOnPullRequestHead: true,
-        isTrackingPullRequestHead,
+        ...tracking,
       };
     }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
   });

@@ -2011,7 +2011,7 @@ export function createPrHandoffClientProvider(
         mode,
         withTask: prompt !== null,
         isOnPullRequestHead,
-        isTrackingPullRequestHead: isTrackingPullRequestHead !== false,
+        isTrackingPullRequestHead,
       });
       return { status: "ready", branch, worktreePath, isOnPullRequestHead };
     },
