@@ -38,6 +38,7 @@ vi.mock("../components/pullRequest/PullRequestsUnavailableState", () => ({
 vi.mock("../state/entities", () => ({
   useThreadShell: () => null,
   readThreadShell: () => ({ projectId: "p", worktreePath: null }),
+  readProject: () => ({ workspaceRoot: "/fixture" }),
 }));
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => null }));
 
@@ -122,6 +123,8 @@ interface Disk {
   readonly preferenceChange?: Promise<Frame>;
   /** The preference write's receipt; unavailable unless given. */
   readonly preferenceWrite?: Promise<unknown>;
+  /** The host's preview-browser open; records its calls and says how it went. */
+  readonly previewFile?: (...args: unknown[]) => Promise<string>;
 }
 
 type Calls = {
@@ -269,6 +272,8 @@ async function mountPanel(disk: Disk) {
       installations: () => [installed],
     } as unknown as Parameters<typeof createNavigationClientProvider>[0],
     async () => {},
+    undefined,
+    (disk.previewFile ?? (async () => "opened")) as never,
   );
   useNavigation(async (request, signal) =>
     navigation.invoke({
@@ -1013,6 +1018,57 @@ describe("hiding the file explorer", () => {
       expect(explorer(panel)).toEqual({ tree: false, search: false, hide: undefined, show: false });
       await act(async () => panel.button("Show file explorer")!.props.onClick());
       expect(explorer(panel)).toEqual({ tree: true, search: true, hide: true, show: undefined });
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Native parity (FilePreviewPanel "Open file in preview browser"): a page
+// opens in the thread's preview browser through t3.ui/navigation.
+describe("opening a file in the preview browser", () => {
+  const stubFetch = () =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+
+  it("offers it for pages only and opens the page from the workspace root", async () => {
+    stubFetch();
+    const previews: unknown[][] = [];
+    const panel = await mountPanel({
+      files: { "site/page.html": "<p>page</p>", "notes.txt": "n" },
+      previewFile: async (...args) => {
+        previews.push(args);
+        return "opened";
+      },
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "notes.txt"));
+      expect(panel.button("Open file in preview browser")).toBeUndefined();
+      await act(async () => useRightPanelStore.getState().openFile(ref, "site/page.html"));
+      expect(panel.button("Open file in preview browser")).toBeDefined();
+      await act(async () => panel.button("Open file in preview browser")!.props.onClick());
+      expect(previews).toEqual([[ref, "/fixture/site/page.html", "/fixture"]]);
+      expect(panel.text()).not.toContain("cannot be opened");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("names a browser that cannot open the page", async () => {
+    stubFetch();
+    const panel = await mountPanel({
+      files: { "page.html": "<p>page</p>" },
+      previewFile: async () => "browser-unavailable",
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "page.html"));
+      expect(panel.button("Open file in preview browser")).toBeDefined();
+      await act(async () => panel.button("Open file in preview browser")!.props.onClick());
+      expect(panel.text()).toContain(
+        "page.html cannot be opened — The preview browser is unavailable in this client",
+      );
     } finally {
       await panel.unmount();
     }

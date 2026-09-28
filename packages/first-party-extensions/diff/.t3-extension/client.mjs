@@ -2156,7 +2156,7 @@ var __t3Client = (() => {
       }
     ]
   };
-  var uiNavigationFileReceiptSchema = {
+  var uiNavigationFileReceipt = (reasons) => ({
     oneOf: [
       {
         type: "object",
@@ -2173,14 +2173,32 @@ var __t3Client = (() => {
         required: ["status", "reason"],
         properties: {
           status: { const: "refused" },
-          reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] }
+          reason: { enum: reasons }
         }
       }
     ]
-  };
-  var uiNavigationFileInputProperties = {
+  });
+  var uiNavigationFileReceiptSchemaV1_1 = uiNavigationFileReceipt([
+    "unknown-thread",
+    "out-of-scope",
+    "invalid-path"
+  ]);
+  var uiNavigationFileReceiptSchema = uiNavigationFileReceipt([
+    "unknown-thread",
+    "out-of-scope",
+    "invalid-path",
+    // 1.2.0, only for `openIn: "browser"`.
+    "not-previewable",
+    "browser-unavailable",
+    "open-failed"
+  ]);
+  var uiNavigationFileInputPropertiesV1_1 = {
     relativePath: { type: "string", minLength: 1, maxLength: 512 },
     line: { type: "integer", minimum: 1, maximum: 1e7 }
+  };
+  var uiNavigationFileInputProperties = {
+    ...uiNavigationFileInputPropertiesV1_1,
+    openIn: { enum: ["panel", "browser"] }
   };
   var uiNavigationSessionReceiptSchema = {
     oneOf: [
@@ -2207,7 +2225,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NAVIGATION_API = validateApiDefinition({
     id: "t3.client/navigation",
-    version: "1.1.0",
+    version: "1.2.0",
     methods: [
       {
         name: "openThread",
@@ -7909,7 +7927,7 @@ var __t3Client = (() => {
   var uiNavigationApi = defineApi(
     {
       id: UI_NAVIGATION,
-      version: "1.1.0",
+      version: "1.2.0",
       methods: [
         {
           name: "getCapabilities",
@@ -7935,8 +7953,41 @@ var __t3Client = (() => {
       ]
     },
     // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
-    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] }
+    {
+      baseline: "1.0.0",
+      additions: [
+        { version: "1.1.0", method: "openFile" },
+        { version: "1.2.0", method: "openFile", input: "openIn" }
+      ]
+    }
   );
+  var uiNavigationApiV1_1 = defineApi({
+    id: UI_NAVIGATION,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputPropertiesV1_1
+        },
+        outputSchema: uiNavigationFileReceiptSchemaV1_1
+      }
+    ]
+  }, { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] });
   var uiNavigationApiV1 = defineApi({
     id: UI_NAVIGATION,
     version: "1.0.0",
@@ -7963,14 +8014,20 @@ var __t3Client = (() => {
   async function openWorkspaceFile(client, context, relativePath, options) {
     if (!isWorkspaceFilePath(relativePath))
       return { status: "refused", reason: "invalid-path" };
+    const browser = options.openIn === "browser";
+    const floor = browser ? [1, 2, 0] : [1, 1, 0];
     const discovered = await client.discoverApis(context, options.signal);
     const opensFiles = discovered.some((api) => {
       const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
-      return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+      return version !== null && version[0] === 1 && compareVersions(version, floor) >= 0;
     });
     if (!opensFiles)
       return { status: "refused", reason: "host-unsupported" };
-    return bindApi(uiNavigationApi, client, context, "^1.1.0").invoke("openFile", { relativePath, ...options.line === void 0 ? {} : { line: options.line } }, options.signal);
+    return bindApi(uiNavigationApi, client, context, browser ? "^1.2.0" : "^1.1.0").invoke("openFile", {
+      relativePath,
+      ...options.line === void 0 ? {} : { line: options.line },
+      ...browser ? { openIn: "browser" } : {}
+    }, options.signal);
   }
   function describeOpenFileRefusal(reason) {
     switch (reason) {
@@ -7980,6 +8037,12 @@ var __t3Client = (() => {
         return "The thread is outside this extension's project";
       case "invalid-path":
         return "Not a workspace-relative path";
+      case "not-previewable":
+        return "The preview browser opens .html, .htm and .pdf files only";
+      case "browser-unavailable":
+        return "The preview browser is unavailable in this client";
+      case "open-failed":
+        return "The preview browser could not open the file";
       case "host-unsupported":
         return "This version of T3 Code cannot open files for extensions";
     }
@@ -8042,6 +8105,7 @@ var __t3Client = (() => {
     uiExternalApi.definition,
     uiEditorApi.definition,
     uiNavigationApi.definition,
+    uiNavigationApiV1_1.definition,
     uiNavigationApiV1.definition,
     agentSessionsApi.definition
   ];

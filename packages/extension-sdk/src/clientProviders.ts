@@ -1104,34 +1104,62 @@ export const uiNavigationReceiptSchema = {
   ],
 } as const;
 
-/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
-export const uiNavigationFileReceiptSchema = {
-  oneOf: [
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["status", "relativePath"],
-      properties: {
-        status: { const: "opened" },
-        relativePath: { type: "string", minLength: 1, maxLength: 512 },
+const uiNavigationFileReceipt = (reasons: readonly string[]) =>
+  ({
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "relativePath"],
+        properties: {
+          status: { const: "opened" },
+          relativePath: { type: "string", minLength: 1, maxLength: 512 },
+        },
       },
-    },
-    {
-      type: "object",
-      additionalProperties: false,
-      required: ["status", "reason"],
-      properties: {
-        status: { const: "refused" },
-        reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: reasons },
+        },
       },
-    },
-  ],
-} as const;
+    ],
+  }) as const;
 
-/** `openFile` input: a workspace-relative path and an optional 1-based line. */
-export const uiNavigationFileInputProperties = {
+/** 1.1.0's file-open receipt, before the preview-browser refusals. */
+export const uiNavigationFileReceiptSchemaV1_1 = uiNavigationFileReceipt([
+  "unknown-thread",
+  "out-of-scope",
+  "invalid-path",
+]);
+
+/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
+export const uiNavigationFileReceiptSchema = uiNavigationFileReceipt([
+  "unknown-thread",
+  "out-of-scope",
+  "invalid-path",
+  // 1.2.0, only for `openIn: "browser"`.
+  "not-previewable",
+  "browser-unavailable",
+  "open-failed",
+]);
+
+/** 1.1.0's `openFile` input: a workspace-relative path and an optional 1-based line. */
+export const uiNavigationFileInputPropertiesV1_1 = {
   relativePath: { type: "string", minLength: 1, maxLength: 512 },
   line: { type: "integer", minimum: 1, maximum: 10_000_000 },
+} as const;
+
+/**
+ * `openFile` input. 1.2.0 adds `openIn`: `"browser"` opens an `.html`,
+ * `.htm` or `.pdf` file in the thread's preview browser instead of the file
+ * panel, where `line` does not apply.
+ */
+export const uiNavigationFileInputProperties = {
+  ...uiNavigationFileInputPropertiesV1_1,
+  openIn: { enum: ["panel", "browser"] },
 } as const;
 
 /** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
@@ -1165,11 +1193,12 @@ export const uiNavigationSessionReceiptSchema = {
  * own thread roster, and only safe workspace paths for the caller's own
  * thread; the client re-checks before routing or opening. `openFile` is
  * 1.1.0: the adapter sends it only to a client satisfying
- * `CLIENT_NAVIGATION_V11_RANGE`.
+ * `CLIENT_NAVIGATION_V11_RANGE`, and `openIn` (1.2.0) only to one satisfying
+ * `CLIENT_NAVIGATION_V12_RANGE`.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
-  version: "1.1.0",
+  version: "1.2.0",
   methods: [
     {
       name: "openThread",
@@ -1209,6 +1238,9 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
 
 /** The navigation range that carries `openFile`. */
 export const CLIENT_NAVIGATION_V11_RANGE = "^1.1.0";
+
+/** The navigation range that carries `openFile`'s `openIn`. */
+export const CLIENT_NAVIGATION_V12_RANGE = "^1.2.0";
 
 /** Host-owned client-provider definitions, keyed by area id. */
 export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(

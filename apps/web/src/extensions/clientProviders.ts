@@ -14,6 +14,7 @@ import {
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
   type UiNavigationFileReceipt,
+  type UiNavigationFileRefusalReason,
   type UiNavigationReceipt,
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
@@ -88,6 +89,7 @@ import { createKeybindingsClientProvider } from "./extensionCommandRegistry";
 import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
+import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -1573,10 +1575,23 @@ const refused = (reason: UiNavigationRefusalReason): UiNavigationReceipt => ({
   reason,
 });
 
+const refusedFile = (reason: UiNavigationFileRefusalReason): UiNavigationFileReceipt => ({
+  status: "refused",
+  reason,
+});
+
+/** Opens a workspace file in the thread's preview browser; injected like the navigator. */
+export type FilePreviewOpener = (
+  ref: ScopedThreadRef,
+  filePath: string,
+  workspaceRoot: string,
+) => Promise<"opened" | "browser-unavailable" | "open-failed">;
+
 export function createNavigationClientProvider(
   deps: ClientProviderDeps,
   navigate: ThreadNavigator,
   opener: () => ExternalOpener | undefined = localExternalOpener,
+  previewFile: FilePreviewOpener = openWorkspaceFileInPreview,
 ): ClientLocalProvider {
   return {
     async invoke(
@@ -1615,6 +1630,18 @@ export function createNavigationClientProvider(
           !installation.grants.projectIds.some((id) => id === shell.projectId)
         )
           return refused("out-of-scope");
+        if (input.openIn === "browser") {
+          // Native's "Open file in preview browser": pages and PDFs only,
+          // resolved against the thread's own checkout.
+          if (!isBrowserPreviewFile(relativePath)) return refusedFile("not-previewable");
+          const project = readProject(scopeProjectRef(deps.environmentId, shell.projectId));
+          const root = shell.worktreePath ?? project?.workspaceRoot;
+          if (!root) return refused("unknown-thread");
+          const outcome = await previewFile(ref, resolvePathLinkTarget(relativePath, root), root);
+          return outcome === "opened"
+            ? ({ status: "opened", relativePath } as UiNavigationFileReceipt)
+            : refusedFile(outcome);
+        }
         // The native file-link path: the file surface resolves the selected
         // t3.file/presentation provider (SelectedApiPresentation) or native.
         useRightPanelStore.getState().openFile(ref, relativePath, line);
@@ -1701,7 +1728,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/external", version: "1.0.0" },
   { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
-  { id: "t3.client/navigation", version: "1.1.0" },
+  { id: "t3.client/navigation", version: "1.2.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

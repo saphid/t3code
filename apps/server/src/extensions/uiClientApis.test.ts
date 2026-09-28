@@ -633,6 +633,43 @@ describe("1.1.0 client seam additions", () => {
   });
 });
 
+// Native parity ("Open file in preview browser"): openIn is a 1.2.0 addition
+// to the client seam; a 1.1.0 client still opens files in the panel.
+describe("1.2.0 openFile in the preview browser", () => {
+  const seam = (navigation: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/navigation", version: navigation }],
+        },
+      ],
+    });
+  const open = (bridge: ReturnType<typeof fakeBridge>, input: Record<string, unknown>) =>
+    makeProviders(bridge).navigation.invoke("openFile", input as Json, context, signal, metadata());
+
+  it("forwards openIn only to a client that has it", async () => {
+    const current = seam("1.2.0");
+    await open(current, { relativePath: "site/index.html", openIn: "browser" });
+    expect(current.invoked.map(({ input }) => input)).toEqual([
+      {
+        target: { kind: "connection", connectionId: "conn-1" },
+        relativePath: "site/index.html",
+        openIn: "browser",
+      },
+    ]);
+    const older = seam("1.1.0");
+    await expect(
+      open(older, { relativePath: "site/index.html", openIn: "browser" }),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(older.invoked).toHaveLength(0);
+    await open(older, { relativePath: "a.ts", openIn: "panel" });
+    expect(older.invoked.map(({ input }) => input)).toEqual([
+      { target: { kind: "connection", connectionId: "conn-1" }, relativePath: "a.ts" },
+    ]);
+  });
+});
+
 describe("keybindings adapter", () => {
   it("rejects global commands locally when the global grant is missing", async () => {
     const bridge = fakeBridge();

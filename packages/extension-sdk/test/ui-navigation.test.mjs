@@ -88,7 +88,12 @@ NodeTest.test("openFile names a workspace path on the caller's own thread, never
   NodeAssert.deepEqual(method.inputSchema.required, ["relativePath"]);
   // No thread, surface or provider id: the host opens the file where its
   // native links do, through the selected t3.file/presentation provider.
-  NodeAssert.deepEqual(Object.keys(method.inputSchema.properties).sort(), ["line", "relativePath"]);
+  NodeAssert.deepEqual(Object.keys(method.inputSchema.properties).sort(), [
+    "line",
+    "openIn",
+    "relativePath",
+  ]);
+  NodeAssert.deepEqual(method.inputSchema.properties.openIn.enum, ["panel", "browser"]);
   const refused = method.outputSchema.oneOf.find(
     (branch) => branch.properties.status.const === "refused",
   );
@@ -96,6 +101,9 @@ NodeTest.test("openFile names a workspace path on the caller's own thread, never
     "unknown-thread",
     "out-of-scope",
     "invalid-path",
+    "not-previewable",
+    "browser-unavailable",
+    "open-failed",
   ]);
   const client = CLIENT_PROVIDER_APIS.get("t3.client/navigation").methods.find(
     (candidate) => candidate.name === "openFile",
@@ -153,9 +161,7 @@ NodeTest.test(
 // 1.0.0. It is a 1.1.0 addition: packs keep loading on a 1.0.0 host and
 // probe before they call it.
 NodeTest.test("openFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
-  NodeAssert.equal(uiNavigationApi.definition.version, "1.1.0");
   NodeAssert.equal(uiNavigationApi.baseline, "1.0.0");
-  NodeAssert.equal(CLIENT_PROVIDER_APIS.get("t3.client/navigation").version, "1.1.0");
   const requests = [];
   const client = {
     invokeApi: (request) => {
@@ -256,3 +262,87 @@ NodeTest.test(
     });
   },
 );
+
+// Native parity (FilePreviewPanel "Open file in preview browser"): openFile
+// can open a page in the thread's preview browser. It is a 1.2.0 input
+// addition, so a pack keeps its 1.0.0 requirement and probes before using it.
+NodeTest.test("openIn is a 1.2.0 addition that keeps 1.1.0 frozen", async () => {
+  NodeAssert.equal(uiNavigationApi.definition.version, "1.2.0");
+  NodeAssert.equal(CLIENT_PROVIDER_APIS.get("t3.client/navigation").version, "1.2.0");
+  NodeAssert.deepEqual(
+    uiNavigationApi.additions.map(({ version, method, input }) => [version, method, input]),
+    [
+      ["1.1.0", "openFile", undefined],
+      ["1.2.0", "openFile", "openIn"],
+    ],
+  );
+  const frozen = Catalogue.uiNavigationApiV1_1.definition;
+  NodeAssert.equal(frozen.version, "1.1.0");
+  NodeAssert.ok(GENERIC_API_CATALOGUE.includes(frozen));
+  const frozenOpen = frozen.methods.find((method) => method.name === "openFile");
+  NodeAssert.deepEqual(Object.keys(frozenOpen.inputSchema.properties).sort(), [
+    "line",
+    "relativePath",
+  ]);
+  NodeAssert.deepEqual(frozenOpen.outputSchema.oneOf[1].properties.reason.enum, [
+    "unknown-thread",
+    "out-of-scope",
+    "invalid-path",
+  ]);
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const client = { invokeApi: () => Promise.resolve({ status: "opened", relativePath: "a.html" }) };
+  const signal = new AbortController().signal;
+  await NodeAssert.rejects(
+    bindApi(uiNavigationApi, client, context, "^1.1.0").invoke(
+      "openFile",
+      { relativePath: "a.html", openIn: "browser" },
+      signal,
+    ),
+    (error) => error instanceof ApiVersionError,
+  );
+});
+
+NodeTest.test("openWorkspaceFile opens a page in the preview browser on a 1.2.0 host", async () => {
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };
+  const signal = new AbortController().signal;
+  const host = (version) => {
+    const requests = [];
+    return {
+      requests,
+      discoverApis: async () => [{ id: "t3.ui/navigation", version }],
+      invokeApi: (request) => {
+        requests.push(request);
+        return Promise.resolve({ status: "opened", relativePath: request.input.relativePath });
+      },
+    };
+  };
+  const current = host("1.2.0");
+  NodeAssert.deepEqual(
+    await Catalogue.openWorkspaceFile(current, context, "site/index.html", {
+      openIn: "browser",
+      signal,
+    }),
+    { status: "opened", relativePath: "site/index.html" },
+  );
+  NodeAssert.deepEqual(
+    current.requests.map(({ versionRange, method, input }) => ({ versionRange, method, input })),
+    [
+      {
+        versionRange: "^1.2.0",
+        method: "openFile",
+        input: { relativePath: "site/index.html", openIn: "browser" },
+      },
+    ],
+  );
+  const older = host("1.1.0");
+  NodeAssert.deepEqual(
+    await Catalogue.openWorkspaceFile(older, context, "site/index.html", {
+      openIn: "browser",
+      signal,
+    }),
+    { status: "refused", reason: "host-unsupported" },
+  );
+  NodeAssert.equal(older.requests.length, 0);
+  for (const reason of ["not-previewable", "browser-unavailable", "open-failed"])
+    NodeAssert.match(Catalogue.describeOpenFileRefusal(reason), /\S/);
+});

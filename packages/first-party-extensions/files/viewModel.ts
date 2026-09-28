@@ -183,6 +183,10 @@ export function previewKind(relativePath: string): PreviewKind {
   return PREVIEW_KIND_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] ?? "text";
 }
 
+/** Paths native offers "Open file in preview browser" for: pages and PDFs in the workspace. */
+export const opensInPreviewBrowser = (path: string): boolean =>
+  isWorkspaceBrowserPreviewPath(path) && presentationPath(path) !== null;
+
 const isHtmlPath = (path: string): boolean =>
   isWorkspaceBrowserPreviewPath(path) && !path.toLowerCase().endsWith(".pdf");
 
@@ -1557,6 +1561,7 @@ export const FILES_VIEW_COMMANDS: readonly {
 export function fileOpenNotification(
   state: FileOpenState,
   threadId: string | undefined,
+  title = "Unable to open file",
 ): {
   readonly severity: "error";
   readonly title: string;
@@ -1568,7 +1573,7 @@ export function fileOpenNotification(
   if (state.status !== "denied" && state.status !== "unavailable") return null;
   return {
     severity: "error",
-    title: "Unable to open file",
+    title,
     body: describeFileOpen(state),
     durationMs: 5_000,
     ...(threadId !== undefined && threadId.length > 0

@@ -84,6 +84,7 @@ function installation(capabilities: readonly string[]): InstalledPackage {
 function provider(
   capabilities: readonly string[] = [GRANT],
   opener: ExternalOpener | undefined = undefined,
+  previewFile: (...args: unknown[]) => Promise<unknown> = async () => "opened",
 ) {
   const navigate = vi.fn(async () => {});
   const installed = installation(capabilities);
@@ -98,6 +99,7 @@ function provider(
       },
       navigate,
       () => opener,
+      previewFile as never,
     ),
   };
 }
@@ -341,6 +343,52 @@ describe("navigation provider", () => {
       for (const threadId of ["thread-gone", "thread-other", "thread-b"])
         expect(panelOf(threadId).surfaces.some((surface) => surface.kind === "file")).toBe(false);
     });
+
+    // Native parity (FilePreviewPanel "Open file in preview browser").
+    it("opens a page in the thread's preview browser from its workspace root", async () => {
+      const previewFile = vi.fn(async () => "opened");
+      const { provider: granted } = provider([GRANT], undefined, previewFile);
+      const surfaces = panelOf("thread-a").surfaces;
+      await expect(
+        granted.invoke(openFile({ relativePath: "site/index.html", openIn: "browser" })),
+      ).resolves.toEqual({ status: "opened", relativePath: "site/index.html" });
+      await expect(
+        granted.invoke(openFile({ relativePath: "doc.pdf", openIn: "browser" }, "thread-b")),
+      ).resolves.toEqual({ status: "opened", relativePath: "doc.pdf" });
+      expect(previewFile.mock.calls).toEqual([
+        [
+          scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a")),
+          "/work/project-a/site/index.html",
+          "/work/project-a",
+        ],
+        [
+          scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-b")),
+          "/work/tree-b/doc.pdf",
+          "/work/tree-b",
+        ],
+      ]);
+      // The page opens in the browser, not as a file surface.
+      expect(panelOf("thread-a").surfaces).toBe(surfaces);
+    });
+
+    it("refuses a file the browser cannot show and names a failed open", async () => {
+      const outcomes = ["browser-unavailable", "open-failed"];
+      const previewFile = vi.fn(async () => outcomes.shift());
+      const { provider: granted } = provider([GRANT], undefined, previewFile);
+      const page = openFile({ relativePath: "index.html", openIn: "browser" });
+      await expect(
+        granted.invoke(openFile({ relativePath: "notes.txt", openIn: "browser" })),
+      ).resolves.toEqual({ status: "refused", reason: "not-previewable" });
+      expect(previewFile).not.toHaveBeenCalled();
+      await expect(granted.invoke(page)).resolves.toEqual({
+        status: "refused",
+        reason: "browser-unavailable",
+      });
+      await expect(granted.invoke(page)).resolves.toEqual({
+        status: "refused",
+        reason: "open-failed",
+      });
+    });
   });
 });
 
@@ -351,5 +399,5 @@ it("registers the 1.1.0 navigation and preferences areas", () => {
     expect(CLIENT_PROVIDER_DESCRIPTORS.find((descriptor) => descriptor.id === id)?.version).toBe(
       CLIENT_PROVIDER_APIS.get(id)?.version,
     );
-  expect(CLIENT_PROVIDER_APIS.get("t3.client/navigation")?.version).toBe("1.1.0");
+  expect(CLIENT_PROVIDER_APIS.get("t3.client/navigation")?.version).toBe("1.2.0");
 });

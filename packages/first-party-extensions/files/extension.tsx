@@ -72,6 +72,7 @@ import {
   FILES_VIEW_COMMANDS,
   fileOpenNotification,
   isMarkdownPath,
+  opensInPreviewBrowser,
   leasePreviewMode,
   mediaLeaseAssetFailed,
   mediaLeaseExpire,
@@ -1605,11 +1606,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // toast on preview-open failure) while opening/opened stay inline.
   // When `t3.ui/notifications` is unavailable the inline row stands as the
   // degraded surface — the failure is never dropped silently.
-  const failFileOpen = (path: string, state: FileOpenState) => {
+  const failFileOpen = (path: string, state: FileOpenState, title?: string) => {
     // Inline first — the failure surface never depends on the notification
     // grant being granted or the invoke landing.
     setFileOpen({ path, state });
-    const input = fileOpenNotification(state, session.context.resource.threadId);
+    const input = fileOpenNotification(state, session.context.resource.threadId, title);
     if (input === null) return;
     const signal = session.signal;
     void bindApi(uiNotificationsApi, host, session.context)
@@ -1631,37 +1632,56 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       );
   };
 
-  const openInPanel = () => {
+  // "Open file in preview browser" (native's, for pages and PDFs) takes the
+  // same path with `openIn: "browser"`. As native, a page that opened says
+  // nothing here — the browser shows it — and a failure toasts.
+  const openSelected = (openIn: "panel" | "browser") => {
     if (selected === null) return;
+    const title = openIn === "browser" ? "Unable to open file in browser" : undefined;
     const path = presentationPath(selected);
     if (path === null) {
-      failFileOpen(selected, {
-        status: "unavailable",
-        message: `${selected} cannot be opened — not a workspace-relative path`,
-      });
+      failFileOpen(
+        selected,
+        {
+          status: "unavailable",
+          message: `${selected} cannot be opened — not a workspace-relative path`,
+        },
+        title,
+      );
       return;
     }
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     setFileOpen({ path, state: { status: "resolving" } });
-    void openWorkspaceFile(host, session.context, path, { signal })
+    void openWorkspaceFile(host, session.context, path, { openIn, signal })
       .then(
         (receipt) => {
           if (signal.aborted) return;
           if (receipt.status === "opened")
-            setFileOpen({ path, state: { status: "resolved", message: `Opened ${path}` } });
-          else
-            failFileOpen(path, {
-              status: "unavailable",
-              message: `${path} cannot be opened — ${describeOpenFileRefusal(receipt.reason)}`,
+            setFileOpen({
+              path,
+              state:
+                openIn === "browser"
+                  ? { status: "idle" }
+                  : { status: "resolved", message: `Opened ${path}` },
             });
+          else
+            failFileOpen(
+              path,
+              {
+                status: "unavailable",
+                message: `${path} cannot be opened — ${describeOpenFileRefusal(receipt.reason)}`,
+              },
+              title,
+            );
         },
         (error) => {
-          if (!signal.aborted) failFileOpen(path, fileOpenFailed(error));
+          if (!signal.aborted) failFileOpen(path, fileOpenFailed(error), title);
         },
       )
       .finally(() => controller.abort());
   };
+  const openInPanel = () => openSelected("panel");
 
   // The panel's commands register through `t3.ui/keybindings` so the
   // host arbitrates them — user rules and native defaults outrank the plugin
@@ -2160,6 +2180,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
+          {opensInPreviewBrowser(selected) && (
+            <button type="button" onClick={() => openSelected("browser")}>
+              Open file in preview browser
+            </button>
+          )}
           {addChat.blockReason === null ? (
             <button
               type="button"

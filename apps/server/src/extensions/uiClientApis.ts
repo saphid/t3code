@@ -22,6 +22,7 @@ import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import {
   CLIENT_NAVIGATION_V11_RANGE,
+  CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
   CLIENT_PREFERENCES_V11_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
@@ -1141,7 +1142,12 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         })();
       if (method === "openFile")
         return (async () => {
-          const { relativePath, line } = input as { relativePath: string; line?: number };
+          const { relativePath, line, openIn } = input as {
+            relativePath: string;
+            line?: number;
+            openIn?: "panel" | "browser";
+          };
+          const browser = openIn === "browser";
           if (!isWorkspaceFilePath(relativePath))
             return { status: "refused", reason: "invalid-path" } satisfies Json;
           // Only the caller's own (broker-scoped) thread; the input cannot name another.
@@ -1154,18 +1160,24 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
             signal,
           });
+          // `openIn` is 1.2.0; the file panel is the 1.1.0 default, so only
+          // a browser open needs the newer client.
           await requireClient(
             connectionId,
             CLIENT_NAVIGATION,
-            CLIENT_NAVIGATION_V11_RANGE,
-            "openFile",
+            browser ? CLIENT_NAVIGATION_V12_RANGE : CLIENT_NAVIGATION_V11_RANGE,
+            browser ? "openFile openIn" : "openFile",
             signal,
           );
           return Effect.runPromise(
             invokeClient(deps, {
               apiId: CLIENT_NAVIGATION,
               method: "openFile",
-              input: { relativePath, ...(line === undefined ? {} : { line }) },
+              input: {
+                relativePath,
+                ...(line === undefined ? {} : { line }),
+                ...(browser ? { openIn } : {}),
+              },
               context,
               metadata,
               signal,

@@ -18,7 +18,7 @@ import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
 import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
-import { compareVersions, parseVersion } from "./semver.js";
+import { compareVersions, parseVersion, type Version } from "./semver.js";
 import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
@@ -35,7 +35,9 @@ import {
   uiEditorOpenReceiptSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
+  uiNavigationFileInputPropertiesV1_1,
   uiNavigationFileReceiptSchema,
+  uiNavigationFileReceiptSchemaV1_1,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
@@ -9254,9 +9256,18 @@ export type UiNavigationSessionReceipt =
 /**
  * Closed refusal set for `openFile`: `unknown-thread` (the caller's context
  * names no live thread), `out-of-scope` (that thread is outside the caller's
- * project), `invalid-path` (not a safe workspace-relative path).
+ * project), `invalid-path` (not a safe workspace-relative path). 1.2.0 adds
+ * three for `openIn: "browser"` only: `not-previewable` (not an `.html`,
+ * `.htm` or `.pdf` file), `browser-unavailable` (this client has no preview
+ * browser) and `open-failed` (the browser could not open the file).
  */
-export type UiNavigationFileRefusalReason = "unknown-thread" | "out-of-scope" | "invalid-path";
+export type UiNavigationFileRefusalReason =
+  | "unknown-thread"
+  | "out-of-scope"
+  | "invalid-path"
+  | "not-previewable"
+  | "browser-unavailable"
+  | "open-failed";
 
 export type UiNavigationFileReceipt =
   | { readonly status: "opened"; readonly relativePath: string }
@@ -9306,9 +9317,63 @@ const uiNavigationOpenAgentSessionMethod = {
  * where the host's native file links land: the host's file panel, presented by
  * the selected `t3.file/presentation` provider (or the native preview). The
  * pack names a path, never a surface or provider. `openWorkspaceFile` probes
- * for it, so a pack keeps its 1.0.0 requirement.
+ * for it, so a pack keeps its 1.0.0 requirement. 1.2.0 adds `openIn:
+ * "browser"`, which opens an `.html`, `.htm` or `.pdf` file in the thread's
+ * preview browser instead, as native's "Open file in preview browser" does.
  */
 export const uiNavigationApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openThread: {
+    input: { threadId: string; surfaceId?: string };
+    output: UiNavigationReceipt;
+  };
+  openAgentSession: {
+    input: { agentId: string };
+    output: UiNavigationSessionReceipt;
+  };
+  openFile: {
+    input: { relativePath: string; line?: number; openIn?: "panel" | "browser" };
+    output: UiNavigationFileReceipt;
+  };
+}>(
+  {
+    id: UI_NAVIGATION,
+    version: "1.2.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"]),
+      },
+      uiNavigationOpenThreadMethod,
+      uiNavigationOpenAgentSessionMethod,
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputProperties,
+        },
+        outputSchema: uiNavigationFileReceiptSchema,
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openFile" },
+      { version: "1.2.0", method: "openFile", input: "openIn" },
+    ],
+  },
+);
+/** Frozen published 1.1.0 definition, before `openIn`; providers may still declare it. */
+export const uiNavigationApiV1_1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   openThread: {
     input: { threadId: string; surfaceId?: string };
@@ -9344,13 +9409,12 @@ export const uiNavigationApi = defineApi<{
           type: "object",
           additionalProperties: false,
           required: ["relativePath"],
-          properties: uiNavigationFileInputProperties,
+          properties: uiNavigationFileInputPropertiesV1_1,
         },
-        outputSchema: uiNavigationFileReceiptSchema,
+        outputSchema: uiNavigationFileReceiptSchemaV1_1,
       },
     ],
   },
-  // Consumers keep loading on a 1.0.0 host; probe before calling openFile.
   { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openFile" }] },
 );
 /** Frozen published 1.0.0 definition, before `openFile`; providers may still declare it. */
@@ -9392,7 +9456,8 @@ export function isWorkspaceFilePath(path: string): boolean {
 
 /**
  * `openWorkspaceFile`'s outcome: the host's receipt, or `host-unsupported`
- * when the host's `t3.ui/navigation` predates `openFile` (1.1.0).
+ * when the host's `t3.ui/navigation` predates `openFile` (1.1.0), or `openIn`
+ * (1.2.0) for an open in the preview browser.
  */
 export type OpenWorkspaceFileReceipt =
   | UiNavigationFileReceipt
@@ -9403,24 +9468,35 @@ export type OpenWorkspaceFileReceipt =
  * `t3.ui/navigation.openFile` (grant `t3.ui/navigation.open`). An unsafe path
  * is refused here without a host round trip; the host checks again. The host
  * is probed first, so an older one answers `host-unsupported` instead of
- * failing. Rejects only when discovery or the invoke itself fails.
+ * failing. `openIn: "browser"` opens the file in the thread's preview browser
+ * (1.2.0). Rejects only when discovery or the invoke itself fails.
  */
 export async function openWorkspaceFile(
   client: Pick<ApiClient, "invokeApi" | "discoverApis">,
   context: ViewContext,
   relativePath: string,
-  options: { readonly line?: number; readonly signal: AbortSignal },
+  options: {
+    readonly line?: number;
+    readonly openIn?: "panel" | "browser";
+    readonly signal: AbortSignal;
+  },
 ): Promise<OpenWorkspaceFileReceipt> {
   if (!isWorkspaceFilePath(relativePath)) return { status: "refused", reason: "invalid-path" };
+  const browser = options.openIn === "browser";
+  const floor: Version = browser ? [1, 2, 0] : [1, 1, 0];
   const discovered = await client.discoverApis(context, options.signal);
   const opensFiles = discovered.some((api) => {
     const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
-    return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+    return version !== null && version[0] === 1 && compareVersions(version, floor) >= 0;
   });
   if (!opensFiles) return { status: "refused", reason: "host-unsupported" };
-  return bindApi(uiNavigationApi, client, context, "^1.1.0").invoke(
+  return bindApi(uiNavigationApi, client, context, browser ? "^1.2.0" : "^1.1.0").invoke(
     "openFile",
-    { relativePath, ...(options.line === undefined ? {} : { line: options.line }) },
+    {
+      relativePath,
+      ...(options.line === undefined ? {} : { line: options.line }),
+      ...(browser ? { openIn: "browser" as const } : {}),
+    },
     options.signal,
   );
 }
@@ -9436,6 +9512,12 @@ export function describeOpenFileRefusal(
       return "The thread is outside this extension's project";
     case "invalid-path":
       return "Not a workspace-relative path";
+    case "not-previewable":
+      return "The preview browser opens .html, .htm and .pdf files only";
+    case "browser-unavailable":
+      return "The preview browser is unavailable in this client";
+    case "open-failed":
+      return "The preview browser could not open the file";
     case "host-unsupported":
       return "This version of T3 Code cannot open files for extensions";
   }
@@ -9506,6 +9588,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiExternalApi.definition,
   uiEditorApi.definition,
   uiNavigationApi.definition,
+  uiNavigationApiV1_1.definition,
   uiNavigationApiV1.definition,
   agentSessionsApi.definition,
 ];
