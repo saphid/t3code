@@ -555,13 +555,86 @@ describe("client connection hint on early calls", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("releases held calls unstamped when the connect fails (server without the seam)", async () => {
-    start({ stream: Stream.die(new Error("unknown rpc")) });
-    const send = vi.fn(async (hint: string | undefined) => hint);
-    await expect(withClientConnectionId(ENV, new AbortController().signal, send)).resolves.toBe(
-      undefined,
-    );
-    expect(send).toHaveBeenCalledOnce();
+  it("holds a call made before the transport is up until the reconnect registers", async () => {
+    // A restored panel calls before the environment's first session exists:
+    // that connect fails, and the call must wait for the next one.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const queue = new Mailbox();
+      mocks.providersStream.mockReturnValueOnce(Stream.fail(new Error("no session")));
+      start({ stream: queue.stream });
+      mocks.stateChanges.mockReturnValue(Stream.make({ phase: "connected" }));
+      const hints: (string | undefined)[] = [];
+      const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
+        hints.push(hint);
+        if (hint === undefined) throw targetRequired();
+        return { theme: "dark" };
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(hints).toEqual([]);
+      queue.offer(registered);
+      await expect(result).resolves.toEqual({ theme: "dark" });
+      expect(hints).toEqual(["conn-early"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the held call and later ones at once when the server lacks the seam", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      start({ stream: Stream.die("Unknown request tag: extensions.clientProviders.connect") });
+      mocks.stateChanges.mockReturnValue(Stream.make({ phase: "connected" }));
+      const send = vi.fn(async (hint: string | undefined) => hint);
+      const held = withClientConnectionId(ENV, new AbortController().signal, send);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledOnce();
+      await expect(held).resolves.toBe(undefined);
+      // Later calls, including across the loop's retry, leave at once too.
+      await vi.advanceTimersByTimeAsync(1000);
+      const later = withClientConnectionId(ENV, new AbortController().signal, send);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledTimes(2);
+      await expect(later).resolves.toBe(undefined);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds calls again after a drop, since the next connection may reach an upgraded server", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const queue = new Mailbox();
+      const states = new Mailbox();
+      mocks.providersStream.mockReturnValueOnce(
+        Stream.die("Unknown request tag: extensions.clientProviders.connect"),
+      );
+      start({ stream: queue.stream });
+      mocks.stateChanges.mockReturnValue(states.stream);
+      const hints: (string | undefined)[] = [];
+      const send = async (hint: string | undefined) => {
+        hints.push(hint);
+        return hint;
+      };
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(withClientConnectionId(ENV, new AbortController().signal, send)).resolves.toBe(
+        undefined,
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      states.offer({ phase: "connected" } as never);
+      states.offer({ phase: "reconnecting" } as never);
+      await vi.advanceTimersByTimeAsync(0);
+      const afterDrop = withClientConnectionId(ENV, new AbortController().signal, send);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hints).toEqual([undefined]);
+      states.offer({ phase: "connected" } as never);
+      await vi.advanceTimersByTimeAsync(0);
+      queue.offer(registered);
+      await expect(afterDrop).resolves.toBe("conn-early");
+      expect(hints).toEqual([undefined, "conn-early"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("releases a held call unstamped after the bound, and never on abort", async () => {

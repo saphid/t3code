@@ -289,11 +289,14 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       const hasOnlyExpectedFailures =
                         cause.reasons.length > 0 &&
                         cause.reasons.every((reason) => reason._tag === "Fail");
+                      // A closing session's RPC client interrupts its open
+                      // streams, which is a lost transport, not a failure.
                       const isTransportFailure =
-                        hasOnlyExpectedFailures &&
-                        cause.reasons.every(
-                          (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
-                        );
+                        Cause.hasInterruptsOnly(cause) ||
+                        (hasOnlyExpectedFailures &&
+                          cause.reasons.every(
+                            (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
+                          ));
                       if (isTransportFailure) {
                         return Stream.fromEffect(
                           Effect.logWarning(

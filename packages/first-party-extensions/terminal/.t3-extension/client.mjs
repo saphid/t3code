@@ -194,12 +194,17 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
-  function resolveResumableStreams(host) {
+  var RESUMABLE_API_STREAMS = {
+    "t3.terminal/output-events#subscribe": 1,
+    "t3.terminal/sessions#list": 2
+  };
+  function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
     if (!member || typeof member !== "object")
       return null;
+    const required = stream === void 0 ? 1 : Object.hasOwn(RESUMABLE_API_STREAMS, stream) ? RESUMABLE_API_STREAMS[stream] : Infinity;
     const { version, subscribeApi } = member;
-    return typeof version === "number" && version >= 1 && typeof subscribeApi === "function" ? member : null;
+    return typeof version === "number" && version >= required && typeof subscribeApi === "function" ? member : null;
   }
   var ApiVersionError = class extends Error {
     name = "ApiVersionError";
@@ -15186,7 +15191,11 @@ var __t3Client = (() => {
                 const stream = bindStreamApi(terminalSessionsApi, host, session.context).subscribe(
                   "list",
                   {},
-                  signal
+                  signal,
+                  resolveResumableStreams(host, "t3.terminal/sessions#list") ? {
+                    resume: "fresh-snapshot",
+                    onSuspended: () => sink.status("connecting", null)
+                  } : void 0
                 );
                 for await (const frame of stream) {
                   if (signal.aborted) return;

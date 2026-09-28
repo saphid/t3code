@@ -177,6 +177,18 @@ NodeTest.test(
       NodeAssert.equal(resolveResumableStreams({ resumableStreams: member }), null);
     NodeAssert.equal(resolveResumableStreams(host), host.resumableStreams);
 
+    // Per stream: the host must offer the version that added it; unlisted streams never resume.
+    const v1 = { resumableStreams: { version: 1, subscribeApi() {} } };
+    const v2 = { resumableStreams: { version: 2, subscribeApi() {} } };
+    NodeAssert.equal(
+      resolveResumableStreams(v1, "t3.terminal/output-events#subscribe"),
+      v1.resumableStreams,
+    );
+    NodeAssert.equal(resolveResumableStreams(v1, "t3.terminal/sessions#list"), null);
+    NodeAssert.equal(resolveResumableStreams(v2, "t3.terminal/sessions#list"), v2.resumableStreams);
+    for (const stream of ["independent.consumer#changes", "toString"])
+      NodeAssert.equal(resolveResumableStreams(v2, stream), null);
+
     // An older host is refused explicitly, never silently downgraded.
     const older = bindStreamApi(api, { subscribeApi: iterable(plain) }, context).subscribe(
       "changes",

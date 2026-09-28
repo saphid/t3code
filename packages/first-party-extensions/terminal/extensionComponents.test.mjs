@@ -1563,6 +1563,11 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
               version: 1,
               subscribeApi: (request, signal, options) => ({
                 async *[Symbol.asyncIterator]() {
+                  // The session list resumes too; these scripts never drop it.
+                  if (request.id === "t3.terminal/sessions") {
+                    yield* host.subscribeApi(request, signal);
+                    return;
+                  }
                   NodeAssert.equal(request.id, "t3.terminal/output-events");
                   session: for (;;) {
                     const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
@@ -2155,3 +2160,191 @@ NodeTest.describe("toolbar hover help", () => {
     }
   });
 });
+
+NodeTest.test(
+  "the session list rides out a transport drop and resumes on the next session",
+  async () => {
+    const drain = () => new Promise((resolve) => setImmediate(resolve));
+    const gate = () => {
+      let open;
+      const wait = new Promise((resolve) => (open = resolve));
+      return { wait, open: () => open() };
+    };
+    const drop = gate();
+    const resume = gate();
+    const hang = (signal) =>
+      new Promise((resolve) =>
+        signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+      );
+    const snapshot = (ids) => ({
+      value: { kind: "snapshot", terminals: ids.map((id) => sessionMetadata(id)) },
+    });
+    const host = {
+      React,
+      readAsset: () => new Promise(() => {}),
+      invokeApi: async () => ({ tokens: {}, cssVars: {} }),
+      // A plain stream dies with the transport, as the web host's does.
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list") {
+            yield snapshot(["a"]);
+            await drop.wait;
+            throw new Error("All fibers interrupted without error");
+          }
+          await hang(signal);
+        },
+      }),
+      // The host's session-following transport: a drop suspends the iterable
+      // and the next session opens with a fresh snapshot.
+      resumableStreams: {
+        version: 2,
+        subscribeApi: (request, signal, options) => ({
+          async *[Symbol.asyncIterator]() {
+            if (request.id === "t3.terminal/sessions" && request.name === "list") {
+              yield snapshot(["a"]);
+              await drop.wait;
+              options?.onSuspended?.();
+              await resume.wait;
+              yield snapshot(["a", "b"]);
+            }
+            await hang(signal);
+          },
+        }),
+      },
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ["a"], activeTerminalId: "a" },
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    const settle = () =>
+      act(async () => {
+        for (let index = 0; index < 8; index++) await drain();
+      });
+    const text = () => JSON.stringify(renderer.toJSON());
+    const newTerminal = () =>
+      renderer.root.find(
+        (node) => node.type === "button" && node.children.includes("New terminal"),
+      );
+    const rows = () =>
+      renderer.root
+        .findAll((node) => node.type === "li" && node.props["data-t3-terminal-session"])
+        .map((row) => row.props["data-t3-terminal-session"]);
+    try {
+      await settle();
+      NodeAssert.equal(newTerminal().props.disabled, false);
+      drop.open();
+      await settle();
+      NodeAssert.doesNotMatch(text(), /Session list disconnected|All fibers interrupted/);
+      NodeAssert.equal(newTerminal().props.disabled, true);
+      resume.open();
+      await settle();
+      NodeAssert.doesNotMatch(text(), /Session list disconnected|All fibers interrupted/);
+      NodeAssert.equal(newTerminal().props.disabled, false);
+      NodeAssert.deepEqual(rows(), ["a", "b"]);
+    } finally {
+      drop.open();
+      resume.open();
+      await act(async () => renderer.unmount());
+    }
+  },
+);
+
+NodeTest.test(
+  "a version 1 host lists sessions on the plain stream, and New and Split work",
+  async () => {
+    const drain = () => new Promise((resolve) => setImmediate(resolve));
+    const hang = (signal) =>
+      new Promise((resolve) =>
+        signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+      );
+    const plainLists = [];
+    const invokes = [];
+    const host = {
+      React,
+      readAsset: () => new Promise(() => {}),
+      invokeApi: async (request) => {
+        invokes.push(request);
+        return request.id === "t3.terminal/control" && request.method === "open"
+          ? sessionMetadata(request.input.terminalId)
+          : { tokens: {}, cssVars: {} };
+      },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list") {
+            plainLists.push(request);
+            yield { value: { kind: "snapshot", terminals: [sessionMetadata("a")] } };
+          }
+          await hang(signal);
+        },
+      }),
+      // The web host as it shipped at version 1: output events only.
+      resumableStreams: {
+        version: 1,
+        subscribeApi: (request, signal) => {
+          if (`${request.id}#${request.name}` !== "t3.terminal/output-events#subscribe")
+            throw new Error(`${request.id}#${request.name} is not resumable`);
+          return {
+            async *[Symbol.asyncIterator]() {
+              await hang(signal);
+            },
+          };
+        },
+      },
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: {
+        resource: { threadId: "t", environmentId: "e" },
+        workspaceRevision: JSON.stringify(["/private/tmp/t3-terminal-v1-host", null]),
+      },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ["a"], activeTerminalId: "a" },
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    const settle = () =>
+      act(async () => {
+        for (let index = 0; index < 8; index++) await drain();
+      });
+    const button = (label) =>
+      renderer.root.find((node) => node.type === "button" && node.children.includes(label));
+    const opens = () =>
+      invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "open");
+    try {
+      await settle();
+      NodeAssert.equal(plainLists.length, 1);
+      NodeAssert.doesNotMatch(
+        JSON.stringify(renderer.toJSON()),
+        /Session list disconnected|not resumable/,
+      );
+      for (const label of ["New terminal", "Split horizontally", "Split vertically"])
+        NodeAssert.equal(button(label).props.disabled, false, label);
+      await act(async () => button("New terminal").props.onClick());
+      await settle();
+      NodeAssert.equal(opens().length, 1);
+      await act(async () => button("Split horizontally").props.onClick());
+      await settle();
+      NodeAssert.equal(opens().length, 2);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  },
+);
