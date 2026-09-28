@@ -5714,8 +5714,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
   // answers each clone-URL lookup with `cloneUrl(lookup)`. GitLab lookups run the real glab
-  // adapter against a glab that resolves its host as the real one does: `--hostname` rejects any
-  // ':', and GITLAB_API_HOST overrides that host's API host.
+  // adapter against a glab whose `--hostname` rejects any ':', as the real one does. A lookup
+  // without `--hostname` reaches glab's default host, reported to `cloneUrl` as no host.
   const setUpForkPullRequest = (input: {
     readonly kind: "github" | "gitlab";
     readonly number: number;
@@ -5751,8 +5751,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               Layer.mock(VcsProcess.VcsProcess)({
                 run: (call) => {
                   const flag = call.args.indexOf("--hostname");
-                  const hostname = flag === -1 ? "gitlab.com" : (call.args[flag + 1] ?? "");
-                  if (hostname.includes(":")) {
+                  const hostname = flag === -1 ? undefined : (call.args[flag + 1] ?? "");
+                  if (hostname?.includes(":")) {
                     return Effect.fail(
                       new VcsProcessExitError({
                         operation: call.operation,
@@ -5767,7 +5767,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                     call.args[1]?.replace(/^projects\//, "") ?? "",
                   );
                   const url = input.cloneUrl({
-                    host: call.env?.GITLAB_API_HOST || hostname,
+                    ...(hostname === undefined ? {} : { host: hostname }),
                     repository,
                   });
                   return Effect.succeed(
@@ -5894,7 +5894,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
       expect(result.isTrackingPullRequestHead).toBe(true);
       expect(lookups.length).toBeGreaterThan(0);
-      expect(lookups.every((host) => host === "forge.example:8443")).toBe(true);
+      // A ported host stays unqualified: glab's default host answers, as before this lane.
+      expect(lookups.every((host) => host === undefined)).toBe(true);
     }),
   );
 

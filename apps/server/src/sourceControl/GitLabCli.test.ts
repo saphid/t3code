@@ -190,9 +190,9 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  // Answers `glab api projects/<repo>` as glab resolves its API host: `--hostname` must be a bare
-  // hostname (glab's HostnameValidator rejects any ':'), and GITLAB_API_HOST overrides that host's
-  // configured API host. The project's URLs name the authority the request reached.
+  // Answers `glab api projects/<repo>` as glab resolves its host: `--hostname` must be a bare
+  // hostname (glab's HostnameValidator rejects any ':'), and glab's default host answers otherwise.
+  // The project's URLs name the host the request reached.
   const fakeGlabApi: VcsProcess.VcsProcess["Service"]["run"] = (input) => {
     const flag = input.args.indexOf("--hostname");
     const hostname = flag === -1 ? "gitlab.com" : (input.args[flag + 1] ?? "");
@@ -207,14 +207,13 @@ layer("GitLabCli.layer", (it) => {
         }),
       );
     }
-    const authority = input.env?.GITLAB_API_HOST || hostname;
     const repository = decodeURIComponent(input.args[1]?.replace(/^projects\//, "") ?? "");
     return Effect.succeed(
       processOutput(
         JSON.stringify({
           path_with_namespace: repository,
-          web_url: `https://${authority}/${repository}`,
-          http_url_to_repo: `https://${authority}/${repository}.git`,
+          web_url: `https://${hostname}/${repository}`,
+          http_url_to_repo: `https://${hostname}/${repository}.git`,
           ssh_url_to_repo: `git@${hostname}:${repository}.git`,
         }),
       ),
@@ -223,11 +222,11 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect.each([
     {
-      name: "a ported host through its hostname and API host",
+      name: "glab's default host when the host has a port",
       host: "gitlab-b.example:8443",
-      args: ["api", "projects/alex%2Frepo", "--hostname", "gitlab-b.example"],
-      env: { GITLAB_API_HOST: "gitlab-b.example:8443" },
-      url: "https://gitlab-b.example:8443/alex/repo",
+      args: ["api", "projects/alex%2Frepo"],
+      env: undefined,
+      url: "https://gitlab.com/alex/repo",
     },
     {
       name: "an ordinary host through its hostname",
