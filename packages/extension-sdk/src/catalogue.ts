@@ -5707,7 +5707,11 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * engine host to show (or close) the guest in its native PiP window — page
  * pixels leave the panel, so it needs its own `t3.browser/picture-in-picture`
  * grant and does NOT need `t3.browser/operate` (neither grant implies the
- * other). The observed state rides the ordinary session projection as
+ * other). The owning desktop host runs the PiP window and its lifecycle; a
+ * caller only asks and observes. Unlike DevTools, it acts on any session the
+ * caller can read in its thread (native, agent-opened or another
+ * installation's), as the native panel's pop-out does. The observed state
+ * rides the ordinary session projection as
  * `pictureInPicture` (null until the owner host reports). A session whose
  * guest is recovering or crashed fails it by name
  * (`BrowserSessionEngineNotLive`), as does one with no host (desktop-required).

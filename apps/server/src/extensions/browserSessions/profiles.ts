@@ -48,7 +48,7 @@ import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
 import { failure, named, operationError, projectSession } from "./v1.ts";
-import { type BrowserFaviconAssets, makeBrowserFaviconAssets } from "./faviconAssets.ts";
+import type { BrowserFaviconAssets } from "./faviconAssets.ts";
 
 const OPERATION = "browser.profiles";
 /** Room after the host's import wait for the post-checks, inside the broker deadline. */
@@ -101,11 +101,11 @@ export function createBrowserProfilesApiProvider(
     /** The host's import wait (`BrowserEngineHosts.ImportAckTimeoutMs`). */
     readonly importAckTimeoutMs: number;
     /** Shared with the sessions provider so projected favicon refs resolve there. */
-    readonly favicons?: BrowserFaviconAssets;
+    readonly favicons: BrowserFaviconAssets;
   },
 ): HostApiProvider {
   const resolve = makeExtensionScopeResolver(dependencies);
-  const favicons = dependencies.favicons ?? makeBrowserFaviconAssets();
+  const favicons = dependencies.favicons;
   /** Same shape as the sessions provider's projector: capture scoped to one project. */
   const captureFor = (projectId: string | undefined) => (dataUrl: string) =>
     projectId === undefined ? null : favicons.capture(projectId, dataUrl);
@@ -391,17 +391,17 @@ export function createBrowserProfilesApiProvider(
   };
 }
 
-export const makeBrowserProfilesApiProvider = Effect.fn("BrowserProfilesApi.make")(function* (
-  input?: { readonly favicons?: BrowserFaviconAssets },
-) {
-  const environment = yield* ServerEnvironment;
-  return createBrowserProfilesApiProvider({
-    environmentId: yield* environment.getEnvironmentId,
-    projects: yield* ProjectionProjectRepository,
-    threads: yield* ProjectionThreadRepository,
-    preview: yield* PreviewManager.PreviewManager,
-    engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
-    importAckTimeoutMs: yield* BrowserEngineHosts.ImportAckTimeoutMs,
-    ...(input?.favicons === undefined ? {} : { favicons: input.favicons }),
-  });
-});
+export const makeBrowserProfilesApiProvider = Effect.fn("BrowserProfilesApi.make")(
+  function* (input: { readonly favicons: BrowserFaviconAssets }) {
+    const environment = yield* ServerEnvironment;
+    return createBrowserProfilesApiProvider({
+      environmentId: yield* environment.getEnvironmentId,
+      projects: yield* ProjectionProjectRepository,
+      threads: yield* ProjectionThreadRepository,
+      preview: yield* PreviewManager.PreviewManager,
+      engineHosts: yield* BrowserEngineHosts.BrowserEngineHosts,
+      importAckTimeoutMs: yield* BrowserEngineHosts.ImportAckTimeoutMs,
+      favicons: input.favicons,
+    });
+  },
+);

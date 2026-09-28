@@ -43,6 +43,7 @@ import * as Stream from "effect/Stream";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as BrowserEngineHosts from "../../preview/BrowserEngineHosts.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import { type BrowserFaviconAssets, makeBrowserFaviconAssets } from "./faviconAssets.ts";
 import { createBrowserProfilesApiProvider } from "./profiles.ts";
 import { createBrowserSessionsApiProvider } from "./v1.ts";
 
@@ -98,6 +99,7 @@ const threads = {
 const deps = (
   preview: PreviewManager.PreviewManager["Service"],
   engineHosts: BrowserEngineHosts.BrowserEngineHosts["Service"],
+  favicons: BrowserFaviconAssets,
   importAckTimeoutMs = BrowserEngineHosts.IMPORT_ACK_TIMEOUT_MS,
 ) => ({
   environmentId: ENV_ID,
@@ -112,6 +114,7 @@ const deps = (
   threads,
   preview,
   engineHosts,
+  favicons,
   importAckTimeoutMs,
 });
 
@@ -120,11 +123,15 @@ const harnessWith = (options: { readonly importAckTimeoutMs?: number }) =>
     const preview = yield* PreviewManager.PreviewManager;
     const engineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
     const importAckTimeoutMs = yield* BrowserEngineHosts.ImportAckTimeoutMs;
+    // One store for both providers, as the environment wires them.
+    const favicons = makeBrowserFaviconAssets();
     return {
       preview,
       engineHosts,
-      profiles: createBrowserProfilesApiProvider(deps(preview, engineHosts, importAckTimeoutMs)),
-      sessions: createBrowserSessionsApiProvider(deps(preview, engineHosts)),
+      profiles: createBrowserProfilesApiProvider(
+        deps(preview, engineHosts, favicons, importAckTimeoutMs),
+      ),
+      sessions: createBrowserSessionsApiProvider(deps(preview, engineHosts, favicons)),
     };
   }).pipe(
     Effect.provide(

@@ -14584,6 +14584,70 @@ ${ind(d)}}`;
   // favicon.tsx
   var import_react2 = __toESM(require_react(), 1);
 
+  // faviconReads.ts
+  var SETTLED_REFS_MAX = 4096;
+  function createFaviconReadQueue(options) {
+    const queued = /* @__PURE__ */ new Map();
+    const running = /* @__PURE__ */ new Map();
+    const settled = /* @__PURE__ */ new Set();
+    const finish = (ref, src) => {
+      settled.add(ref);
+      if (settled.size > SETTLED_REFS_MAX) settled.delete(settled.values().next().value);
+      options.settle(ref, src);
+    };
+    const start = (ref, views, read) => {
+      const controller = new AbortController();
+      const joined = /* @__PURE__ */ new Set();
+      const release = () => {
+        for (const signal of joined) if (!signal.aborted) return;
+        controller.abort();
+      };
+      const join = (signal) => {
+        joined.add(signal);
+        signal.addEventListener("abort", release, { once: true });
+      };
+      running.set(ref, { controller, join });
+      for (const signal of views.keys()) join(signal);
+      read(ref, controller.signal).then(
+        (src) => finish(ref, src),
+        () => {
+          if (!controller.signal.aborted) finish(ref, null);
+        }
+      ).finally(() => {
+        for (const signal of joined) signal.removeEventListener("abort", release);
+        running.delete(ref);
+        pump();
+      });
+    };
+    const pump = () => {
+      for (const [ref, views] of queued) {
+        if (running.size >= options.maxInFlight) return;
+        for (const signal of views.keys()) if (signal.aborted) views.delete(signal);
+        const read = views.values().next().value;
+        if (read === void 0 || settled.has(ref)) {
+          queued.delete(ref);
+          continue;
+        }
+        if (running.has(ref)) continue;
+        queued.delete(ref);
+        start(ref, views, read);
+      }
+    };
+    return {
+      request(refs, read, signal) {
+        if (signal.aborted) return;
+        for (const ref of refs) {
+          if (settled.has(ref)) continue;
+          const reading = running.get(ref);
+          if (reading && !reading.controller.signal.aborted) reading.join(signal);
+          else queued.set(ref, (queued.get(ref) ?? /* @__PURE__ */ new Map()).set(signal, read));
+        }
+        pump();
+      },
+      inFlight: () => running.size
+    };
+  }
+
   // node_modules/@t3tools/shared/src/hostClassification.ts
   var normalizeHostname = (host) => host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/u, "");
   var parseIpv4Address = (host) => {
@@ -14695,15 +14759,18 @@ ${ind(d)}}`;
   var FAVICON_CACHE_MAX_ENTRIES = 40;
   var FAVICON_PROVIDER_SIZE = 32;
   var FAVICON_FAILURE_TTL_MS = 5 * 6e4;
+  var MAX_FAVICON_READS = 8;
+  var FAVICON_REF_MAX_ENTRIES = 256;
   function emptyFaviconCache() {
-    return { byOrigin: {}, captured: {} };
+    return { byOrigin: {}, captured: {}, resolved: {} };
   }
-  function capEntries(entries, stamp) {
+  function capEntries(entries, stamp, max = FAVICON_CACHE_MAX_ENTRIES, pinned = /* @__PURE__ */ new Set()) {
     const keys = Object.keys(entries);
-    if (keys.length <= FAVICON_CACHE_MAX_ENTRIES) return entries;
-    const keep = new Set(
-      keys.toSorted((left, right) => stamp(entries[right]) - stamp(entries[left])).slice(0, FAVICON_CACHE_MAX_ENTRIES)
-    );
+    if (keys.length <= max) return entries;
+    const keep = /* @__PURE__ */ new Set([
+      ...keys.filter((key) => pinned.has(key)),
+      ...keys.filter((key) => !pinned.has(key)).toSorted((left, right) => stamp(entries[right]) - stamp(entries[left])).slice(0, Math.max(0, max - pinned.size))
+    ]);
     return Object.fromEntries(keys.filter((key) => keep.has(key)).map((key) => [key, entries[key]]));
   }
   function formatFaviconHost(host) {
@@ -14737,23 +14804,65 @@ ${ind(d)}}`;
     };
   }
   var CAPTURED_SRC = /^data:image\/[a-z.+-]+;base64,/i;
-  function recordCapturedFavicon(cache2, rawUrl, favicon, at) {
+  function dropCapturedFavicon(cache2, rawUrl, ref) {
     const key = faviconOriginKey(rawUrl);
-    if (!key || !CAPTURED_SRC.test(favicon.src)) return cache2;
-    if (cache2.captured[key]?.ref === favicon.ref) return cache2;
+    const originCapture = key ? cache2.captured[key] : void 0;
+    const brokenRef = ref ?? originCapture?.ref;
+    if (!key || !brokenRef) return cache2;
+    const resolved = cache2.resolved[brokenRef];
+    if (resolved?.src === null && originCapture?.ref !== brokenRef) return cache2;
+    const captured = { ...cache2.captured };
+    if (originCapture?.ref === brokenRef) delete captured[key];
     return {
       ...cache2,
-      captured: capEntries(
-        { ...cache2.captured, [key]: { ref: favicon.ref, src: favicon.src, capturedAt: at } },
-        (entry) => entry.capturedAt
+      captured,
+      resolved: {
+        ...cache2.resolved,
+        [brokenRef]: {
+          src: null,
+          resolvedAt: resolved?.resolvedAt ?? originCapture?.capturedAt ?? 0
+        }
+      }
+    };
+  }
+  function recordResolvedFaviconRef(cache2, ref, src, at) {
+    const image = src !== null && CAPTURED_SRC.test(src) ? src : null;
+    const existing = cache2.resolved[ref];
+    if (existing && existing.src === image) return cache2;
+    return {
+      ...cache2,
+      resolved: capEntries(
+        { ...cache2.resolved, [ref]: { src: image, resolvedAt: at } },
+        (entry) => entry.resolvedAt,
+        FAVICON_REF_MAX_ENTRIES
       )
     };
   }
-  function dropCapturedFavicon(cache2, rawUrl) {
-    const key = faviconOriginKey(rawUrl);
-    if (!key || !cache2.captured[key]) return cache2;
-    const { [key]: _dropped, ...captured } = cache2.captured;
-    return { ...cache2, captured };
+  function applyResolvedFaviconRefs(cache2, sessions, at) {
+    const refsByOrigin = /* @__PURE__ */ new Map();
+    for (const session of sessions) {
+      const ref = session.faviconRef;
+      const key = session.navigation.url ? faviconOriginKey(session.navigation.url) : null;
+      if (!ref || !key || !cache2.resolved[ref]?.src) continue;
+      refsByOrigin.set(key, [...refsByOrigin.get(key) ?? [], ref]);
+    }
+    const updates = {};
+    for (const [key, refs] of refsByOrigin) {
+      const current = cache2.captured[key]?.ref;
+      if (current !== void 0 && refs.includes(current)) continue;
+      const ref = refs.at(-1);
+      updates[key] = { ref, src: cache2.resolved[ref].src, capturedAt: at };
+    }
+    if (Object.keys(updates).length === 0) return cache2;
+    return {
+      ...cache2,
+      captured: capEntries(
+        { ...cache2.captured, ...updates },
+        (entry) => entry.capturedAt,
+        FAVICON_CACHE_MAX_ENTRIES,
+        new Set(refsByOrigin.keys())
+      )
+    };
   }
   function expireStaleFaviconFailure(cache2, rawUrl, now) {
     const key = rawUrl ? faviconOriginKey(rawUrl) : null;
@@ -14772,32 +14881,34 @@ ${ind(d)}}`;
       return "\u2022";
     }
   }
-  function resolveFavicon(cache2, rawUrl) {
+  function resolveFavicon(cache2, rawUrl, ref) {
     if (!rawUrl) return GLYPH;
     const key = faviconOriginKey(rawUrl);
     if (!key) return GLYPH;
+    const own = ref ? cache2.resolved[ref]?.src : null;
+    if (ref && own) return { kind: "image", src: own, tier: "captured", ref };
     const captured = cache2.captured[key];
-    if (captured) return { kind: "image", src: captured.src, tier: "captured" };
+    if (captured) return { kind: "image", src: captured.src, tier: "captured", ref: captured.ref };
     if (cache2.byOrigin[key]) return GLYPH;
     const src = faviconUrlForOrigin(rawUrl, FAVICON_PROVIDER_SIZE);
     return src ? { kind: "image", src, tier: "provider" } : GLYPH;
   }
-  function pendingFaviconRefs(cache2, sessions, attempted) {
-    const pending = /* @__PURE__ */ new Map();
+  function pendingFaviconRefs(cache2, sessions) {
+    const pending = /* @__PURE__ */ new Set();
     for (const session of sessions) {
       const ref = session.faviconRef;
       const url = session.navigation.url;
-      if (!ref || !url || attempted.has(ref) || pending.has(ref)) continue;
+      if (!ref || !url || cache2.resolved[ref]) continue;
       const key = faviconOriginKey(url);
       if (!key || cache2.captured[key]?.ref === ref) continue;
-      pending.set(ref, url);
+      pending.add(ref);
     }
-    return [...pending].map(([ref, url]) => ({ ref, url }));
+    return [...pending];
   }
   function panelTabIndicators(cache2, presented, sessions) {
     const rawUrl = presented ? presented.navigation.url ?? presented.requestedUrl : null;
     const pageUrl = rawUrl && rawUrl.length <= 2048 && faviconOriginKey(rawUrl) ? rawUrl : null;
-    const resolution = resolveFavicon(cache2, pageUrl);
+    const resolution = resolveFavicon(cache2, pageUrl, presented?.faviconRef);
     const audible = sessions.filter((session) => session.audible === true);
     const audio = audible.some((session) => session.audioMuted !== true) ? "audible" : audible.length > 0 ? "muted" : null;
     if (pageUrl === null && audio === null) return null;
@@ -14814,30 +14925,30 @@ ${ind(d)}}`;
   var listeners = /* @__PURE__ */ new Set();
   var cache = emptyFaviconCache();
   var version = 0;
-  var attemptedRefs = /* @__PURE__ */ new Set();
-  var MAX_ATTEMPTED_REFS = 256;
   function commit(next) {
     if (next === cache) return;
     cache = next;
     version += 1;
     for (const listener of listeners) listener();
   }
-  function faviconImageFailed(rawUrl, tier) {
+  function faviconImageFailed(rawUrl, shown) {
     commit(
-      tier === "captured" ? dropCapturedFavicon(cache, rawUrl) : recordProviderFaviconFailure(cache, rawUrl, Date.now())
+      shown.tier === "captured" ? dropCapturedFavicon(cache, rawUrl, shown.ref) : recordProviderFaviconFailure(cache, rawUrl, Date.now())
     );
   }
+  var reads = createFaviconReadQueue({
+    maxInFlight: MAX_FAVICON_READS,
+    settle: (ref, src) => commit(recordResolvedFaviconRef(cache, ref, src, Date.now()))
+  });
   function resolveSessionFavicons(api, sessions, signal) {
-    for (const { ref, url } of pendingFaviconRefs(cache, sessions, attemptedRefs)) {
-      if (attemptedRefs.size >= MAX_ATTEMPTED_REFS) attemptedRefs.clear();
-      attemptedRefs.add(ref);
-      api.invoke("getFavicon", { ref }, signal).then(
-        (favicon) => commit(recordCapturedFavicon(cache, url, { ref, src: favicon.dataUrl }, Date.now())),
-        () => {
-          if (signal.aborted) attemptedRefs.delete(ref);
-        }
-      );
-    }
+    reads.request(
+      pendingFaviconRefs(cache, sessions),
+      (ref, readSignal) => api.invoke("getFavicon", { ref }, readSignal).then((favicon) => favicon.dataUrl),
+      signal
+    );
+  }
+  function applySessionFavicons(rendered, sessions) {
+    if (rendered === cache.resolved) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
   }
   function useFaviconCache() {
     (0, import_react2.useSyncExternalStore)(subscribe, () => version);
@@ -14849,16 +14960,17 @@ ${ind(d)}}`;
       listeners.delete(listener);
     };
   }
-  function useFaviconResolution(url) {
+  function useFaviconResolution(url, ref) {
     (0, import_react2.useSyncExternalStore)(subscribe, () => version);
     (0, import_react2.useEffect)(() => {
       commit(expireStaleFaviconFailure(cache, url, Date.now()));
     }, [url]);
-    return resolveFavicon(cache, url);
+    return resolveFavicon(cache, url, ref);
   }
   function BrowserFavicon(props) {
     const size = props.size ?? 12;
-    const resolution = useFaviconResolution(props.url);
+    const ref = props.faviconRef ?? null;
+    const resolution = useFaviconResolution(props.url, ref);
     const box = {
       width: size,
       height: size,
@@ -14892,7 +15004,7 @@ ${ind(d)}}`;
         width: size,
         height: size,
         style: { ...box, objectFit: "contain" },
-        onError: () => faviconImageFailed(props.url ?? "", resolution.tier)
+        onError: () => faviconImageFailed(props.url ?? "", resolution)
       }
     );
   }
@@ -17073,6 +17185,8 @@ ${ind(d)}}`;
         session.signal
       );
     }, [host, session, tabs]);
+    const resolvedFaviconRefs = faviconCache.resolved;
+    (0, import_react7.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
     (0, import_react7.useEffect)(() => {
       if (typeof session.setTabIndicators !== "function") return;
       const indicators = panelTabIndicators(faviconCache, live, tabs);
@@ -17661,7 +17775,7 @@ ${titledTitle}`;
                             ...active ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: tabUrl }),
+                            /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(BrowserFavicon, { url: tabUrl, faviconRef: tab.faviconRef }),
                             /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
                           ]
                         }
