@@ -12853,6 +12853,22 @@ var __t3Client = (() => {
       }
       return terminalId;
     }
+    /**
+     * Starts the shown panes the server has no session for — a restored tab
+     * after an app or server restart. Native attaches every pane it shows with
+     * its launch cwd, which spawns a fresh shell for a missing session; this
+     * does the same once the list is live, so the pane does not sit closed
+     * until Start. A server row (even an exited one) or a failed start is left
+     * for the user, as native leaves it.
+     */
+    startMissingSessions(terminalIds) {
+      if (this.#disposed || this.#stream !== "live") return;
+      for (const terminalId of terminalIds) {
+        const tab = this.#tabs.get(terminalId);
+        if (tab && tab.meta === null && !tab.starting && tab.error === null)
+          void this.startSession(terminalId);
+      }
+    }
     /** Attach a tracked id that has no live metadata (restore/edge). */
     async startSession(terminalId) {
       const launch = this.#launch;
@@ -15855,6 +15871,10 @@ var __t3Client = (() => {
       ...snapshot.terminalIds.filter((id2) => !visibleSet.has(id2))
     ];
     const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
+    const missingShownKey = visibleTerminalIds.filter((id2) => tabById.get(id2)?.status === "closed").join("\n");
+    (0, import_react2.useEffect)(() => {
+      if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));
+    }, [panel, visible, missingShownKey, snapshot.stream]);
     const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
     const splitLimitNote = hasReachedSplitLimit ? `max ${MAX_TERMINALS_PER_GROUP} per group` : null;
     const newTerminalLabel = terminalActionLabel("New Terminal", shortcutLabel("terminal.new"));

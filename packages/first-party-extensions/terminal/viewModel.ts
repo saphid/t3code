@@ -1176,6 +1176,23 @@ export class TerminalPanel {
     return terminalId;
   }
 
+  /**
+   * Starts the shown panes the server has no session for — a restored tab
+   * after an app or server restart. Native attaches every pane it shows with
+   * its launch cwd, which spawns a fresh shell for a missing session; this
+   * does the same once the list is live, so the pane does not sit closed
+   * until Start. A server row (even an exited one) or a failed start is left
+   * for the user, as native leaves it.
+   */
+  startMissingSessions(terminalIds: readonly string[]) {
+    if (this.#disposed || this.#stream !== "live") return;
+    for (const terminalId of terminalIds) {
+      const tab = this.#tabs.get(terminalId);
+      if (tab && tab.meta === null && !tab.starting && tab.error === null)
+        void this.startSession(terminalId);
+    }
+  }
+
   /** Attach a tracked id that has no live metadata (restore/edge). */
   async startSession(terminalId: string): Promise<void> {
     const launch = this.#launch;

@@ -86,6 +86,9 @@ stream — the host caps each installation at 8 concurrent plugin streams,
 and the sessions/theme feeds already take 3, so attaching every tracked
 session at once would starve the sessions stream itself. Hidden panes
 re-attach and resume their retained history when their group is shown.
+A shown pane whose session the server no longer has (after an app or
+backend restart) starts a fresh shell once the session list is live, as
+the native drawer does when it attaches the panes it shows.
 
 The surface declares `claimsTerminalFocus`, so the host tags the frame
 `data-terminal-owner="extension"` and leaves the four focused terminal

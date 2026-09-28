@@ -408,6 +408,33 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
     NodeAssert.deepEqual(reconcileTerminalIds(["c", "a", "b"], ["a", "c", "d"]), ["c", "a", "d"]);
   });
 
+  NodeTest.it(
+    "starts shown restored ids only once the live list lacks them (fix-d9 O2)",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({
+        control,
+        launch,
+        restored: { terminalIds: ["term-1", "term-2", "term-3"], activeTerminalId: "term-1" },
+      });
+      // Before the first snapshot nothing is known to be missing.
+      panel.startMissingSessions(["term-1", "term-2", "term-3"]);
+      NodeAssert.deepEqual(control.calls, []);
+      // The restarted server still has term-2 (exited); term-1 and term-3 are gone.
+      panel.applySessionsEvent({
+        kind: "snapshot",
+        terminals: [{ ...meta("term-2"), status: "exited" }],
+      });
+      panel.startMissingSessions(["term-1", "term-2"]);
+      await Promise.resolve();
+      NodeAssert.deepEqual(
+        control.calls.map(([op, input]) => [op, input.terminalId, input.cwd]),
+        [["attach", "term-1", launch.cwd]],
+      );
+      panel.dispose();
+    },
+  );
+
   NodeTest.it("a restored tab order survives reconcile and is what gets saved", () => {
     const saved = [];
     let panel;

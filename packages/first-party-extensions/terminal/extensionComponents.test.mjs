@@ -1040,6 +1040,79 @@ NodeTest.describe(
   },
 );
 
+// fix-d9 O2: after an app/backend restart the restored pane sat "closed"
+// until Start was clicked. Native attaches every pane it shows with the
+// launch cwd, which starts a session the server no longer has.
+NodeTest.test("a shown restored pane with no server session starts without a click", async () => {
+  const drain = () => new Promise((resolve) => setImmediate(resolve));
+  const invokes = [];
+  const host = {
+    readAsset: async (path) => ({
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: path.endsWith(".woff2")
+        ? "font/woff2"
+        : path.endsWith(".txt")
+          ? "text/plain"
+          : "application/wasm",
+      sha256: "0".repeat(64),
+    }),
+    invokeApi: async (request) => {
+      invokes.push({ id: request.id, method: request.method, input: request.input });
+      if (request.id === "t3.terminal/control" && request.method === "attach")
+        return sessionMetadata(request.input.terminalId);
+      if (request.id === "t3.ui/theme" && request.method === "getTokens")
+        return { tokens: {}, cssVars: {} };
+      return { commandSetToken: "token", results: [] };
+    },
+    subscribeApi: (request, signal) => ({
+      async *[Symbol.asyncIterator]() {
+        // The restarted server lists no sessions for this thread.
+        if (request.id === "t3.terminal/sessions" && request.name === "list")
+          yield { value: { kind: "snapshot", terminals: [] } };
+        await new Promise((resolve) =>
+          signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+    }),
+  };
+  const session = {
+    signal: new AbortController().signal,
+    context: {
+      resource: { threadId: "t", environmentId: "e" },
+      workspaceRevision: JSON.stringify(["/ws/root", null]),
+    },
+    visible: true,
+    save() {},
+    onVisibility: () => () => {},
+    bindCommands: () => () => {},
+    // r1 is shown; r2 is in another group, so it stays mounted offscreen.
+    restoreState: { terminalIds: ["r1", "r2"], activeTerminalId: "r1" },
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+      createNodeMock: nodeMock,
+    });
+  });
+  try {
+    for (let attempt = 0; attempt < 10; attempt++)
+      await act(async () => {
+        await drain();
+      });
+    const controls = invokes.filter(
+      (entry) => entry.id === "t3.terminal/control" && entry.method !== "resize",
+    );
+    NodeAssert.deepEqual(
+      controls.map(({ method, input }) => [method, input.terminalId, input.cwd]),
+      [["attach", "r1", "/ws/root"]],
+    );
+  } finally {
+    await act(async () => {
+      renderer.unmount();
+    });
+  }
+});
+
 NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   const drain = () => new Promise((resolve) => setImmediate(resolve));
   // The stub class exists only inside the esbuild bundle; it publishes itself.
