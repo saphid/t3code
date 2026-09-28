@@ -245,6 +245,10 @@ async function setup() {
   const frames: string[] = [];
   const replies: ClientProvidersRespondInput[] = [];
   let connectionId: string | undefined;
+  // Receipts: each resolves when the server or the client actually gets that far.
+  const registered = gate();
+  const cancelled = gate();
+  const replied = gate();
   socket.stream = (
     _environmentId: string,
     input: { providers: { id: string; version: string }[] },
@@ -258,17 +262,24 @@ async function setup() {
       Stream.tap((frame: ClientProviderServerFrame) =>
         Effect.sync(() => {
           frames.push(frame.type);
-          if (frame.type === "registered") connectionId = frame.connectionId;
+          if (frame.type === "registered") {
+            connectionId = frame.connectionId;
+            registered.resolve();
+          }
+          if (frame.type === "cancel") cancelled.resolve();
         }),
       ),
     );
   socket.respond = (_environmentId: string, payload: ClientProvidersRespondInput) => {
     replies.push(payload);
+    replied.resolve();
     return seam.respond(connectionId!, payload).pipe(Effect.ignore, Effect.as(null));
   };
 
   const steps: string[] = [];
   let signal: AbortSignal | undefined;
+  let invoked: Promise<unknown> | undefined;
+  let prepared: Promise<unknown> | undefined;
   const held = gate();
   const reached = gate();
   const provider = createPrHandoffClientProvider(
@@ -283,15 +294,16 @@ async function setup() {
         steps.push(workspace === undefined ? "open" : "point");
         return { draftId: NEW_DRAFT, threadId: NEW_THREAD };
       },
-      prepare: async () => {
-        steps.push("prepare");
-        reached.resolve();
-        await held.promise;
-        return {
-          ok: true as const,
-          value: { branch: "feat/x", worktreePath: "/work/wt", isOnPullRequestHead: true },
-        };
-      },
+      prepare: () =>
+        (prepared = (async () => {
+          steps.push("prepare");
+          reached.resolve();
+          await held.promise;
+          return {
+            ok: true as const,
+            value: { branch: "feat/x", worktreePath: "/work/wt", isOnPullRequestHead: true },
+          };
+        })()),
     },
   );
   const connection = startClientProviderConnection({
@@ -302,7 +314,9 @@ async function setup() {
         {
           invoke: (call) => {
             signal = call.signal;
-            return provider.invoke(call);
+            const invocation = Promise.resolve(provider.invoke(call));
+            invoked = invocation.catch(() => {});
+            return invocation;
           },
         },
       ],
@@ -315,7 +329,7 @@ async function setup() {
     connection.stop();
     await runtime.dispose();
   });
-  await vi.waitFor(() => expect(connectionId).toBeDefined());
+  await registered.promise;
 
   let installations: readonly Installation[] = [record];
   const broker = createApiBroker({
@@ -384,7 +398,17 @@ async function setup() {
     steps,
     outcome,
     signal: () => signal!,
-    release: () => held.resolve(),
+    cancelled: cancelled.promise,
+    replied: replied.promise,
+    /**
+     * Releases the held checkout, then waits for it to return and for the client's handling of the
+     * call to run to its end, so anything the late result could start has already happened.
+     */
+    releaseAndDrain: async () => {
+      held.resolve();
+      await prepared;
+      await invoked;
+    },
     advance: (ms: number) => runtime.runPromise(TestClock.adjust(ms)),
     uninstall: () => {
       installations = [];
@@ -392,9 +416,6 @@ async function setup() {
     },
   };
 }
-
-/** Lets the released host step and anything it would start run to the end. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const CHECKOUT_STOPPED = {
   type: "warning",
@@ -409,16 +430,18 @@ describe("a handoff whose call ends while the checkout is still running", () => 
     expect(await handoff.outcome).toEqual({
       error: "client-request-timeout: Client provider request timed out.",
     });
-    await vi.waitFor(() => expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]));
-    await vi.waitFor(() => expect(handoff.signal().aborted).toBe(true));
-    await vi.waitFor(() => expect(handoff.replies).toHaveLength(1));
+    // The server cancels the call and the client answers while the checkout is still held.
+    await handoff.cancelled;
+    await handoff.replied;
+    expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]);
+    expect(handoff.signal().aborted).toBe(true);
     // The client answered, so its pending entry is gone, and the spinner says where it stopped.
-    expect(handoff.replies[0]).toMatchObject({ ok: false });
+    expect(handoff.replies).toEqual([expect.objectContaining({ ok: false })]);
     expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
 
-    handoff.release();
-    await settle();
+    await handoff.releaseAndDrain();
     expect(handoff.steps).toEqual(["open", "prepare"]);
+    expect(handoff.replies).toHaveLength(1);
     expect(useComposerDraftStore.getState().getComposerDraft(NEW_DRAFT)?.prompt ?? "").toBe("");
     expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
   });
@@ -427,14 +450,15 @@ describe("a handoff whose call ends while the checkout is still running", () => 
     const handoff = await setup();
     handoff.uninstall();
     expect(await handoff.outcome).toEqual({ error: "API configuration changed" });
-    await vi.waitFor(() => expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]));
-    await vi.waitFor(() => expect(handoff.signal().aborted).toBe(true));
-    await vi.waitFor(() => expect(handoff.replies).toHaveLength(1));
+    await handoff.cancelled;
+    await handoff.replied;
+    expect(handoff.frames).toEqual(["registered", "invoke", "cancel"]);
+    expect(handoff.signal().aborted).toBe(true);
     expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
 
-    handoff.release();
-    await settle();
+    await handoff.releaseAndDrain();
     expect(handoff.steps).toEqual(["open", "prepare"]);
+    expect(handoff.replies).toHaveLength(1);
     expect([...toasts.values()]).toEqual([CHECKOUT_STOPPED]);
   });
 });
