@@ -7801,6 +7801,16 @@ var __t3Client = (() => {
     const { version, Tooltip: Tooltip2 } = member;
     return Number.isInteger(version) && version >= 1 && isComponentType(Tooltip2) ? member : null;
   }
+  function isComponent(value) {
+    return typeof value === "function" || typeof value === "object" && value !== null && "$$typeof" in value;
+  }
+  function resolveFloatingLayer(host) {
+    const member = host.floatingLayer;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, Popover } = member;
+    return typeof version === "number" && version >= 1 && isComponent(Popover) ? member : null;
+  }
   function validateEntry(value) {
     if (typeof value !== "string" || value.length > 240 || !/\.(mjs|js)$/.test(value) || value.split("/").some((part) => !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part) || part === "." || part === ".."))
       throw new Error("Entry must be a package-relative bundled ESM .mjs or .js file");
@@ -11273,6 +11283,92 @@ ${writeKey}`;
       )
     ] });
   }
+  function ConfirmDialog(props) {
+    const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
+    const titleId = (0, import_react.useId)();
+    const descriptionId = (0, import_react.useId)();
+    const cancel = (0, import_react.useRef)(null);
+    const confirm = (0, import_react.useRef)(null);
+    const opener = (0, import_react.useRef)(anchor);
+    (0, import_react.useEffect)(() => {
+      cancel.current?.focus();
+      const returnTo = opener.current;
+      return () => returnTo?.focus();
+    }, []);
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!pending) onCancel();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      const order = pending ? [] : [cancel.current, confirm.current].filter((item) => item !== null);
+      if (order.length === 0) return;
+      const focused = typeof document === "undefined" ? null : document.activeElement;
+      const at = order.findIndex((item) => item === focused);
+      const next = event.shiftKey ? at <= 0 ? order.length - 1 : at - 1 : (at + 1) % order.length;
+      order[next]?.focus();
+    };
+    const dialogProps = {
+      role: "dialog",
+      "aria-modal": true,
+      "aria-labelledby": titleId,
+      "aria-describedby": descriptionId,
+      onKeyDown
+    };
+    const surface = {
+      width: 360,
+      maxWidth: "calc(100vw - 24px)",
+      padding: "10px 12px",
+      border,
+      borderRadius: 8,
+      fontSize: 12,
+      color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+      background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+      boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)"
+    };
+    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted }, children: description }),
+      props.children,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            ref: cancel,
+            type: "button",
+            disabled: pending,
+            onClick: onCancel,
+            style: { ...control, fontSize: 12, border },
+            children: "Cancel"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            ref: confirm,
+            type: "button",
+            disabled: pending,
+            onClick: onConfirm,
+            style: { ...control, fontSize: 12, border },
+            children: pending ? "Working\u2026" : confirmLabel
+          }
+        )
+      ] })
+    ] });
+    const Popover = resolveFloatingLayer(host)?.Popover;
+    if (Popover !== void 0 && anchor !== null)
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Popover, { ...dialogProps, anchor, side: "bottom", align: "start", style: surface, children: body });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "div",
+      {
+        ...dialogProps,
+        style: { ...surface, position: "absolute", top: 36, left: 10, zIndex: 20 },
+        children: body
+      }
+    );
+  }
   function ReceiptLine({ receipt: receipt2 }) {
     if (receipt2 === null) return null;
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: receipt2.tone === "error" ? "alert" : "status", style: { ...noteStyle, fontSize: 12 }, children: [
@@ -11379,6 +11475,7 @@ ${writeKey}`;
     const [writeState, setWriteState] = (0, import_react.useState)(null);
     const [openError, setOpenError] = (0, import_react.useState)(null);
     const [stackConfirm, setStackConfirm] = (0, import_react.useState)(null);
+    const stackMergeOpener = (0, import_react.useRef)(null);
     const [stackReceipt, setStackReceipt] = (0, import_react.useState)(null);
     const [handoff, setHandoff] = (0, import_react.useState)(null);
     const [handoffReceipt, setHandoffReceipt] = (0, import_react.useState)(null);
@@ -11635,15 +11732,24 @@ ${thread.id}`;
       );
     };
     const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
+    const confirming = stackConfirm !== null && stackConfirm.refKey === selectedKey && stackMerge !== null ? stackConfirm : null;
+    const closeConfirmation = () => setStackConfirm(null);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
         "aria-label": "Pull requests",
-        style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
+        style: {
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          position: "relative"
+        },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "div",
             {
+              inert: confirming !== null,
               style: {
                 display: "flex",
                 alignItems: "center",
@@ -11704,7 +11810,7 @@ ${thread.id}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { inert: confirming !== null, style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
             gate.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Reading pull-request capabilities\u2026" }),
             gate.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
               "Pull requests unavailable \u2014 ",
@@ -12006,65 +12112,16 @@ ${thread.id}`;
                           {
                             type: "button",
                             disabled: stackMerge.disabled || writeState?.pending === true,
-                            onClick: () => setStackConfirm(selectedKey),
+                            ref: stackMergeOpener,
+                            onClick: () => selectedKey !== null && setStackConfirm({
+                              refKey: selectedKey,
+                              opener: stackMergeOpener.current
+                            }),
                             style: { ...control, fontSize: 12, border },
                             children: stackMerge.label
                           }
                         ) }),
                         stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
-                      ]
-                    }
-                  ),
-                  stackMerge !== null && stackConfirm === selectedKey && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                    "div",
-                    {
-                      role: "dialog",
-                      "aria-labelledby": "t3-vc-stack-merge-title",
-                      onKeyDown: (event) => {
-                        if (event.key === "Escape" && !stackMergePending) {
-                          event.preventDefault();
-                          setStackConfirm(null);
-                        }
-                      },
-                      style: {
-                        margin: "4px 10px",
-                        padding: "6px 8px",
-                        border,
-                        borderRadius: 6,
-                        fontSize: 12
-                      },
-                      children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: "t3-vc-stack-merge-title", children: stackMerge.confirmTitle }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "4px 0", color: muted }, children: stackMerge.confirmDescription }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: stackMerge.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
-                          "#",
-                          layer.number,
-                          " ",
-                          layer.title ?? layer.headBranch
-                        ] }, layer.number)) }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end" }, children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                            "button",
-                            {
-                              type: "button",
-                              disabled: stackMergePending,
-                              onClick: () => setStackConfirm(null),
-                              style: { ...control, fontSize: 12, border },
-                              children: "Cancel"
-                            }
-                          ),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                            "button",
-                            {
-                              type: "button",
-                              autoFocus: true,
-                              disabled: stackMergePending,
-                              onClick: runStackMerge,
-                              style: { ...control, fontSize: 12, border },
-                              children: stackMergePending ? "Working\u2026" : "Merge stack"
-                            }
-                          )
-                        ] })
                       ]
                     }
                   ),
@@ -12247,7 +12304,26 @@ ${thread.id}`) === activity,
                 prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
             ] })
-          ] })
+          ] }),
+          confirming !== null && stackMerge !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            ConfirmDialog,
+            {
+              host,
+              anchor: confirming.opener,
+              title: stackMerge.confirmTitle,
+              description: stackMerge.confirmDescription,
+              confirmLabel: "Merge stack",
+              pending: stackMergePending,
+              onCancel: closeConfirmation,
+              onConfirm: runStackMerge,
+              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: stackMerge.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+                "#",
+                layer.number,
+                " ",
+                layer.title ?? layer.headBranch
+              ] }, layer.number)) })
+            }
+          )
         ]
       }
     );

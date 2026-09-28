@@ -36,9 +36,9 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
-import type { ClientHost } from "@t3tools/extension-sdk/environment";
+import { resolveFloatingLayer, type ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   PRS_CHECKOUT_OPTIONS,
@@ -1573,6 +1573,117 @@ function CheckoutMenu(props: {
   );
 }
 
+/**
+ * Native's confirmation Dialog: modal, labelled by its title and described by
+ * its description, first focus on Cancel (never the destructive action), Tab
+ * held inside, Escape or Cancel closing it and handing focus back to the
+ * control that opened it. A running write cannot be dismissed. It paints on
+ * the host's floating layer against its opener; hosts without one get it in
+ * place. The caller makes the panel behind it inert.
+ */
+function ConfirmDialog(props: {
+  host: ClientHost;
+  anchor: HTMLElement | null;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  children?: ReactNode;
+}) {
+  const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
+  const titleId = useId();
+  const descriptionId = useId();
+  const cancel = useRef<HTMLButtonElement | null>(null);
+  const confirm = useRef<HTMLButtonElement | null>(null);
+  const opener = useRef(anchor);
+  useEffect(() => {
+    cancel.current?.focus();
+    const returnTo = opener.current;
+    return () => returnTo?.focus();
+  }, []);
+  const onKeyDown = (event: { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (!pending) onCancel();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    const order = pending ? [] : [cancel.current, confirm.current].filter((item) => item !== null);
+    if (order.length === 0) return;
+    const focused = typeof document === "undefined" ? null : document.activeElement;
+    const at = order.findIndex((item) => item === focused);
+    const next = event.shiftKey ? (at <= 0 ? order.length - 1 : at - 1) : (at + 1) % order.length;
+    order[next]?.focus();
+  };
+  const dialogProps = {
+    role: "dialog",
+    "aria-modal": true,
+    "aria-labelledby": titleId,
+    "aria-describedby": descriptionId,
+    onKeyDown,
+  } as const;
+  const surface = {
+    width: 360,
+    maxWidth: "calc(100vw - 24px)",
+    padding: "10px 12px",
+    border,
+    borderRadius: 8,
+    fontSize: 12,
+    color: "var(--t3-version-control-text, var(--foreground, #20252d))",
+    background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
+    boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)",
+  } as const;
+  const body = (
+    <>
+      <strong id={titleId} style={{ fontSize: 13 }}>
+        {title}
+      </strong>
+      <p id={descriptionId} style={{ margin: "4px 0", color: muted }}>
+        {description}
+      </p>
+      {props.children}
+      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
+        <button
+          ref={cancel}
+          type="button"
+          disabled={pending}
+          onClick={onCancel}
+          style={{ ...control, fontSize: 12, border }}
+        >
+          Cancel
+        </button>
+        <button
+          ref={confirm}
+          type="button"
+          disabled={pending}
+          onClick={onConfirm}
+          style={{ ...control, fontSize: 12, border }}
+        >
+          {pending ? "Working…" : confirmLabel}
+        </button>
+      </div>
+    </>
+  );
+  const Popover = resolveFloatingLayer(host)?.Popover;
+  if (Popover !== undefined && anchor !== null)
+    return (
+      <Popover {...dialogProps} anchor={anchor} side="bottom" align="start" style={surface}>
+        {body}
+      </Popover>
+    );
+  return (
+    <div
+      {...dialogProps}
+      style={{ ...surface, position: "absolute", top: 36, left: 10, zIndex: 20 }}
+    >
+      {body}
+    </div>
+  );
+}
+
 function ReceiptLine({ receipt }: { receipt: PrsReceipt | null }) {
   if (receipt === null) return null;
   return (
@@ -1763,7 +1874,11 @@ export function PullRequestsPanel(props: {
   // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
   // the last one's receipt, bound to the PR it answered.
   // An armed stack merge (the PR it was armed on) and its last receipt.
-  const [stackConfirm, setStackConfirm] = useState<string | null>(null);
+  const [stackConfirm, setStackConfirm] = useState<{
+    readonly refKey: string;
+    readonly opener: HTMLElement | null;
+  } | null>(null);
+  const stackMergeOpener = useRef<HTMLButtonElement | null>(null);
   const [stackReceipt, setStackReceipt] = useState<{
     readonly refKey: string;
     readonly receipt: PrsReceipt;
@@ -2122,13 +2237,25 @@ export function PullRequestsPanel(props: {
   };
   const commitUrl = (oid: string) =>
     detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
+  const confirming =
+    stackConfirm !== null && stackConfirm.refKey === selectedKey && stackMerge !== null
+      ? stackConfirm
+      : null;
+  const closeConfirmation = () => setStackConfirm(null);
 
   return (
     <div
       aria-label="Pull requests"
-      style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+      }}
     >
       <div
+        inert={confirming !== null}
         style={{
           display: "flex",
           alignItems: "center",
@@ -2200,7 +2327,7 @@ export function PullRequestsPanel(props: {
         )}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div inert={confirming !== null} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {gate.kind === "loading" && (
           <p role="note" style={noteStyle}>
             Reading pull-request capabilities…
@@ -2593,7 +2720,14 @@ export function PullRequestsPanel(props: {
                           <button
                             type="button"
                             disabled={stackMerge.disabled || writeState?.pending === true}
-                            onClick={() => setStackConfirm(selectedKey)}
+                            ref={stackMergeOpener}
+                            onClick={() =>
+                              selectedKey !== null &&
+                              setStackConfirm({
+                                refKey: selectedKey,
+                                opener: stackMergeOpener.current,
+                              })
+                            }
                             style={{ ...control, fontSize: 12, border }}
                           >
                             {stackMerge.label}
@@ -2604,56 +2738,6 @@ export function PullRequestsPanel(props: {
                             {stackMerge.blockedNote}
                           </span>
                         )}
-                      </div>
-                    )}
-                    {stackMerge !== null && stackConfirm === selectedKey && (
-                      <div
-                        role="dialog"
-                        aria-labelledby="t3-vc-stack-merge-title"
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape" && !stackMergePending) {
-                            event.preventDefault();
-                            setStackConfirm(null);
-                          }
-                        }}
-                        style={{
-                          margin: "4px 10px",
-                          padding: "6px 8px",
-                          border,
-                          borderRadius: 6,
-                          fontSize: 12,
-                        }}
-                      >
-                        <strong id="t3-vc-stack-merge-title">{stackMerge.confirmTitle}</strong>
-                        <p style={{ margin: "4px 0", color: muted }}>
-                          {stackMerge.confirmDescription}
-                        </p>
-                        <ul style={{ listStyle: "none", margin: "4px 0", padding: 0 }}>
-                          {stackMerge.layers.map((layer) => (
-                            <li key={layer.number}>
-                              #{layer.number} {layer.title ?? layer.headBranch}
-                            </li>
-                          ))}
-                        </ul>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <button
-                            type="button"
-                            disabled={stackMergePending}
-                            onClick={() => setStackConfirm(null)}
-                            style={{ ...control, fontSize: 12, border }}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            autoFocus
-                            disabled={stackMergePending}
-                            onClick={runStackMerge}
-                            style={{ ...control, fontSize: 12, border }}
-                          >
-                            {stackMergePending ? "Working…" : "Merge stack"}
-                          </button>
-                        </div>
                       </div>
                     )}
                     <ReceiptLine
@@ -2916,6 +3000,26 @@ export function PullRequestsPanel(props: {
           </>
         )}
       </div>
+      {confirming !== null && stackMerge !== null && (
+        <ConfirmDialog
+          host={host}
+          anchor={confirming.opener}
+          title={stackMerge.confirmTitle}
+          description={stackMerge.confirmDescription}
+          confirmLabel="Merge stack"
+          pending={stackMergePending}
+          onCancel={closeConfirmation}
+          onConfirm={runStackMerge}
+        >
+          <ul style={{ listStyle: "none", margin: "4px 0", padding: 0 }}>
+            {stackMerge.layers.map((layer) => (
+              <li key={layer.number}>
+                #{layer.number} {layer.title ?? layer.headBranch}
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
