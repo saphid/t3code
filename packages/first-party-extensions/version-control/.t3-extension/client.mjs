@@ -2249,6 +2249,7 @@ var __t3Client = (() => {
     ]
   });
   var CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"];
+  var CLIENT_PR_HANDOFF_MODES = ["worktree", "local"];
   var prHandoffResultSchema = {
     oneOf: [
       {
@@ -2259,8 +2260,9 @@ var __t3Client = (() => {
         properties: { status: { const: "drafted" } }
       },
       {
-        // Checked out into its own worktree with a thread open on it; a task
-        // other than checkout is in that thread's composer.
+        // Checked out, into its own worktree or this repository (`worktreePath`
+        // null), with a thread open on it; a task other than checkout is in that
+        // thread's composer.
         type: "object",
         additionalProperties: false,
         required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
@@ -2297,6 +2299,7 @@ var __t3Client = (() => {
         requiredGrants: [],
         inputSchema: withTarget({
           task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          mode: { enum: [...CLIENT_PR_HANDOFF_MODES] },
           pullRequest: {
             type: "object",
             additionalProperties: false,
@@ -2308,7 +2311,7 @@ var __t3Client = (() => {
               baseBranch: { type: "string", minLength: 1, maxLength: 4096 }
             }
           }
-        }, ["task", "pullRequest"]),
+        }, ["task", "mode", "pullRequest"]),
         outputSchema: prHandoffResultSchema
       }
     ]
@@ -5722,11 +5725,14 @@ var __t3Client = (() => {
         },
         {
           // Native's pull-request handoff, run by the host: it resolves the pull
-          // request, opens a thread, checks the pull request out into its own
-          // worktree (running the project's setup script for that thread), and
-          // leaves any task in the composer as a draft for the reader to send.
-          // `resolve-conflicts` from a view beside a thread drafts into that
-          // thread instead, as native does. The pack names a task, never text.
+          // request, opens a thread, checks the pull request out (running the
+          // project's setup script for that thread), points the thread at the
+          // checkout, and leaves any task in the composer as a draft for the
+          // reader to send. `checkout` lands in its own worktree, or with
+          // `mode: "local"` in this repository; `resolve-conflicts` always takes
+          // a worktree and refuses a mode, and from a view beside a thread
+          // drafts into that thread instead, as native does. The pack names a
+          // task, never text.
           name: "handoffPullRequest",
           effect: "write",
           requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
@@ -5736,7 +5742,8 @@ var __t3Client = (() => {
             required: ["reference", "task"],
             properties: {
               reference: { type: "string", minLength: 1, maxLength: 2048 },
-              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] }
+              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+              mode: { enum: [...CLIENT_PR_HANDOFF_MODES] }
             }
           },
           outputSchema: prHandoffResultSchema
@@ -10260,7 +10267,7 @@ ${ref.number}`;
       disabled: handoff !== null
     };
   }
-  function prsHandoffReceipt(task, outcome) {
+  function prsHandoffReceipt(task, outcome, mode = "worktree") {
     if (!outcome.ok)
       return {
         tone: "error",
@@ -10294,11 +10301,17 @@ ${ref.number}`;
       };
     }
     if (!result.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
-    return task === "checkout" ? {
-      tone: "success",
-      title: "Checked out",
-      description: "The pull request is in its own worktree, with a thread open on it."
-    } : {
+    if (task === "checkout")
+      return mode === "local" ? {
+        tone: "success",
+        title: "Checked out here",
+        description: "This repository is on the pull request's branch, with a thread open on it."
+      } : {
+        tone: "success",
+        title: "Checked out",
+        description: "The pull request is in its own worktree, with a thread open on it."
+      };
+    return {
       tone: "success",
       title: "Checkout ready",
       description: "The task is in the composer \u2014 read it over, then send."
@@ -12637,10 +12650,10 @@ ${writeKey}`;
     const reportResult = (receipt2, showInline) => {
       if (!toasts.report(receiptToast(receipt2), () => showInline(receipt2))) showInline(receipt2);
     };
-    const startHandoff = (url, task) => {
+    const startHandoff = (url, task, mode = "worktree") => {
       if (selectedKey === null || handoff !== null) return;
       const refKey = selectedKey;
-      setHandoff(task === "checkout" ? "checkout:worktree" : "conflicts");
+      setHandoff(task === "checkout" ? `checkout:${mode}` : "conflicts");
       setHandoffReceipt(null);
       const drafting = task === "resolve-conflicts" && session.context.resource.threadId;
       const report = beginReport(
@@ -12648,7 +12661,11 @@ ${writeKey}`;
         drafting ? void 0 : "Preparing the pull request checkout...",
         (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
       );
-      void bindApi(vcsActionsApi, host, session.context, "^1.1.0").invoke("handoffPullRequest", { reference: url, task }, session.signal).then(
+      void bindApi(vcsActionsApi, host, session.context, "^1.1.0").invoke(
+        "handoffPullRequest",
+        task === "checkout" ? { reference: url, task, mode } : { reference: url, task },
+        session.signal
+      ).then(
         (value) => ({ ok: true, value }),
         (error) => ({
           ok: false,
@@ -12657,11 +12674,11 @@ ${writeKey}`;
       ).then((outcome) => {
         if (session.signal.aborted) return;
         setHandoff(null);
-        report(prsHandoffReceipt(task, outcome));
+        report(prsHandoffReceipt(task, outcome, mode));
       });
     };
     const startCheckout = (url, mode) => {
-      if (mode === "worktree" && checkoutSupport.handoff) return startHandoff(url, "checkout");
+      if (checkoutSupport.handoff) return startHandoff(url, "checkout", mode);
       if (selectedKey === null || handoff !== null) return;
       const refKey = selectedKey;
       setHandoff(`checkout:${mode}`);

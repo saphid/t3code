@@ -505,12 +505,16 @@ export function prsResolveConflictsControl(
   };
 }
 
-/** Native's handoff toasts as one receipt, for the task the pack asked the host to run. */
+/**
+ * Native's handoff toasts as one receipt, for the task the pack asked the host
+ * to run and, for a checkout, where it asked for it.
+ */
 export function prsHandoffReceipt(
   task: VcsPullRequestHandoffTask,
   outcome:
     | { readonly ok: true; readonly value: VcsActionHandoffResult }
     | { readonly ok: false; readonly detail: string | null },
+  mode: PrsCheckoutMode = "worktree",
 ): PrsReceipt {
   if (!outcome.ok)
     return {
@@ -545,17 +549,23 @@ export function prsHandoffReceipt(
     };
   }
   if (!result.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
-  return task === "checkout"
-    ? {
-        tone: "success",
-        title: "Checked out",
-        description: "The pull request is in its own worktree, with a thread open on it.",
-      }
-    : {
-        tone: "success",
-        title: "Checkout ready",
-        description: "The task is in the composer — read it over, then send.",
-      };
+  if (task === "checkout")
+    return mode === "local"
+      ? {
+          tone: "success",
+          title: "Checked out here",
+          description: "This repository is on the pull request's branch, with a thread open on it.",
+        }
+      : {
+          tone: "success",
+          title: "Checked out",
+          description: "The pull request is in its own worktree, with a thread open on it.",
+        };
+  return {
+    tone: "success",
+    title: "Checkout ready",
+    description: "The task is in the composer — read it over, then send.",
+  };
 }
 
 /* ---------------- detail projections ---------------- */

@@ -143,7 +143,7 @@ NodeTest.describe("checkout into its own folder and thread", () => {
     dispatch(item, "onClick");
     await flush();
     NodeAssert.deepEqual(handoffCalls(view), [
-      { versionRange: "^1.1.0", input: { reference: URL, task: "checkout" } },
+      { versionRange: "^1.1.0", input: { reference: URL, task: "checkout", mode: "worktree" } },
     ]);
     NodeAssert.equal(prepareCalls(view).length, 0);
     NodeAssert.ok(
@@ -179,13 +179,16 @@ NodeTest.describe("checkout into its own folder and thread", () => {
   );
 
   NodeTest.it("still checks out in this repository without a handoff", async () => {
-    const view = mountPanel({
-      "t3.vcs/actions#preparePullRequestThread": () => ({
-        branch: "b3",
-        worktreePath: null,
-        isOnPullRequestHead: true,
-      }),
-    });
+    const view = mountPanel(
+      {
+        "t3.vcs/actions#preparePullRequestThread": () => ({
+          branch: "b3",
+          worktreePath: null,
+          isOnPullRequestHead: true,
+        }),
+      },
+      { handoff: false },
+    );
     await flush();
     dispatch(view.find("Check out"), "onClick");
     await flush();
@@ -195,6 +198,29 @@ NodeTest.describe("checkout into its own folder and thread", () => {
     NodeAssert.deepEqual(
       prepareCalls(view).map((call) => call.input),
       [{ reference: URL, mode: "local" }],
+    );
+    view.unmount();
+  });
+
+  // Native opens a thread for this checkout too, on the repository's own checkout.
+  NodeTest.it("checks out in this repository through the host handoff too", async () => {
+    const view = mountPanel({
+      "t3.vcs/actions#handoffPullRequest": () => ({ ...READY, worktreePath: null }),
+    });
+    await flush();
+    dispatch(view.find("Check out"), "onClick");
+    await flush();
+    dispatch(menuItem(view, "In this repository"), "onClick");
+    await flush();
+    NodeAssert.deepEqual(handoffCalls(view), [
+      { versionRange: "^1.1.0", input: { reference: URL, task: "checkout", mode: "local" } },
+    ]);
+    NodeAssert.equal(prepareCalls(view).length, 0);
+    NodeAssert.ok(view.text().includes("Checked out here"));
+    NodeAssert.ok(
+      view
+        .text()
+        .includes("This repository is on the pull request's branch, with a thread open on it."),
     );
     view.unmount();
   });

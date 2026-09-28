@@ -2455,10 +2455,14 @@ export function PullRequestsPanel(props: {
    * checks out, and writes any task into the composer. The pack names the
    * task only; the receipt says what the host did.
    */
-  const startHandoff = (url: string, task: VcsPullRequestHandoffTask) => {
+  const startHandoff = (
+    url: string,
+    task: VcsPullRequestHandoffTask,
+    mode: PrsCheckoutMode = "worktree",
+  ) => {
     if (selectedKey === null || handoff !== null) return;
     const refKey = selectedKey;
-    setHandoff(task === "checkout" ? "checkout:worktree" : "conflicts");
+    setHandoff(task === "checkout" ? `checkout:${mode}` : "conflicts");
     setHandoffReceipt(null);
     // Beside a thread native writes the task straight into its composer, with
     // nothing to wait for; everywhere else the checkout is.
@@ -2469,7 +2473,11 @@ export function PullRequestsPanel(props: {
       (receipt) => setHandoffReceipt({ refKey, receipt }),
     );
     void bindApi(vcsActionsApi, host, session.context, "^1.1.0")
-      .invoke("handoffPullRequest", { reference: url, task }, session.signal)
+      .invoke(
+        "handoffPullRequest",
+        task === "checkout" ? { reference: url, task, mode } : { reference: url, task },
+        session.signal,
+      )
       .then(
         (value) => ({ ok: true as const, value }),
         (error: unknown) => ({
@@ -2480,13 +2488,13 @@ export function PullRequestsPanel(props: {
       .then((outcome) => {
         if (session.signal.aborted) return;
         setHandoff(null);
-        report(prsHandoffReceipt(task, outcome));
+        report(prsHandoffReceipt(task, outcome, mode));
       });
   };
 
   /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
   const startCheckout = (url: string, mode: PrsCheckoutMode) => {
-    if (mode === "worktree" && checkoutSupport.handoff) return startHandoff(url, "checkout");
+    if (checkoutSupport.handoff) return startHandoff(url, "checkout", mode);
     if (selectedKey === null || handoff !== null) return;
     const refKey = selectedKey;
     setHandoff(`checkout:${mode}`);

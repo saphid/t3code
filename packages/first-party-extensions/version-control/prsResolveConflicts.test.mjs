@@ -7,9 +7,9 @@ const control = (detail, handoff = null) => {
   NodeAssert.equal(typeof ViewModel.prsResolveConflictsControl, "function");
   return ViewModel.prsResolveConflictsControl(detail, handoff);
 };
-const receipt = (task, outcome) => {
+const receipt = (task, outcome, mode) => {
   NodeAssert.equal(typeof ViewModel.prsHandoffReceipt, "function");
-  return ViewModel.prsHandoffReceipt(task, outcome);
+  return ViewModel.prsHandoffReceipt(task, outcome, mode);
 };
 const conflicting = { state: "open", mergeability: "conflicting" };
 
@@ -64,6 +64,14 @@ NodeTest.describe("resolve conflicts", () => {
       title: "Checked out",
       description: "The pull request is in its own worktree, with a thread open on it.",
     });
+    NodeAssert.deepEqual(
+      receipt("checkout", { ok: true, value: { ...ready, worktreePath: null } }, "local"),
+      {
+        tone: "success",
+        title: "Checked out here",
+        description: "This repository is on the pull request's branch, with a thread open on it.",
+      },
+    );
     NodeAssert.deepEqual(
       receipt("resolve-conflicts", {
         ok: true,

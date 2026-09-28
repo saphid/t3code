@@ -62,9 +62,11 @@ The PR browser consumes the `t3.prs/read` grant:
   Stack merges and rebases report only their result, as one toast; without
   a toast provider (or when delivery is lost) the same words show inline.
   Where the host offers `handoffPullRequest` (`t3.vcs/actions@1.1.0`, the
-  `t3.vcs/handoff` grant), the worktree option is native's "Its own folder
-  and thread": the host opens the thread, checks out, and runs the setup
-  script. Without it, the worktree option promises only the folder;
+  `t3.vcs/handoff` grant), both options run as native's do: the host opens
+  a thread, checks out (`mode` names where), runs the setup script, and
+  points the thread at the checkout, so the worktree option reads "Its own
+  folder and thread". Without it, the pack checks out alone and the worktree
+  option promises only the folder;
 - Resolve conflicts (the same handoff, on an open pull request that
   conflicts with its base): the pack names the task and the host writes
   native's prompt into a composer — beside a thread, that thread's; otherwise
