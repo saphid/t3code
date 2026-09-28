@@ -17,11 +17,15 @@ const env = vi.hoisted(() => {
   const online = new Map<string, boolean>();
   const installed = new Map<string, unknown[]>();
   const waiters = new Set<() => void>();
+  // Environments whose catalogue list never answers, like a black-holed request.
+  const heldLists = new Set<string>();
+  // Answers the pending API discovery whenever the test chooses.
+  const discovery: { reply?: (value: unknown) => void } = {};
   const notify = () => {
     for (const listener of listeners) listener();
     for (const waiter of [...waiters]) waiter();
   };
-  return { listeners, prepared, online, installed, waiters, notify };
+  return { listeners, prepared, online, installed, waiters, heldLists, discovery, notify };
 });
 
 vi.mock("../connection/runtime", async () => {
@@ -72,16 +76,25 @@ vi.mock("@t3tools/client-runtime/state/extensions", async () => {
     environmentExtensionsHttp: {
       list: (connection: { environmentId: string }) =>
         Effect.suspend(() =>
-          reachable(connection)
-            ? Effect.succeed({
-                installations: env.installed.get(connection.environmentId) ?? [],
-                supportsApiStreams: true,
-                supportedPackageFormats: [1, 2, 3],
-              })
-            : Effect.fail(new Unreachable({ message: "Failed to fetch" })),
+          env.heldLists.has(connection.environmentId)
+            ? Effect.never
+            : reachable(connection)
+              ? Effect.succeed({
+                  installations: env.installed.get(connection.environmentId) ?? [],
+                  supportsApiStreams: true,
+                  supportedPackageFormats: [1, 2, 3],
+                })
+              : Effect.fail(new Unreachable({ message: "Failed to fetch" })),
         ),
       client: (_connection: unknown, input: { expectedContentHash: string }) =>
         Effect.succeed({ code: "pack", contentHash: input.expectedContentHash }),
+      discoverApis: () =>
+        Effect.promise(
+          () =>
+            new Promise((resolve) => {
+              env.discovery.reply = resolve;
+            }),
+        ),
     },
   };
 });
@@ -160,6 +173,8 @@ const pack: ExtensionInstallation = {
   package: { format: 1, manifest, clientEntry: "client.mjs", tools: [] },
 };
 const mounts: string[] = [];
+/** The client host each environment's mounted view was created with. */
+const hosts = new Map<string, ClientHost>();
 /** The installed client: a terminal-like view that follows one resumable stream. */
 Object.assign(globalThis, {
   __t3HostTestPack: (host: ClientHost) => ({
@@ -168,37 +183,40 @@ Object.assign(globalThis, {
       {
         id: surface.id,
         validateRestore: () => true,
-        createView: (session: { context: ViewRecord["context"] }) => ({
-          renderer: function PackView() {
-            const [state, setState] = React.useState("connecting");
-            React.useEffect(() => {
-              const environmentId = session.context.resource.environmentId!;
-              mounts.push(environmentId);
-              const controller = new AbortController();
-              const frames = resolveResumableStreams(host)!.subscribeApi(
-                {
-                  id: "t3.terminal/output-events",
-                  versionRange: "^1.0.0",
-                  name: "subscribe",
-                  input: { terminalId: "term-1" },
-                  context: session.context,
-                },
-                controller.signal,
-                { onSuspended: () => setState("Reconnecting…") },
-              );
-              void (async () => {
-                try {
-                  for await (const frame of frames as AsyncIterable<ApiStreamFrame>)
-                    setState("live " + frame.sequence);
-                } catch {
-                  setState("stream closed");
-                }
-              })();
-              return () => controller.abort();
-            }, []);
-            return <span>{state}</span>;
-          },
-        }),
+        createView: (session: { context: ViewRecord["context"] }) => {
+          hosts.set(session.context.resource.environmentId!, host);
+          return {
+            renderer: function PackView() {
+              const [state, setState] = React.useState("connecting");
+              React.useEffect(() => {
+                const environmentId = session.context.resource.environmentId!;
+                mounts.push(environmentId);
+                const controller = new AbortController();
+                const frames = resolveResumableStreams(host)!.subscribeApi(
+                  {
+                    id: "t3.terminal/output-events",
+                    versionRange: "^1.0.0",
+                    name: "subscribe",
+                    input: { terminalId: "term-1" },
+                    context: session.context,
+                  },
+                  controller.signal,
+                  { onSuspended: () => setState("Reconnecting…") },
+                );
+                void (async () => {
+                  try {
+                    for await (const frame of frames as AsyncIterable<ApiStreamFrame>)
+                      setState("live " + frame.sequence);
+                  } catch {
+                    setState("stream closed");
+                  }
+                })();
+                return () => controller.abort();
+              }, []);
+              return <span>{state}</span>;
+            },
+          };
+        },
       },
     ],
   }),
@@ -243,6 +261,9 @@ afterEach(async () => {
   });
   roots = [];
   mounts.length = 0;
+  hosts.clear();
+  env.heldLists.clear();
+  delete env.discovery.reply;
   env.prepared.clear();
   env.online.clear();
   env.installed.clear();
@@ -302,4 +323,43 @@ it("removes a pack that was uninstalled while the environment was disconnected",
 
   expect(text(a)).toContain("Pack is unavailable");
   expect(text(b)).toContain("live 1");
+});
+
+it("fails a one-shot call that was in flight when the connection dropped", async () => {
+  const { a } = await mountHost();
+  const host = hosts.get("env-a")!;
+  const call = host.discoverApis(record("env-a").context, new AbortController().signal);
+  const outcome = call.then(
+    (value) => ({ settled: "resolved", value }),
+    (error: Error) => ({ settled: "rejected", value: error.message }),
+  );
+  await settle();
+
+  await act(async () => setConnected("env-a", false));
+  await settle();
+  await act(async () => setConnected("env-a", true));
+  await settle();
+  // The old connection's reply arrives after the new session started.
+  env.discovery.reply?.({ apis: [{ id: "late.api", status: "available" }] });
+  await settle();
+
+  expect(await outcome).toMatchObject({ settled: "rejected" });
+  // The drop ended the call, not the mounted pack.
+  expect(text(a)).toContain("live 2");
+});
+
+it("does not let a catalogue list from a dropped connection hold the reconnect refresh", async () => {
+  const { a } = await mountHost();
+
+  env.heldLists.add("env-a");
+  void refreshInstalledExtensions("env-a");
+  await settle();
+  await act(async () => setConnected("env-a", false));
+  await settle();
+  env.heldLists.delete("env-a");
+  env.installed.set("env-a", []);
+  await act(async () => setConnected("env-a", true));
+  await settle();
+
+  expect(text(a)).toContain("Pack is unavailable");
 });

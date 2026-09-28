@@ -27,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import type { HttpClient } from "effect/unstable/http";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readPreparedConnection, usePreparedConnection } from "../state/session";
@@ -173,7 +174,11 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
   useEffect(() => {
     newThreadRef.current = newThread;
   }, [newThread]);
-  const prepared = usePreparedConnection(environmentId);
+  const prepared = Option.getOrNull(usePreparedConnection(environmentId));
+  // The live connection and a signal that aborts when it drops or is replaced.
+  const connectionRef = useRef<{ connection: PreparedConnection; signal: AbortSignal } | null>(
+    null,
+  );
   const installed = useInstalledExtensions(environmentId);
   const catalogue = useAtomValue(
     installed.supportsCatalogueChanges === true
@@ -184,10 +189,17 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
   // a dropped connection keeps mounted packs (their resumable streams report the
   // suspension), and each new connection re-lists what is installed.
   useEffect(() => {
-    const connection = () => {
-      const current = readPreparedConnection(environmentId);
+    // One-shot calls belong to the connection they were sent on: a drop or a
+    // replacement aborts them, and a reply that races the abort is refused.
+    const connected = async <A,>(
+      signal: AbortSignal,
+      call: (connection: PreparedConnection, signal: AbortSignal) => Promise<A>,
+    ): Promise<A> => {
+      const current = connectionRef.current;
       if (!current) throw new Error("Environment is not connected");
-      return current;
+      const result = await call(current.connection, AbortSignal.any([signal, current.signal]));
+      if (current.signal.aborted) throw new Error("Environment connection changed");
+      return result;
     };
     const providers = createClientProviders(
       {
@@ -238,9 +250,8 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             clientConnectionId,
           },
         });
-        const result = await run(
-          environmentExtensionsHttp.invokeApi(connection(), payload),
-          signal,
+        const result = await connected(signal, (connection, callSignal) =>
+          run(environmentExtensionsHttp.invokeApi(connection, payload), callSignal),
         );
         return result.result as {
           commandSetToken?: string;
@@ -352,7 +363,9 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           supportsApiStreams,
           supportedPackageFormats,
           ...result
-        } = await run(environmentExtensionsHttp.list(connection()), signal);
+        } = await connected(signal, (connection, callSignal) =>
+          run(environmentExtensionsHttp.list(connection), callSignal),
+        );
         return {
           ...result,
           supportsCatalogueChanges: supportsCatalogueChanges === true,
@@ -379,11 +392,18 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         };
       },
       client: (id, expectedContentHash, signal) =>
-        run(environmentExtensionsHttp.client(connection(), { id, expectedContentHash }), signal),
+        connected(signal, (connection, callSignal) =>
+          run(
+            environmentExtensionsHttp.client(connection, { id, expectedContentHash }),
+            callSignal,
+          ),
+        ),
       readAsset: (id, expectedContentHash, path, signal) =>
-        run(
-          environmentExtensionsHttp.asset(connection(), { id, expectedContentHash, path }),
-          signal,
+        connected(signal, (connection, callSignal) =>
+          run(
+            environmentExtensionsHttp.asset(connection, { id, expectedContentHash, path }),
+            callSignal,
+          ),
         ),
       invoke: async (toolId, input, context, expectedContentHash, signal) => {
         const payload = decodeInvoke({
@@ -392,7 +412,11 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           context,
           expectedContentHash,
         });
-        return (await run(environmentExtensionsHttp.invoke(connection(), payload), signal)).result;
+        return (
+          await connected(signal, (connection, callSignal) =>
+            run(environmentExtensionsHttp.invoke(connection, payload), callSignal),
+          )
+        ).result;
       },
       // The session-validated `self` hint: stamps the socket-bound id the
       // seam minted so client-provider-backed contracts reach this client.
@@ -404,12 +428,13 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             request:
               clientConnectionId === undefined ? request : { ...request, clientConnectionId },
           });
-          const current = connection();
-          const { result } = await run(
-            environmentExtensionsHttp.invokeApi(current, payload),
-            signal,
-          );
-          return resolveLeasePresentationUrl(request, result, current.httpBaseUrl);
+          return connected(signal, async (connection, callSignal) => {
+            const { result } = await run(
+              environmentExtensionsHttp.invokeApi(connection, payload),
+              callSignal,
+            );
+            return resolveLeasePresentationUrl(request, result, connection.httpBaseUrl);
+          });
         }),
       subscribeApi: (installationId, expectedContentHash, request, signal) =>
         withClientConnectionIdFrames(environmentId, signal, (clientConnectionId) =>
@@ -440,7 +465,9 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           context,
         });
         return (
-          await run(environmentExtensionsHttp.discoverApis(connection(), payload), signal)
+          await connected(signal, (connection, callSignal) =>
+            run(environmentExtensionsHttp.discoverApis(connection, payload), callSignal),
+          )
         ).apis.map(({ pluginId, reason, ...item }) => ({
           ...item,
           ...(pluginId === undefined ? {} : { pluginId }),
@@ -505,7 +532,15 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
     };
   }, [environmentId, router]);
   useEffect(() => {
-    if (Option.isSome(prepared)) void refreshInstalledExtensions(environmentId);
+    if (!prepared) return;
+    const lifetime = new AbortController();
+    const current = { connection: prepared, signal: lifetime.signal };
+    connectionRef.current = current;
+    void refreshInstalledExtensions(environmentId);
+    return () => {
+      lifetime.abort();
+      if (connectionRef.current === current) connectionRef.current = null;
+    };
   }, [environmentId, prepared]);
   useEffect(() => {
     if (catalogue._tag === "Success") void refreshInstalledExtensions(environmentId);
