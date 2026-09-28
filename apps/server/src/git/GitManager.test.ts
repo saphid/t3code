@@ -4588,10 +4588,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  // A host that publishes no `refs/pull/<n>/head` (Bitbucket) or checks the pull request out on
-  // a branch of its own name (Forgejo's `pulls/<n>`): the scripted provider only switches to the
-  // local branch, as both do for a branch that already exists, without moving it.
+  // A host that publishes no `refs/pull/<n>/head` or checks the pull request out on a branch of
+  // its own name (Forgejo's `pulls/<n>`): the scripted provider only switches to the local
+  // branch, as Bitbucket and Forgejo do for a branch that already exists, without moving it.
   const setUpSwitchOnlyPullRequest = (input: {
+    readonly kind?: "github" | "gitlab" | "bitbucket";
     readonly number: number;
     readonly headBranch: string;
     readonly localBranch?: string;
@@ -4622,10 +4623,15 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }
       yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
       yield* runGit(repoDir, ["checkout", "main"]);
+      const kind = input.kind ?? "github";
+      const host = { github: "github.com", gitlab: "gitlab.com", bitbucket: "bitbucket.org" }[kind];
+      const pullPath = { github: "pull", gitlab: "-/merge_requests", bitbucket: "pull-requests" }[
+        kind
+      ];
       yield* configureVisibleRemoteUrlWithLocalRewrite(
         repoDir,
         "origin",
-        "https://bitbucket.org/owner/repo.git",
+        `https://${host}/owner/repo.git`,
         remoteDir,
       );
       const { service } = createGitHubCliWithFakeGh();
@@ -4634,13 +4640,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       const provider: SourceControlProvider["Service"] = {
         ...base,
-        kind: "bitbucket",
+        kind,
         getChangeRequest: () =>
           Effect.succeed({
-            provider: "bitbucket" as const,
+            provider: kind,
             number: input.number,
             title: "Switch-only checkout PR",
-            url: `https://bitbucket.org/owner/repo/pull-requests/${input.number}`,
+            url: `https://${host}/owner/repo/${pullPath}/${input.number}`,
             baseRefName: "main",
             headRefName: input.headBranch,
             state: "open" as const,
@@ -4649,8 +4655,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         getRepositoryCloneUrls: (lookup) =>
           Effect.succeed({
             nameWithOwner: lookup.repository,
-            url: "https://bitbucket.org/owner/repo.git",
-            sshUrl: "git@bitbucket.org:owner/repo.git",
+            url: `https://${host}/owner/repo.git`,
+            sshUrl: `git@${host}:owner/repo.git`,
           }),
         checkoutChangeRequest: (checkout) =>
           Effect.sync(() => {
@@ -4875,6 +4881,145 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }),
   );
 
+  it.effect("PR checkout on GitLab and Bitbucket is reported unverified and never advanced", () =>
+    Effect.gen(function* () {
+      for (const [index, kind] of (["gitlab", "bitbucket"] as const).entries()) {
+        const local = yield* setUpSwitchOnlyPullRequest({
+          kind,
+          number: 300 + index,
+          headBranch: `feature/${kind}-local`,
+          publishPullRef: true,
+        });
+        const localResult = yield* preparePullRequestThread(local.manager, {
+          cwd: local.repoDir,
+          reference: String(300 + index),
+          mode: "local",
+        });
+        expect(localResult.isOnPullRequestHead).toBe(false);
+        expect((yield* runGit(local.repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          local.firstCommit,
+        );
+
+        const reused = yield* setUpSwitchOnlyPullRequest({
+          kind,
+          number: 310 + index,
+          headBranch: `feature/${kind}-reused`,
+          publishPullRef: true,
+        });
+        const worktreePath = NodePath.join(
+          reused.repoDir,
+          "..",
+          `${kind}-reused-${NodePath.basename(reused.repoDir)}`,
+        );
+        yield* runGit(reused.repoDir, ["worktree", "add", worktreePath, `feature/${kind}-reused`]);
+        const reusedResult = yield* preparePullRequestThread(reused.manager, {
+          cwd: reused.repoDir,
+          reference: String(310 + index),
+          mode: "worktree",
+        });
+        expect(reusedResult).toMatchObject({ isOnPullRequestHead: false });
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          reused.firstCommit,
+        );
+      }
+    }),
+  );
+
+  // Azure pull request IDs are organization-wide, but `az repos show --repository repo` resolves
+  // the bare name in the checkout's own project. Here the checkout belongs to ProjectA, the pull
+  // request and its already-open worktree to ProjectB, and ProjectA has its own `repo` with a
+  // same-named branch holding unrelated work.
+  it.effect(
+    "reused Azure PR worktree is not moved onto another project's same-named repository",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const anchorDir = yield* createBareRemote();
+        const projectADir = yield* createBareRemote();
+        const projectBDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", anchorDir]);
+        yield* runGit(repoDir, ["remote", "add", "project-a", projectADir]);
+        yield* runGit(repoDir, ["remote", "add", "project-b", projectBDir]);
+        for (const remote of ["origin", "project-a", "project-b"]) {
+          yield* runGit(repoDir, ["push", remote, "main"]);
+        }
+        yield* runGit(repoDir, ["checkout", "-b", "feature/right-pr"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "right.txt"), "wanted PR\n");
+        yield* runGit(repoDir, ["add", "right.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Wanted PR"]);
+        const wanted = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "project-b", "HEAD:refs/heads/feature/right-pr"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "another project's work\n");
+        yield* runGit(repoDir, ["add", "wrong.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Unrelated descendant in ProjectA"]);
+        yield* runGit(repoDir, ["push", "project-a", "HEAD:refs/heads/feature/right-pr"]);
+        yield* runGit(repoDir, ["reset", "--hard", wanted]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://dev.azure.com/org/ProjectA/_git/anchor",
+          anchorDir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "project-a",
+          "https://dev.azure.com/org/ProjectA/_git/repo",
+          projectADir,
+        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "project-b",
+          "https://dev.azure.com/org/ProjectB/_git/repo",
+          projectBDir,
+        );
+        const worktreePath = NodePath.join(
+          repoDir,
+          "..",
+          `azure-reused-${NodePath.basename(repoDir)}`,
+        );
+        yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/right-pr"]);
+        const { service } = createGitHubCliWithFakeGh();
+        const base = yield* GitHubSourceControlProvider.make.pipe(
+          Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+        );
+        const provider: SourceControlProvider["Service"] = {
+          ...base,
+          kind: "azure-devops",
+          getChangeRequest: () =>
+            Effect.succeed({
+              provider: "azure-devops" as const,
+              number: 198,
+              title: "Wanted ProjectB PR",
+              url: "https://dev.azure.com/org/ProjectB/_git/repo/pullrequest/198",
+              baseRefName: "main",
+              headRefName: "feature/right-pr",
+              state: "open" as const,
+              isCrossRepository: false,
+              updatedAt: Option.none(),
+            }),
+          getRepositoryCloneUrls: () =>
+            Effect.succeed({
+              nameWithOwner: "ProjectA/repo",
+              url: "https://dev.azure.com/org/ProjectA/_git/repo",
+              sshUrl: "https://dev.azure.com/org/ProjectA/_git/repo",
+            }),
+          checkoutChangeRequest: () => Effect.die("A reused worktree is never checked out again"),
+        };
+        const { manager } = yield* makeManager({ sourceControlProvider: provider });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "https://dev.azure.com/org/ProjectB/_git/repo/pullrequest/198",
+          mode: "worktree",
+        });
+
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(wanted);
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
+  );
+
   // origin is a fork holding a different pull request under the same number as the upstream one
   // the provider resolved. The provider reports `upstreamUrl` (or `reportedUrl`) for it.
   const setUpCollidingPullRequestNumbers = (input: {
@@ -4886,6 +5031,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     readonly reportedUrl?: string;
     // Like gh: a lookup that does not name the pull request's host answers for this URL instead.
     readonly unqualifiedLookupUrl?: string;
+    readonly reportedNameWithOwner?: string;
   }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4963,7 +5109,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             input.unqualifiedLookupUrl !== undefined && lookup.host !== new URL(pullRequestUrl).host
               ? input.unqualifiedLookupUrl
               : reportedUrl;
-          return Effect.succeed({ nameWithOwner: input.repository, url, sshUrl: url });
+          return Effect.succeed({
+            nameWithOwner: input.reportedNameWithOwner ?? input.repository,
+            url,
+            sshUrl: url,
+          });
         },
         checkoutChangeRequest: (checkout) =>
           Effect.sync(() => runGitSyncForFakeGh(checkout.cwd, ["checkout", "feature/right-pr"])),
@@ -5046,6 +5196,20 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       expect(head).toBe(wanted);
+      expect(result.isOnPullRequestHead).toBe(false);
+    }),
+  );
+
+  it.effect("local PR checkout does not trust a lookup that names another repository", () =>
+    Effect.gen(function* () {
+      const { result } = yield* setUpCollidingPullRequestNumbers({
+        repository: "upstream/repo",
+        originUrl: "https://github.com/fork/repo.git",
+        upstreamUrl: "https://github.com/upstream/repo.git",
+        visibleRemotes: true,
+        reportedNameWithOwner: "fork/repo",
+      });
+
       expect(result.isOnPullRequestHead).toBe(false);
     }),
   );

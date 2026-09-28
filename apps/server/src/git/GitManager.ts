@@ -922,24 +922,31 @@ export const make = Effect.gen(function* () {
 
   // `ref` read straight from the URL the provider reports for `repository` on `host`. Never through
   // a configured remote: neither its name nor its URLs prove which repository Git fetches from.
-  // A provider that answers for another host (gh without an explicit host means github.com) has
-  // named some other repository, so its URLs are not used.
+  // Only GitHub's lookup (`gh repo view host/owner/repo`) names one exact repository. The others
+  // ignore the host or resolve a bare name against the checkout's own project (Azure), so they
+  // can answer for a different repository; their heads are never read, and a checkout on them is
+  // reported unverified. A GitHub answer for any other host or repository is refused too.
   const fetchRepositoryCommit = Effect.fn("fetchRepositoryCommit")(function* (
     cwd: string,
     host: string,
     repository: string | null,
     ref: string,
   ) {
-    const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
-      cwd,
-      host,
-      repository: yield* Effect.fromNullishOr(repository),
-    });
-    if (urlHost(cloneUrls.url) !== host) {
+    const provider = yield* sourceControlProvider(cwd);
+    const expected = yield* Effect.fromNullishOr(repository);
+    if (provider.kind !== "github") {
       return yield* new GitManagerError({
         operation: "fetchRepositoryCommit",
         cwd,
-        detail: "The provider's clone URL is not on the pull request's host.",
+        detail: "The provider cannot name the pull request's exact repository.",
+      });
+    }
+    const cloneUrls = yield* provider.getRepositoryCloneUrls({ cwd, host, repository: expected });
+    if (urlHost(cloneUrls.url) !== host || cloneUrls.nameWithOwner !== expected) {
+      return yield* new GitManagerError({
+        operation: "fetchRepositoryCommit",
+        cwd,
+        detail: "The provider's repository is not the pull request's repository.",
       });
     }
     const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
