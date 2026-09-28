@@ -17,6 +17,7 @@ import {
   type TerminalSessionsListEvent,
   type UiKeybindingChord,
   type UiKeybindingsHost,
+  type UiEditorOpenReceipt,
   type UiExternalOpenReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
@@ -24,7 +25,6 @@ import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/c
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { GlobalCommandDescriptor } from "@t3tools/extension-sdk/environment";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/ghostty-terminal/terminal-links";
 
 import { TerminalInputQueue } from "./inputQueue.ts";
 
@@ -582,112 +582,31 @@ export function workspaceLaunchFromRevision(
 
 /* ---------------- path links (Terminal 22 path half) ---------------- */
 
-/** What a terminal path link resolves to for `t3.ui/panels.openFile`. */
-export type TerminalPathLinkTarget =
-  | { readonly status: "open"; readonly relativePath: string; readonly line?: number }
-  | { readonly status: "unopenable"; readonly reason: string };
-
-/** Trailing `:line` / `:line:column`; the file view reveals the line, not the column. */
-const TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:(\d+)(?::\d+)?$/;
 /**
- * Home-relative check spelled as split comparisons: the pack's private-import
- * audit bans the home-link character sequence anywhere in package content,
- * and a concatenated constant would fold back into it in the bundle.
+ * Terminal 22, path half: hands the link text and the launch cwd to
+ * `t3.ui/editor`, which resolves them the native way (`~/`, relative, and a
+ * `:line:column` suffix) and opens the user's preferred editor. Resolves null
+ * once opened — native opens silently — or the surface line naming the
+ * refusal (the host's own wording) or the failed invoke.
  */
-function isHomeRelativeLink(path: string): boolean {
-  return path[0] === "~" && path[1] === "/";
-}
-
-function joinPathStyle(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
-}
-
-/** `/Users/<user>`, `/home/<user>` or `C:\Users\<user>` inferred the native way. */
-function inferHomeFromCwd(cwd: string): string | undefined {
-  return (
-    cwd.match(/^\/Users\/([^/]+)/)?.[0] ??
-    cwd.match(/^\/home\/([^/]+)/)?.[0] ??
-    cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/)?.[1] ??
-    undefined
-  );
-}
-
-/**
- * Lexically normalize one mapped path: `.` and empty segments drop, `..`
- * pops, and a `..` that would climb past the workspace root fails. Returns
- * null when nothing presentable is left.
- */
-function terminalLinkSegments(relative: string, windows: boolean): string[] | null {
-  const segments: string[] = [];
-  for (const segment of relative.split(windows ? /[\\/]/ : /\//)) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      if (segments.length === 0) return null;
-      segments.pop();
-      continue;
-    }
-    segments.push(segment);
-  }
-  return segments.length > 0 ? segments : null;
-}
-
-/**
- * Terminal link text → the workspace-relative path (and line) the host file
- * view opens, or the named reason it cannot open. The op only carries
- * workspace-relative forward-slash paths, so the position suffix becomes
- * the line, `~` and bare-relative links resolve against the launch cwd
- * (the contracts expose no live shell cwd), and under a Windows root the
- * link's separators are normalized to the root's style before mapping —
- * Windows tools emit forward-slash and mixed-separator paths. Anything
- * that lands outside the workspace root — including cross-style absolute
- * paths — refuses by name like the diff panel's Open does.
- */
-export function terminalPathLinkTarget(
-  text: string,
+export async function openTerminalPath(
+  editor: {
+    invoke(
+      method: "openPath",
+      input: { path: string; cwd: string },
+      signal: AbortSignal,
+    ): Promise<UiEditorOpenReceipt>;
+  },
+  path: string,
   cwd: string,
-  workspaceRoot: string,
-): TerminalPathLinkTarget {
-  const reject = (): TerminalPathLinkTarget => ({
-    status: "unopenable",
-    reason: `${text} cannot be opened — not a workspace-relative path.`,
-  });
-  const windows = isWindowsAbsolutePath(workspaceRoot);
-  const root = workspaceRoot.replace(/[\\/]+$/, "");
-  const stripRoot = (absolute: string): string | null => {
-    const prefix = `${root}${windows ? "\\" : "/"}`;
-    const head = absolute.slice(0, prefix.length);
-    const expected = windows ? prefix.toLowerCase() : prefix;
-    return (windows ? head.toLowerCase() : head) === expected
-      ? absolute.slice(prefix.length)
-      : null;
-  };
-
-  const position = TERMINAL_LINK_POSITION_SUFFIX_PATTERN.exec(text);
-  const line = position ? Number(position[1]) : 0;
-  const path = position ? text.slice(0, position.index) : text;
-  if (path.length === 0) return reject();
-  let absolute: string;
-  if (isAbsolutePath(path)) {
-    absolute = path;
-  } else if (isHomeRelativeLink(path)) {
-    const home = inferHomeFromCwd(cwd);
-    if (home === undefined) return reject();
-    absolute = joinPathStyle(home, path.slice(2), home.includes("\\") ? "\\" : "/");
-  } else {
-    absolute = joinPathStyle(cwd, path, isWindowsAbsolutePath(cwd) ? "\\" : "/");
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const receipt = await editor.invoke("openPath", { path, cwd }, signal);
+    return receipt.status === "opened" ? null : receipt.message;
+  } catch (error) {
+    return `${path} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
   }
-
-  const relative = stripRoot(windows ? absolute.replaceAll("/", "\\") : absolute);
-  if (relative === null) return reject();
-  const segments = terminalLinkSegments(relative, windows);
-  if (segments === null) return reject();
-  return {
-    status: "open",
-    relativePath: segments.join("/"),
-    ...(line >= 1 ? { line } : {}),
-  };
 }
 
 /**
@@ -774,6 +693,13 @@ interface TabInternal {
   input: TerminalInputQueue;
   exiting: boolean;
   exitBanner: string | null;
+  /** Bumped per observed incarnation; a deferred exit only closes its own. */
+  generation: number;
+  /** The last status the sessions list reported, and how many exits it has. */
+  listStatus: TerminalSessionMetadata["status"] | null;
+  listExits: number;
+  /** Exits the pane's output stream reported. */
+  streamExits: number;
   confirm: TerminalConfirmAction | null;
   error: string | null;
   resizeInFlight: { cols: number; rows: number } | null;
@@ -928,6 +854,10 @@ export class TerminalPanel {
         input: this.#newInputQueue(terminalId),
         exiting: false,
         exitBanner: null,
+        generation: 0,
+        listStatus: null,
+        listExits: 0,
+        streamExits: 0,
         confirm: null,
         error: null,
         resizeInFlight: null,
@@ -1013,37 +943,68 @@ export class TerminalPanel {
     this.#emit();
   }
 
-  /** Banner, then close + remove on the next tick, for an exited session (native #29). */
+  /**
+   * Absorbs server metadata (a list row or control result). Like native,
+   * only `exited` closes the session; an `error` (a failed start) stays with
+   * its diagnostic and Start. A live row is a newer incarnation: it cancels
+   * any pending exit.
+   */
   #observeMeta(next: TerminalSessionMetadata) {
     const tab = this.#tab(next.terminalId);
+    const listPrevious = tab.listStatus;
+    tab.listStatus = next.status;
     tab.meta = next;
-    if (tab.exiting || tab.starting || (next.status !== "exited" && next.status !== "error"))
+    if (next.status === "running" || next.status === "starting") {
+      if (listPrevious !== "running" && listPrevious !== "starting") tab.generation += 1;
+      tab.exiting = false;
+      tab.exitBanner = null;
       return;
+    }
+    if (next.status !== "exited") return;
+    if (listPrevious !== "exited") tab.listExits += 1;
+    this.#beginExit(next.terminalId, tab, next.exitCode);
+  }
+
+  /** Banner, then close + remove on the next tick, for an exited session (native #29). */
+  #beginExit(terminalId: string, tab: TabInternal, exitCode: number | null) {
+    if (tab.exiting || tab.starting) return;
     tab.exiting = true;
-    tab.exitBanner =
-      next.status === "exited"
-        ? `Process exited (code ${next.exitCode ?? "unknown"})`
-        : "Terminal error";
+    tab.exitBanner = `Process exited (code ${exitCode ?? "unknown"})`;
+    const generation = tab.generation;
     this.#schedule(() => {
-      if (this.#disposed || !this.#tabs.get(next.terminalId)?.exiting) return;
+      // Only the incarnation that exited: a restart (from any client) or a
+      // re-added tab under the same id is a different session.
+      if (
+        this.#disposed ||
+        this.#tabs.get(terminalId) !== tab ||
+        !tab.exiting ||
+        tab.generation !== generation
+      )
+        return;
       // Native closes an exited terminal outright; a failed close still
       // leaves the tab, like a user close.
-      this.#closing.add(next.terminalId);
+      this.#closing.add(terminalId);
       void this.#control
-        .close({ terminalId: next.terminalId, deleteHistory: true })
-        .catch(() => this.#closing.delete(next.terminalId));
-      this.#removeTab(next.terminalId);
+        .close({ terminalId, deleteHistory: true })
+        .catch(() => this.#closing.delete(terminalId));
+      this.#removeTab(terminalId);
     });
   }
 
   /**
    * The pane's output stream saw the process exit. It usually lands before
-   * the sessions list's upsert, so the exit handling starts here.
+   * the sessions list's upsert, so the exit handling starts here — unless
+   * the list already reported this exit, in which case a live row is a newer
+   * incarnation this late exit must not touch.
    */
   noteExit(terminalId: string, exitCode: number | null) {
-    const meta = this.#tabs.get(terminalId)?.meta;
-    if (this.#disposed || !meta) return;
-    this.#observeMeta({ ...meta, status: "exited", exitCode });
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab?.meta) return;
+    tab.streamExits += 1;
+    if (tab.streamExits <= tab.listExits) return;
+    if (tab.meta.status !== "running" && tab.meta.status !== "starting") return;
+    tab.meta = { ...tab.meta, status: "exited", exitCode };
+    this.#beginExit(terminalId, tab, exitCode);
     this.#emit();
   }
 

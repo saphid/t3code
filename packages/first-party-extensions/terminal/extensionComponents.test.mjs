@@ -1048,11 +1048,11 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
   // The stub class exists only inside the esbuild bundle; it publishes itself.
   const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
   // The count this feature owns — other invokes may share the window.
-  const openFileInvokes = (invokes) =>
-    invokes.filter((entry) => entry.id === "t3.ui/panels" && entry.method === "openFile");
+  const editorInvokes = (invokes) =>
+    invokes.filter((entry) => entry.id === "t3.ui/editor" && entry.method === "openPath");
 
   /** A host whose assets resolve, so the pane really mounts its surface. */
-  function linkHost(openFileResult) {
+  function linkHost(openPath) {
     const invokes = [];
     const host = {
       readAsset: async (path) => ({
@@ -1065,13 +1065,9 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
         sha256: "0".repeat(64),
       }),
       invokeApi: async (request) => {
-        invokes.push({
-          id: request.id,
-          method: request.method,
-          input: request.input,
-          versionRange: request.versionRange,
-        });
-        if (request.id === "t3.ui/panels" && request.method === "openFile") return openFileResult;
+        invokes.push({ id: request.id, method: request.method, input: request.input });
+        if (request.id === "t3.ui/editor" && request.method === "openPath")
+          return openPath(request.input);
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
           return { tokens: {}, cssVars: {} };
         if (request.id === "t3.ui/external" && request.method === "open")
@@ -1097,7 +1093,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
       signal: new AbortController().signal,
       context: {
         resource: { threadId: "t", environmentId: "e" },
-        workspaceRevision: JSON.stringify(["/ws/root", null]),
+        workspaceRevision: JSON.stringify(["/ws/root", "/ws/worktrees/feature"]),
       },
       visible: true,
       save() {},
@@ -1107,194 +1103,141 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
     };
   }
 
-  NodeTest.test(
-    "path links open the host file view, URLs open through t3.ui/external; refusals are named",
-    async () => {
-      const { host, invokes } = linkHost({ applied: true });
-      stubSurfaces().length = 0;
-      let renderer;
-      await act(async () => {
-        renderer = create(
-          React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
-          {
-            createNodeMock: nodeMock,
-          },
-        );
-      });
-      try {
-        // The pane's surface mounts only after the shared asset load lands.
-        for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-          await act(async () => {
-            await drain();
-          });
-        }
-        const surface = stubSurfaces()[0];
-        NodeAssert.ok(surface, "terminal surface never mounted");
-        const activate = surface.options.onLinkActivate;
-
-        // Path link: the host opens its file view (the selected
-        // t3.file/presentation) at the workspace-relative path and line, and
-        // like the native drawer a successful open writes nothing.
-        surface.writes.length = 0;
-        await act(async () => {
-          activate("src/view.tsx:12", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.deepEqual(openFileInvokes(invokes), [
-          {
-            id: "t3.ui/panels",
-            method: "openFile",
-            input: { relativePath: "src/view.tsx", line: 12, threadId: "t" },
-            versionRange: "^1.1.0",
-          },
-        ]);
-        NodeAssert.deepEqual(
-          invokes.filter((entry) => entry.id === "t3.file/presentation"),
-          [],
-        );
-        NodeAssert.deepEqual(
-          surface.writes.filter((data) => data.includes("[terminal]")),
-          [],
-        );
-
-        // URL link: handed to t3.ui/external, never the file view; the
-        // client's refusal is written on the surface by name.
-        const invokesBefore = openFileInvokes(invokes).length;
-        surface.writes.length = 0;
-        await act(async () => {
-          activate("https://t3.codes/docs", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.equal(openFileInvokes(invokes).length, invokesBefore);
-        NodeAssert.deepEqual(
-          invokes
-            .filter((entry) => entry.id === "t3.ui/external")
-            .map(({ id, method, input }) => ({ id, method, input })),
-          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
-        );
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes("[terminal] https://t3.codes/docs was not opened (opener-refused)."),
-          ),
-        );
-
-        // Outside-workspace path: refuses by name, still no invoke.
-        surface.writes.length = 0;
-        await act(async () => {
-          activate("/etc/passwd", { metaKey: true });
-          await drain();
-        });
-        NodeAssert.equal(openFileInvokes(invokes).length, invokesBefore);
-        NodeAssert.ok(
-          surface.writes.some((data) =>
-            data.includes(
-              "[terminal] /etc/passwd cannot be opened — not a workspace-relative path.",
-            ),
-          ),
-        );
-      } finally {
-        await act(async () => {
-          renderer.unmount();
-        });
-      }
-    },
-  );
-
-  NodeTest.test("a denied file open reports the failure on the surface", async () => {
-    const { host, invokes } = (() => {
-      const inner = linkHost(null);
-      const denied = Object.create(inner.host);
-      denied.invokeApi = async (request) => {
-        inner.invokes.push({ id: request.id, method: request.method, input: request.input });
-        if (request.id === "t3.ui/panels" && request.method === "openFile")
-          throw new Error("API capability denied: t3.ui/panels.openFile");
-        if (request.id === "t3.ui/theme" && request.method === "getTokens")
-          return { tokens: {}, cssVars: {} };
-        return { commandSetToken: "token", results: [] };
-      };
-      return { host: denied, invokes: inner.invokes };
-    })();
+  /** Mounts the pane and returns its link activator and surface. */
+  async function mountLinkPane(host, session = workspaceSession()) {
     stubSurfaces().length = 0;
-    let renderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(bundle.TerminalView, { host, session: workspaceSession() }),
-        {
-          createNodeMock: nodeMock,
-        },
-      );
-    });
-    try {
-      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-        await act(async () => {
-          await drain();
-        });
-      }
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      await act(async () => {
-        surface.options.onLinkActivate("src/view.tsx", { metaKey: true });
-        await drain();
-      });
-      NodeAssert.equal(openFileInvokes(invokes).length, 1);
-      NodeAssert.ok(
-        surface.writes.some((data) =>
-          data.includes(
-            "[terminal] src/view.tsx could not be opened — API capability denied: t3.ui/panels.openFile",
-          ),
-        ),
-      );
-    } finally {
-      await act(async () => {
-        renderer.unmount();
-      });
-    }
-  });
-
-  NodeTest.test("a session without a workspace reports it on the surface", async () => {
-    const { host, invokes } = linkHost(null);
-    stubSurfaces().length = 0;
-    const session = workspaceSession();
-    session.context.workspaceRevision = undefined;
     let renderer;
     await act(async () => {
       renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
         createNodeMock: nodeMock,
       });
     });
-    try {
-      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
-        await act(async () => {
-          await drain();
-        });
-      }
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
+    // The pane's surface mounts only after the shared asset load lands.
+    for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
       await act(async () => {
-        surface.options.onLinkActivate("src/a.ts", { metaKey: true });
         await drain();
       });
-      NodeAssert.equal(openFileInvokes(invokes).length, 0);
-      NodeAssert.ok(
-        surface.writes.some((data) =>
-          data.includes("[terminal] src/a.ts cannot be opened — the workspace is not available."),
-        ),
-      );
-    } finally {
+    }
+    const surface = stubSurfaces()[0];
+    NodeAssert.ok(surface, "terminal surface never mounted");
+    const activate = async (text) => {
+      surface.writes.length = 0;
       await act(async () => {
+        surface.options.onLinkActivate(text, { metaKey: true });
+        await drain();
+      });
+      return surface.writes.filter((data) => data.includes("[terminal]"));
+    };
+    const unmount = () =>
+      act(async () => {
         renderer.unmount();
       });
+    return { activate, unmount };
+  }
+
+  NodeTest.test(
+    "path links open the preferred editor at the link position, URLs open through t3.ui/external",
+    async () => {
+      const { host, invokes } = linkHost((input) => ({
+        status: "opened",
+        path: `${input.cwd}/${input.path}`,
+        editor: "zed",
+      }));
+      const pane = await mountLinkPane(host);
+      try {
+        // Like the native drawer: raw link text plus the launch cwd (the
+        // thread worktree), position intact, and a successful open is silent.
+        NodeAssert.deepEqual(await pane.activate("src/view.tsx:12:3"), []);
+        // A path outside the project root is still the user's to open.
+        NodeAssert.deepEqual(await pane.activate("/elsewhere/other.ts:4"), []);
+        NodeAssert.deepEqual(
+          editorInvokes(invokes).map((entry) => entry.input),
+          [
+            { path: "src/view.tsx:12:3", cwd: "/ws/worktrees/feature" },
+            { path: "/elsewhere/other.ts:4", cwd: "/ws/worktrees/feature" },
+          ],
+        );
+        // The Files view and file presentation are never involved.
+        NodeAssert.deepEqual(
+          invokes.filter(
+            (entry) =>
+              entry.id === "t3.file/presentation" ||
+              (entry.id === "t3.ui/panels" && entry.method !== "getCapabilities"),
+          ),
+          [],
+        );
+
+        // URL link: handed to t3.ui/external, never the editor; the
+        // client's refusal is written on the surface by name.
+        const editorCount = editorInvokes(invokes).length;
+        NodeAssert.deepEqual(await pane.activate("https://t3.codes/docs"), [
+          "\r\n[terminal] https://t3.codes/docs was not opened (opener-refused).\r\n",
+        ]);
+        NodeAssert.equal(editorInvokes(invokes).length, editorCount);
+        NodeAssert.deepEqual(
+          invokes
+            .filter((entry) => entry.id === "t3.ui/external")
+            .map(({ id, method, input }) => ({ id, method, input })),
+          [{ id: "t3.ui/external", method: "open", input: { url: "https://t3.codes/docs" } }],
+        );
+      } finally {
+        await pane.unmount();
+      }
+    },
+  );
+
+  NodeTest.test("the host's refusal and a denied open are written on the surface", async () => {
+    let answer = { status: "refused", reason: "no-editor", message: "No available editor." };
+    const { host } = linkHost(() => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    });
+    const pane = await mountLinkPane(host);
+    try {
+      NodeAssert.deepEqual(await pane.activate("src/view.tsx"), [
+        "\r\n[terminal] No available editor.\r\n",
+      ]);
+      answer = new Error("API capability denied: t3.ui/editor.open");
+      NodeAssert.deepEqual(await pane.activate("src/view.tsx"), [
+        "\r\n[terminal] src/view.tsx could not be opened — API capability denied: t3.ui/editor.open\r\n",
+      ]);
+    } finally {
+      await pane.unmount();
+    }
+  });
+
+  NodeTest.test("a session without a workspace reports it on the surface", async () => {
+    const { host, invokes } = linkHost(() => {
+      throw new Error("unreachable");
+    });
+    const session = workspaceSession();
+    session.context.workspaceRevision = undefined;
+    const pane = await mountLinkPane(host, session);
+    try {
+      NodeAssert.deepEqual(await pane.activate("src/a.ts"), [
+        "\r\n[terminal] src/a.ts cannot be opened — the workspace is not available.\r\n",
+      ]);
+      NodeAssert.equal(editorInvokes(invokes).length, 0);
+    } finally {
+      await pane.unmount();
     }
   });
 });
 
 NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
-  NodeTest.test("scrolls within a fixed cap so the panes keep the dock floor", async () => {
-    const ids = Array.from({ length: 10 }, (_, index) => `many${index + 1}`);
+  /** Renders the panel over `count` live sessions with a resolving renderer. */
+  async function renderSessions(count) {
+    const ids = Array.from({ length: count }, (_, index) => `many${index + 1}`);
     const host = {
-      readAsset: async () => {
-        throw new Error("assets unused");
-      },
+      readAsset: async (path) => ({
+        bytes: new Uint8Array([1, 2, 3]),
+        mediaType: path.endsWith(".woff2")
+          ? "font/woff2"
+          : path.endsWith(".txt")
+            ? "text/plain"
+            : "application/wasm",
+        sha256: "0".repeat(64),
+      }),
       invokeApi: async (request) =>
         request.id === "t3.ui/theme" && request.method === "getTokens"
           ? { tokens: {}, cssVars: {} }
@@ -1324,25 +1267,82 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
         createNodeMock: nodeMock,
       });
     });
-    try {
-      const list = renderer.root.find(
-        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
-      );
-      NodeAssert.equal(list.findAll((node) => node.type === "li").length >= ids.length, true);
-      // The host's dock floor sums the intrinsic heights of non-growing
-      // children, so the list's cap must be a fixed length, not a share of
-      // the frame, and the overflow must scroll instead of pushing the panes.
-      const { maxHeight, overflowY, minHeight } = list.props.style;
-      NodeAssert.equal(typeof maxHeight, "number");
-      NodeAssert.ok(maxHeight > 0 && maxHeight <= 200, `maxHeight ${maxHeight}`);
-      NodeAssert.equal(overflowY, "auto");
-      NodeAssert.equal(minHeight, 0);
-    } finally {
+    for (let attempt = 0; attempt < 5; attempt++)
       await act(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+    const unmount = () =>
+      act(async () => {
         renderer.unmount();
       });
+    try {
+      const root = renderer.root;
+      const section = root.find((node) => node.type === "section");
+      const body = root.find((node) => node.type === "div" && node.props["data-t3-terminal-body"]);
+      const list = root.find(
+        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
+      );
+      // What stacks above the body in the panel's column, in order.
+      const column = section.children.filter((child) => typeof child !== "string");
+      const chromeAbove = column
+        .slice(0, column.indexOf(body))
+        .map((child) => `${child.type}:${child.props["aria-label"] ?? child.props.role ?? ""}`);
+      const within = (ancestor, node) =>
+        ancestor.findAll((candidate) => candidate === node).length > 0;
+      return {
+        ids,
+        body,
+        list,
+        chromeAbove,
+        within,
+        panes: root.find((node) => node.props["aria-label"] === "Terminal panes"),
+        unmount,
+      };
+    } catch (error) {
+      await unmount();
+      throw error;
+    }
+  }
+
+  NodeTest.test("many sessions list beside the panes and never take their height", async () => {
+    const two = await renderSessions(2);
+    const ten = await renderSessions(10).catch(async (error) => {
+      await two.unmount();
+      throw error;
+    });
+    try {
+      // Like the native drawer, the selector sits beside the panes in the
+      // body, so ten sessions stack no more above the panes than two do.
+      NodeAssert.deepEqual(ten.chromeAbove, two.chromeAbove);
+      NodeAssert.ok(!ten.chromeAbove.includes("ul:Terminal sessions"));
+      NodeAssert.ok(ten.within(ten.body, ten.list) && ten.within(ten.body, ten.panes));
+      NodeAssert.equal(
+        ten.list.findAll(
+          (node) => node.type === "button" && node.props["aria-label"]?.startsWith("Restart "),
+        ).length,
+        ten.ids.length,
+      );
+      // The list scrolls inside the body's height; the body keeps a floor.
+      NodeAssert.equal(ten.list.props.style.overflowY, "auto");
+      NodeAssert.ok(ten.body.props.style.minHeight >= 120);
+    } finally {
+      await two.unmount();
+      await ten.unmount();
     }
   });
+
+  NodeTest.test(
+    "a single session keeps its row above the panes, as native has no sidebar",
+    async () => {
+      const one = await renderSessions(1);
+      try {
+        NodeAssert.ok(one.chromeAbove.includes("ul:Terminal sessions"));
+        NodeAssert.ok(!one.within(one.body, one.list));
+      } finally {
+        await one.unmount();
+      }
+    },
+  );
 });
 
 NodeTest.describe("exit UX (Terminal 29)", () => {

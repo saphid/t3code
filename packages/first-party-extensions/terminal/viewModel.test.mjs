@@ -21,8 +21,8 @@ import {
   noteOutputFrameForStreak,
   removeTerminalId,
   resolveActiveTerminalId,
+  openTerminalPath,
   openTerminalUrl,
-  terminalPathLinkTarget,
 } from "./viewModel.ts";
 
 const frame = (sequence, streamId = "stream-1") => ({ streamId, sequence });
@@ -783,6 +783,114 @@ NodeTest.describe("terminal panel — exit UX", () => {
     await panel.startSession("term-1");
     scheduler.pending.forEach((cb) => cb());
     NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.deepEqual(
+      control.calls.map(([method]) => method),
+      ["attach"],
+    );
+    panel.dispose();
+  });
+
+  NodeTest.it("a restart from another client before the tick keeps the new session", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
+    });
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.equal(panel.snapshot.tabs[0].status, "running");
+    NodeAssert.deepEqual(control.calls, []);
+    panel.dispose();
+  });
+
+  NodeTest.it("an output-stream exit is cancelled by a running upsert before the tick", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    panel.noteExit("term-1", 0);
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
+    });
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.deepEqual(control.calls, []);
+    panel.dispose();
+  });
+
+  NodeTest.it("a late output exit for a restarted session never closes the new one", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    // The list reports the exit and the restart before the pane's (possibly
+    // remounted) output stream delivers the old process's exit.
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
+    });
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    panel.noteExit("term-1", 0);
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
+    NodeAssert.deepEqual(control.calls, []);
+    // The new incarnation's own exit still closes it.
+    scheduler.pending.length = 0;
+    panel.noteExit("term-1", 7);
+    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 7)");
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
+    panel.dispose();
+  });
+
+  NodeTest.it("a pending exit never closes a re-added session under the same id", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 0 }),
+    });
+    panel.applySessionsEvent({ kind: "remove", terminalId: "term-1" });
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.deepEqual(control.calls, []);
+    panel.dispose();
+  });
+
+  NodeTest.it("a failed-start session keeps its error and retry on mount", async () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1", { status: "error" }), meta("term-2")],
+    });
+    // A live session that then fails is kept the same way.
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-2", { status: "error" }) });
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1", "term-2"]);
+    NodeAssert.deepEqual(
+      panel.snapshot.tabs.map((tab) => [tab.status, tab.exitBanner]),
+      [
+        ["error", null],
+        ["error", null],
+      ],
+    );
+    NodeAssert.deepEqual(control.calls, []);
+    // Start still retries it in place.
+    await panel.startSession("term-1");
     NodeAssert.deepEqual(
       control.calls.map(([method]) => method),
       ["attach"],
@@ -1610,13 +1718,12 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
         "t3.ui/keybindings",
         "t3.ui/panels",
         "t3.ui/external",
+        "t3.ui/editor",
       ],
     );
-    // Path links call openFile, which t3.ui/panels added in 1.1.0.
-    NodeAssert.equal(
-      manifest.requires.find((item) => item.id === "t3.ui/panels").versionRange,
-      "^1.1.0",
-    );
+    // No requirement needs a newer contract than its 1.0.0 baseline.
+    for (const item of manifest.requires.filter((entry) => entry.id.startsWith("t3.ui/")))
+      NodeAssert.equal(item.versionRange, "^1.0.0", item.id);
   });
 });
 
@@ -1661,137 +1768,42 @@ NodeTest.describe("terminal URL links (Terminal 22 URL half)", () => {
 });
 
 NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
-  const target = (text, cwd, workspaceRoot) => terminalPathLinkTarget(text, cwd, workspaceRoot);
-  const unopenable = (value) =>
-    value.status === "unopenable" &&
-    value.reason === `${value.text} cannot be opened — not a workspace-relative path.`;
-
-  NodeTest.it("bare-relative link strips its position suffix and opens", () => {
-    NodeAssert.deepEqual(target("src/view.tsx:12:3", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "src/view.tsx",
-      line: 12,
-    });
+  const signal = new AbortController().signal;
+  const editor = (answer, calls = []) => ({
+    invoke: async (method, input) => {
+      calls.push({ method, input });
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
   });
 
-  NodeTest.it("a position suffix of zero still slices off", () => {
-    // The markdown splitter slices the suffix even when the line number is
-    // not keepable, so `a.ts:0` must resolve as `a.ts`, not `a.ts:0`.
-    NodeAssert.deepEqual(target("a.ts:0", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "a.ts",
-    });
+  NodeTest.it("hands the raw link and launch cwd to t3.ui/editor and opens silently", async () => {
+    const calls = [];
+    const opened = editor({ status: "opened", path: "/ws/root/a.ts:3:5", editor: "zed" }, calls);
+    NodeAssert.equal(await openTerminalPath(opened, "a.ts:3:5", "/ws/root", signal), null);
+    NodeAssert.deepEqual(calls, [
+      { method: "openPath", input: { path: "a.ts:3:5", cwd: "/ws/root" } },
+    ]);
   });
 
-  NodeTest.it("a link that is only a position suffix refuses by name", () => {
-    // Nothing presentable remains once the suffix is stripped.
-    NodeAssert.ok(unopenable({ ...target(":12", "/ws/root", "/ws/root"), text: ":12" }));
-  });
-
-  NodeTest.it("absolute link inside the workspace root opens relative", () => {
-    NodeAssert.deepEqual(target("/ws/root/packages/a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "packages/a.ts",
-    });
-  });
-
-  NodeTest.it("absolute link outside the workspace root refuses by name", () => {
-    const value = target("/etc/passwd", "/ws/root", "/ws/root");
-    NodeAssert.ok(unopenable({ ...value, text: "/etc/passwd" }));
-  });
-
-  NodeTest.it("home-relative link resolves through the inferred home", () => {
-    // Spelled concatenated: the pack's audit bans the home-link sequence.
-    const homeLink = (rest) => "~" + "/" + rest;
-    const noHome = "~" + "/srv/none/a.ts";
-    NodeAssert.ok(unopenable({ ...target(noHome, "/srv/app", "/srv/app"), text: noHome }));
-    const inside = target(homeLink("proj/src/a.ts"), "/Users/alex/proj", "/Users/alex/proj");
-    NodeAssert.deepEqual(inside, {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.ok(
-      unopenable({
-        ...target(homeLink("elsewhere/x.ts"), "/Users/alex/proj", "/Users/alex/proj"),
-        text: homeLink("elsewhere/x.ts"),
-      }),
+  NodeTest.it("writes the host's refusal and names a denied invoke", async () => {
+    NodeAssert.equal(
+      await openTerminalPath(
+        editor({ status: "refused", reason: "no-editor", message: "No available editor." }),
+        "a.ts",
+        "/ws/root",
+        signal,
+      ),
+      "No available editor.",
     );
-  });
-
-  NodeTest.it("dot segments normalize while root escapes refuse", () => {
-    NodeAssert.deepEqual(target("./src/./a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.deepEqual(target("src/../a.ts", "/ws/root", "/ws/root"), {
-      status: "open",
-      relativePath: "a.ts",
-    });
-    // `..` past the root — including through the root prefix — never opens.
-    NodeAssert.ok(
-      unopenable({ ...target("../outside.ts", "/ws/root", "/ws/root"), text: "../outside.ts" }),
-    );
-    NodeAssert.ok(
-      unopenable({
-        ...target("/ws/root/../escape.ts", "/ws/root", "/ws/root"),
-        text: "/ws/root/../escape.ts",
-      }),
-    );
-  });
-
-  NodeTest.it("the bare workspace root is not a presentable file", () => {
-    NodeAssert.ok(unopenable({ ...target("/ws/root", "/ws/root", "/ws/root"), text: "/ws/root" }));
-  });
-
-  NodeTest.it("a worktree launch cwd cannot express its links as project-relative", () => {
-    // The terminal spawns in the worktree, but the presentation op's paths
-    // are project-root-relative, so worktree paths refuse honestly while
-    // project-root absolutes still open.
-    NodeAssert.ok(unopenable({ ...target("src/a.ts", "/wt/tree", "/ws/root"), text: "src/a.ts" }));
-    NodeAssert.ok(
-      unopenable({
-        ...target("/wt/tree/src/a.ts", "/wt/tree", "/ws/root"),
-        text: "/wt/tree/src/a.ts",
-      }),
-    );
-    NodeAssert.deepEqual(target("/ws/root/src/a.ts", "/wt/tree", "/ws/root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-  });
-
-  NodeTest.it("windows workspaces map drive-letter links case-insensitively", () => {
-    NodeAssert.deepEqual(target("src\\a.ts:4", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-      line: 4,
-    });
-    NodeAssert.deepEqual(target("c:\\WS\\ROOT\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.ok(
-      unopenable({
-        ...target("C:\\Other\\a.ts", "C:\\ws\\root", "C:\\ws\\root"),
-        text: "C:\\Other\\a.ts",
-      }),
-    );
-    // Windows tools emit forward-slash and mixed-separator paths; the
-    // resolver normalizes to the root's style before mapping.
-    NodeAssert.deepEqual(target("C:/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    NodeAssert.deepEqual(target("c:/WS/root\\src\\a.ts", "C:\\ws\\root", "C:\\ws\\root"), {
-      status: "open",
-      relativePath: "src/a.ts",
-    });
-    // Cross-style: a posix absolute never maps onto a windows root.
-    NodeAssert.ok(
-      unopenable({
-        ...target("/ws/root/src/a.ts", "C:\\ws\\root", "C:\\ws\\root"),
-        text: "/ws/root/src/a.ts",
-      }),
+    NodeAssert.equal(
+      await openTerminalPath(
+        editor(new Error("API capability denied: t3.ui/editor.open")),
+        "a.ts",
+        "/ws/root",
+        signal,
+      ),
+      "a.ts could not be opened — API capability denied: t3.ui/editor.open",
     );
   });
 });

@@ -436,7 +436,7 @@ const panelThreadInput = {
 
 export const CLIENT_PANELS_API = validateApiDefinition({
   id: "t3.client/panels",
-  version: "1.1.0",
+  version: "1.0.0",
   methods: [
     {
       name: "openSurface",
@@ -526,21 +526,6 @@ export const CLIENT_PANELS_API = validateApiDefinition({
       effect: "write",
       requiredGrants: [],
       inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
-      outputSchema: okOutput,
-    },
-    // 1.1.0: the host's own file view for a workspace-relative path.
-    {
-      name: "openFile",
-      effect: "write",
-      requiredGrants: [],
-      inputSchema: withTarget(
-        {
-          relativePath: { type: "string", minLength: 1, maxLength: 512 },
-          line: { type: "integer", minimum: 1, maximum: 1_000_000 },
-          ...panelThreadInput,
-        },
-        ["relativePath", "threadId"],
-      ),
       outputSchema: okOutput,
     },
   ],
@@ -953,6 +938,52 @@ export const CLIENT_EXTERNAL_API = validateApiDefinition({
   ],
 });
 
+/** The `t3.ui/editor` open receipt, shared by the public and private areas. */
+export const uiEditorOpenReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "path", "editor"],
+      properties: {
+        status: { const: "opened" },
+        path: { type: "string", minLength: 1, maxLength: 4096 },
+        editor: { type: "string", minLength: 1, maxLength: 64 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason", "message"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["no-editor", "open-failed"] },
+        message: { type: "string", maxLength: 1024 },
+      },
+    },
+  ],
+} as const;
+
+const editorPathInput = {
+  path: { type: "string", minLength: 1, maxLength: 4096 },
+  cwd: { type: "string", minLength: 1, maxLength: 4096 },
+} as const;
+
+/** Backs `t3.ui/editor`: the client owns the preferred editor and opens through its environment. */
+export const CLIENT_EDITOR_API = validateApiDefinition({
+  id: "t3.client/editor",
+  version: "1.0.0",
+  methods: [
+    {
+      name: "openPath",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
+      outputSchema: uiEditorOpenReceiptSchema,
+    },
+  ],
+});
+
 /**
  * The `t3.browser/history` result, shared by the public and private areas:
  * the project's URL history, most-recently-visited first, at most 50 entries
@@ -1126,6 +1157,7 @@ export const CLIENT_PROVIDER_APIS: ReadonlyMap<string, ApiDefinition> = new Map(
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
+    CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
     CLIENT_NAVIGATION_API,
   ].map((definition) => [definition.id, definition]),

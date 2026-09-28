@@ -1551,7 +1551,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PANELS_API = validateApiDefinition({
     id: "t3.client/panels",
-    version: "1.1.0",
+    version: "1.0.0",
     methods: [
       {
         name: "openSurface",
@@ -1635,18 +1635,6 @@ var __t3Client = (() => {
         effect: "write",
         requiredGrants: [],
         inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
-        outputSchema: okOutput
-      },
-      // 1.1.0: the host's own file view for a workspace-relative path.
-      {
-        name: "openFile",
-        effect: "write",
-        requiredGrants: [],
-        inputSchema: withTarget({
-          relativePath: { type: "string", minLength: 1, maxLength: 512 },
-          line: { type: "integer", minimum: 1, maximum: 1e6 },
-          ...panelThreadInput
-        }, ["relativePath", "threadId"]),
         outputSchema: okOutput
       }
     ]
@@ -2009,6 +1997,47 @@ var __t3Client = (() => {
       }
     ]
   });
+  var uiEditorOpenReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "path", "editor"],
+        properties: {
+          status: { const: "opened" },
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          editor: { type: "string", minLength: 1, maxLength: 64 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason", "message"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["no-editor", "open-failed"] },
+          message: { type: "string", maxLength: 1024 }
+        }
+      }
+    ]
+  };
+  var editorPathInput = {
+    path: { type: "string", minLength: 1, maxLength: 4096 },
+    cwd: { type: "string", minLength: 1, maxLength: 4096 }
+  };
+  var CLIENT_EDITOR_API = validateApiDefinition({
+    id: "t3.client/editor",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "openPath",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
+        outputSchema: uiEditorOpenReceiptSchema
+      }
+    ]
+  });
   var browserHistoryEntriesSchema = {
     type: "object",
     additionalProperties: false,
@@ -2147,6 +2176,7 @@ var __t3Client = (() => {
     CLIENT_TERMINAL_APPEARANCE_API,
     CLIENT_PREFERENCES_API,
     CLIENT_EXTERNAL_API,
+    CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
     CLIENT_NAVIGATION_API
   ].map((definition) => [definition.id, definition]));
@@ -7445,184 +7475,155 @@ var __t3Client = (() => {
       ]
     }
   );
-  var uiPanelsApi = defineApi(
-    {
-      id: "t3.ui/panels",
-      version: "1.1.0",
-      methods: [
-        {
-          name: "getCapabilities",
-          effect: "read",
-          requiredGrants: [],
-          inputSchema: composerEmptyInputSchema,
-          outputSchema: uiCapabilitiesOutput([
-            "openSurface",
-            "activateSurface",
-            "closeSurface",
-            "listSurfaces",
-            "hideDock",
-            "showDock",
-            "openFile"
-          ])
-        },
-        {
-          name: "openSurface",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["surfaceId"],
-            properties: {
-              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-              title: { type: "string", minLength: 1, maxLength: 200 },
-              placement: { enum: ["side-panel", "bottom-dock"] },
-              threadId: { type: "string", maxLength: 128 }
-            }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["surfaceId"],
-            properties: { surfaceId: { type: "string", maxLength: 160 } }
+  var uiPanelsApi = defineApi({
+    id: "t3.ui/panels",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "openSurface",
+          "activateSurface",
+          "closeSurface",
+          "listSurfaces",
+          "hideDock",
+          "showDock"
+        ])
+      },
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            threadId: { type: "string", maxLength: 128 }
           }
         },
-        {
-          name: "activateSurface",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["surfaceId"],
-            properties: {
-              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-              threadId: { type: "string", maxLength: 128 }
-            }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["applied"],
-            properties: { applied: { type: "boolean" } }
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } }
+        }
+      },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
           }
         },
-        {
-          name: "closeSurface",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["surfaceId"],
-            properties: {
-              surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-              threadId: { type: "string", maxLength: 128 }
-            }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["applied"],
-            properties: { applied: { type: "boolean" } }
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 }
           }
         },
-        {
-          name: "listSurfaces",
-          effect: "read",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["threadId"],
-            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["surfaces"],
-            properties: {
-              surfaces: {
-                type: "array",
-                maxItems: 64,
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["id", "title", "placement", "active"],
-                  properties: {
-                    id: { type: "string", maxLength: 160 },
-                    title: { type: "string", maxLength: 200 },
-                    placement: { enum: ["side-panel", "bottom-dock"] },
-                    active: { type: "boolean" }
-                  }
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" }
                 }
               }
             }
           }
-        },
-        {
-          name: "hideDock",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["threadId"],
-            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["applied"],
-            properties: { applied: { type: "boolean" } }
-          }
-        },
-        {
-          name: "showDock",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["threadId"],
-            properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["applied"],
-            properties: { applied: { type: "boolean" } }
-          }
-        },
-        {
-          name: "openFile",
-          effect: "write",
-          requiredGrants: [UI_PANELS],
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["relativePath"],
-            properties: {
-              relativePath: { type: "string", minLength: 1, maxLength: 512 },
-              line: { type: "integer", minimum: 1, maximum: 1e6 },
-              threadId: { type: "string", maxLength: 128 }
-            }
-          },
-          outputSchema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["applied"],
-            properties: { applied: { type: "boolean" } }
-          }
         }
-      ]
-    },
-    // Consumers keep loading on a 1.0.0 host; bind at ^1.1.0 to call openFile.
-    {
-      baseline: "1.0.0",
-      additions: [{ version: "1.1.0", method: "openFile", input: "relativePath" }]
-    }
-  );
+      },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } }
+        }
+      }
+    ]
+  });
   var uiPreferencesApi = defineApi({
     id: UI_PREFERENCES,
     version: "1.0.0",
@@ -7691,6 +7692,36 @@ var __t3Client = (() => {
       }
     ]
   });
+  var UI_EDITOR = "t3.ui/editor";
+  var UI_EDITOR_OPEN = "t3.ui/editor.open";
+  var uiEditorApi = defineApi({
+    id: UI_EDITOR,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput(["openPath"])
+      },
+      {
+        name: "openPath",
+        effect: "write",
+        requiredGrants: [UI_EDITOR_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "cwd"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            cwd: { type: "string", minLength: 1, maxLength: 4096 }
+          }
+        },
+        outputSchema: uiEditorOpenReceiptSchema
+      }
+    ]
+  });
   var UI_NAVIGATION = "t3.ui/navigation";
   var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
   var UI_NAVIGATION_OPEN_SESSION = "t3.ui/navigation.open-session";
@@ -7738,6 +7769,7 @@ var __t3Client = (() => {
   var UI_PANELS_API = uiPanelsApi.definition;
   var UI_PREFERENCES_API = uiPreferencesApi.definition;
   var UI_EXTERNAL_API = uiExternalApi.definition;
+  var UI_EDITOR_API = uiEditorApi.definition;
   var UI_NAVIGATION_API = uiNavigationApi.definition;
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
@@ -7787,6 +7819,7 @@ var __t3Client = (() => {
     uiPanelsApi.definition,
     uiPreferencesApi.definition,
     uiExternalApi.definition,
+    uiEditorApi.definition,
     uiNavigationApi.definition,
     agentSessionsApi.definition
   ];
@@ -8140,12 +8173,6 @@ var __t3Client = (() => {
       matches.push(candidate);
     }
     return matches;
-  }
-  function isWindowsAbsolutePath(value) {
-    return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
-  }
-  function isAbsolutePath(value) {
-    return value.startsWith("/") || isWindowsAbsolutePath(value);
   }
   function extractTerminalLinks(line) {
     const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
@@ -11910,67 +11937,13 @@ var __t3Client = (() => {
       return null;
     }
   }
-  var TERMINAL_LINK_POSITION_SUFFIX_PATTERN = /:(\d+)(?::\d+)?$/;
-  function isHomeRelativeLink(path3) {
-    return path3[0] === "~" && path3[1] === "/";
-  }
-  function joinPathStyle(base, next, separator) {
-    const cleanBase = base.replace(/[\\/]+$/, "");
-    if (separator === "\\") return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-    return `${cleanBase}/${next.replace(/^\/+/, "")}`;
-  }
-  function inferHomeFromCwd(cwd) {
-    return cwd.match(/^\/Users\/([^/]+)/)?.[0] ?? cwd.match(/^\/home\/([^/]+)/)?.[0] ?? cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/)?.[1] ?? void 0;
-  }
-  function terminalLinkSegments(relative, windows) {
-    const segments = [];
-    for (const segment of relative.split(windows ? /[\\/]/ : /\//)) {
-      if (segment === "" || segment === ".") continue;
-      if (segment === "..") {
-        if (segments.length === 0) return null;
-        segments.pop();
-        continue;
-      }
-      segments.push(segment);
+  async function openTerminalPath(editor, path3, cwd, signal) {
+    try {
+      const receipt2 = await editor.invoke("openPath", { path: path3, cwd }, signal);
+      return receipt2.status === "opened" ? null : receipt2.message;
+    } catch (error) {
+      return `${path3} could not be opened \u2014 ${error instanceof Error ? error.message : "unavailable"}`;
     }
-    return segments.length > 0 ? segments : null;
-  }
-  function terminalPathLinkTarget(text, cwd, workspaceRoot) {
-    const reject = () => ({
-      status: "unopenable",
-      reason: `${text} cannot be opened \u2014 not a workspace-relative path.`
-    });
-    const windows = isWindowsAbsolutePath(workspaceRoot);
-    const root = workspaceRoot.replace(/[\\/]+$/, "");
-    const stripRoot = (absolute2) => {
-      const prefix = `${root}${windows ? "\\" : "/"}`;
-      const head = absolute2.slice(0, prefix.length);
-      const expected = windows ? prefix.toLowerCase() : prefix;
-      return (windows ? head.toLowerCase() : head) === expected ? absolute2.slice(prefix.length) : null;
-    };
-    const position = TERMINAL_LINK_POSITION_SUFFIX_PATTERN.exec(text);
-    const line = position ? Number(position[1]) : 0;
-    const path3 = position ? text.slice(0, position.index) : text;
-    if (path3.length === 0) return reject();
-    let absolute;
-    if (isAbsolutePath(path3)) {
-      absolute = path3;
-    } else if (isHomeRelativeLink(path3)) {
-      const home = inferHomeFromCwd(cwd);
-      if (home === void 0) return reject();
-      absolute = joinPathStyle(home, path3.slice(2), home.includes("\\") ? "\\" : "/");
-    } else {
-      absolute = joinPathStyle(cwd, path3, isWindowsAbsolutePath(cwd) ? "\\" : "/");
-    }
-    const relative = stripRoot(windows ? absolute.replaceAll("/", "\\") : absolute);
-    if (relative === null) return reject();
-    const segments = terminalLinkSegments(relative, windows);
-    if (segments === null) return reject();
-    return {
-      status: "open",
-      relativePath: segments.join("/"),
-      ...line >= 1 ? { line } : {}
-    };
   }
   async function openTerminalUrl(external, url, signal) {
     try {
@@ -12088,6 +12061,10 @@ var __t3Client = (() => {
           input: this.#newInputQueue(terminalId),
           exiting: false,
           exitBanner: null,
+          generation: 0,
+          listStatus: null,
+          listExits: 0,
+          streamExits: 0,
           confirm: null,
           error: null,
           resizeInFlight: null,
@@ -12152,29 +12129,55 @@ var __t3Client = (() => {
       this.#syncGroupsFollowingActive();
       this.#emit();
     }
-    /** Banner, then close + remove on the next tick, for an exited session (native #29). */
+    /**
+     * Absorbs server metadata (a list row or control result). Like native,
+     * only `exited` closes the session; an `error` (a failed start) stays with
+     * its diagnostic and Start. A live row is a newer incarnation: it cancels
+     * any pending exit.
+     */
     #observeMeta(next) {
       const tab = this.#tab(next.terminalId);
+      const listPrevious = tab.listStatus;
+      tab.listStatus = next.status;
       tab.meta = next;
-      if (tab.exiting || tab.starting || next.status !== "exited" && next.status !== "error")
+      if (next.status === "running" || next.status === "starting") {
+        if (listPrevious !== "running" && listPrevious !== "starting") tab.generation += 1;
+        tab.exiting = false;
+        tab.exitBanner = null;
         return;
+      }
+      if (next.status !== "exited") return;
+      if (listPrevious !== "exited") tab.listExits += 1;
+      this.#beginExit(next.terminalId, tab, next.exitCode);
+    }
+    /** Banner, then close + remove on the next tick, for an exited session (native #29). */
+    #beginExit(terminalId, tab, exitCode) {
+      if (tab.exiting || tab.starting) return;
       tab.exiting = true;
-      tab.exitBanner = next.status === "exited" ? `Process exited (code ${next.exitCode ?? "unknown"})` : "Terminal error";
+      tab.exitBanner = `Process exited (code ${exitCode ?? "unknown"})`;
+      const generation = tab.generation;
       this.#schedule(() => {
-        if (this.#disposed || !this.#tabs.get(next.terminalId)?.exiting) return;
-        this.#closing.add(next.terminalId);
-        void this.#control.close({ terminalId: next.terminalId, deleteHistory: true }).catch(() => this.#closing.delete(next.terminalId));
-        this.#removeTab(next.terminalId);
+        if (this.#disposed || this.#tabs.get(terminalId) !== tab || !tab.exiting || tab.generation !== generation)
+          return;
+        this.#closing.add(terminalId);
+        void this.#control.close({ terminalId, deleteHistory: true }).catch(() => this.#closing.delete(terminalId));
+        this.#removeTab(terminalId);
       });
     }
     /**
      * The pane's output stream saw the process exit. It usually lands before
-     * the sessions list's upsert, so the exit handling starts here.
+     * the sessions list's upsert, so the exit handling starts here — unless
+     * the list already reported this exit, in which case a live row is a newer
+     * incarnation this late exit must not touch.
      */
     noteExit(terminalId, exitCode) {
-      const meta = this.#tabs.get(terminalId)?.meta;
-      if (this.#disposed || !meta) return;
-      this.#observeMeta({ ...meta, status: "exited", exitCode });
+      const tab = this.#tabs.get(terminalId);
+      if (this.#disposed || !tab?.meta) return;
+      tab.streamExits += 1;
+      if (tab.streamExits <= tab.listExits) return;
+      if (tab.meta.status !== "running" && tab.meta.status !== "starting") return;
+      tab.meta = { ...tab.meta, status: "exited", exitCode };
+      this.#beginExit(terminalId, tab, exitCode);
       this.#emit();
     }
     applySessionsEvent(event) {
@@ -14398,8 +14401,9 @@ var __t3Client = (() => {
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
-  var SESSION_LIST_MAX_HEIGHT = 168;
-  var UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
+  var TERMINAL_BODY_MIN_HEIGHT = 120;
+  var SESSION_SIDEBAR_MIN_WIDTH = 144;
+  var SESSION_SIDEBAR_WIDTH = 240;
   var RESTORED_GROUP_KEYS = /* @__PURE__ */ new Set(["id", "terminalIds", "splitDirection"]);
   function isRestoredGroup(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -14868,47 +14872,28 @@ var __t3Client = (() => {
           onLinkActivate: (text) => {
             if (surface === null) return;
             const paneSurface = surface;
+            const signal = session.signal;
+            const report = (failure) => {
+              if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
+                writeSystemMessage(paneSurface, failure);
+            };
             if (isTerminalUrl(text)) {
-              const signal2 = session.signal;
-              void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal2).then(
-                (failure) => {
-                  if (failure !== null && !signal2.aborted && surfaceRef.current === paneSurface)
-                    writeSystemMessage(paneSurface, failure);
-                }
+              void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
+                report
               );
               return;
             }
             const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
-            const target = workspace === null ? null : terminalPathLinkTarget(text, workspace.cwd, workspace.workspaceRoot);
-            if (target === null || target.status === "unopenable") {
-              writeSystemMessage(
-                paneSurface,
-                target === null ? `${text} cannot be opened \u2014 the workspace is not available.` : target.reason
-              );
+            if (workspace === null) {
+              report(`${text} cannot be opened \u2014 the workspace is not available.`);
               return;
             }
-            const signal = session.signal;
-            const threadId = session.context.resource.threadId;
-            void bindApi(uiPanelsApi, host, session.context, UI_PANELS_OPEN_FILE_RANGE).invoke(
-              "openFile",
-              {
-                relativePath: target.relativePath,
-                ...target.line === void 0 ? {} : { line: target.line },
-                ...threadId === void 0 ? {} : { threadId }
-              },
+            void openTerminalPath(
+              bindApi(uiEditorApi, host, session.context),
+              text,
+              workspace.cwd,
               signal
-            ).then(
-              // Like the native drawer, a successful open writes nothing.
-              () => void 0,
-              (error) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${text} could not be opened \u2014 ${error instanceof Error ? error.message : "presentation unavailable"}`
-                  );
-                }
-              }
-            );
+            ).then(report);
           }
         };
         try {
@@ -15253,6 +15238,174 @@ var __t3Client = (() => {
     };
     const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
     const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
+    const sessionSidebar = snapshot.tabs.length > 1;
+    const sessionList = /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      "ul",
+      {
+        "aria-label": "Terminal sessions",
+        style: {
+          listStyle: "none",
+          margin: 0,
+          padding: 6,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          // In the sidebar the list takes the body's height and scrolls, so
+          // adding sessions never takes height from the panes.
+          ...sessionSidebar ? { flex: 1, minHeight: 0, overflowY: "auto" } : { flexShrink: 0 }
+        },
+        children: snapshot.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { display: "flex", flexDirection: "column", gap: 2 }, children: [
+          showGroupHeaders && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+            "button",
+            {
+              type: "button",
+              "aria-label": `Activate terminal group ${group.id}`,
+              onClick: () => {
+                const target = group.terminalIds.includes(activeId ?? "") ? activeId : group.terminalIds[0];
+                if (target !== void 0) panel.activate(target);
+              },
+              style: {
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "2px 6px",
+                border: "1px solid transparent",
+                borderRadius: 5,
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 11,
+                color: snapshot.activeGroupId === group.id ? "inherit" : muted,
+                background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, textAlign: "left" }, children: group.terminalIds.length === 1 ? "Single" : group.splitDirection === "vertical" ? "Stacked" : "Side by side" }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 10 }, children: group.terminalIds.length })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "ul",
+            {
+              style: {
+                listStyle: "none",
+                margin: 0,
+                padding: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2
+              },
+              children: group.terminalIds.map((terminalId) => {
+                const tab = tabById.get(terminalId);
+                if (!tab) return null;
+                return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  "li",
+                  {
+                    style: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "button",
+                        {
+                          type: "button",
+                          "aria-current": tab.terminalId === activeId ? "true" : void 0,
+                          onClick: () => panel.activate(tab.terminalId),
+                          style: {
+                            flex: 1,
+                            minWidth: 0,
+                            textAlign: "left",
+                            padding: "4px 6px",
+                            border: "1px solid transparent",
+                            borderRadius: 5,
+                            cursor: "pointer",
+                            font: "inherit",
+                            fontSize: 12,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            color: "inherit",
+                            background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
+                          },
+                          children: tab.label
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                        tab.status,
+                        tab.hasRunningSubprocess ? " \xB7 running" : "",
+                        tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
+                      ] }),
+                      tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                        (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Start ${tab.terminalId}`,
+                            onClick: () => void panel.startSession(tab.terminalId),
+                            style: control,
+                            children: "Start"
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Clear ${tab.terminalId}`,
+                            onClick: () => panel.requestAction(tab.terminalId, "clear"),
+                            style: control,
+                            children: "Clear"
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Restart ${tab.terminalId}`,
+                            onClick: () => panel.requestAction(tab.terminalId, "restart"),
+                            style: control,
+                            children: "Restart"
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Close ${tab.terminalId}`,
+                            onClick: () => panel.requestAction(tab.terminalId, "close"),
+                            style: control,
+                            children: "\xD7"
+                          }
+                        )
+                      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
+                            onClick: () => void panel.confirmAction(tab.terminalId),
+                            style: control,
+                            children: "Confirm"
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          "button",
+                          {
+                            type: "button",
+                            "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
+                            onClick: () => panel.cancelAction(tab.terminalId),
+                            style: control,
+                            children: "Cancel"
+                          }
+                        )
+                      ] })
+                    ]
+                  },
+                  tab.terminalId
+                );
+              })
+            }
+          )
+        ] }, group.id))
+      }
+    );
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {
@@ -15274,6 +15427,9 @@ var __t3Client = (() => {
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          // A dock shorter than the chrome plus the body floor scrolls rather
+          // than collapsing the panes.
+          overflowY: "auto",
           color: "var(--t3-terminal-text, var(--foreground, #20252d))",
           background: "var(--t3-terminal-canvas, var(--background, #fff))",
           fontFamily: "var(--font-sans, system-ui, sans-serif)",
@@ -15340,176 +15496,7 @@ var __t3Client = (() => {
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-            "ul",
-            {
-              "aria-label": "Terminal sessions",
-              style: {
-                listStyle: "none",
-                margin: 0,
-                padding: 6,
-                flexShrink: 0,
-                // Many sessions scroll here instead of squeezing the panes. A fixed
-                // cap keeps the list's height intrinsic for the host's dock floor.
-                maxHeight: SESSION_LIST_MAX_HEIGHT,
-                minHeight: 0,
-                overflowY: "auto",
-                display: "flex",
-                flexDirection: "column",
-                gap: 2
-              },
-              children: snapshot.groups.map((group) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { display: "flex", flexDirection: "column", gap: 2 }, children: [
-                showGroupHeaders && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                  "button",
-                  {
-                    type: "button",
-                    "aria-label": `Activate terminal group ${group.id}`,
-                    onClick: () => {
-                      const target = group.terminalIds.includes(activeId ?? "") ? activeId : group.terminalIds[0];
-                      if (target !== void 0) panel.activate(target);
-                    },
-                    style: {
-                      display: "flex",
-                      gap: 6,
-                      alignItems: "center",
-                      padding: "2px 6px",
-                      border: "1px solid transparent",
-                      borderRadius: 5,
-                      cursor: "pointer",
-                      font: "inherit",
-                      fontSize: 11,
-                      color: snapshot.activeGroupId === group.id ? "inherit" : muted,
-                      background: snapshot.activeGroupId === group.id ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
-                    },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, textAlign: "left" }, children: group.terminalIds.length === 1 ? "Single" : group.splitDirection === "vertical" ? "Stacked" : "Side by side" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 10 }, children: group.terminalIds.length })
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "ul",
-                  {
-                    style: {
-                      listStyle: "none",
-                      margin: 0,
-                      padding: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 2
-                    },
-                    children: group.terminalIds.map((terminalId) => {
-                      const tab = tabById.get(terminalId);
-                      if (!tab) return null;
-                      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                        "li",
-                        {
-                          style: { display: "flex", gap: 6, alignItems: "center" },
-                          children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                              "button",
-                              {
-                                type: "button",
-                                "aria-current": tab.terminalId === activeId ? "true" : void 0,
-                                onClick: () => panel.activate(tab.terminalId),
-                                style: {
-                                  flex: 1,
-                                  minWidth: 0,
-                                  textAlign: "left",
-                                  padding: "4px 6px",
-                                  border: "1px solid transparent",
-                                  borderRadius: 5,
-                                  cursor: "pointer",
-                                  font: "inherit",
-                                  fontSize: 12,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                  color: "inherit",
-                                  background: tab.terminalId === activeId ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))" : "transparent"
-                                },
-                                children: tab.label
-                              }
-                            ),
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
-                              tab.status,
-                              tab.hasRunningSubprocess ? " \xB7 running" : "",
-                              tab.queuedInputCount > 0 ? ` \xB7 queued ${tab.queuedInputCount}` : ""
-                            ] }),
-                            tab.confirmAction === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-                              (tab.status === "exited" || tab.status === "error" || tab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Start ${tab.terminalId}`,
-                                  onClick: () => void panel.startSession(tab.terminalId),
-                                  style: control,
-                                  children: "Start"
-                                }
-                              ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Clear ${tab.terminalId}`,
-                                  onClick: () => panel.requestAction(tab.terminalId, "clear"),
-                                  style: control,
-                                  children: "Clear"
-                                }
-                              ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Restart ${tab.terminalId}`,
-                                  onClick: () => panel.requestAction(tab.terminalId, "restart"),
-                                  style: control,
-                                  children: "Restart"
-                                }
-                              ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Close ${tab.terminalId}`,
-                                  onClick: () => panel.requestAction(tab.terminalId, "close"),
-                                  style: control,
-                                  children: "\xD7"
-                                }
-                              )
-                            ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: tab.confirmAction === "close" ? "Close this terminal?" : tab.confirmAction === "restart" ? "Restart this terminal?" : "Clear history?" }),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Confirm ${tab.confirmAction} ${tab.terminalId}`,
-                                  onClick: () => void panel.confirmAction(tab.terminalId),
-                                  style: control,
-                                  children: "Confirm"
-                                }
-                              ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                                "button",
-                                {
-                                  type: "button",
-                                  "aria-label": `Cancel ${tab.confirmAction} ${tab.terminalId}`,
-                                  onClick: () => panel.cancelAction(tab.terminalId),
-                                  style: control,
-                                  children: "Cancel"
-                                }
-                              )
-                            ] })
-                          ]
-                        },
-                        tab.terminalId
-                      );
-                    })
-                  }
-                )
-              ] }, group.id))
-            }
-          ),
+          !sessionSidebar && sessionList,
           snapshot.tabs.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }, children: "No terminals yet. New terminal opens a shell in this workspace." }),
           snapshot.panelError && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "output",
@@ -15567,140 +15554,183 @@ var __t3Client = (() => {
               ]
             }
           ),
-          !textFallback && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "div",
             {
-              "aria-label": "Terminal panes",
+              "data-t3-terminal-body": true,
               style: {
                 display: "flex",
-                flexDirection: splitDirection === "vertical" ? "column" : "row",
                 flex: 1,
-                minHeight: 0,
+                minHeight: TERMINAL_BODY_MIN_HEIGHT,
                 minWidth: 0
               },
-              children: paneOrder.map((terminalId, index) => {
-                const shown = visibleSet.has(terminalId);
-                const focused = terminalId === activeId;
-                return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "div",
-                  {
-                    "data-t3-terminal-pane": terminalId,
-                    onMouseDown: shown && !focused ? () => {
-                      panel.activate(terminalId);
-                    } : void 0,
-                    style: {
-                      display: shown ? "flex" : "none",
-                      flexDirection: "column",
-                      flex: "1 1 0",
-                      minWidth: 0,
-                      minHeight: 0,
-                      borderLeft: splitDirection === "horizontal" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0,
-                      borderTop: splitDirection === "vertical" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0
-                    },
-                    children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                      TerminalPane,
-                      {
-                        host,
-                        session,
-                        panel,
-                        terminalId,
-                        streamKeyPrefix,
-                        active: focused,
-                        shown,
-                        visible,
-                        assets,
-                        themeVars,
-                        appearanceVars,
-                        editingBinding
-                      }
-                    )
-                  },
-                  terminalId
-                );
-              })
-            }
-          ),
-          textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-            "div",
-            {
-              style: {
-                display: "flex",
-                flexDirection: "column",
-                flex: 1,
-                minHeight: 0,
-                borderTop: border
-              },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                  "output",
-                  {
-                    "aria-label": "Output status",
-                    style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
-                    children: [
-                      activeId,
-                      ": ",
-                      activeTab.exitBanner ?? output?.statusText ?? "Connecting\u2026",
-                      activeTab.error ? ` \u2014 ${activeTab.error}` : ""
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "pre",
-                  {
-                    ref: outputRef,
-                    "aria-label": "Terminal output",
-                    "data-t3-terminal-output": true,
-                    style: {
-                      flex: 1,
-                      minHeight: 0,
-                      margin: 0,
-                      padding: 12,
-                      overflow: "auto",
-                      whiteSpace: "pre-wrap",
-                      overflowWrap: "anywhere",
-                      color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
-                      background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
-                      fontFamily: "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
-                      fontSize: "var(--t3-terminal-font-size, 12px)",
-                      lineHeight: "var(--t3-terminal-line-height, normal)",
-                      fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
-                      colorScheme: "var(--t3-terminal-color-scheme, normal)"
-                    },
-                    children: plainOutput
-                  }
-                ),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "div",
                   {
                     style: {
                       display: "flex",
-                      gap: 6,
-                      padding: 8,
-                      borderTop: border,
-                      flexShrink: 0
+                      flexDirection: "column",
+                      flex: "1 1 0",
+                      minWidth: 0,
+                      minHeight: 0
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                        "input",
+                      !textFallback && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        "div",
                         {
-                          "aria-label": "Terminal input",
-                          placeholder: activeTab.starting ? "Starting\u2026 input is queued" : "Type a command",
-                          value: input,
-                          onChange: (event) => setInput(event.target.value),
-                          onKeyDown: (event) => {
-                            if (event.key === "Enter") send();
-                          },
+                          "aria-label": "Terminal panes",
                           style: {
-                            ...control,
+                            display: "flex",
+                            flexDirection: splitDirection === "vertical" ? "column" : "row",
                             flex: 1,
-                            minWidth: 0,
-                            cursor: "text",
-                            background: "var(--t3-terminal-input, var(--input, transparent))"
-                          }
+                            minHeight: 0,
+                            minWidth: 0
+                          },
+                          children: paneOrder.map((terminalId, index) => {
+                            const shown = visibleSet.has(terminalId);
+                            const focused = terminalId === activeId;
+                            return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              "div",
+                              {
+                                "data-t3-terminal-pane": terminalId,
+                                onMouseDown: shown && !focused ? () => {
+                                  panel.activate(terminalId);
+                                } : void 0,
+                                style: {
+                                  display: shown ? "flex" : "none",
+                                  flexDirection: "column",
+                                  flex: "1 1 0",
+                                  minWidth: 0,
+                                  minHeight: 0,
+                                  borderLeft: splitDirection === "horizontal" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0,
+                                  borderTop: splitDirection === "vertical" && index > 0 ? `1px solid ${focused ? "var(--t3-terminal-border, var(--border, #dfe3e8))" : "var(--t3-terminal-muted, var(--border, #dfe3e8))"}` : void 0
+                                },
+                                children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                  TerminalPane,
+                                  {
+                                    host,
+                                    session,
+                                    panel,
+                                    terminalId,
+                                    streamKeyPrefix,
+                                    active: focused,
+                                    shown,
+                                    visible,
+                                    assets,
+                                    themeVars,
+                                    appearanceVars,
+                                    editingBinding
+                                  }
+                                )
+                              },
+                              terminalId
+                            );
+                          })
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
+                      textFallback && activeId !== null && activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            flexDirection: "column",
+                            flex: 1,
+                            minHeight: 0,
+                            borderTop: border
+                          },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                              "output",
+                              {
+                                "aria-label": "Output status",
+                                style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
+                                children: [
+                                  activeId,
+                                  ": ",
+                                  activeTab.exitBanner ?? output?.statusText ?? "Connecting\u2026",
+                                  activeTab.error ? ` \u2014 ${activeTab.error}` : ""
+                                ]
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              "pre",
+                              {
+                                ref: outputRef,
+                                "aria-label": "Terminal output",
+                                "data-t3-terminal-output": true,
+                                style: {
+                                  flex: 1,
+                                  minHeight: 0,
+                                  margin: 0,
+                                  padding: 12,
+                                  overflow: "auto",
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                  color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+                                  background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
+                                  fontFamily: "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
+                                  fontSize: "var(--t3-terminal-font-size, 12px)",
+                                  lineHeight: "var(--t3-terminal-line-height, normal)",
+                                  fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
+                                  colorScheme: "var(--t3-terminal-color-scheme, normal)"
+                                },
+                                children: plainOutput
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                              "div",
+                              {
+                                style: {
+                                  display: "flex",
+                                  gap: 6,
+                                  padding: 8,
+                                  borderTop: border,
+                                  flexShrink: 0
+                                },
+                                children: [
+                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                                    "input",
+                                    {
+                                      "aria-label": "Terminal input",
+                                      placeholder: activeTab.starting ? "Starting\u2026 input is queued" : "Type a command",
+                                      value: input,
+                                      onChange: (event) => setInput(event.target.value),
+                                      onKeyDown: (event) => {
+                                        if (event.key === "Enter") send();
+                                      },
+                                      style: {
+                                        ...control,
+                                        flex: 1,
+                                        minWidth: 0,
+                                        cursor: "text",
+                                        background: "var(--t3-terminal-input, var(--input, transparent))"
+                                      }
+                                    }
+                                  ),
+                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: send, style: control, children: "Send" })
+                                ]
+                              }
+                            )
+                          ]
+                        }
+                      )
                     ]
+                  }
+                ),
+                sessionSidebar && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                  "aside",
+                  {
+                    "aria-label": "Terminal session list",
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      flex: `0 1 ${SESSION_SIDEBAR_WIDTH}px`,
+                      minWidth: SESSION_SIDEBAR_MIN_WIDTH,
+                      minHeight: 0,
+                      borderLeft: border
+                    },
+                    children: sessionList
                   }
                 )
               ]
@@ -15739,10 +15769,11 @@ var __t3Client = (() => {
       // panel feature-detects (default chords without it), so a 1.0.0 host
       // still loads the panel.
       requireApi(uiKeybindingsApi, "^1.0.0"),
-      // 1.1.0 adds openFile, which path links use to open the host file view.
-      requireApi(uiPanelsApi, UI_PANELS_OPEN_FILE_RANGE),
+      requireApi(uiPanelsApi),
       // Terminal 22 URL half: detected URLs open on the user's own client.
-      requireApi(uiExternalApi)
+      requireApi(uiExternalApi),
+      // Terminal 22 path half: path links open in the user's preferred editor.
+      requireApi(uiEditorApi)
     ],
     assets: [
       { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },

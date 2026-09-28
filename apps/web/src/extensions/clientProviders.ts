@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type EditorId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
@@ -8,6 +8,7 @@ import {
   BROWSER_RECORD_HISTORY,
   checkExternalUrl,
   fitBrowserHistoryList,
+  UI_EDITOR_OPEN,
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
@@ -79,6 +80,17 @@ import { createKeybindingsClientProvider } from "./extensionCommandRegistry";
 import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
+import {
+  isAtomCommandInterrupted,
+  runAtomCommand,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import { openInPreferredEditor, PreferredEditorUnavailableError } from "../editorPreferences";
+import { resolvePathLinkTarget } from "../terminal-links";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { serverEnvironment } from "../state/server";
+import { shellEnvironment } from "../state/shell";
 import {
   environmentHostnameFor,
   readThreadHistory,
@@ -791,28 +803,6 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
           }
           return { surfaces } as unknown as Json;
         }
-        case "openFile": {
-          const relativePath = readInputString(input, "relativePath")!;
-          // Workspace-relative, '/'-separated, and never climbing out.
-          if (
-            relativePath.startsWith("/") ||
-            relativePath.includes("\\") ||
-            /^[A-Za-z]:/.test(relativePath) ||
-            relativePath.split("/").includes("..")
-          )
-            throw new ClientProviderOpError("provider-rejected", "Not a workspace-relative path");
-          const shell = readThreadShell(ref);
-          if (!shell?.projectId)
-            throw new ClientProviderOpError("panel-surface-not-found", "Unknown thread");
-          const installation = deps
-            .installations()
-            ?.find((item) => item.id === call.caller.installationId);
-          if (!installation?.grants.projectIds.some((id) => id === shell.projectId))
-            throw new ClientProviderOpError("client-target-denied", "Thread outside granted scope");
-          const line = input.line;
-          store.openFile(ref, relativePath, typeof line === "number" ? line : undefined);
-          return { applied: true } as unknown as Json;
-        }
         case "hideDock":
           store.hideExtensionDock(ref);
           return { applied: true } as unknown as Json;
@@ -1414,6 +1404,64 @@ export function createExternalClientProvider(
 }
 
 // ---------------------------------------------------------------------------
+// Editor — native path links: the saved editor, launched in this environment.
+
+/** The environment seams `t3.client/editor` launches through; tests fake them. */
+export interface EditorLauncher {
+  availableEditors(environmentId: EnvironmentId): readonly EditorId[];
+  openInEditor(value: {
+    environmentId: EnvironmentId;
+    input: { cwd: string; editor: EditorId };
+  }): Promise<AtomCommandResult<unknown, unknown>>;
+}
+
+const environmentEditorLauncher: EditorLauncher = {
+  availableEditors: (environmentId) =>
+    appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.availableEditors ?? [],
+  openInEditor: (value) =>
+    runAtomCommand(appAtomRegistry, shellEnvironment.openInEditor, value, {
+      reportFailure: false,
+    }),
+};
+
+export function createEditorClientProvider(
+  deps: ClientProviderDeps,
+  launcher: EditorLauncher = environmentEditorLauncher,
+): ClientLocalProvider {
+  return {
+    async invoke(call) {
+      authorizeCaller(deps, call.caller, call.context, [UI_EDITOR_OPEN]);
+      if (call.method !== "openPath")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown editor op ${call.method}`,
+        );
+      const input = readInputObject(call.input);
+      // The native terminal's resolution: `~/` and relative links join the
+      // cwd, and a `:line:column` suffix rides through to the editor.
+      const targetPath = resolvePathLinkTarget(
+        readInputString(input, "path")!,
+        readInputString(input, "cwd")!,
+      );
+      const result = await openInPreferredEditor(
+        deps.environmentId,
+        launcher.availableEditors(deps.environmentId),
+        targetPath,
+        launcher.openInEditor,
+      );
+      if (result._tag === "Success")
+        return { status: "opened", path: targetPath, editor: result.value };
+      const error = isAtomCommandInterrupted(result) ? null : squashAtomCommandFailure(result);
+      return {
+        status: "refused",
+        reason: Schema.is(PreferredEditorUnavailableError)(error) ? "no-editor" : "open-failed",
+        message: (error instanceof Error ? error.message : "Unable to open path").slice(0, 1024),
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Browser history — the native per-project store behind the preview's recents.
 
 /**
@@ -1566,6 +1614,7 @@ export function createClientProviders(
     ["t3.client/terminal-appearance", createTerminalAppearanceClientProvider(deps)],
     ["t3.client/preferences", createPreferencesClientProvider(deps)],
     ["t3.client/external", createExternalClientProvider(deps)],
+    ["t3.client/editor", createEditorClientProvider(deps)],
     ["t3.client/browser-history", createBrowserHistoryClientProvider(deps)],
     ["t3.client/navigation", createNavigationClientProvider(deps, navigate)],
   ]);
@@ -1575,11 +1624,12 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
   { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
-  { id: "t3.client/panels", version: "1.1.0" },
+  { id: "t3.client/panels", version: "1.0.0" },
   { id: "t3.client/composer", version: "1.2.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.0.0" },
   { id: "t3.client/external", version: "1.0.0" },
+  { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
   { id: "t3.client/navigation", version: "1.0.0" },
 ] as const;

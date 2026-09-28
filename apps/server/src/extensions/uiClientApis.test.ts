@@ -169,48 +169,11 @@ function makeProviders(
     panels: byId("host.ui.panels"),
     preferences: byId("host.ui.preferences"),
     external: byId("host.ui.external"),
+    editor: byId("host.ui.editor"),
     history: byId("host.browser.history"),
     navigation: byId("host.ui.navigation"),
   };
 }
-
-describe("panels adapter", () => {
-  it("forwards openFile to the client, scoped to the context thread", async () => {
-    const bridge = fakeBridge();
-    const { panels } = makeProviders(bridge);
-    await expect(
-      panels.invoke(
-        "openFile",
-        { relativePath: "src/app.ts", line: 3 } as Json,
-        context,
-        signal,
-        metadata(),
-      ),
-    ).resolves.toEqual({ applied: true });
-    expect(bridge.invoked).toEqual([
-      {
-        connectionId: "conn-1",
-        apiId: "t3.client/panels",
-        method: "openFile",
-        input: {
-          target: { kind: "connection", connectionId: "conn-1" },
-          relativePath: "src/app.ts",
-          line: 3,
-          threadId: "thread-a",
-        },
-      },
-    ]);
-    await expect(
-      panels.invoke(
-        "openFile",
-        { relativePath: "a.ts", threadId: "thread-b" } as Json,
-        context,
-        signal,
-        metadata(),
-      ),
-    ).rejects.toMatchObject({ code: "client-target-denied" });
-  });
-});
 
 describe("preferences adapter", () => {
   it("forwards writes as the broker-verified writer's patch", async () => {
@@ -329,6 +292,32 @@ describe("external adapter", () => {
         input: {
           target: { kind: "connection", connectionId: "conn-1" },
           url: "https://example.com/",
+        },
+      },
+    ]);
+  });
+});
+
+describe("editor adapter", () => {
+  it("forwards openPath to the caller's own client", async () => {
+    const bridge = fakeBridge();
+    const { editor } = makeProviders(bridge);
+    await editor.invoke(
+      "openPath",
+      { path: "src/app.ts:3:5", cwd: "/ws/root" },
+      context,
+      signal,
+      metadata(),
+    );
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/editor",
+        method: "openPath",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          path: "src/app.ts:3:5",
+          cwd: "/ws/root",
         },
       },
     ]);

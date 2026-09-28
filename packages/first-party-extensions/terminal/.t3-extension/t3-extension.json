@@ -57,10 +57,14 @@
     },
     {
       "id": "t3.ui/panels",
-      "versionRange": "^1.1.0"
+      "versionRange": "^1.0.0"
     },
     {
       "id": "t3.ui/external",
+      "versionRange": "^1.0.0"
+    },
+    {
+      "id": "t3.ui/editor",
       "versionRange": "^1.0.0"
     }
   ],

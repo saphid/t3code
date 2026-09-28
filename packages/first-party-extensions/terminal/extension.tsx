@@ -4,6 +4,7 @@ import {
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  uiEditorApi,
   uiExternalApi,
   uiKeybindingsApi,
   uiPanelsApi,
@@ -58,11 +59,11 @@ import {
   dispatchTerminalCommand,
   isResumableOutputClose,
   noteOutputFrameForStreak,
+  openTerminalPath,
   openTerminalUrl,
   plainTerminalText,
   registerPanelCommands,
   terminalChordAction,
-  terminalPathLinkTarget,
   watchTerminalAppearanceVars,
   watchThemeVars,
   workspaceLaunchFromRevision,
@@ -85,10 +86,11 @@ const streamHub = new TerminalStreamHub();
 const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
-/** About five session rows; longer lists scroll. */
-const SESSION_LIST_MAX_HEIGHT = 168;
-/** `t3.ui/panels` 1.1.0 added `openFile`. */
-const UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
+/** The terminal body never shrinks below this, however many sessions or notices. */
+const TERMINAL_BODY_MIN_HEIGHT = 120;
+/** The multi-session sidebar: native's w-36 at the narrowest, wider for row actions. */
+const SESSION_SIDEBAR_MIN_WIDTH = 144;
+const SESSION_SIDEBAR_WIDTH = 240;
 
 interface RestoredGroup {
   readonly id: string;
@@ -837,61 +839,33 @@ function TerminalPane(props: {
           handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
         onLinkActivate: (text) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
-          // user's own client; a path link opens the host's file view (which
-          // renders the selected t3.file/presentation). Both report failures
-          // on the surface.
+          // user's own client; a path link opens in the user's preferred
+          // editor through t3.ui/editor, like the native drawer. Both report
+          // failures on the surface.
           if (surface === null) return;
           const paneSurface = surface;
+          const signal = session.signal;
+          const report = (failure: string | null) => {
+            if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
+              writeSystemMessage(paneSurface, failure);
+          };
           if (isTerminalUrl(text)) {
-            const signal = session.signal;
             void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
-              (failure) => {
-                if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
-                  writeSystemMessage(paneSurface, failure);
-              },
+              report,
             );
             return;
           }
           const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
-          const target =
-            workspace === null
-              ? null
-              : terminalPathLinkTarget(text, workspace.cwd, workspace.workspaceRoot);
-          if (target === null || target.status === "unopenable") {
-            writeSystemMessage(
-              paneSurface,
-              target === null
-                ? `${text} cannot be opened — the workspace is not available.`
-                : target.reason,
-            );
+          if (workspace === null) {
+            report(`${text} cannot be opened — the workspace is not available.`);
             return;
           }
-          const signal = session.signal;
-          const threadId = session.context.resource.threadId;
-          void bindApi(uiPanelsApi, host, session.context, UI_PANELS_OPEN_FILE_RANGE)
-            .invoke(
-              "openFile",
-              {
-                relativePath: target.relativePath,
-                ...(target.line === undefined ? {} : { line: target.line }),
-                ...(threadId === undefined ? {} : { threadId }),
-              },
-              signal,
-            )
-            .then(
-              // Like the native drawer, a successful open writes nothing.
-              () => undefined,
-              (error: unknown) => {
-                if (!signal.aborted && surfaceRef.current === paneSurface) {
-                  writeSystemMessage(
-                    paneSurface,
-                    `${text} could not be opened — ${
-                      error instanceof Error ? error.message : "presentation unavailable"
-                    }`,
-                  );
-                }
-              },
-            );
+          void openTerminalPath(
+            bindApi(uiEditorApi, host, session.context),
+            text,
+            workspace.cwd,
+            signal,
+          ).then(report);
         },
       };
       try {
@@ -1308,6 +1282,186 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
 
   const muted = "var(--t3-terminal-muted, var(--muted-foreground, #667085))";
   const border = "1px solid var(--t3-terminal-border, var(--border, #dfe3e8))";
+  // Native drawer: with more than one session the selector is a scrolling
+  // sidebar beside the panes; a single session keeps its row above them.
+  const sessionSidebar = snapshot.tabs.length > 1;
+  const sessionList = (
+    <ul
+      aria-label="Terminal sessions"
+      style={{
+        listStyle: "none",
+        margin: 0,
+        padding: 6,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        // In the sidebar the list takes the body's height and scrolls, so
+        // adding sessions never takes height from the panes.
+        ...(sessionSidebar ? { flex: 1, minHeight: 0, overflowY: "auto" } : { flexShrink: 0 }),
+      }}
+    >
+      {snapshot.groups.map((group) => (
+        <li key={group.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {showGroupHeaders && (
+            <button
+              type="button"
+              aria-label={`Activate terminal group ${group.id}`}
+              onClick={() => {
+                const target = group.terminalIds.includes(activeId ?? "")
+                  ? activeId!
+                  : group.terminalIds[0];
+                if (target !== undefined) panel.activate(target);
+              }}
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+                padding: "2px 6px",
+                border: "1px solid transparent",
+                borderRadius: 5,
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 11,
+                color: snapshot.activeGroupId === group.id ? "inherit" : muted,
+                background:
+                  snapshot.activeGroupId === group.id
+                    ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                    : "transparent",
+              }}
+            >
+              <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                {group.terminalIds.length === 1
+                  ? "Single"
+                  : group.splitDirection === "vertical"
+                    ? "Stacked"
+                    : "Side by side"}
+              </span>
+              <span style={{ fontSize: 10 }}>{group.terminalIds.length}</span>
+            </button>
+          )}
+          <ul
+            style={{
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            {group.terminalIds.map((terminalId) => {
+              const tab = tabById.get(terminalId);
+              if (!tab) return null;
+              return (
+                <li
+                  key={tab.terminalId}
+                  style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}
+                >
+                  <button
+                    type="button"
+                    aria-current={tab.terminalId === activeId ? "true" : undefined}
+                    onClick={() => panel.activate(tab.terminalId)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: "left",
+                      padding: "4px 6px",
+                      border: "1px solid transparent",
+                      borderRadius: 5,
+                      cursor: "pointer",
+                      font: "inherit",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: "inherit",
+                      background:
+                        tab.terminalId === activeId
+                          ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                          : "transparent",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                  <span style={{ color: muted, fontSize: 11 }}>
+                    {tab.status}
+                    {tab.hasRunningSubprocess ? " · running" : ""}
+                    {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
+                  </span>
+                  {tab.confirmAction === null ? (
+                    <>
+                      {(tab.status === "exited" ||
+                        tab.status === "error" ||
+                        tab.status === "closed") && (
+                        <button
+                          type="button"
+                          aria-label={`Start ${tab.terminalId}`}
+                          onClick={() => void panel.startSession(tab.terminalId)}
+                          style={control}
+                        >
+                          Start
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Clear ${tab.terminalId}`}
+                        onClick={() => panel.requestAction(tab.terminalId, "clear")}
+                        style={control}
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Restart ${tab.terminalId}`}
+                        onClick={() => panel.requestAction(tab.terminalId, "restart")}
+                        style={control}
+                      >
+                        Restart
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Close ${tab.terminalId}`}
+                        onClick={() => panel.requestAction(tab.terminalId, "close")}
+                        style={control}
+                      >
+                        ×
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: muted, fontSize: 12 }}>
+                        {tab.confirmAction === "close"
+                          ? "Close this terminal?"
+                          : tab.confirmAction === "restart"
+                            ? "Restart this terminal?"
+                            : "Clear history?"}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
+                        onClick={() => void panel.confirmAction(tab.terminalId)}
+                        style={control}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
+                        onClick={() => panel.cancelAction(tab.terminalId)}
+                        style={control}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <section
       aria-label="Terminal"
@@ -1337,6 +1491,9 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        // A dock shorter than the chrome plus the body floor scrolls rather
+        // than collapsing the panes.
+        overflowY: "auto",
         color: "var(--t3-terminal-text, var(--foreground, #20252d))",
         background: "var(--t3-terminal-canvas, var(--background, #fff))",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
@@ -1397,184 +1554,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               : ""}
         </span>
       </header>
-      <ul
-        aria-label="Terminal sessions"
-        style={{
-          listStyle: "none",
-          margin: 0,
-          padding: 6,
-          flexShrink: 0,
-          // Many sessions scroll here instead of squeezing the panes. A fixed
-          // cap keeps the list's height intrinsic for the host's dock floor.
-          maxHeight: SESSION_LIST_MAX_HEIGHT,
-          minHeight: 0,
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-        }}
-      >
-        {snapshot.groups.map((group) => (
-          <li key={group.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {showGroupHeaders && (
-              <button
-                type="button"
-                aria-label={`Activate terminal group ${group.id}`}
-                onClick={() => {
-                  const target = group.terminalIds.includes(activeId ?? "")
-                    ? activeId!
-                    : group.terminalIds[0];
-                  if (target !== undefined) panel.activate(target);
-                }}
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  alignItems: "center",
-                  padding: "2px 6px",
-                  border: "1px solid transparent",
-                  borderRadius: 5,
-                  cursor: "pointer",
-                  font: "inherit",
-                  fontSize: 11,
-                  color: snapshot.activeGroupId === group.id ? "inherit" : muted,
-                  background:
-                    snapshot.activeGroupId === group.id
-                      ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                      : "transparent",
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                  {group.terminalIds.length === 1
-                    ? "Single"
-                    : group.splitDirection === "vertical"
-                      ? "Stacked"
-                      : "Side by side"}
-                </span>
-                <span style={{ fontSize: 10 }}>{group.terminalIds.length}</span>
-              </button>
-            )}
-            <ul
-              style={{
-                listStyle: "none",
-                margin: 0,
-                padding: 0,
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-              }}
-            >
-              {group.terminalIds.map((terminalId) => {
-                const tab = tabById.get(terminalId);
-                if (!tab) return null;
-                return (
-                  <li
-                    key={tab.terminalId}
-                    style={{ display: "flex", gap: 6, alignItems: "center" }}
-                  >
-                    <button
-                      type="button"
-                      aria-current={tab.terminalId === activeId ? "true" : undefined}
-                      onClick={() => panel.activate(tab.terminalId)}
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        textAlign: "left",
-                        padding: "4px 6px",
-                        border: "1px solid transparent",
-                        borderRadius: 5,
-                        cursor: "pointer",
-                        font: "inherit",
-                        fontSize: 12,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "inherit",
-                        background:
-                          tab.terminalId === activeId
-                            ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                            : "transparent",
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                    <span style={{ color: muted, fontSize: 11 }}>
-                      {tab.status}
-                      {tab.hasRunningSubprocess ? " · running" : ""}
-                      {tab.queuedInputCount > 0 ? ` · queued ${tab.queuedInputCount}` : ""}
-                    </span>
-                    {tab.confirmAction === null ? (
-                      <>
-                        {(tab.status === "exited" ||
-                          tab.status === "error" ||
-                          tab.status === "closed") && (
-                          <button
-                            type="button"
-                            aria-label={`Start ${tab.terminalId}`}
-                            onClick={() => void panel.startSession(tab.terminalId)}
-                            style={control}
-                          >
-                            Start
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          aria-label={`Clear ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "clear")}
-                          style={control}
-                        >
-                          Clear
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Restart ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "restart")}
-                          style={control}
-                        >
-                          Restart
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Close ${tab.terminalId}`}
-                          onClick={() => panel.requestAction(tab.terminalId, "close")}
-                          style={control}
-                        >
-                          ×
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <span style={{ color: muted, fontSize: 12 }}>
-                          {tab.confirmAction === "close"
-                            ? "Close this terminal?"
-                            : tab.confirmAction === "restart"
-                              ? "Restart this terminal?"
-                              : "Clear history?"}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Confirm ${tab.confirmAction} ${tab.terminalId}`}
-                          onClick={() => void panel.confirmAction(tab.terminalId)}
-                          style={control}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Cancel ${tab.confirmAction} ${tab.terminalId}`}
-                          onClick={() => panel.cancelAction(tab.terminalId)}
-                          style={control}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
-      </ul>
+      {!sessionSidebar && sessionList}
       {snapshot.tabs.length === 0 && (
         <p style={{ padding: "6px 10px", color: muted, fontSize: 12, margin: 0 }}>
           No terminals yet. New terminal opens a shell in this workspace.
@@ -1628,146 +1608,182 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           VT renderer unavailable ({assets.message}) — showing a plain-text view.
         </output>
       )}
-      {!textFallback && (
-        <div
-          aria-label="Terminal panes"
-          style={{
-            display: "flex",
-            flexDirection: splitDirection === "vertical" ? "column" : "row",
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-          }}
-        >
-          {paneOrder.map((terminalId, index) => {
-            const shown = visibleSet.has(terminalId);
-            const focused = terminalId === activeId;
-            return (
-              <div
-                key={terminalId}
-                data-t3-terminal-pane={terminalId}
-                onMouseDown={
-                  shown && !focused
-                    ? () => {
-                        panel.activate(terminalId);
-                      }
-                    : undefined
-                }
-                style={{
-                  display: shown ? "flex" : "none",
-                  flexDirection: "column",
-                  flex: "1 1 0",
-                  minWidth: 0,
-                  minHeight: 0,
-                  borderLeft:
-                    splitDirection === "horizontal" && index > 0
-                      ? `1px solid ${
-                          focused
-                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
-                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
-                        }`
-                      : undefined,
-                  borderTop:
-                    splitDirection === "vertical" && index > 0
-                      ? `1px solid ${
-                          focused
-                            ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
-                            : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
-                        }`
-                      : undefined,
-                }}
-              >
-                <TerminalPane
-                  host={host}
-                  session={session}
-                  panel={panel}
-                  terminalId={terminalId}
-                  streamKeyPrefix={streamKeyPrefix}
-                  active={focused}
-                  shown={shown}
-                  visible={visible}
-                  assets={assets}
-                  themeVars={themeVars}
-                  appearanceVars={appearanceVars}
-                  editingBinding={editingBinding}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {textFallback && activeId !== null && activeTab !== null && (
+      <div
+        data-t3-terminal-body
+        style={{
+          display: "flex",
+          flex: 1,
+          minHeight: TERMINAL_BODY_MIN_HEIGHT,
+          minWidth: 0,
+        }}
+      >
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            flex: 1,
+            flex: "1 1 0",
+            minWidth: 0,
             minHeight: 0,
-            borderTop: border,
           }}
         >
-          <output
-            aria-label="Output status"
-            style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
-          >
-            {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
-            {activeTab.error ? ` — ${activeTab.error}` : ""}
-          </output>
-          <pre
-            ref={outputRef}
-            aria-label="Terminal output"
-            data-t3-terminal-output
-            style={{
-              flex: 1,
-              minHeight: 0,
-              margin: 0,
-              padding: 12,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
-              color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
-              background: "var(--t3-terminal-background, var(--terminal-background, transparent))",
-              fontFamily:
-                "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
-              fontSize: "var(--t3-terminal-font-size, 12px)",
-              lineHeight: "var(--t3-terminal-line-height, normal)",
-              fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
-              colorScheme: "var(--t3-terminal-color-scheme, normal)",
-            }}
-          >
-            {plainOutput}
-          </pre>
-          <div
+          {!textFallback && (
+            <div
+              aria-label="Terminal panes"
+              style={{
+                display: "flex",
+                flexDirection: splitDirection === "vertical" ? "column" : "row",
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+              }}
+            >
+              {paneOrder.map((terminalId, index) => {
+                const shown = visibleSet.has(terminalId);
+                const focused = terminalId === activeId;
+                return (
+                  <div
+                    key={terminalId}
+                    data-t3-terminal-pane={terminalId}
+                    onMouseDown={
+                      shown && !focused
+                        ? () => {
+                            panel.activate(terminalId);
+                          }
+                        : undefined
+                    }
+                    style={{
+                      display: shown ? "flex" : "none",
+                      flexDirection: "column",
+                      flex: "1 1 0",
+                      minWidth: 0,
+                      minHeight: 0,
+                      borderLeft:
+                        splitDirection === "horizontal" && index > 0
+                          ? `1px solid ${
+                              focused
+                                ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                                : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                            }`
+                          : undefined,
+                      borderTop:
+                        splitDirection === "vertical" && index > 0
+                          ? `1px solid ${
+                              focused
+                                ? "var(--t3-terminal-border, var(--border, #dfe3e8))"
+                                : "var(--t3-terminal-muted, var(--border, #dfe3e8))"
+                            }`
+                          : undefined,
+                    }}
+                  >
+                    <TerminalPane
+                      host={host}
+                      session={session}
+                      panel={panel}
+                      terminalId={terminalId}
+                      streamKeyPrefix={streamKeyPrefix}
+                      active={focused}
+                      shown={shown}
+                      visible={visible}
+                      assets={assets}
+                      themeVars={themeVars}
+                      appearanceVars={appearanceVars}
+                      editingBinding={editingBinding}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {textFallback && activeId !== null && activeTab !== null && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                flex: 1,
+                minHeight: 0,
+                borderTop: border,
+              }}
+            >
+              <output
+                aria-label="Output status"
+                style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
+              >
+                {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
+                {activeTab.error ? ` — ${activeTab.error}` : ""}
+              </output>
+              <pre
+                ref={outputRef}
+                aria-label="Terminal output"
+                data-t3-terminal-output
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  margin: 0,
+                  padding: 12,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  color: "var(--t3-terminal-foreground, var(--terminal-foreground, inherit))",
+                  background:
+                    "var(--t3-terminal-background, var(--terminal-background, transparent))",
+                  fontFamily:
+                    "var(--t3-terminal-font-family, var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace))",
+                  fontSize: "var(--t3-terminal-font-size, 12px)",
+                  lineHeight: "var(--t3-terminal-line-height, normal)",
+                  fontVariantLigatures: "var(--t3-terminal-ligatures, normal)",
+                  colorScheme: "var(--t3-terminal-color-scheme, normal)",
+                }}
+              >
+                {plainOutput}
+              </pre>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  padding: 8,
+                  borderTop: border,
+                  flexShrink: 0,
+                }}
+              >
+                <input
+                  aria-label="Terminal input"
+                  placeholder={activeTab.starting ? "Starting… input is queued" : "Type a command"}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") send();
+                  }}
+                  style={{
+                    ...control,
+                    flex: 1,
+                    minWidth: 0,
+                    cursor: "text",
+                    background: "var(--t3-terminal-input, var(--input, transparent))",
+                  }}
+                />
+                <button type="button" onClick={send} style={control}>
+                  Send
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {sessionSidebar && (
+          <aside
+            aria-label="Terminal session list"
             style={{
               display: "flex",
-              gap: 6,
-              padding: 8,
-              borderTop: border,
-              flexShrink: 0,
+              flexDirection: "column",
+              flex: `0 1 ${SESSION_SIDEBAR_WIDTH}px`,
+              minWidth: SESSION_SIDEBAR_MIN_WIDTH,
+              minHeight: 0,
+              borderLeft: border,
             }}
           >
-            <input
-              aria-label="Terminal input"
-              placeholder={activeTab.starting ? "Starting… input is queued" : "Type a command"}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") send();
-              }}
-              style={{
-                ...control,
-                flex: 1,
-                minWidth: 0,
-                cursor: "text",
-                background: "var(--t3-terminal-input, var(--input, transparent))",
-              }}
-            />
-            <button type="button" onClick={send} style={control}>
-              Send
-            </button>
-          </div>
-        </div>
-      )}
+            {sessionList}
+          </aside>
+        )}
+      </div>
       <output
         aria-label="Slice notice"
         style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
@@ -1801,10 +1817,11 @@ const authored = defineExtension({
     // panel feature-detects (default chords without it), so a 1.0.0 host
     // still loads the panel.
     requireApi(uiKeybindingsApi, "^1.0.0"),
-    // 1.1.0 adds openFile, which path links use to open the host file view.
-    requireApi(uiPanelsApi, UI_PANELS_OPEN_FILE_RANGE),
+    requireApi(uiPanelsApi),
     // Terminal 22 URL half: detected URLs open on the user's own client.
     requireApi(uiExternalApi),
+    // Terminal 22 path half: path links open in the user's preferred editor.
+    requireApi(uiEditorApi),
   ],
   assets: [
     { path: GHOSTTY_VT_ASSET, mediaType: "application/wasm" },

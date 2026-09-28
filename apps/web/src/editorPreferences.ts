@@ -1,7 +1,6 @@
 import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
-  type AtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
@@ -60,6 +59,56 @@ export function resolveAndPersistPreferredEditor(
   return editor ?? null;
 }
 
+/**
+ * Opens `targetPath` in the saved editor (or the first available one) through
+ * the environment's `shell.openInEditor`. Every native link and the
+ * `t3.client/editor` provider open paths through this.
+ */
+export async function openInPreferredEditor<E>(
+  environmentId: EnvironmentId | null,
+  availableEditors: readonly EditorId[],
+  targetPath: string,
+  openInEditor: (value: {
+    environmentId: EnvironmentId;
+    input: { cwd: string; editor: EditorId };
+  }) => Promise<AtomCommandResult<unknown, E>>,
+): Promise<
+  AtomCommandResult<
+    EditorId,
+    E | PreferredEditorEnvironmentRequiredError | PreferredEditorUnavailableError
+  >
+> {
+  if (environmentId === null) {
+    return AsyncResult.failure(
+      Cause.fail(
+        new PreferredEditorEnvironmentRequiredError({
+          targetPath,
+        }),
+      ),
+    );
+  }
+  const editor = resolveAndPersistPreferredEditor(availableEditors);
+  if (!editor) {
+    return AsyncResult.failure(
+      Cause.fail(
+        new PreferredEditorUnavailableError({
+          environmentId,
+          targetPath,
+          availableEditorIds: availableEditors,
+        }),
+      ),
+    );
+  }
+  const result = await openInEditor({
+    environmentId,
+    input: {
+      cwd: targetPath,
+      editor,
+    },
+  });
+  return mapAtomCommandResult(result, () => editor);
+}
+
 export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
@@ -67,49 +116,10 @@ export function useOpenInPreferredEditor(
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
-  type OpenInEditorError = AtomCommandFailure<Awaited<ReturnType<typeof openInEditor>>>;
 
   return useCallback(
-    async (
-      targetPath: string,
-    ): Promise<
-      AtomCommandResult<
-        EditorId,
-        | OpenInEditorError
-        | PreferredEditorEnvironmentRequiredError
-        | PreferredEditorUnavailableError
-      >
-    > => {
-      if (environmentId === null) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new PreferredEditorEnvironmentRequiredError({
-              targetPath,
-            }),
-          ),
-        );
-      }
-      const editor = resolveAndPersistPreferredEditor(availableEditors);
-      if (!editor) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new PreferredEditorUnavailableError({
-              environmentId,
-              targetPath,
-              availableEditorIds: availableEditors,
-            }),
-          ),
-        );
-      }
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: targetPath,
-          editor,
-        },
-      });
-      return mapAtomCommandResult(result, () => editor);
-    },
+    (targetPath: string) =>
+      openInPreferredEditor(environmentId, availableEditors, targetPath, openInEditor),
     [availableEditors, environmentId, openInEditor],
   );
 }
