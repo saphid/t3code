@@ -24,7 +24,6 @@ import {
   resolveActiveTerminalId,
   openTerminalPath,
   openTerminalUrl,
-  terminalCloseLabel,
 } from "./viewModel.ts";
 
 const frame = (sequence, streamId = "stream-1") => ({ streamId, sequence });
@@ -1749,12 +1748,6 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
       "a.ts could not be opened — API capability denied: t3.ui/editor.open",
     );
   });
-});
-
-NodeTest.test("terminalCloseLabel names the close shortcut only on the active tab", () => {
-  NodeAssert.equal(terminalCloseLabel("Terminal 2", true, "⌘W"), "Close Terminal 2 (⌘W)");
-  NodeAssert.equal(terminalCloseLabel("Terminal 2", false, "⌘W"), "Close Terminal 2");
-  NodeAssert.equal(terminalCloseLabel("Terminal 2", true, null), "Close Terminal 2");
 });
 
 NodeTest.describe("OutputReattach (native durable-attach port)", () => {

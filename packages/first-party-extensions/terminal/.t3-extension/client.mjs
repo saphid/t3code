@@ -12794,9 +12794,6 @@ var __t3Client = (() => {
     const note = limitNote ?? shortcutLabel;
     return note ? `${action} (${note})` : action;
   }
-  function terminalCloseLabel(terminalLabel, active, closeShortcutLabel) {
-    return `Close ${terminalLabel}${active && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
-  }
   var NATIVE_TERMINAL_CHORD_COMMANDS = /* @__PURE__ */ new Map([
     ["terminal.split", "split"],
     ["terminal.splitVertical", "splitVertical"],
@@ -15694,7 +15691,7 @@ var __t3Client = (() => {
     );
     const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
     const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
-    const activeCloseLabel = activeTab === null ? "" : terminalCloseLabel(activeTab.label, true, closeShortcutLabel);
+    const closeLabel = terminalActionLabel("Close Terminal", closeShortcutLabel);
     const sessionActions = activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
@@ -15758,11 +15755,11 @@ var __t3Client = (() => {
               children: "\u21BB"
             }
           ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: activeCloseLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: closeLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
-              "aria-label": activeCloseLabel,
+              "aria-label": closeLabel,
               onClick: () => panel.requestAction(activeTab.terminalId, "close"),
               style: iconControl,
               children: "\xD7"

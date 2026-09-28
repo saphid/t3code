@@ -1996,7 +1996,9 @@ NodeTest.describe("toolbar hover help", () => {
         "Split vertically": "Split Terminal Vertically (⇧⌘D)",
         "Clear a": "Clear history",
         "Restart a": "Restart",
-        "Close a (⌘W)": "Close a (⌘W)",
+        // The toolbar closes whichever terminal is active, so it names the
+        // action as native's drawer toolbar does, not the tab.
+        "Close Terminal (⌘W)": "Close Terminal (⌘W)",
       });
       // Native's action popovers open below their trigger.
       for (const props of view.help.values()) NodeAssert.equal(props.side, "bottom");
