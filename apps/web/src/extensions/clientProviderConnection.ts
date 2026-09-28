@@ -51,6 +51,8 @@ const connectionOwners = new Map<string, object>();
 const connectingSeams = new Map<string, Set<object>>();
 /** Wakes calls held until the in-flight connect settles. */
 const connectionWaiters = new Map<string, Set<() => void>>();
+/** Environments whose server lacks the seam: calls leave unstamped at once until the next connection. */
+const unsupportedSeams = new Set<string>();
 
 /** The socket-bound id the server minted for this environment's live seam, if any. */
 export function currentClientConnectionId(environmentId: string): string | undefined {
@@ -63,20 +65,31 @@ function markConnecting(environmentId: string, owner: object) {
   connectingSeams.set(environmentId, owners);
 }
 
+function wakeWaiters(environmentId: string) {
+  for (const wake of connectionWaiters.get(environmentId) ?? []) wake();
+}
+
 /** The connect registered or ended: release held calls either way. */
 function settleConnecting(environmentId: string, owner: object) {
   const owners = connectingSeams.get(environmentId);
   if (!owners?.delete(owner)) return;
   if (owners.size === 0) connectingSeams.delete(environmentId);
-  for (const wake of connectionWaiters.get(environmentId) ?? []) wake();
+  wakeWaiters(environmentId);
+}
+
+/** The server rejected the connect as an unknown RPC — an older server without the seam. */
+function isUnknownRequestTag(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith("Unknown request tag:");
 }
 
 /**
  * The hint for an outbound call. Until a live seam registers — including while
  * it waits for the transport's first or next session — the call is held
  * (bounded) so it leaves stamped the first time; calls are never replayed,
- * because the server may already have run them. An absent seam releases the
- * call at once, and one the server never registers releases it at the bound.
+ * because the server may already have run them. An absent seam, or a server
+ * known to lack it, releases the call at once; one the server never registers
+ * releases it at the bound.
  */
 async function clientConnectionIdForCall(
   environmentId: string,
@@ -85,7 +98,12 @@ async function clientConnectionIdForCall(
 ): Promise<string | undefined> {
   signal.throwIfAborted();
   const current = connectionIds.get(environmentId);
-  if (current !== undefined || !connectingSeams.has(environmentId)) return current;
+  if (
+    current !== undefined ||
+    !connectingSeams.has(environmentId) ||
+    unsupportedSeams.has(environmentId)
+  )
+    return current;
   await new Promise<void>((resolve) => {
     const waiters = connectionWaiters.get(environmentId) ?? new Set();
     connectionWaiters.set(environmentId, waiters);
@@ -201,6 +219,7 @@ export function startClientProviderConnection(
     void deps.flushGlobalCommands(lifecycle.signal).catch(() => {});
   };
   // Calls made before the first connect registers are held, not rejected.
+  unsupportedSeams.delete(deps.environmentId);
   markConnecting(deps.environmentId, owner);
   void runConnectionLoop(deps, lifecycle.signal, owner, iteration, teardownIteration)
     .catch(() => {})
@@ -238,6 +257,7 @@ async function runConnectionLoop(
     ).catch(() => {});
   };
   while (!signal.aborted) {
+    let unsupported = false;
     iteration.connectionId = undefined;
     iteration.subscriptions = new Map();
     iteration.pending = new Map();
@@ -275,16 +295,28 @@ async function runConnectionLoop(
         signal.removeEventListener("abort", resolveAborted);
         await iterator.return?.().catch(() => {});
       }
-    } catch {
+    } catch (error) {
       // Transport or session failure — fall through to the reconnect wait.
+      unsupported = isUnknownRequestTag(error);
     } finally {
       teardownIteration();
     }
     if (signal.aborted) return;
+    if (unsupported) {
+      // The server lacks the seam: release held and later calls. The next
+      // connection may reach an upgraded server, so only a drop clears this
+      // (and calls hold again) before the loop retries.
+      unsupportedSeams.add(deps.environmentId);
+      wakeWaiters(deps.environmentId);
+    }
     // A non-transport failure (e.g. a rejected connect) would otherwise spin.
     await new Promise((resolve) => setTimeout(resolve, 1000));
     if (signal.aborted) return;
-    await waitForReconnect(deps.environmentId, signal).catch(() => {});
+    await waitForReconnect(
+      deps.environmentId,
+      signal,
+      unsupported ? () => unsupportedSeams.delete(deps.environmentId) : undefined,
+    ).catch(() => {});
   }
 }
 
@@ -302,6 +334,7 @@ function handleFrame(
     case "registered": {
       connectionIds.set(deps.environmentId, frame.connectionId);
       connectionOwners.set(deps.environmentId, owner);
+      unsupportedSeams.delete(deps.environmentId);
       iteration.connectionId = frame.connectionId;
       settleConnecting(deps.environmentId, owner);
       // A new connection epoch: prior registrations stay fenced until the
@@ -413,8 +446,16 @@ function handleFrame(
   }
 }
 
-/** Resolves once the environment reports a connected phase, or on abort. */
-async function waitForReconnect(environmentId: EnvironmentId, signal: AbortSignal) {
+/**
+ * Resolves once the environment reports a connected phase, or on abort. With
+ * `onDrop`, the current connection does not count: it waits for a drop, calls
+ * `onDrop`, then for the next connected phase.
+ */
+async function waitForReconnect(
+  environmentId: EnvironmentId,
+  signal: AbortSignal,
+  onDrop?: () => void,
+) {
   const context = await Effect.runPromise(
     AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
     { signal },
@@ -430,7 +471,10 @@ async function waitForReconnect(environmentId: EnvironmentId, signal: AbortSigna
     while (!signal.aborted) {
       const next = await iterator.next();
       if (next.done) return;
-      if (next.value.phase === "connected") return;
+      if (next.value.phase !== "connected") {
+        onDrop?.();
+        onDrop = undefined;
+      } else if (onDrop === undefined) return;
     }
   } finally {
     signal.removeEventListener("abort", cancel);
