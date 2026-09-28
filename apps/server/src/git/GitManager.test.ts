@@ -75,6 +75,11 @@ interface FakeGhScenario {
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
+  /**
+   * Mirror gh 2.94's `pr checkout` against origin's `refs/pull/<n>/head`: `--force` hard-resets
+   * the branch onto the pull head, otherwise gh only fast-forwards it.
+   */
+  syncCheckoutWithPullHead?: boolean;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -444,7 +449,39 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.try({
         try: () => {
           const headBranch = scenario.pullRequest?.headRefName;
-          if (headBranch) {
+          if (headBranch && scenario.syncCheckoutWithPullHead) {
+            const force = args.includes("--force");
+            runGitSyncForFakeGh(input.cwd, [
+              "fetch",
+              "origin",
+              `refs/pull/${scenario.pullRequest?.number}/head`,
+            ]);
+            const current = NodeChildProcess.spawnSync("git", ["branch", "--show-current"], {
+              cwd: input.cwd,
+              encoding: "utf8",
+            }).stdout.trim();
+            const exists =
+              NodeChildProcess.spawnSync(
+                "git",
+                ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
+                { cwd: input.cwd },
+              ).status === 0;
+            if (!exists) {
+              runGitSyncForFakeGh(input.cwd, ["checkout", "-b", headBranch, "FETCH_HEAD"]);
+            } else {
+              if (current !== headBranch) {
+                runGitSyncForFakeGh(input.cwd, [
+                  "checkout",
+                  ...(force ? ["--force"] : []),
+                  headBranch,
+                ]);
+              }
+              runGitSyncForFakeGh(
+                input.cwd,
+                force ? ["reset", "--hard", "FETCH_HEAD"] : ["merge", "--ff-only", "FETCH_HEAD"],
+              );
+            }
+          } else if (headBranch) {
             const existingBranch = NodeChildProcess.spawnSync(
               "git",
               ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
@@ -4411,7 +4448,114 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.worktreePath).toBeNull();
       const branch = (yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim();
       expect(branch).toBe("feature/pr-local");
-      expect(ghCalls).toContain("pr checkout 64 --force");
+      expect(ghCalls).toContain("pr checkout 64");
+    }),
+  );
+
+  // A real repository and remote; the fake gh replays gh 2.94's own checkout, in which
+  // `--force` hard-resets the PR branch onto the pull head.
+  const setUpLocalCheckoutPullRequest = (number: number, headBranch: string) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR first"]);
+      const firstCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      // The pull head moves on without this checkout.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "second\n");
+      yield* runGit(repoDir, ["commit", "-am", "PR second"]);
+      const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", `HEAD:refs/pull/${number}/head`]);
+      yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number,
+            title: "Safe checkout PR",
+            url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+            baseRefName: "main",
+            headRefName: headBranch,
+            state: "open",
+          },
+          syncCheckoutWithPullHead: true,
+        },
+      });
+      return { repoDir, manager, ghCalls, firstCommit, pullHead };
+    });
+
+  it.effect("local PR checkout refuses, and keeps tracked edits, when the tree is dirty", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager } = yield* setUpLocalCheckoutPullRequest(91, "feature/pr-dirty");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "my unsaved edit\n");
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("uncommitted changes");
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "README.md"), "utf8")).toBe(
+        "my unsaved edit\n",
+      );
+    }),
+  );
+
+  it.effect(
+    "local PR checkout refuses, and keeps local commits, when the PR branch has diverged",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager } = yield* setUpLocalCheckoutPullRequest(
+          92,
+          "feature/pr-diverged",
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My local commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "92",
+          mode: "local",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("commits that are not on pull request #92");
+        expect(
+          (yield* runGit(repoDir, ["rev-parse", "refs/heads/feature/pr-diverged"])).stdout.trim(),
+        ).toBe(localCommit);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect("local PR checkout fast-forwards a clean PR branch without forcing", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, ghCalls, pullHead } = yield* setUpLocalCheckoutPullRequest(
+        93,
+        "feature/pr-behind",
+      );
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "93",
+        mode: "local",
+      });
+
+      expect(result).toMatchObject({
+        branch: "feature/pr-behind",
+        worktreePath: null,
+        isOnPullRequestHead: true,
+      });
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      expect(ghCalls).toContain("pr checkout 93");
+      expect(ghCalls.some((call) => call.includes("--force"))).toBe(false);
     }),
   );
 

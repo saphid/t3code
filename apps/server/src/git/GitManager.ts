@@ -2327,6 +2327,53 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  // Checking a pull request out in the repository itself moves the user's own checkout, so it
+  // refuses instead of discarding tracked edits or commits the pull request does not have.
+  const ensureLocalCheckoutKeepsWork = Effect.fn("ensureLocalCheckoutKeepsWork")(function* (
+    cwd: string,
+    pullRequest: { readonly number: number; readonly headBranch: string },
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequest.number} here, or check it out in its own folder.`,
+      });
+    }
+    const localBranch = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.localBranch",
+      cwd,
+      args: ["rev-parse", "--verify", "--quiet", `refs/heads/${pullRequest.headBranch}^{commit}`],
+      allowNonZeroExit: true,
+    });
+    const localCommit = localBranch.exitCode === 0 ? localBranch.stdout.trim() : null;
+    if (localCommit === null) return;
+    // Hosts without `refs/pull/<n>/head` cannot be compared; the unforced checkout still
+    // leaves their branch as it is.
+    const pullHead = yield* gitCore
+      .fetchPullRequestHeadCommit({ cwd, prNumber: pullRequest.number })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (pullHead === null || pullHead.commitSha === localCommit) return;
+    const contained = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.isAncestor",
+      cwd,
+      args: ["merge-base", "--is-ancestor", localCommit, pullHead.commitSha],
+      allowNonZeroExit: true,
+    });
+    if (contained.exitCode !== 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `The local branch ${pullRequest.headBranch} has commits that are not on pull request #${pullRequest.number}. Push or move them before checking it out here, or check it out in its own folder.`,
+      });
+    }
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2360,10 +2407,13 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
+        yield* ensureLocalCheckoutKeepsWork(input.cwd, pullRequest);
+        // Never forced: `gh pr checkout --force` hard-resets the branch, discarding edits and
+        // local commits. Unforced, the provider can only fast-forward, so a race after the
+        // checks above fails instead of losing work.
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
-          force: true,
         });
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
