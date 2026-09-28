@@ -19,6 +19,7 @@ import {
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
+import { LISTED_ANNOTATION_TEXT_MAX } from "@t3tools/extension-sdk/clientProviders";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -846,6 +847,16 @@ function composerQuotedContents(excerpt: string, startLine: number, endLine: num
   return "\n".repeat(firstLine - 1) + excerpt;
 }
 
+/** A review comment's text as `listAnnotations` lists it: trimmed, and cut with "…" past the bound. */
+function listedAnnotationText(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= LISTED_ANNOTATION_TEXT_MAX) return trimmed;
+  let cut = trimmed.slice(0, LISTED_ANNOTATION_TEXT_MAX - 1);
+  // Never leave half a surrogate pair at the cut.
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
 function composerThread(call: ClientProviderInvokeCall, threadId: string): ScopedThreadRef {
   const scoped = call.context.resource.threadId;
   if (threadId !== scoped)
@@ -1129,6 +1140,8 @@ export function createComposerClientProvider(
           // Own ids only: the prefix minted by attachAnnotation above. Native
           // comments and other installations' annotations stay unlisted.
           const prefix = `annotation:${call.caller.installationId}:`;
+          const include = readInputObject(input).include;
+          const withText = Array.isArray(include) && include.includes("text");
           const comments =
             useComposerDraftStore.getState().getComposerDraft(ref)?.reviewComments ?? [];
           const annotations = comments
@@ -1141,6 +1154,8 @@ export function createComposerClientProvider(
               filePath: entry.filePath,
               rangeLabel: entry.rangeLabel,
               sectionTitle: entry.sectionTitle,
+              // The words the composer chip shows, cut to fit the frame.
+              ...(withText ? { text: listedAnnotationText(entry.text) } : {}),
             }));
           return { annotations } as unknown as Json;
         }
@@ -1722,7 +1737,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
   { id: "t3.client/panels", version: "1.0.0" },
-  { id: "t3.client/composer", version: "1.2.0" },
+  { id: "t3.client/composer", version: "1.3.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.1.0" },
   { id: "t3.client/external", version: "1.0.0" },

@@ -1732,9 +1732,16 @@ var __t3Client = (() => {
     threadId: { type: "string", minLength: 1, maxLength: 128 }
   };
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+  var LISTED_ANNOTATION_TEXT_MAX = 160;
+  var listAnnotationsIncludeSchema = {
+    type: "array",
+    maxItems: 1,
+    uniqueItems: true,
+    items: { enum: ["text"] }
+  };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.2.0",
+    version: "1.3.0",
     methods: [
       {
         name: "insertContext",
@@ -1867,7 +1874,9 @@ var __t3Client = (() => {
         name: "listAnnotations",
         effect: "read",
         requiredGrants: [],
-        inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+        inputSchema: withTarget({ ...composerThreadIdInput, include: listAnnotationsIncludeSchema }, [
+          "threadId"
+        ]),
         outputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1886,7 +1895,9 @@ var __t3Client = (() => {
                   kind: { enum: ["file", "diff"] },
                   filePath: { type: "string", minLength: 1, maxLength: 512 },
                   rangeLabel: { type: "string", maxLength: 128 },
-                  sectionTitle: { type: "string", maxLength: 256 }
+                  sectionTitle: { type: "string", maxLength: 256 },
+                  // 1.3.0, only when `include` asks for it.
+                  text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX }
                 }
               }
             }
@@ -7078,9 +7089,9 @@ var __t3Client = (() => {
       }
     ]
   });
-  var messagesEnrichmentApi = defineApi({
+  var messagesEnrichmentDefinition = (withText) => ({
     id: MESSAGES_ENRICHMENT,
-    version: "1.1.0",
+    version: withText ? "1.2.0" : "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7143,7 +7154,10 @@ var __t3Client = (() => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: { threadId: composerThreadIdInput2 }
+          properties: {
+            threadId: composerThreadIdInput2,
+            ...withText ? { include: listAnnotationsIncludeSchema } : {}
+          }
         },
         outputSchema: {
           type: "object",
@@ -7163,7 +7177,8 @@ var __t3Client = (() => {
                   kind: { enum: ["file", "diff"] },
                   filePath: { type: "string", minLength: 1, maxLength: 512 },
                   rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
-                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 }
+                  sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+                  ...withText ? { text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX } } : {}
                 }
               }
             }
@@ -7192,6 +7207,15 @@ var __t3Client = (() => {
       }
     ]
   });
+  var messagesEnrichmentApi = defineApi(
+    messagesEnrichmentDefinition(true),
+    // Consumers keep loading on a 1.1.0 host; probe before asking for text.
+    {
+      baseline: "1.1.0",
+      additions: [{ version: "1.2.0", method: "listAnnotations", input: "include" }]
+    }
+  );
+  var messagesEnrichmentApiV1_1 = defineApi(messagesEnrichmentDefinition(false));
   var COMPOSER_CONTEXT_API = composerContextApi.definition;
   var MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
   var UI_THEME = "t3.ui/theme";
@@ -8096,6 +8120,7 @@ var __t3Client = (() => {
     prsWriteApi.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
+    messagesEnrichmentApiV1_1.definition,
     uiThemeApi.definition,
     uiKeybindingsApi.definition,
     uiNotificationsApi.definition,

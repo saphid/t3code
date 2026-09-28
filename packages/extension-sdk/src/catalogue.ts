@@ -38,6 +38,8 @@ import {
   uiNavigationFileInputPropertiesV1_1,
   uiNavigationFileReceiptSchema,
   uiNavigationFileReceiptSchemaV1_1,
+  listAnnotationsIncludeSchema,
+  LISTED_ANNOTATION_TEXT_MAX,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
@@ -7673,6 +7675,8 @@ export type MessagesAttachAnnotationResult = {
 };
 export type MessagesListAnnotationsInput = {
   readonly threadId?: string;
+  /** 1.2.0: `["text"]` asks for each comment's text. */
+  readonly include?: readonly "text"[];
 };
 export type MessagesListedAnnotation = {
   readonly annotationId: string;
@@ -7680,6 +7684,12 @@ export type MessagesListedAnnotation = {
   readonly filePath: string;
   readonly rangeLabel: string;
   readonly sectionTitle: string;
+  /**
+   * 1.2.0, when asked with `include: ["text"]`: the comment's words, trimmed
+   * and cut to `LISTED_ANNOTATION_TEXT_MAX` characters (ending in "…" when
+   * cut). Absent from an older host or client.
+   */
+  readonly text?: string;
 };
 export type MessagesListAnnotationsResult = {
   readonly annotations: readonly MessagesListedAnnotation[];
@@ -7999,18 +8009,7 @@ export const composerContextApi = defineApi<{
   ],
 });
 
-/**
- * Review-style draft annotation. The native path is composer-insert only —
- * `buildFileReviewComment` + `addReviewComment` on the client draft store —
- * and annotations serialize into the next sent message. There is no
- * message-level annotation entity, so turn/sent-message enrichment is not
- * expressible and stays deferred.
- *
- * 1.1.0 adds the diff kind the diff viewer inserts (`buildDiffReviewComment`
- * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
- * installation can enumerate and retract what it attached.
- */
-export const messagesEnrichmentApi = defineApi<{
+type MessagesEnrichmentMethods = {
   getCapabilities: { input: Record<string, never>; output: MessagesEnrichmentCapabilities };
   attachAnnotation: {
     input: MessagesAttachAnnotationInput;
@@ -8024,9 +8023,12 @@ export const messagesEnrichmentApi = defineApi<{
     input: MessagesRemoveAnnotationInput;
     output: MessagesRemoveAnnotationResult;
   };
-}>({
+};
+
+/** The contract at 1.2.0 (`withText`) or as frozen at 1.1.0. */
+const messagesEnrichmentDefinition = (withText: boolean): ApiDefinition => ({
   id: MESSAGES_ENRICHMENT,
-  version: "1.1.0",
+  version: withText ? "1.2.0" : "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -8089,7 +8091,10 @@ export const messagesEnrichmentApi = defineApi<{
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        properties: { threadId: composerThreadIdInput },
+        properties: {
+          threadId: composerThreadIdInput,
+          ...(withText ? { include: listAnnotationsIncludeSchema } : {}),
+        },
       },
       outputSchema: {
         type: "object",
@@ -8110,6 +8115,9 @@ export const messagesEnrichmentApi = defineApi<{
                 filePath: { type: "string", minLength: 1, maxLength: 512 },
                 rangeLabel: { type: "string", minLength: 1, maxLength: 128 },
                 sectionTitle: { type: "string", minLength: 1, maxLength: 256 },
+                ...(withText
+                  ? { text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX } }
+                  : {}),
               },
             },
           },
@@ -8138,6 +8146,59 @@ export const messagesEnrichmentApi = defineApi<{
     },
   ],
 });
+
+/**
+ * Review-style draft annotation. The native path is composer-insert only —
+ * `buildFileReviewComment` + `addReviewComment` on the client draft store —
+ * and annotations serialize into the next sent message. There is no
+ * message-level annotation entity, so turn/sent-message enrichment is not
+ * expressible and stays deferred.
+ *
+ * 1.1.0 adds the diff kind the diff viewer inserts (`buildDiffReviewComment`
+ * records, `fenceLanguage: "diff"`), plus own-ids-only list/remove so an
+ * installation can enumerate and retract what it attached. 1.2.0 lets
+ * `listAnnotations` return each comment's text when asked (`include`), as the
+ * composer chip shows it; `listOwnAnnotations` probes for it.
+ */
+export const messagesEnrichmentApi = defineApi<MessagesEnrichmentMethods>(
+  messagesEnrichmentDefinition(true),
+  // Consumers keep loading on a 1.1.0 host; probe before asking for text.
+  {
+    baseline: "1.1.0",
+    additions: [{ version: "1.2.0", method: "listAnnotations", input: "include" }],
+  },
+);
+/** Frozen published 1.1.0 definition, before listed text; providers may still declare it. */
+export const messagesEnrichmentApiV1_1 = defineApi<MessagesEnrichmentMethods>(
+  messagesEnrichmentDefinition(false),
+);
+
+/**
+ * Lists the caller's own unsent annotations through
+ * `t3.messages/enrichment.listAnnotations` (grant `t3.messages/write`), with
+ * each comment's text where the host has it (1.2.0). The host is probed
+ * first, so an older one answers without text instead of failing.
+ */
+export async function listOwnAnnotations(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  input: { readonly threadId?: string },
+  signal: AbortSignal,
+): Promise<MessagesListAnnotationsResult> {
+  const discovered = await client.discoverApis(context, signal);
+  const withText = discovered.some((api) => {
+    const version = api.id === MESSAGES_ENRICHMENT ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+  });
+  return withText
+    ? bindApi(messagesEnrichmentApi, client, context, "^1.2.0").invoke(
+        "listAnnotations",
+        { ...input, include: ["text"] },
+        signal,
+      )
+    : bindApi(messagesEnrichmentApi, client, context).invoke("listAnnotations", input, signal);
+}
+
 export const COMPOSER_CONTEXT_API = composerContextApi.definition;
 export const MESSAGES_ENRICHMENT_API = messagesEnrichmentApi.definition;
 
@@ -9579,6 +9640,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   prsWriteApi.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
+  messagesEnrichmentApiV1_1.definition,
   uiThemeApi.definition,
   uiKeybindingsApi.definition,
   uiNotificationsApi.definition,

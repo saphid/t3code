@@ -1595,6 +1595,31 @@ describe("composer provider", () => {
     expectDenied(() => provider.invoke(invokeCall("listAnnotations", { threadId: "thread-b" })));
   });
 
+  // Native parity: the composer chip shows the comment's words, so a listing
+  // that asks for them gets a bounded preview of each own comment's text.
+  it("listAnnotations carries each comment's text only when asked", () => {
+    const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
+    const long = "word ".repeat(60);
+    for (const body of ["  short note  ", long])
+      provider.invoke(
+        invokeCall("attachAnnotation", {
+          threadId: "thread-a",
+          annotation: { filePath: "src/f.ts", startLine: 1, endLine: 1, body },
+        }),
+      );
+    const list = (input: Record<string, unknown>) =>
+      (
+        provider.invoke(invokeCall("listAnnotations", { threadId: "thread-a", ...input })) as {
+          annotations: { text?: string }[];
+        }
+      ).annotations.map((entry) => entry.text);
+    expect(list({})).toEqual([undefined, undefined]);
+    const [short, preview] = list({ include: ["text"] });
+    expect(short).toBe("short note");
+    expect(preview).toHaveLength(160);
+    expect(preview).toBe(`${long.trim().slice(0, 159)}…`);
+  });
+
   it("removeAnnotation removes only the caller's own annotation and its reference", () => {
     const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));
     const ref = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));

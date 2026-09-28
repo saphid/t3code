@@ -606,9 +606,24 @@ const composerThreadIdInput = {
 const BROWSER_CAPTURE_ARTIFACT_REF_PATTERN =
   "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
+/**
+ * Bound on the comment text `listAnnotations` returns when asked (1.2.0 public,
+ * 1.3.0 seam): a preview, so eight entries at every field maximum still fit
+ * the 64 KiB frame envelope. The composer chip holds the whole comment.
+ */
+export const LISTED_ANNOTATION_TEXT_MAX = 160;
+
+/** `listAnnotations` `include`: the optional members a caller asks for. */
+export const listAnnotationsIncludeSchema = {
+  type: "array",
+  maxItems: 1,
+  uniqueItems: true,
+  items: { enum: ["text"] },
+} as const;
+
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: "1.2.0",
+  version: "1.3.0",
   methods: [
     {
       name: "insertContext",
@@ -756,7 +771,9 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
       name: "listAnnotations",
       effect: "read",
       requiredGrants: [],
-      inputSchema: withTarget({ ...composerThreadIdInput }, ["threadId"]),
+      inputSchema: withTarget({ ...composerThreadIdInput, include: listAnnotationsIncludeSchema }, [
+        "threadId",
+      ]),
       outputSchema: {
         type: "object",
         additionalProperties: false,
@@ -776,6 +793,8 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
                 filePath: { type: "string", minLength: 1, maxLength: 512 },
                 rangeLabel: { type: "string", maxLength: 128 },
                 sectionTitle: { type: "string", maxLength: 256 },
+                // 1.3.0, only when `include` asks for it.
+                text: { type: "string", maxLength: LISTED_ANNOTATION_TEXT_MAX },
               },
             },
           },
@@ -1277,3 +1296,6 @@ export const CLIENT_COMPOSER_V11_RANGE = "^1.1.0";
 
 /** The composer range that carries `insertImage`; gated per connection like the 1.1.0 ops. */
 export const CLIENT_COMPOSER_V12_RANGE = "^1.2.0";
+
+/** The composer range that answers `listAnnotations` `include: ["text"]`. */
+export const CLIENT_COMPOSER_V13_RANGE = "^1.3.0";

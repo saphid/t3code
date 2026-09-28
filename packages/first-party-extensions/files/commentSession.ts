@@ -4,6 +4,7 @@
  */
 
 import {
+  listOwnAnnotations,
   messagesEnrichmentApi,
   type MessagesEnrichmentCapabilities,
   type MessagesListedAnnotation,
@@ -205,7 +206,10 @@ export interface PostedComment {
   readonly annotationId: string;
   readonly path: string;
   readonly rangeLabel: string;
-  /** The body, when this view attached it — `listAnnotations` does not return bodies. */
+  /**
+   * The body: the whole of it when this view attached it, else the preview a
+   * 1.2.0 host lists (what survives a reload); null from an older host.
+   */
   readonly text: string | null;
 }
 
@@ -218,7 +222,8 @@ export const LISTED_ANNOTATIONS_CAP = 8;
  * On a 1.1 composer (`operations.listAnnotations`) the draft is the source of
  * truth: the list is read on thread change and whenever the view becomes
  * visible, so a chip removed in the composer drops out here, and a comment
- * attached from another view shows up. `remove` goes through
+ * attached from another view shows up; a 1.2.0 host lists each comment's
+ * words too, so they survive a reload as the composer chip's do. `remove` goes through
  * `removeAnnotation` when the host offers it. A 1.0 composer has neither op;
  * the view then shows what it attached this session, per thread, and removal
  * stays with the composer chip.
@@ -268,19 +273,17 @@ export function usePostedComments(
     if (!canList || threadId === undefined || !visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(messagesEnrichmentApi, host, session.context)
-      .invoke("listAnnotations", { threadId }, signal)
-      .then(
-        (result) => {
-          if (signal.aborted) return;
-          setListing({ threadId, seq: refreshSeq, annotations: result.annotations });
-          setError(null);
-        },
-        (cause) => {
-          if (!signal.aborted)
-            setError(cause instanceof Error ? cause.message : "Comments could not be listed");
-        },
-      );
+    void listOwnAnnotations(host, session.context, { threadId }, signal).then(
+      (result) => {
+        if (signal.aborted) return;
+        setListing({ threadId, seq: refreshSeq, annotations: result.annotations });
+        setError(null);
+      },
+      (cause) => {
+        if (!signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Comments could not be listed");
+      },
+    );
     return () => controller.abort();
   }, [host, session, canList, threadId, visible, refreshSeq]);
 
@@ -339,7 +342,7 @@ export function usePostedComments(
         annotationId: entry.annotationId,
         path: entry.filePath,
         rangeLabel: entry.rangeLabel,
-        text: bodies.get(entry.annotationId) ?? null,
+        text: bodies.get(entry.annotationId) ?? entry.text ?? null,
       }));
     // An attach lands before the re-list that includes it returns; past the
     // op's cap an absent own attach may simply be unlisted, not removed.

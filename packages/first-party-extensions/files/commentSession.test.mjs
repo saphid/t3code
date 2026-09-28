@@ -571,18 +571,26 @@ NodeTest.describe("usePostedComments", () => {
     sectionTitle: filePath,
   });
 
-  /** A fake composer draft: list/remove answer from `draft` synchronously-resolved. */
-  function draftHost(draft) {
+  /**
+   * A fake composer draft: list/remove answer from `draft` synchronously-resolved.
+   * `version` is the host's t3.messages/enrichment; entry text is listed only when asked.
+   */
+  function draftHost(draft, version = "1.1.0") {
     const calls = [];
     return {
       calls,
+      discoverApis: async () => [{ id: "t3.messages/enrichment", version }],
       invokeApi(request) {
         calls.push([request.method, request.input]);
         if (request.method === "listAnnotations")
           return Promise.resolve({
             annotations: draft
               .filter((entry) => entry.thread === request.input.threadId)
-              .map(({ thread: _t, ...entry }) => entry),
+              .map(({ thread: _t, text, ...entry }) =>
+                request.input.include?.includes("text") && text !== undefined
+                  ? { ...entry, text }
+                  : entry,
+              ),
           });
         if (request.method === "removeAnnotation") {
           const index = draft.findIndex(
@@ -660,6 +668,30 @@ NodeTest.describe("usePostedComments", () => {
     },
   );
 
+  // Native parity: the composer chip shows a comment's words after a reload,
+  // so the list here does too wherever the host can say them.
+  NodeTest.it("after a reload lists what each comment says, where the host can", async () => {
+    for (const [version, text] of [
+      ["1.2.0", "why this?"],
+      ["1.1.0", null],
+    ]) {
+      const draft = [
+        { thread: "thread-a", ...listed("a1", "src/a.ts", "L1 to L2"), text: "why this?" },
+      ];
+      const host = draftHost(draft, version);
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(Probe, { host, threadId: "thread-a", capabilities: v11 }));
+        });
+        await flush();
+        NodeAssert.deepEqual(summary(), [["a1", "src/a.ts", "L1 to L2", text]], version);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    }
+  });
+
   NodeTest.it("a chip removed in the composer drops out when the view is shown again", async () => {
     const draft = [{ thread: "thread-a", ...listed("a1", "src/a.ts", "L1") }];
     const host = draftHost(draft);
@@ -725,6 +757,7 @@ NodeTest.describe("usePostedComments", () => {
     const base = draftHost(draft);
     const host = {
       calls: base.calls,
+      discoverApis: base.discoverApis,
       invokeApi(request) {
         if (request.method === "removeAnnotation")
           return Promise.reject(new Error("API capability denied: t3.messages/write"));
