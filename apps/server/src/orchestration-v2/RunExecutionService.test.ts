@@ -3190,6 +3190,44 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect("keeps the run alive when ingesting one provider event fails", () =>
+  Effect.gen(function* () {
+    const { observed, written } = yield* captureRootRunTermination({
+      key: "ingest-failure:mid-stream",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "node.updated",
+            driver,
+            node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+          } as const,
+          rootTerminalEvent(ids, "completed"),
+        ),
+      ingestNormalized: (event) =>
+        event.type === "turn.terminal"
+          ? Effect.succeed([])
+          : Effect.die(new Error("SQLITE_BUSY: database is locked")),
+    });
+    assert.notInclude(observed, "run:failed");
+    assert.include(observed, "run:waiting");
+    assert.isUndefined(written.find((item) => item.type === "error"));
+  }),
+);
+
+it.effect("stores the failure item when ingesting a failed terminal was skipped", () =>
+  Effect.gen(function* () {
+    const { observed, written } = yield* captureRootRunTermination({
+      key: "ingest-failure:terminal",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "failed")),
+      ingestNormalized: () => Effect.die(new Error("SQLITE_BUSY: database is locked")),
+    });
+    assert.include(observed, "run:failed");
+    assert.isDefined(written.find((item) => item.type === "error"));
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
@@ -3200,6 +3238,7 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly ingestNormalized?: (event: ProviderAdapterV2Event) => Effect.Effect<[]>;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3249,7 +3288,8 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: (ingest) =>
+              input.ingestNormalized?.(ingest.event) ?? Effect.succeed([]),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
