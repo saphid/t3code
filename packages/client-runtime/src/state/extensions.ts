@@ -129,8 +129,9 @@ export function environmentExtensionApiStream(
 /**
  * `ClientHost.resumableStreams` transport: follows the environment's transport
  * sessions like native durable subscriptions. Each session opens one fresh
- * subscription with a payload built for it (so session-bound hints are never
- * replayed), and a transport failure waits for the next session. The
+ * subscription with a payload built for it, and a transport failure waits
+ * for the next session. `makePayload` only sees state the caller holds, not
+ * which session is opening, so it must not carry session-bound hints. The
  * source's own completion or domain failure ends the stream.
  */
 export function environmentResumableExtensionApiStream(
