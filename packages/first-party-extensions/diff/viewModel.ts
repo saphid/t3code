@@ -662,6 +662,45 @@ export function diffCapabilityState(
   return { kind: "ready" };
 }
 
+/**
+ * Runs a one-shot read the panel cannot work without. While the view stays
+ * live, a failure is usually transient — the host cancelled the request
+ * under us or the transport blipped — so retry a bounded number of times
+ * before reporting it, as native's status query does. Aborting stops the
+ * retries and rejects with the abort reason.
+ */
+export async function readWithRetry<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = abortableDelay,
+  attempts = 3,
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      if (signal.aborted || attempt >= attempts) throw error;
+    }
+    await wait(400 * attempt, signal);
+    signal.throwIfAborted();
+  }
+}
+
+/** Resolves after `ms`, or rejects with the abort reason and clears its timer. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /* ---------------- stream-vs-unary delivery policy ---------------- */
 
 /**

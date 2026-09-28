@@ -10376,6 +10376,30 @@ ${prefix}`;
     }
     return { kind: "ready" };
   }
+  async function readWithRetry(read, signal, wait = abortableDelay, attempts = 3) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await read();
+      } catch (error) {
+        if (signal.aborted || attempt >= attempts) throw error;
+      }
+      await wait(400 * attempt, signal);
+      signal.throwIfAborted();
+    }
+  }
+  function abortableDelay(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
   function isEnvelopeRejection(error) {
     return error instanceof Error && /byte limit/i.test(error.message);
   }
@@ -10980,7 +11004,8 @@ ${prefix}`;
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE).invoke("getCapabilities", {}, signal).then(
+      const repository = bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE);
+      void readWithRetry(() => repository.invoke("getCapabilities", {}, signal), signal).then(
         (capabilities) => {
           if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
         },

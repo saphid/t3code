@@ -87,6 +87,7 @@ import {
   splitRows,
   toggleAllDiffFiles,
   toggleCollapsedKey,
+  readWithRetry,
   turnChoices,
   CONNECTING_AGENTS,
   type AgentsModel,
@@ -132,21 +133,20 @@ function useCapabilities(host: ClientHost, session: ViewSession, visible: boolea
     if (!visible) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    void bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE)
-      .invoke("getCapabilities", {}, signal)
-      .then(
-        (capabilities) => {
-          if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
-        },
-        (error) => {
-          if (!signal.aborted)
-            setResult({
-              key: tick,
-              capabilities: null,
-              error: error instanceof Error ? error.message : "Capabilities unavailable",
-            });
-        },
-      );
+    const repository = bindApi(vcsRepositoryApi, host, session.context, REPOSITORY_API_RANGE);
+    void readWithRetry(() => repository.invoke("getCapabilities", {}, signal), signal).then(
+      (capabilities) => {
+        if (!signal.aborted) setResult({ key: tick, capabilities, error: null });
+      },
+      (error) => {
+        if (!signal.aborted)
+          setResult({
+            key: tick,
+            capabilities: null,
+            error: error instanceof Error ? error.message : "Capabilities unavailable",
+          });
+      },
+    );
     return () => controller.abort();
   }, [host, session, visible, tick]);
   return result?.key === tick ? result : { capabilities: null, error: null };

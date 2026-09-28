@@ -44,6 +44,7 @@ import {
   splitRows,
   toggleAllDiffFiles,
   toggleCollapsedKey,
+  readWithRetry,
   turnChoices,
 } from "./viewModel.ts";
 
@@ -1586,4 +1587,84 @@ NodeTest.test("checkpointRevertInput + describeRevertReceipt: honest control edg
     }),
     /Revert rejected: OrchestrationStaleRevision/,
   );
+});
+
+NodeTest.test(
+  "readWithRetry: a transient failure (e.g. a host-side interruption) is retried, not reported",
+  async () => {
+    const errors = [new Error("All fibers interrupted without error")];
+    const waits = [];
+    const result = await readWithRetry(
+      async () => {
+        const error = errors.shift();
+        if (error) throw error;
+        return "capabilities";
+      },
+      new AbortController().signal,
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    NodeAssert.equal(result, "capabilities");
+    NodeAssert.deepEqual(waits, [400]);
+  },
+);
+
+NodeTest.test("readWithRetry: reports the last failure once attempts run out", async () => {
+  let calls = 0;
+  await NodeAssert.rejects(
+    readWithRetry(
+      async () => {
+        calls += 1;
+        throw new Error(`failure ${calls}`);
+      },
+      new AbortController().signal,
+      async () => {},
+    ),
+    /failure 3/,
+  );
+  NodeAssert.equal(calls, 3);
+});
+
+NodeTest.test("readWithRetry: an aborted view stops retrying", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await NodeAssert.rejects(
+    readWithRetry(
+      async () => {
+        calls += 1;
+        throw new Error("View cancelled");
+      },
+      controller.signal,
+      async () => {
+        controller.abort(new Error("closed"));
+      },
+    ),
+    /closed/,
+  );
+  NodeAssert.equal(calls, 1);
+});
+
+NodeTest.test("readWithRetry: aborting during the default backoff ends it at once", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const controller = new AbortController();
+  let calls = 0;
+  let outcome = null;
+  const pending = readWithRetry(async () => {
+    calls += 1;
+    throw new Error("View cancelled");
+  }, controller.signal).then(
+    () => (outcome = "resolved"),
+    (error) => (outcome = error.message),
+  );
+  // Let the first read fail so the 400 ms backoff is scheduled.
+  await new Promise((resolve) => setImmediate(resolve));
+  NodeAssert.equal(calls, 1);
+  controller.abort(new Error("closed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  // No timer has fired: the abort alone must settle the read.
+  NodeAssert.equal(outcome, "closed");
+  t.mock.timers.runAll();
+  await pending;
+  NodeAssert.equal(calls, 1);
 });
