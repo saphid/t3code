@@ -2248,6 +2248,71 @@ var __t3Client = (() => {
       }
     ]
   });
+  var CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"];
+  var prHandoffResultSchema = {
+    oneOf: [
+      {
+        // The task is in the caller's own thread's composer, for the reader to send.
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: { status: { const: "drafted" } }
+      },
+      {
+        // Checked out into its own worktree with a thread open on it; a task
+        // other than checkout is in that thread's composer.
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
+        properties: {
+          status: { const: "ready" },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+          isOnPullRequestHead: { type: "boolean" }
+        }
+      },
+      {
+        // `thread`: no thread could be opened, so nothing was checked out.
+        // `checkout`: the checkout failed; `detail` is the host's own sentence.
+        // `thread-move`: checked out on `branch`, but the thread stayed put.
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "stage"],
+        properties: {
+          status: { const: "failed" },
+          stage: { enum: ["thread", "checkout", "thread-move"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          detail: { type: "string", minLength: 1, maxLength: 2048 }
+        }
+      }
+    ]
+  };
+  var CLIENT_PR_HANDOFF_API = validateApiDefinition({
+    id: "t3.client/pr-handoff",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          pullRequest: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "url", "headBranch", "baseBranch"],
+            properties: {
+              number: { type: "integer", minimum: 1 },
+              url: { type: "string", minLength: 1, maxLength: 4096 },
+              headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+              baseBranch: { type: "string", minLength: 1, maxLength: 4096 }
+            }
+          }
+        }, ["task", "pullRequest"]),
+        outputSchema: prHandoffResultSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -2259,7 +2324,8 @@ var __t3Client = (() => {
     CLIENT_EXTERNAL_API,
     CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
-    CLIENT_NAVIGATION_API
+    CLIENT_NAVIGATION_API,
+    CLIENT_PR_HANDOFF_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -5278,6 +5344,7 @@ var __t3Client = (() => {
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
   var VCS_ACTIONS = "t3.vcs/actions";
+  var VCS_HANDOFF = "t3.vcs/handoff";
   var vcsActionKindSchema = {
     enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
   };
@@ -5512,7 +5579,8 @@ var __t3Client = (() => {
       "actions.resolvePullRequest": { type: "boolean" },
       "actions.preparePullRequestThread": { type: "boolean" },
       "actions.publishRepository": { type: "boolean" },
-      "actions.actionProgress": { type: "boolean" }
+      "actions.actionProgress": { type: "boolean" },
+      "actions.handoffPullRequest": { type: "boolean" }
     }
   };
   var vcsActionsCapabilitiesResultSchema = {
@@ -5527,145 +5595,171 @@ var __t3Client = (() => {
       operations: vcsActionsOperationsSupportSchema
     }
   };
-  var vcsActionsApi = defineStreamApi({
-    id: VCS_ACTIONS,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: prsEmptyInputSchema,
-        outputSchema: vcsActionsCapabilitiesResultSchema
-      },
-      {
-        name: "run",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["action"],
-          properties: {
-            action: vcsActionKindSchema,
-            commitMessage: { type: "string", maxLength: 1e4 },
-            featureBranch: { type: "boolean" },
-            paths: {
-              type: "array",
-              minItems: 1,
-              maxItems: 100,
-              items: { type: "string", minLength: 1, maxLength: 512 }
+  var vcsActionsApi = defineStreamApi(
+    {
+      id: VCS_ACTIONS,
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [VCS_READ],
+          inputSchema: prsEmptyInputSchema,
+          outputSchema: vcsActionsCapabilitiesResultSchema
+        },
+        {
+          name: "run",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action"],
+            properties: {
+              action: vcsActionKindSchema,
+              commitMessage: { type: "string", maxLength: 1e4 },
+              featureBranch: { type: "boolean" },
+              paths: {
+                type: "array",
+                minItems: 1,
+                maxItems: 100,
+                items: { type: "string", minLength: 1, maxLength: 512 }
+              }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["actionId"],
+            properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+          }
+        },
+        {
+          name: "resolvePullRequest",
+          // Read-shaped but Operate-gated: it shells the provider CLI, matching
+          // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+          effect: "read",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: vcsActionReferenceInputSchema,
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pullRequest"],
+            properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+          }
+        },
+        {
+          name: "preparePullRequestThread",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["reference", "mode"],
+            properties: {
+              reference: { type: "string", minLength: 1, maxLength: 2048 },
+              mode: { enum: ["local", "worktree"] }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+            properties: {
+              pullRequest: vcsActionResolvedPullRequestSchema,
+              branch: { type: "string", minLength: 1, maxLength: 4096 },
+              worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+              isOnPullRequestHead: { type: "boolean" }
             }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["actionId"],
-          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
-        }
-      },
-      {
-        name: "resolvePullRequest",
-        // Read-shaped but Operate-gated: it shells the provider CLI, matching
-        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
-        effect: "read",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: vcsActionReferenceInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["pullRequest"],
-          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
-        }
-      },
-      {
-        name: "preparePullRequestThread",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["reference", "mode"],
-          properties: {
-            reference: { type: "string", minLength: 1, maxLength: 2048 },
-            mode: { enum: ["local", "worktree"] }
+        {
+          name: "publishRepository",
+          // Declared `t3.vcs/mutate`; the adapter additionally requires every
+          // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+          // G3 — a comment-only grant must never reach pushCurrentBranch).
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "repository", "visibility"],
+            properties: {
+              provider: {
+                enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+              },
+              repository: { type: "string", minLength: 1, maxLength: 512 },
+              visibility: { enum: ["private", "public"] },
+              remoteName: { type: "string", minLength: 1, maxLength: 256 },
+              protocol: { enum: ["auto", "ssh", "https"] }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+            properties: {
+              repository: {
+                type: "object",
+                additionalProperties: false,
+                required: ["provider", "nameWithOwner", "url", "sshUrl"],
+                properties: {
+                  provider: {
+                    enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+                  },
+                  nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                  url: { type: "string", minLength: 1, maxLength: 4096 },
+                  sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+                }
+              },
+              remoteName: { type: "string", minLength: 1, maxLength: 256 },
+              remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+              branch: { type: "string", minLength: 1, maxLength: 4096 },
+              upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+              status: { enum: ["pushed", "remote_added"] }
+            }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
-          properties: {
-            pullRequest: vcsActionResolvedPullRequestSchema,
-            branch: { type: "string", minLength: 1, maxLength: 4096 },
-            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
-            isOnPullRequestHead: { type: "boolean" }
-          }
+        {
+          // Native's pull-request handoff, run by the host: it resolves the pull
+          // request, opens a thread, checks the pull request out into its own
+          // worktree (running the project's setup script for that thread), and
+          // leaves any task in the composer as a draft for the reader to send.
+          // `resolve-conflicts` from a view beside a thread drafts into that
+          // thread instead, as native does. The pack names a task, never text.
+          name: "handoffPullRequest",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["reference", "task"],
+            properties: {
+              reference: { type: "string", minLength: 1, maxLength: 2048 },
+              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] }
+            }
+          },
+          outputSchema: prHandoffResultSchema
         }
-      },
-      {
-        name: "publishRepository",
-        // Declared `t3.vcs/mutate`; the adapter additionally requires every
-        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
-        // G3 — a comment-only grant must never reach pushCurrentBranch).
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["provider", "repository", "visibility"],
-          properties: {
-            provider: {
-              enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
-            },
-            repository: { type: "string", minLength: 1, maxLength: 512 },
-            visibility: { enum: ["private", "public"] },
-            remoteName: { type: "string", minLength: 1, maxLength: 256 },
-            protocol: { enum: ["auto", "ssh", "https"] }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
-          properties: {
-            repository: {
-              type: "object",
-              additionalProperties: false,
-              required: ["provider", "nameWithOwner", "url", "sshUrl"],
-              properties: {
-                provider: {
-                  enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
-                },
-                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
-                url: { type: "string", minLength: 1, maxLength: 4096 },
-                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
-              }
-            },
-            remoteName: { type: "string", minLength: 1, maxLength: 256 },
-            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
-            branch: { type: "string", minLength: 1, maxLength: 4096 },
-            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
-            status: { enum: ["pushed", "remote_added"] }
-          }
+      ],
+      streams: [
+        {
+          name: "actionProgress",
+          requiredGrants: [VCS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["actionId"],
+            properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+          },
+          eventSchema: vcsActionProgressEventSchema
         }
-      }
-    ],
-    streams: [
-      {
-        name: "actionProgress",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["actionId"],
-          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        eventSchema: vcsActionProgressEventSchema
-      }
-    ]
-  });
+      ]
+    },
+    // Existing consumers keep loading on a 1.0.0 host; probe
+    // `actions.handoffPullRequest`, then bind at ^1.1.0 to call it.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "handoffPullRequest" }] }
+  );
   var VCS_ACTIONS_API = vcsActionsApi.definition;
   var PRS_WRITE = "t3.prs/write";
   var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };
@@ -10119,21 +10213,28 @@ ${ref.number}`;
         return "Could not open the link \u2014 the system refused it.";
     }
   }
-  var PRS_CHECKOUT_OPTIONS = [
-    {
-      mode: "worktree",
-      label: "In a separate worktree",
-      description: "Its own folder. Nothing you have open moves."
-    },
-    {
-      mode: "local",
-      label: "In this repository",
-      description: "Switches the branch you are working in, like `gh pr checkout`."
-    }
-  ];
+  function prsCheckoutOptions(handoff) {
+    return [
+      {
+        mode: "worktree",
+        label: "In a separate worktree",
+        description: handoff ? "Its own folder and thread. Nothing you have open moves." : "Its own folder. Nothing you have open moves."
+      },
+      {
+        mode: "local",
+        label: "In this repository",
+        description: "Switches the branch you are working in, like `gh pr checkout`."
+      }
+    ];
+  }
   function prsCheckoutLabel(pending) {
     return pending ? "Checking out..." : "Check out";
   }
+  var STALE_CHECKOUT_RECEIPT = {
+    tone: "warning",
+    title: "Checked out, but the latest commits are unconfirmed",
+    description: "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request."
+  };
   function prsCheckoutReceipt(mode, outcome) {
     if (!outcome.ok)
       return {
@@ -10141,12 +10242,7 @@ ${ref.number}`;
         title: "Could not prepare the pull request checkout",
         description: outcome.detail
       };
-    if (!outcome.value.isOnPullRequestHead)
-      return {
-        tone: "warning",
-        title: "Checked out, but the latest commits are unconfirmed",
-        description: "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request."
-      };
+    if (!outcome.value.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
     return mode === "local" || outcome.value.worktreePath === null ? {
       tone: "success",
       title: "Checked out here",
@@ -10155,6 +10251,57 @@ ${ref.number}`;
       tone: "success",
       title: "Checked out",
       description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`
+    };
+  }
+  function prsResolveConflictsControl(detail, handoff) {
+    return {
+      visible: detail.state === "open" && detail.mergeability === "conflicting",
+      label: handoff === "conflicts" ? "Preparing..." : "Resolve conflicts",
+      disabled: handoff !== null
+    };
+  }
+  function prsHandoffReceipt(task, outcome) {
+    if (!outcome.ok)
+      return {
+        tone: "error",
+        title: "Could not prepare the pull request checkout",
+        description: outcome.detail
+      };
+    const result = outcome.value;
+    if (result.status === "drafted")
+      return {
+        tone: "success",
+        title: "Added to the composer",
+        description: "The task is in the composer \u2014 read it over, then send."
+      };
+    if (result.status === "failed") {
+      if (result.stage === "thread")
+        return {
+          tone: "error",
+          title: "Could not open a thread for the checkout",
+          description: "Try again from the project, or open a thread first."
+        };
+      if (result.stage === "checkout")
+        return {
+          tone: "error",
+          title: "Could not prepare the pull request checkout",
+          description: result.detail ?? null
+        };
+      return {
+        tone: "error",
+        title: "Checked out, but the thread stayed where it was",
+        description: `The checkout is ready on \`${result.branch ?? "its branch"}\`. Point a thread at it from the branch picker, then ask again.`
+      };
+    }
+    if (!result.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
+    return task === "checkout" ? {
+      tone: "success",
+      title: "Checked out",
+      description: "The pull request is in its own worktree, with a thread open on it."
+    } : {
+      tone: "success",
+      title: "Checkout ready",
+      description: "The task is in the composer \u2014 read it over, then send."
     };
   }
   function prsBranchChips(detail, stacked) {
@@ -10923,7 +11070,7 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useCheckoutSupport(host, session, enabled) {
-    const [supported, setSupported] = (0, import_react2.useState)(false);
+    const [supported, setSupported] = (0, import_react2.useState)({ checkout: false, handoff: false });
     (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
@@ -10931,17 +11078,18 @@ ${writeKey}`;
       void bindApi(vcsActionsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
         (capabilities) => {
           if (!signal.aborted)
-            setSupported(
-              capabilities.detected && capabilities.operations["actions.preparePullRequestThread"] === true
-            );
+            setSupported({
+              checkout: capabilities.detected && capabilities.operations["actions.preparePullRequestThread"] === true,
+              handoff: capabilities.detected && capabilities.operations["actions.handoffPullRequest"] === true
+            });
         },
         () => {
-          if (!signal.aborted) setSupported(false);
+          if (!signal.aborted) setSupported({ checkout: false, handoff: false });
         }
       );
       return () => controller.abort();
     }, [host, session, enabled]);
-    return enabled && supported;
+    return enabled ? supported : { checkout: false, handoff: false };
   }
   function useDefaultRefs(host, session, enabled, revision2) {
     const [refs, setRefs] = (0, import_react2.useState)(null);
@@ -12057,7 +12205,7 @@ ${writeKey}`;
     ] });
   }
   function CheckoutMenu(props) {
-    const { host, pending, disabled, onPick } = props;
+    const { host, pending, disabled, options, onPick } = props;
     const [open, setOpen] = (0, import_react2.useState)(null);
     const trigger = (0, import_react2.useRef)(null);
     const items = (0, import_react2.useRef)([]);
@@ -12071,7 +12219,7 @@ ${writeKey}`;
     const move = (step) => {
       const focused = typeof document === "undefined" ? null : document.activeElement;
       const at = items.current.findIndex((item) => item === focused);
-      const count = PRS_CHECKOUT_OPTIONS.length;
+      const count = options.length;
       items.current[(at + step + count) % count]?.focus();
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
@@ -12114,7 +12262,7 @@ ${writeKey}`;
               move(event.key === "ArrowDown" ? 1 : -1);
             } else if (event.key === "Home" || event.key === "End") {
               event.preventDefault();
-              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+              items.current[event.key === "Home" ? 0 : options.length - 1]?.focus();
             }
           },
           onBlur: (event) => {
@@ -12133,7 +12281,7 @@ ${writeKey}`;
             background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
             boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
           },
-          children: PRS_CHECKOUT_OPTIONS.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          children: options.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "button",
             {
               ref: (element) => {
@@ -12461,7 +12609,7 @@ ${writeKey}`;
       ).finally(() => controller.abort());
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
-    const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected !== null);
     const defaultRefs = useDefaultRefs(
       host,
       session,
@@ -12489,7 +12637,31 @@ ${writeKey}`;
     const reportResult = (receipt2, showInline) => {
       if (!toasts.report(receiptToast(receipt2), () => showInline(receipt2))) showInline(receipt2);
     };
+    const startHandoff = (url, task) => {
+      if (selectedKey === null || handoff !== null) return;
+      const refKey = selectedKey;
+      setHandoff(task === "checkout" ? "checkout:worktree" : "conflicts");
+      setHandoffReceipt(null);
+      const drafting = task === "resolve-conflicts" && session.context.resource.threadId;
+      const report = beginReport(
+        task === "checkout" ? "Check out" : "Resolve conflicts",
+        drafting ? void 0 : "Preparing the pull request checkout...",
+        (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
+      );
+      void bindApi(vcsActionsApi, host, session.context, "^1.1.0").invoke("handoffPullRequest", { reference: url, task }, session.signal).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({
+          ok: false,
+          detail: error instanceof Error ? error.message : null
+        })
+      ).then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        report(prsHandoffReceipt(task, outcome));
+      });
+    };
     const startCheckout = (url, mode) => {
+      if (mode === "worktree" && checkoutSupport.handoff) return startHandoff(url, "checkout");
       if (selectedKey === null || handoff !== null) return;
       const refKey = selectedKey;
       setHandoff(`checkout:${mode}`);
@@ -12659,6 +12831,7 @@ ${thread.id}`;
     };
     const detail = sections.detail;
     const activity = sections.activity;
+    const resolveConflicts = detail !== null && checkoutSupport.handoff ? prsResolveConflictsControl(detail, handoff) : { visible: false, label: "Resolve conflicts", disabled: true };
     const singleMergeAllowed = prsSingleMergeAllowed({
       supportsStackActions: ops?.["prs.stack"] === true && detail?.capabilities.stacks === true && detail.capabilities.stackActions === true,
       hasStack: sections.stack !== null && sections.stack.layers.length > 0,
@@ -12936,15 +13109,43 @@ ${thread.id}`;
                               onOpenLink: openOnHost
                             }
                           ),
-                          canCheckout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { marginLeft: "auto" }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                            CheckoutMenu,
-                            {
-                              host,
-                              pending: handoff?.startsWith("checkout") === true,
-                              disabled: handoff !== null,
-                              onPick: (mode) => startCheckout(detail.url, mode)
-                            }
-                          ) })
+                          (checkoutSupport.checkout || resolveConflicts.visible) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { marginLeft: "auto", display: "inline-flex", gap: 4 }, children: [
+                            checkoutSupport.checkout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              CheckoutMenu,
+                              {
+                                host,
+                                pending: handoff?.startsWith("checkout") === true,
+                                disabled: handoff !== null,
+                                options: prsCheckoutOptions(checkoutSupport.handoff),
+                                onPick: (mode) => startCheckout(detail.url, mode)
+                              }
+                            ),
+                            resolveConflicts.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              Tooltip,
+                              {
+                                host,
+                                side: "top",
+                                label: resolveConflicts.label,
+                                showWhenDisabled: true,
+                                children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                  "button",
+                                  {
+                                    type: "button",
+                                    "aria-label": resolveConflicts.label,
+                                    disabled: resolveConflicts.disabled,
+                                    onClick: () => startHandoff(detail.url, "resolve-conflicts"),
+                                    style: {
+                                      ...control,
+                                      fontSize: 12,
+                                      border: "1px solid var(--t3-version-control-error, var(--destructive, #b42318))",
+                                      color: "var(--t3-version-control-error, var(--destructive, #b42318))"
+                                    },
+                                    children: resolveConflicts.label
+                                  }
+                                )
+                              }
+                            )
+                          ] })
                         ]
                       }
                     ),

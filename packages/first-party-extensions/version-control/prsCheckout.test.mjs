@@ -1,6 +1,13 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
-import { PRS_CHECKOUT_OPTIONS, prsCheckoutLabel, prsCheckoutReceipt } from "./prsViewModel.ts";
+// A namespace import, so a missing export fails its test on an assertion.
+import * as ViewModel from "./prsViewModel.ts";
+
+const { prsCheckoutLabel, prsCheckoutReceipt } = ViewModel;
+const options = (handoff) => {
+  NodeAssert.equal(typeof ViewModel.prsCheckoutOptions, "function");
+  return ViewModel.prsCheckoutOptions(handoff);
+};
 
 const prepared = (overrides = {}) => ({
   pullRequest: {
@@ -19,17 +26,28 @@ const prepared = (overrides = {}) => ({
 
 NodeTest.describe("checkout pull request", () => {
   NodeTest.it("offers native's two places, worktree first", () => {
-    NodeAssert.deepEqual(
-      PRS_CHECKOUT_OPTIONS.map((option) => [option.mode, option.label]),
-      [
-        ["worktree", "In a separate worktree"],
-        ["local", "In this repository"],
-      ],
-    );
+    for (const handoff of [true, false]) {
+      NodeAssert.deepEqual(
+        options(handoff).map((option) => [option.mode, option.label]),
+        [
+          ["worktree", "In a separate worktree"],
+          ["local", "In this repository"],
+        ],
+      );
+      NodeAssert.equal(
+        options(handoff)[1].description,
+        "Switches the branch you are working in, like `gh pr checkout`.",
+      );
+    }
+  });
+
+  // The host opens the thread; a host without the handoff opens none, so none is claimed.
+  NodeTest.it("promises a thread with the worktree only where the host opens one", () => {
     NodeAssert.equal(
-      PRS_CHECKOUT_OPTIONS[1].description,
-      "Switches the branch you are working in, like `gh pr checkout`.",
+      options(true)[0].description,
+      "Its own folder and thread. Nothing you have open moves.",
     );
+    NodeAssert.equal(options(false)[0].description, "Its own folder. Nothing you have open moves.");
   });
 
   NodeTest.it("reads Checking out... only while its own checkout runs", () => {

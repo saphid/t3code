@@ -34,6 +34,7 @@ import {
   type PrsWriteMergeMethod,
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
+  type VcsPullRequestHandoffTask,
   type VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
 import { copyText, Tooltip } from "@t3tools/extension-sdk/authoring";
@@ -49,7 +50,6 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
 import {
-  PRS_CHECKOUT_OPTIONS,
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
   collectPrsDiffStream,
@@ -72,7 +72,10 @@ import {
   prsStackMergeReceipt,
   prsBranchUrl,
   prsCheckoutLabel,
+  prsCheckoutOptions,
   prsCheckoutReceipt,
+  prsHandoffReceipt,
+  prsResolveConflictsControl,
   prsCommitUrl,
   prsHeadRepositoryUrl,
   prsOpenOnHostLabel,
@@ -294,11 +297,12 @@ function usePrsWriteCapabilities(
 
 /**
  * Whether this workspace can prepare a pull-request checkout
- * (`t3.vcs/actions` `preparePullRequestThread`). A failed probe — no git,
- * a denied grant — simply leaves the checkout offer out.
+ * (`t3.vcs/actions` `preparePullRequestThread`), and whether the host can run
+ * it as a handoff that opens a thread (`handoffPullRequest`, 1.1.0). A failed
+ * probe — no git, a denied grant — simply leaves the offer out.
  */
 function useCheckoutSupport(host: ClientHost, session: ViewSession, enabled: boolean) {
-  const [supported, setSupported] = useState(false);
+  const [supported, setSupported] = useState({ checkout: false, handoff: false });
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
@@ -308,18 +312,22 @@ function useCheckoutSupport(host: ClientHost, session: ViewSession, enabled: boo
       .then(
         (capabilities) => {
           if (!signal.aborted)
-            setSupported(
-              capabilities.detected &&
+            setSupported({
+              checkout:
+                capabilities.detected &&
                 capabilities.operations["actions.preparePullRequestThread"] === true,
-            );
+              handoff:
+                capabilities.detected &&
+                capabilities.operations["actions.handoffPullRequest"] === true,
+            });
         },
         () => {
-          if (!signal.aborted) setSupported(false);
+          if (!signal.aborted) setSupported({ checkout: false, handoff: false });
         },
       );
     return () => controller.abort();
   }, [host, session, enabled]);
-  return enabled && supported;
+  return enabled ? supported : { checkout: false, handoff: false };
 }
 
 /**
@@ -1841,9 +1849,10 @@ function CheckoutMenu(props: {
   host: ClientHost;
   pending: boolean;
   disabled: boolean;
+  options: ReturnType<typeof prsCheckoutOptions>;
   onPick: (mode: PrsCheckoutMode) => void;
 }) {
-  const { host, pending, disabled, onPick } = props;
+  const { host, pending, disabled, options, onPick } = props;
   const [open, setOpen] = useState<"first" | "last" | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
@@ -1857,7 +1866,7 @@ function CheckoutMenu(props: {
   const move = (step: number) => {
     const focused = typeof document === "undefined" ? null : document.activeElement;
     const at = items.current.findIndex((item) => item === focused);
-    const count = PRS_CHECKOUT_OPTIONS.length;
+    const count = options.length;
     items.current[(at + step + count) % count]?.focus();
   };
   return (
@@ -1898,7 +1907,7 @@ function CheckoutMenu(props: {
               move(event.key === "ArrowDown" ? 1 : -1);
             } else if (event.key === "Home" || event.key === "End") {
               event.preventDefault();
-              items.current[event.key === "Home" ? 0 : PRS_CHECKOUT_OPTIONS.length - 1]?.focus();
+              items.current[event.key === "Home" ? 0 : options.length - 1]?.focus();
             }
           }}
           onBlur={(event) => {
@@ -1919,7 +1928,7 @@ function CheckoutMenu(props: {
             boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
           }}
         >
-          {PRS_CHECKOUT_OPTIONS.map((option, index) => (
+          {options.map((option, index) => (
             <button
               key={option.mode}
               ref={(element) => {
@@ -2402,7 +2411,7 @@ export function PullRequestsPanel(props: {
   };
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
-  const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+  const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected !== null);
   const defaultRefs = useDefaultRefs(
     host,
     session,
@@ -2441,8 +2450,43 @@ export function PullRequestsPanel(props: {
     if (!toasts.report(receiptToast(receipt), () => showInline(receipt))) showInline(receipt);
   };
 
+  /**
+   * The host runs native's handoff (`handoffPullRequest`): it opens the thread,
+   * checks out, and writes any task into the composer. The pack names the
+   * task only; the receipt says what the host did.
+   */
+  const startHandoff = (url: string, task: VcsPullRequestHandoffTask) => {
+    if (selectedKey === null || handoff !== null) return;
+    const refKey = selectedKey;
+    setHandoff(task === "checkout" ? "checkout:worktree" : "conflicts");
+    setHandoffReceipt(null);
+    // Beside a thread native writes the task straight into its composer, with
+    // nothing to wait for; everywhere else the checkout is.
+    const drafting = task === "resolve-conflicts" && session.context.resource.threadId;
+    const report = beginReport(
+      task === "checkout" ? "Check out" : "Resolve conflicts",
+      drafting ? undefined : "Preparing the pull request checkout...",
+      (receipt) => setHandoffReceipt({ refKey, receipt }),
+    );
+    void bindApi(vcsActionsApi, host, session.context, "^1.1.0")
+      .invoke("handoffPullRequest", { reference: url, task }, session.signal)
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({
+          ok: false as const,
+          detail: error instanceof Error ? error.message : null,
+        }),
+      )
+      .then((outcome) => {
+        if (session.signal.aborted) return;
+        setHandoff(null);
+        report(prsHandoffReceipt(task, outcome));
+      });
+  };
+
   /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
   const startCheckout = (url: string, mode: PrsCheckoutMode) => {
+    if (mode === "worktree" && checkoutSupport.handoff) return startHandoff(url, "checkout");
     if (selectedKey === null || handoff !== null) return;
     const refKey = selectedKey;
     setHandoff(`checkout:${mode}`);
@@ -2670,6 +2714,11 @@ export function PullRequestsPanel(props: {
 
   const detail = sections.detail;
   const activity = sections.activity;
+  // Offered only where the host can run the handoff; it owns the thread and the prompt.
+  const resolveConflicts =
+    detail !== null && checkoutSupport.handoff
+      ? prsResolveConflictsControl(detail, handoff)
+      : { visible: false, label: "Resolve conflicts", disabled: true };
   // On a stack layer a plain merge would land this layer alone into its base,
   // so single merges wait until the stack lookup says there is no stack.
   const singleMergeAllowed = prsSingleMergeAllowed({
@@ -3070,14 +3119,42 @@ export function PullRequestsPanel(props: {
                           stale={checksRollup?.stale === true}
                           onOpenLink={openOnHost}
                         />
-                        {canCheckout && (
-                          <span style={{ marginLeft: "auto" }}>
-                            <CheckoutMenu
-                              host={host}
-                              pending={handoff?.startsWith("checkout") === true}
-                              disabled={handoff !== null}
-                              onPick={(mode) => startCheckout(detail.url, mode)}
-                            />
+                        {(checkoutSupport.checkout || resolveConflicts.visible) && (
+                          <span style={{ marginLeft: "auto", display: "inline-flex", gap: 4 }}>
+                            {checkoutSupport.checkout && (
+                              <CheckoutMenu
+                                host={host}
+                                pending={handoff?.startsWith("checkout") === true}
+                                disabled={handoff !== null}
+                                options={prsCheckoutOptions(checkoutSupport.handoff)}
+                                onPick={(mode) => startCheckout(detail.url, mode)}
+                              />
+                            )}
+                            {resolveConflicts.visible && (
+                              <Tooltip
+                                host={host}
+                                side="top"
+                                label={resolveConflicts.label}
+                                showWhenDisabled
+                              >
+                                <button
+                                  type="button"
+                                  aria-label={resolveConflicts.label}
+                                  disabled={resolveConflicts.disabled}
+                                  onClick={() => startHandoff(detail.url, "resolve-conflicts")}
+                                  style={{
+                                    ...control,
+                                    fontSize: 12,
+                                    border:
+                                      "1px solid var(--t3-version-control-error, var(--destructive, #b42318))",
+                                    color:
+                                      "var(--t3-version-control-error, var(--destructive, #b42318))",
+                                  }}
+                                >
+                                  {resolveConflicts.label}
+                                </button>
+                              </Tooltip>
+                            )}
                           </span>
                         )}
                       </div>

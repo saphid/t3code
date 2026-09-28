@@ -60,9 +60,15 @@ The PR browser consumes the `t3.prs/read` grant:
   worktree" or "In this repository" — with native's loading toast settling
   to where the checkout landed, a stale checkout, or the host's own refusal.
   Stack merges and rebases report only their result, as one toast; without
-  a toast provider (or when delivery is lost) the same words show inline. No thread
-  opens alongside it: no extension contract creates one, so the worktree
-  option does not promise one either;
+  a toast provider (or when delivery is lost) the same words show inline.
+  Where the host offers `handoffPullRequest` (`t3.vcs/actions@1.1.0`, the
+  `t3.vcs/handoff` grant), the worktree option is native's "Its own folder
+  and thread": the host opens the thread, checks out, and runs the setup
+  script. Without it, the worktree option promises only the folder;
+- Resolve conflicts (the same handoff, on an open pull request that
+  conflicts with its base): the pack names the task and the host writes
+  native's prompt into a composer — beside a thread, that thread's; otherwise
+  a new thread on a fresh worktree checkout. Nothing is sent;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
   thread resolve/unresolve, each gated on the write capability probe's
   per-operation flags.
