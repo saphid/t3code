@@ -203,6 +203,12 @@ An independent installed worker's write call cannot forge this callback or excee
 root. Tests revoke authority at an actual pre-mutation barrier and verify another login
 continues through the same broker.
 
+A unary host method that detaches work past its return (VCS stacked actions) cannot use the
+retired callback, and the broker's own checks end with the return. Unary host providers also
+receive assertDetachedAuthority: the same root, installation, scope, grant and generation checks
+without the lifetime guard, so it stays callable after settlement. Nothing cancels it on
+revocation; the provider must await it before each detached side effect.
+
 Verification on lxso2: runtime 87/87 including real Electron; seven operation tests;
 published external consumer 2/2; scoped lint with zero warnings, package build,
 server typecheck and v13 production build all passed. A final test-only iterator spelling
