@@ -90,12 +90,14 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
           description:
             "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
         } as const;
+      // Only a failed attempt is known. The branch keeps whatever upstream it had, which may
+      // already be right, and the remote holding the head may never have been added.
       if (outcome.isTrackingPullRequestHead === false)
         return {
           type: "warning",
-          title: "Checked out, but not tracking the pull request",
+          title: "Checked out, but its upstream is unconfirmed",
           description:
-            "The branch could not be set to track the pull request's branch, so pull and push may not reach it. Set it with `git branch --set-upstream-to`.",
+            "Setting the branch to track the pull request's branch failed, so it keeps any upstream it had. Pull and push may not reach the pull request.",
         } as const;
       if (outcome.withTask)
         return {

@@ -460,9 +460,9 @@ describe("pull-request handoff provider", () => {
         },
         settled: {
           type: "warning",
-          title: "Checked out, but not tracking the pull request",
+          title: "Checked out, but its upstream is unconfirmed",
           description:
-            "The branch could not be set to track the pull request's branch, so pull and push may not reach it. Set it with `git branch --set-upstream-to`.",
+            "Setting the branch to track the pull request's branch failed, so it keeps any upstream it had. Pull and push may not reach the pull request.",
         },
       },
       {
