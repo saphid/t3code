@@ -1,6 +1,9 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -136,5 +139,73 @@ describe("VcsDriverRegistry", () => {
       assert.equal((yield* registry.detect({ cwd: "/repo" }))?.repository.rootPath, "/repo");
       assert.equal(insideWorkTreeChecks, 2);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a shared detection alive when the first caller is interrupted", () => {
+    // Two host API calls (Version Control, then Diff) detect the same cwd. The
+    // first caller's request is aborted while the git probe is still running;
+    // the second caller must still get the detection, not an interrupt.
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probeInterrupted = yield* Deferred.make<void>();
+      const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+            resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              const command = normalizeGitArgs(input.args).join(" ");
+              if (command === "rev-parse --is-inside-work-tree") {
+                // A real subprocess takes time to die, so its interruption
+                // only completes once `release` fires.
+                return Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(probeInterrupted, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                    ),
+                  ),
+                  Effect.as(processOutput("true\n")),
+                );
+              }
+              if (command === "rev-parse --show-toplevel") {
+                return Effect.succeed(processOutput("/repo\n"));
+              }
+              if (command === "rev-parse --git-common-dir") {
+                return Effect.succeed(processOutput("/repo/.git\n"));
+              }
+              return Effect.succeed(processOutput(""));
+            },
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        const first = yield* Effect.forkChild(registry.detect({ cwd: "/repo" }));
+        yield* Deferred.await(started);
+        const interrupting = yield* Effect.forkChild(Fiber.interrupt(first));
+        // Either the probe is being torn down, or the first caller left
+        // without touching it; both are the moment the second caller arrives.
+        yield* Effect.raceFirst(Deferred.await(probeInterrupted), Fiber.await(first));
+        const second = yield* Effect.forkChild(registry.detect({ cwd: "/repo" }), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(release, undefined);
+
+        const secondExit = yield* Fiber.await(second);
+        yield* Fiber.join(interrupting);
+        assert.isTrue(Exit.isSuccess(secondExit), String(secondExit));
+        assert.equal(
+          Exit.isSuccess(secondExit) ? secondExit.value?.repository.rootPath : null,
+          "/repo",
+        );
+      }).pipe(Effect.provide(layer));
+    });
   });
 });
