@@ -51,7 +51,8 @@ import {
   mergePrsEntries,
   prsActorLabel,
   prsAuthoredByViewer,
-  prsChecksLabel,
+  prsChecksIcon,
+  prsChecksStateFromChecks,
   prsChecksSummary,
   prsCheckStatusLabel,
   prsDraftKey,
@@ -76,7 +77,6 @@ import {
   prsActorTooltip,
   prsArmedAutoMergeTooltip,
   prsCheckTooltip,
-  prsChecksTooltip,
   prsConflictTooltip,
   prsReviewTooltip,
   prsStackTooltip,
@@ -724,6 +724,32 @@ function stateBadge(
   );
 }
 
+const CHECKS_TONES = {
+  success: "var(--success, #2da44e)",
+  destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
+  warning: "var(--warning, #b54708)",
+} as const;
+
+/** Native's checks glyph: an icon named by its headline, the same words on hover. */
+export function ChecksIcon(props: {
+  host: ClientHost;
+  state: "passing" | "failing" | "pending" | null | undefined;
+}) {
+  const icon = prsChecksIcon(props.state);
+  if (icon === null) return null;
+  return (
+    <Tooltip host={props.host} side="top" label={icon.label}>
+      <span
+        role="img"
+        aria-label={icon.label}
+        style={{ flexShrink: 0, fontSize: 11, lineHeight: 1, color: CHECKS_TONES[icon.tone] }}
+      >
+        {icon.glyph}
+      </span>
+    </Tooltip>
+  );
+}
+
 export function PrListRow(props: {
   host: ClientHost;
   entry: PrsListEntry;
@@ -732,7 +758,6 @@ export function PrListRow(props: {
 }) {
   const { host, entry, viewers, onSelect } = props;
   const review = prsReviewLabel(entry.reviewDecision);
-  const checks = prsChecksLabel(entry.checksState);
   const stack = prsStackLabel(entry.stack);
   return (
     <li>
@@ -766,6 +791,7 @@ export function PrListRow(props: {
           >
             {entry.title}
           </span>
+          <ChecksIcon host={host} state={entry.checksState} />
           {entry.viewerReviewRequested && badge("Review requested", "open")}
         </span>
         <span
@@ -796,18 +822,6 @@ export function PrListRow(props: {
           {review !== null && (
             <Tooltip host={host} side="top" label={prsReviewTooltip(entry.reviewDecision)}>
               {badge(review, review === "Approved" ? "open" : "closed")}
-            </Tooltip>
-          )}
-          {checks !== null && (
-            <Tooltip host={host} side="top" label={prsChecksTooltip(entry.checksState)}>
-              {badge(
-                checks,
-                entry.checksState === "passing"
-                  ? "open"
-                  : entry.checksState === "failing"
-                    ? "closed"
-                    : "muted",
-              )}
             </Tooltip>
           )}
           {stack !== null && (
@@ -1964,6 +1978,7 @@ export function PullRequestsPanel(props: {
                             {detail.repository}#{detail.number}
                           </span>
                         </Tooltip>
+                        <ChecksIcon host={host} state={prsChecksStateFromChecks(detail.checks)} />
                       </div>
                       <div style={{ color: muted, fontSize: 12, marginTop: 2 }}>{detail.url}</div>
                     </div>

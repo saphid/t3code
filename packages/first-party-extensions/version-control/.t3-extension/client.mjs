@@ -9441,18 +9441,6 @@ ${ref.number}`;
         return null;
     }
   }
-  function prsChecksLabel(state2) {
-    switch (state2) {
-      case "passing":
-        return "Checks passing";
-      case "failing":
-        return "Checks failing";
-      case "pending":
-        return "Checks pending";
-      default:
-        return null;
-    }
-  }
   function prsStackLabel(stack) {
     if (stack === void 0) return null;
     return `Stack ${stack.position}/${stack.size} \xB7 ${stack.base}`;
@@ -9899,17 +9887,24 @@ ${ref.number}`;
     const armed = methodLabel === void 0 ? "Auto-merge" : `Auto-merge (${methodLabel.toLowerCase()})`;
     return `${armed}: the host will merge this on its own once its requirements are met`;
   }
-  function prsChecksTooltip(state2) {
+  function prsChecksIcon(state2) {
     switch (state2) {
       case "passing":
-        return "All checks have passed";
+        return { glyph: "\u2713", label: "All checks have passed", tone: "success" };
       case "failing":
-        return "Some checks were not successful";
+        return { glyph: "\u2715", label: "Some checks were not successful", tone: "destructive" };
       case "pending":
-        return "Some checks haven't completed yet";
+        return { glyph: "\u25CF", label: "Some checks haven't completed yet", tone: "warning" };
       default:
         return null;
     }
+  }
+  function prsChecksStateFromChecks(checks) {
+    if (checks.length === 0) return null;
+    const statuses = new Set(checks.map((check) => check.status));
+    if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+    if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+    return statuses.has("success") ? "passing" : null;
   }
   function prsStackTooltip(stack) {
     if (stack === void 0) return null;
@@ -10461,10 +10456,27 @@ ${writeKey}`;
     const [text, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
   }
+  var CHECKS_TONES = {
+    success: "var(--success, #2da44e)",
+    destructive: "var(--t3-version-control-error, var(--destructive, #b42318))",
+    warning: "var(--warning, #b54708)"
+  };
+  function ChecksIcon(props) {
+    const icon = prsChecksIcon(props.state);
+    if (icon === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: icon.label, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "span",
+      {
+        role: "img",
+        "aria-label": icon.label,
+        style: { flexShrink: 0, fontSize: 11, lineHeight: 1, color: CHECKS_TONES[icon.tone] },
+        children: icon.glyph
+      }
+    ) });
+  }
   function PrListRow(props) {
     const { host, entry, viewers, onSelect } = props;
     const review = prsReviewLabel(entry.reviewDecision);
-    const checks = prsChecksLabel(entry.checksState);
     const stack = prsStackLabel(entry.stack);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "button",
@@ -10500,6 +10512,7 @@ ${writeKey}`;
                 children: entry.title
               }
             ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: entry.checksState }),
             entry.viewerReviewRequested && badge("Review requested", "open")
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
@@ -10534,10 +10547,6 @@ ${writeKey}`;
                   }
                 ),
                 review !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
-                checks !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsChecksTooltip(entry.checksState), children: badge(
-                  checks,
-                  entry.checksState === "passing" ? "open" : entry.checksState === "failing" ? "closed" : "muted"
-                ) }),
                 stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
               ]
             }
@@ -11363,7 +11372,8 @@ ${thread.id}`;
                             detail.repository,
                             "#",
                             detail.number
-                          ] }) })
+                          ] }) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChecksIcon, { host, state: prsChecksStateFromChecks(detail.checks) })
                         ]
                       }
                     ),

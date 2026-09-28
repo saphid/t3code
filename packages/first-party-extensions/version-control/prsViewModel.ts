@@ -958,6 +958,41 @@ export function prsChecksTooltip(
   }
 }
 
+export type PrsChecksState = "passing" | "failing" | "pending";
+
+/**
+ * The checks glyph native draws on a row and in the detail header: one
+ * icon per rollup, its accessible name and tooltip native's headline.
+ * Null where the host reported no rollup — no tick nobody earned.
+ */
+export function prsChecksIcon(state: PrsChecksState | null | undefined): {
+  readonly glyph: string;
+  readonly label: string;
+  readonly tone: "success" | "destructive" | "warning";
+} | null {
+  switch (state) {
+    case "passing":
+      return { glyph: "✓", label: "All checks have passed", tone: "success" };
+    case "failing":
+      return { glyph: "✕", label: "Some checks were not successful", tone: "destructive" };
+    case "pending":
+      return { glyph: "●", label: "Some checks haven't completed yet", tone: "warning" };
+    default:
+      return null;
+  }
+}
+
+/** A detail's checks rolled up as the list row's field would be (native `pullRequestChecksState`). */
+export function prsChecksStateFromChecks(
+  checks: readonly Pick<PrsCheck, "status">[],
+): PrsChecksState | null {
+  if (checks.length === 0) return null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
+
 /**
  * Native's stack-membership help. List membership only ever comes from the
  * host's own stack graph (GitHub stacks), never a base-branch chain, so this
