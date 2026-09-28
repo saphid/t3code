@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { ApiDefinition } from "@t3tools/extension-sdk/capabilities";
 import * as Catalogue from "@t3tools/extension-sdk/catalogue";
@@ -7,26 +6,24 @@ import {
   type ResolutionInstallation,
 } from "@t3tools/extension-runtime/resolution";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
-const PACKS = ["browser", "diff", "terminal", "version-control"];
+const PACKS = ["agents", "browser", "diff", "files", "terminal", "version-control"];
 
-/** The committed manifests, as the host loads them. */
-const loadInstallations = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const packs = path.resolve(import.meta.dirname, "../../../../packages/first-party-extensions");
-  return yield* Effect.forEach(PACKS, (pack, index) =>
-    fs.readFileString(path.join(packs, pack, ".t3-extension/t3-extension.json")).pipe(
-      Effect.map((text): ResolutionInstallation => ({
-        id: `first-party.${pack}.${index}`,
-        enabled: true,
-        package: JSON.parse(text),
-      })),
-    ),
-  );
-});
+/**
+ * The authored manifests. Files and Agents commit no bundle; each committed
+ * bundle's freshness test pins it to this same source.
+ */
+const loadInstallations = Effect.forEach(PACKS, (pack, index) =>
+  Effect.promise(
+    () => import(`../../../../packages/first-party-extensions/${pack}/extension.ts`),
+  ).pipe(
+    Effect.map((module): ResolutionInstallation => ({
+      id: `first-party.${pack}.${index}`,
+      enabled: true,
+      package: module.default.package,
+    })),
+  ),
+);
 
 /** Every catalogue API no pack provides, at its newest version, as a current host has it. */
 function hostApis(
@@ -59,6 +56,21 @@ const statuses = (
   }).plugins.map(({ status, reason }) => ({ status, reason: reason?.relatedIds }));
 
 describe("first-party pack manifests", () => {
+  it.effect("all install together with no API selections", () =>
+    Effect.gen(function* () {
+      const installations = yield* loadInstallations;
+      const resolution = resolveCapabilities({
+        installations,
+        providers: hostApis(installations).map((definition) => ({
+          providerId: `host:${definition.id}`,
+          definition,
+        })),
+      });
+      expect(resolution.apis.filter((api) => api.reason)).toEqual([]);
+      expect(resolution.plugins.filter((plugin) => plugin.status !== "available")).toEqual([]);
+    }),
+  );
+
   it.effect("load on a host whose t3.ui/notifications is still 1.0.0", () =>
     Effect.gen(function* () {
       const installations = yield* loadInstallations;
@@ -67,6 +79,6 @@ describe("first-party pack manifests", () => {
       expect(
         statuses(installations, hostApis(installations, { "t3.ui/notifications": "1.0.0" })),
       ).toEqual(available);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }),
   );
 });

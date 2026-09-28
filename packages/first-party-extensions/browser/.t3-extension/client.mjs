@@ -17860,8 +17860,6 @@ ${titledTitle}`;
   var authored = defineExtension({
     id: manifestId,
     version: "0.1.0",
-    provides: [filePresentationApi.definition],
-    serverEntry: "server.ts",
     requires: [
       requireApi(browserSessionsApi),
       requireApi(browserProfilesApi),

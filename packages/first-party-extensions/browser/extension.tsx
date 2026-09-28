@@ -12,7 +12,6 @@ import {
   browserProfilesApi,
   browserSessionsApi,
   composerContextApi,
-  filePresentationApi,
   resourcesLeaseApi,
   uiExternalApi,
   uiKeybindingsApi,
@@ -1362,8 +1361,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
 const authored = defineExtension({
   id: manifestId,
   version: "0.1.0",
-  provides: [filePresentationApi.definition],
-  serverEntry: "server.ts",
   requires: [
     requireApi(browserSessionsApi),
     requireApi(browserProfilesApi),
