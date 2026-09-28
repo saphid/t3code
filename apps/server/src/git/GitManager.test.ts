@@ -5858,7 +5858,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         merge: "refs/heads/feature/http-fork",
       });
       expect(lookups.length).toBeGreaterThan(0);
-      expect(lookups.every((host) => host === "forge.example")).toBe(true);
+      // Fork lookups stay unqualified: glab's own host answers, as before this lane.
+      expect(lookups.every((host) => host === undefined)).toBe(true);
     }),
   );
 
@@ -5894,7 +5895,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
       expect(result.isTrackingPullRequestHead).toBe(true);
       expect(lookups.length).toBeGreaterThan(0);
-      // A ported host stays unqualified: glab's default host answers, as before this lane.
+      // Fork lookups stay unqualified: glab's own host answers, as before this lane.
       expect(lookups.every((host) => host === undefined)).toBe(true);
     }),
   );

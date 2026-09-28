@@ -287,8 +287,6 @@ export class GitLabCli extends Context.Service<
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
-      /** The GitLab host (with any port) to ask; glab's default host otherwise. */
-      readonly host?: string;
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
@@ -410,12 +408,6 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
-// `glab api` arguments that ask `host`. A ported host stays unqualified, as before: glab rejects
-// a port in `--hostname`, and the credential key for a ported server varies by login.
-function hostSelection(host: string | undefined, path: string): ReadonlyArray<string> {
-  return host && !/:\d+$/.test(host) ? ["api", path, "--hostname", host] : ["api", path];
-}
-
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
@@ -530,7 +522,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: hostSelection(input.host, `projects/${encodeURIComponent(input.repository)}`),
+        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
