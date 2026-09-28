@@ -5694,7 +5694,8 @@ var __t3Client = (() => {
           // `mode: "local"` in this repository; `resolve-conflicts` always takes
           // a worktree and refuses a mode, and from a view beside a thread
           // drafts into that thread instead, as native does. The pack names a
-          // task, never text.
+          // task, never text. The host reports every outcome in native's toasts,
+          // which survive the move to the new thread, so the pack adds none.
           name: "handoffPullRequest",
           effect: "write",
           requiredGrants: [VCS_MUTATE, VCS_HANDOFF],

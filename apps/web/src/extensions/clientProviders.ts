@@ -66,6 +66,10 @@ import {
 import { RENDER_BROWSER_FILE_STORAGE_KEY } from "../components/files/filePreviewMode";
 import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
+import {
+  beginPullRequestCheckoutToast,
+  showTaskAddedToComposerToast,
+} from "../components/pullRequest/pullRequestHandoffToast";
 import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
@@ -1772,8 +1776,8 @@ function readPrHandoffInput(value: Json) {
 
 /**
  * Native's pull-request handoff for a pack: the pack names a task, and the host writes the prompt,
- * opens the thread, checks out and navigates exactly as the native panel does. It only prepares a
- * draft; the reader sends it.
+ * opens the thread, checks out, navigates and reports it in native's toasts exactly as the native
+ * panel does. It only prepares a draft; the reader sends it.
  */
 export function createPrHandoffClientProvider(
   deps: ClientProviderDeps,
@@ -1786,10 +1790,16 @@ export function createPrHandoffClientProvider(
           "client-provider-unavailable",
           `Unknown handoff op ${call.method}`,
         );
-      const installation = authorizeCaller(deps, call.caller, call.context, [
-        VCS_MUTATE,
-        VCS_HANDOFF,
-      ]);
+      const authorize = () => {
+        const installation = authorizeCaller(deps, call.caller, call.context, [
+          VCS_MUTATE,
+          VCS_HANDOFF,
+        ]);
+        if (!installation.enabled)
+          throw new ClientProviderOpError("client-target-denied", "Caller is disabled");
+        return installation;
+      };
+      const installation = authorize();
       const { task, mode, pullRequest } = readPrHandoffInput(call.input);
       const projectId = installation.grants.projectIds.find(
         (id) => id === call.context.resource.projectId,
@@ -1812,13 +1822,32 @@ export function createPrHandoffClientProvider(
           useComposerDraftStore.getState().getDraftThread(beside)?.projectId) === projectId
       ) {
         writePullRequestTaskToComposer(beside, { prompt });
+        showTaskAddedToComposerToast();
         return { status: "drafted" };
       }
       const projectRef = scopeProjectRef(deps.environmentId, projectId);
+      // Global and posted before the thread opens, so it is still on screen on that thread.
+      const toast = beginPullRequestCheckoutToast();
+      // A cancelled call or a caller that lost its install or grants starts nothing further; what
+      // already ran stays, as native leaves a partial checkout.
+      const live = () => {
+        try {
+          if (call.signal.aborted)
+            throw new ClientProviderOpError("client-target-denied", "Handoff cancelled");
+          authorize();
+        } catch (error) {
+          toast.close();
+          throw error;
+        }
+      };
       // The thread is opened before the checkout because the project's setup script only runs
       // for a checkout that knows which thread it is for.
       const opened = await host.openThread(projectRef).catch(() => null);
-      if (opened === null) return { status: "failed", stage: "thread" };
+      live();
+      if (opened === null) {
+        toast.settle({ kind: "thread-failed" });
+        return { status: "failed", stage: "thread" };
+      }
       const prepared = await host.prepare({
         environmentId: deps.environmentId,
         cwd: project.workspaceRoot,
@@ -1826,12 +1855,15 @@ export function createPrHandoffClientProvider(
         mode,
         threadId: opened.threadId,
       });
-      if (!prepared.ok)
+      live();
+      if (!prepared.ok) {
+        toast.settle({ kind: "checkout-failed", detail: prepared.detail });
         return {
           status: "failed",
           stage: "checkout",
           ...(prepared.detail ? { detail: prepared.detail.slice(0, 2048) } : {}),
         };
+      }
       const { branch, worktreePath, isOnPullRequestHead } = prepared.value;
       const pointed = await host
         .openThread(projectRef, {
@@ -1840,9 +1872,14 @@ export function createPrHandoffClientProvider(
           envMode: worktreePath === null ? "local" : "worktree",
         })
         .catch(() => null);
+      live();
       // Writing the task now would aim the agent at whatever the thread was already open on.
-      if (pointed === null) return { status: "failed", stage: "thread-move", branch };
+      if (pointed === null) {
+        toast.settle({ kind: "thread-move-failed", branch });
+        return { status: "failed", stage: "thread-move", branch };
+      }
       if (prompt !== null) writePullRequestTaskToComposer(opened.draftId, { prompt });
+      toast.settle({ kind: "ready", mode, withTask: prompt !== null, isOnPullRequestHead });
       return { status: "ready", branch, worktreePath, isOnPullRequestHead };
     },
   };

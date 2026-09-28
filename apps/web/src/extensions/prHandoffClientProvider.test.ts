@@ -6,6 +6,7 @@ import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { buildResolveConflictsPrompt } from "../components/pullRequest/pullRequestDetail.logic";
+import { shouldRenderThreadScopedToast } from "../components/ui/toast.logic";
 // A namespace import, so a missing provider fails each test on its own assertion.
 import * as ClientProviders from "./clientProviders";
 import { ClientProviderOpError, type ClientProviderInvokeCall } from "./clientProviderTypes";
@@ -19,6 +20,19 @@ vi.mock("../state/entities", async (importOriginal) => ({
     ref.projectId.startsWith("project-") ? { workspaceRoot: `/work/${ref.projectId}` } : null,
 }));
 vi.mock("../components/ThreadTerminalDrawer", () => ({ terminalThemeFromApp: () => ({}) }));
+/** Host steps and native toasts, in the order they happened. */
+const timeline = vi.hoisted(() => [] as unknown[][]);
+vi.mock("../components/ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/ui/toast")>()),
+  toastManager: {
+    add: (toast: unknown) => {
+      timeline.push(["toast", toast]);
+      return `toast-${timeline.length}`;
+    },
+    update: (id: string, toast: unknown) => timeline.push(["toast-update", id, toast]),
+    close: (id: string) => timeline.push(["toast-close", id]),
+  },
+}));
 
 const ENV = "env-a";
 const INSTALL = "t3.version-control";
@@ -80,18 +94,33 @@ function setup(
     projectId?: string;
     opened?: ReadonlyArray<{ draftId: DraftId; threadId: ThreadId } | null>;
     prepared?: Prepared;
+    /** A host step that waits for `release` before it settles. */
+    hold?: HostStep;
   } = {},
 ) {
   expect(ClientProviders.createPrHandoffClientProvider).toBeTypeOf("function");
   const steps: unknown[] = [];
   const opened = [...(options.opened ?? [{ draftId: NEW_DRAFT, threadId: NEW_THREAD }])];
+  const held = gate();
+  const reached = gate();
+  const step = async (name: HostStep, entry: unknown[]) => {
+    steps.push(entry);
+    timeline.push([name]);
+    if (options.hold === name) {
+      reached.resolve();
+      await held.promise;
+    }
+  };
   const host = {
     openThread: vi.fn(async (projectRef: unknown, workspace?: unknown) => {
-      steps.push(workspace === undefined ? ["openThread", projectRef] : ["point", workspace]);
+      await step(
+        workspace === undefined ? "openThread" : "point",
+        workspace === undefined ? ["openThread", projectRef] : ["point", workspace],
+      );
       return opened.length > 1 ? opened.shift()! : (opened[0] ?? null);
     }),
     prepare: vi.fn(async (input: unknown) => {
-      steps.push(["prepare", input]);
+      await step("prepare", ["prepare", input]);
       return (
         options.prepared ?? {
           ok: true as const,
@@ -106,12 +135,14 @@ function setup(
   };
   const projectId = options.projectId ?? "project-a";
   const installed = installation(options.grants ?? GRANTS, [projectId]);
+  let installations: readonly InstalledPackage[] = [installed];
+  const call = new AbortController();
   const provider = ClientProviders.createPrHandoffClientProvider(
     {
       environmentId: EnvironmentId.make(ENV),
       client: "web",
       emit: vi.fn(),
-      installations: () => [installed],
+      installations: () => installations,
     },
     host,
   );
@@ -123,10 +154,40 @@ function setup(
         input: { target: { kind: "self" }, mode: "worktree", ...input } as Json,
         context: contextOf(threadId, projectId),
         caller,
-        signal: new AbortController().signal,
+        signal: call.signal,
       } as ClientProviderInvokeCall),
     );
-  return { host, steps, start, provider };
+  const interruptions = {
+    cancelled: () => call.abort(),
+    uninstalled: () => {
+      installations = [];
+    },
+    disabled: () => {
+      installations = [{ ...installed, enabled: false }];
+    },
+    "stripped of its handoff grant": () => {
+      installations = [installation(["t3.vcs/mutate"], [projectId])];
+    },
+  };
+  return {
+    host,
+    steps,
+    start,
+    provider,
+    interruptions,
+    reached: reached.promise,
+    release: () => held.resolve(),
+  };
+}
+
+type HostStep = "openThread" | "prepare" | "point";
+
+function gate() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 type DraftTarget = Parameters<
@@ -136,7 +197,21 @@ const draftPrompt = (target: DraftTarget) =>
   useComposerDraftStore.getState().getComposerDraft(target)?.prompt ?? "";
 const threadA = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
 
+/** The native toasts the handoff posted, each as its latest state. */
+const toastsSoFar = () => {
+  const toasts = new Map<string, Record<string, unknown> | "closed">();
+  timeline.forEach((entry, index) => {
+    if (entry[0] === "toast") toasts.set(`toast-${index + 1}`, entry[1] as Record<string, unknown>);
+    if (entry[0] === "toast-update")
+      toasts.set(entry[1] as string, entry[2] as Record<string, unknown>);
+    if (entry[0] === "toast-close") toasts.set(entry[1] as string, "closed");
+  });
+  return [...toasts.values()];
+};
+const newThreadRef = scopeThreadRef(EnvironmentId.make(ENV), NEW_THREAD);
+
 beforeEach(() => {
+  timeline.length = 0;
   shells.clear();
   shells.set("thread-a", { projectId: "project-a" });
   useComposerDraftStore.getState().clearDraftThread(threadA);
@@ -314,6 +389,180 @@ describe("pull-request handoff provider", () => {
     expect(host.prepare).not.toHaveBeenCalled();
     expect(ungranted.host.openThread).not.toHaveBeenCalled();
     expect(draftPrompt(threadA)).toBe("");
+  });
+
+  // Native posts its checkout toast globally before the thread opens, so it is still on screen
+  // when the new thread is; a toast anchored to the thread beside the pack would vanish there.
+  describe("native's toasts, owned by the host across the navigation", () => {
+    const WORKTREE = "/work/project-a/.t3/worktrees/feat-x";
+    const readyAt = (worktreePath: string | null, isOnPullRequestHead = true): Prepared => ({
+      ok: true,
+      value: { branch: "feat/x", worktreePath, isOnPullRequestHead },
+    });
+    const stale = {
+      type: "warning",
+      title: "Checked out, but the latest commits are unconfirmed",
+      description:
+        "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+    };
+    const cases: ReadonlyArray<{
+      readonly name: string;
+      readonly input: Record<string, unknown>;
+      readonly options?: Parameters<typeof setup>[0];
+      /** Started beside thread A, whose toasts the new thread would hide, unless null. */
+      readonly beside?: null;
+      readonly settled: Record<string, unknown>;
+    }> = [
+      {
+        name: "a worktree checkout",
+        input: { task: "checkout" },
+        options: { prepared: readyAt(WORKTREE) },
+        settled: {
+          type: "success",
+          title: "Checked out",
+          description: "The pull request is in its own worktree, with a thread open on it.",
+        },
+      },
+      {
+        name: "a checkout in this repository",
+        input: { task: "checkout", mode: "local" },
+        options: { prepared: readyAt(null) },
+        settled: {
+          type: "success",
+          title: "Checked out here",
+          description: "This repository is on the pull request's branch, with a thread open on it.",
+        },
+      },
+      {
+        name: "a stale worktree checkout",
+        input: { task: "checkout" },
+        options: { prepared: readyAt(WORKTREE, false) },
+        settled: stale,
+      },
+      {
+        name: "a stale checkout in this repository",
+        input: { task: "checkout", mode: "local" },
+        options: { prepared: readyAt(null, false) },
+        settled: stale,
+      },
+      {
+        name: "resolve conflicts with no thread beside it",
+        input: { task: "resolve-conflicts" },
+        beside: null,
+        settled: {
+          type: "success",
+          title: "Checkout ready",
+          description: "The task is in the composer — read it over, then send.",
+        },
+      },
+      {
+        name: "a thread that would not open",
+        input: { task: "checkout" },
+        options: { opened: [null] },
+        settled: {
+          type: "error",
+          title: "Could not open a thread for the checkout",
+          description: "Try again from the project, or open a thread first.",
+        },
+      },
+      {
+        name: "a checkout the host refused",
+        input: { task: "checkout", mode: "local" },
+        options: { prepared: { ok: false, detail: "Branch is checked out elsewhere." } },
+        settled: {
+          type: "error",
+          title: "Could not prepare the pull request checkout",
+          description: "Branch is checked out elsewhere.",
+        },
+      },
+      {
+        name: "a thread that stayed where it was",
+        input: { task: "checkout" },
+        options: { opened: [{ draftId: NEW_DRAFT, threadId: NEW_THREAD }, null] },
+        settled: {
+          type: "error",
+          title: "Checked out, but the thread stayed where it was",
+          description:
+            "The checkout is ready on `feat/x`. Point a thread at it from the branch picker, then ask again.",
+        },
+      },
+    ];
+    for (const { name, input, options, beside, settled } of cases) {
+      it(`reports ${name} on the thread it opened`, async () => {
+        const { start } = setup(options);
+        await start({ ...input, pullRequest: PULL_REQUEST }, beside === null ? null : "thread-a");
+        expect(timeline[0]).toEqual([
+          "toast",
+          { type: "loading", title: "Preparing the pull request checkout..." },
+        ]);
+        expect(timeline[1]).toEqual(["openThread"]);
+        expect(timeline.at(-1)).toEqual(["toast-update", "toast-1", settled]);
+        expect(toastsSoFar()).toEqual([settled]);
+        for (const entry of timeline.filter((item) => String(item[0]).startsWith("toast")))
+          expect(
+            shouldRenderThreadScopedToast(
+              (entry.at(-1) as { data?: { threadId?: ThreadId } }).data,
+              newThreadRef,
+            ),
+          ).toBe(true);
+      });
+    }
+
+    it("drafting beside a thread says so at once, with no loading toast", async () => {
+      const { start } = setup();
+      await start({ task: "resolve-conflicts", pullRequest: PULL_REQUEST }, "thread-a");
+      expect(timeline).toEqual([
+        [
+          "toast",
+          {
+            type: "success",
+            title: "Added to the composer",
+            description: "The task is in the composer — read it over, then send.",
+          },
+        ],
+      ]);
+    });
+
+    it("says nothing for a handoff it refused", async () => {
+      const { start } = setup({ projectId: "gone" });
+      await expect(start({ task: "checkout", pullRequest: PULL_REQUEST }, null)).rejects.toThrow();
+      expect(timeline).toEqual([]);
+    });
+  });
+
+  // The server can cancel the call, and the pack can lose its install or grants, while a host
+  // step is in flight. Nothing further may start after that: no checkout, no move, no task.
+  describe("a handoff cancelled or revoked between steps", () => {
+    const next: Record<HostStep, readonly string[]> = {
+      openThread: ["openThread"],
+      prepare: ["openThread", "prepare"],
+      point: ["openThread", "prepare", "point"],
+    };
+    const interruptions = [
+      "cancelled",
+      "uninstalled",
+      "disabled",
+      "stripped of its handoff grant",
+    ] as const;
+    for (const hold of ["openThread", "prepare", "point"] as const) {
+      for (const interruption of interruptions) {
+        it(`starts nothing after ${hold} when ${interruption}`, async () => {
+          const handoff = setup({ hold });
+          const started = handoff.start(
+            { task: "resolve-conflicts", pullRequest: PULL_REQUEST },
+            null,
+          );
+          await handoff.reached;
+          handoff.interruptions[interruption]();
+          handoff.release();
+          await expect(started).rejects.toBeInstanceOf(ClientProviderOpError);
+          expect(handoff.steps.map((step) => (step as unknown[])[0])).toEqual(next[hold]);
+          expect(draftPrompt(NEW_DRAFT)).toBe("");
+          // No spinner is left behind for a handoff that stopped.
+          expect(toastsSoFar()).toEqual(["closed"]);
+        });
+      }
+    }
   });
 
   it("registers at the version the SDK seam declares", () => {
