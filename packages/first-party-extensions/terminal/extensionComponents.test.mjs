@@ -1410,11 +1410,21 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
    * script: its frames, then (unless it ends the stream as the server does
    * after an exit or an ended snapshot) it stays open until aborted.
    */
-  async function renderSession({ terminalId, listed, scripts, invoke = async () => ({}) }) {
+  async function renderSession({
+    terminalId,
+    listed,
+    scripts,
+    invoke = async () => ({}),
+    textFallback = false,
+  }) {
     const invokes = [];
     let outputSubscriptions = 0;
+    // Later session-list snapshots, pushed by `relist`.
+    const relisted = [];
+    let wakeList = () => {};
     const host = {
-      ...assetHost,
+      // Without readAsset the view renders the plain-text fallback.
+      ...(textFallback ? {} : assetHost),
       invokeApi: async (request) => {
         invokes.push({ id: request.id, method: request.method, input: request.input });
         if (request.id === "t3.ui/theme" && request.method === "getTokens")
@@ -1424,8 +1434,19 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
       },
       subscribeApi: (request, signal) => ({
         async *[Symbol.asyncIterator]() {
-          if (request.id === "t3.terminal/sessions" && request.name === "list")
+          if (request.id === "t3.terminal/sessions" && request.name === "list") {
             yield { value: { kind: "snapshot", terminals: [listed] } };
+            while (!signal.aborted) {
+              const row = relisted.shift();
+              if (row) yield { value: { kind: "snapshot", terminals: [row] } };
+              else
+                await new Promise((resolve) => {
+                  wakeList = resolve;
+                  signal.addEventListener("abort", resolve, { once: true });
+                });
+            }
+            return;
+          }
           if (request.id === "t3.terminal/output-events") {
             const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
             for (const next of script.frames) {
@@ -1470,6 +1491,15 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
       renderer,
       invokes,
       settle,
+      relist: async (row) => {
+        relisted.push(row);
+        wakeList();
+        await settle();
+      },
+      fallbackText: () =>
+        renderer.root
+          .find((node) => node.type === "pre" && node.props["aria-label"] === "Terminal output")
+          .children.join(""),
       outputSubscriptions: () => outputSubscriptions,
       closes: () =>
         invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "close"),
@@ -1618,4 +1648,115 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
       await view.unmount();
     }
   });
+
+  const clickStart = async (view, terminalId) => {
+    const start = view.renderer.root.find(
+      (node) => node.type === "button" && node.props["aria-label"] === `Start ${terminalId}`,
+    );
+    await act(async () => {
+      start.props.onClick();
+    });
+    await view.settle();
+  };
+
+  NodeTest.test("Start reattaches when the failed stream finishes after Start", async () => {
+    // The host tears the old stream down asynchronously: Start can report
+    // running while the error stream is still draining.
+    let releaseOldEnd;
+    const oldEnd = new Promise((resolve) => (releaseOldEnd = resolve));
+    const view = await renderSession({
+      terminalId: "retry2",
+      listed: { ...sessionMetadata("retry2"), status: "error" },
+      invoke: async (request) =>
+        request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
+      scripts: [
+        { frames: [outputSnapshot("retry2", "epoch-1", "error", ""), () => oldEnd], ends: true },
+        { frames: [outputSnapshot("retry2", "epoch-2", "running", "$ ready")], ends: false },
+      ],
+    });
+    try {
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      await view.settle();
+      await clickStart(view, "retry2");
+      NodeAssert.equal(view.invokes.filter((entry) => entry.method === "attach").length, 1);
+      NodeAssert.equal(view.outputSubscriptions(), 1, "the old stream is still draining");
+      releaseOldEnd();
+      await view.settle();
+      NodeAssert.equal(view.outputSubscriptions(), 2, "output reattached after the old end");
+      NodeAssert.ok(surface.writes.includes("$ ready"), "the restarted shell's output renders");
+      const status = view.renderer.root.findAll(
+        (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+      );
+      NodeAssert.ok(
+        status.some((node) => node.children.join("").includes("Watching live output")),
+        "pane status is live",
+      );
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  NodeTest.test("text fallback keeps a healthy stream across running-state changes", async () => {
+    const view = await renderSession({
+      terminalId: "fb1",
+      listed: sessionMetadata("fb1"),
+      textFallback: true,
+      scripts: [
+        { frames: [outputSnapshot("fb1", "epoch-1", "running", "$ one")], ends: false },
+        { frames: [outputSnapshot("fb1", "epoch-1", "running", "$ one")], ends: false },
+      ],
+    });
+    try {
+      await view.settle();
+      NodeAssert.ok(view.fallbackText().includes("$ one"));
+      const attached = view.outputSubscriptions();
+      await view.relist({ ...sessionMetadata("fb1"), status: "starting" });
+      await view.relist(sessionMetadata("fb1"));
+      NodeAssert.equal(view.outputSubscriptions(), attached, "no resubscribe on status flips");
+      NodeAssert.ok(view.fallbackText().includes("$ one"));
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  for (const delayed of [false, true])
+    NodeTest.test(
+      `text fallback Start reattaches once${delayed ? " when the failed stream ends late" : ""}`,
+      async () => {
+        let releaseOldEnd;
+        const oldEnd = delayed
+          ? new Promise((resolve) => (releaseOldEnd = resolve))
+          : Promise.resolve();
+        const failed = { frames: [outputSnapshot("fb2", "epoch-1", "error", "")], ends: true };
+        const view = await renderSession({
+          terminalId: "fb2",
+          listed: { ...sessionMetadata("fb2"), status: "error" },
+          textFallback: true,
+          invoke: async (request) =>
+            request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
+          scripts: [
+            // The loading VT pane's brief subscription before assets fail.
+            failed,
+            { frames: [...failed.frames, () => oldEnd], ends: true },
+            { frames: [outputSnapshot("fb2", "epoch-2", "running", "$ ready")], ends: false },
+          ],
+        });
+        try {
+          await view.settle();
+          const before = view.outputSubscriptions();
+          await clickStart(view, "fb2");
+          releaseOldEnd?.();
+          await view.settle();
+          NodeAssert.equal(
+            view.outputSubscriptions(),
+            before + 1,
+            "exactly one fresh subscription",
+          );
+          NodeAssert.ok(view.fallbackText().includes("$ ready"), "fresh output renders");
+        } finally {
+          await view.unmount();
+        }
+      },
+    );
 });

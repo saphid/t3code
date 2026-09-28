@@ -11672,6 +11672,20 @@ var __t3Client = (() => {
     };
   };
   var isResumableOutputClose = (reason, overflowAttempts) => reason === "identity-changed" || reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX;
+  var OutputReattach = class {
+    #deadEpoch = null;
+    #reattachedEpoch = null;
+    noteSnapshot(value) {
+      this.#deadEpoch = value.status === "error" || value.status === "exited" ? value.streamEpoch : null;
+    }
+    /** Call only while no stream is attached; true when one should subscribe now. */
+    take(running) {
+      if (!running || this.#deadEpoch === null || this.#deadEpoch === this.#reattachedEpoch)
+        return false;
+      this.#reattachedEpoch = this.#deadEpoch;
+      return true;
+    }
+  };
   var textEncoder2 = new TextEncoder();
   var utf8Bytes = (value) => textEncoder2.encode(value).byteLength;
   function tailByBytes(value, maxBytes) {
@@ -14711,6 +14725,8 @@ var __t3Client = (() => {
       ...chatSink ? { chat: chatSink } : {}
     });
     const shownRef = (0, import_react2.useRef)(shown && visible);
+    const runningRef = (0, import_react2.useRef)(running);
+    runningRef.current = running;
     const activeRef = (0, import_react2.useRef)(active);
     activeRef.current = active;
     const appearanceVarsRef = (0, import_react2.useRef)(appearanceVars);
@@ -14724,7 +14740,7 @@ var __t3Client = (() => {
       if (!visible) return;
       let stopped = false;
       let run = null;
-      let ended = false;
+      const reattach = new OutputReattach();
       let retryRegistration = null;
       let brokerRefusals = 0;
       let brokerRefusalTimer = null;
@@ -14775,7 +14791,10 @@ var __t3Client = (() => {
                   if (value.kind === "closed" && value.reason !== "overflow") {
                     panel.resetInput(terminalId);
                   }
-                  if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
+                  if (value.kind === "snapshot") {
+                    reattach.noteSnapshot(value);
+                    panel.noteOutputSnapshot(terminalId, value.status);
+                  }
                   if (value.kind === "exit") {
                     const surface = surfaceRef.current;
                     if (surface !== null)
@@ -14805,13 +14824,14 @@ var __t3Client = (() => {
               );
             }
           }).finally(() => {
-            if (run?.controller === controller) {
+            const endedOnItsOwn = run?.controller === controller;
+            if (endedOnItsOwn) {
               run = null;
               lease.release();
-              if (!refused) ended = true;
             }
             lease.streamSettled();
             if (!refused) brokerRefusals = 0;
+            if (endedOnItsOwn && !refused) resumeStreamRef.current();
           });
         });
       };
@@ -14823,9 +14843,8 @@ var __t3Client = (() => {
         run.lease.setPriority(mandatory);
       };
       resumeStreamRef.current = () => {
-        if (!ended || stopped || run !== null) return;
-        ended = false;
-        acquire(shownRef.current);
+        if (stopped || run !== null) return;
+        if (reattach.take(runningRef.current)) acquire(shownRef.current);
       };
       acquire(shownRef.current);
       return () => {
@@ -15030,12 +15049,28 @@ var __t3Client = (() => {
   function useTerminalOutput(host, session, panel, terminalId, visible, running) {
     const [state2, setState] = (0, import_react2.useState)(null);
     const pendingRef = (0, import_react2.useRef)(null);
+    const runningRef = (0, import_react2.useRef)(running);
+    runningRef.current = running;
+    const resumeRef = (0, import_react2.useRef)(() => {
+    });
     (0, import_react2.useEffect)(() => {
       pendingRef.current = null;
       if (!visible || terminalId === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void (async () => {
+      const reattach = new OutputReattach();
+      let attached = false;
+      const attach = () => {
+        attached = true;
+        void pump().finally(() => {
+          attached = false;
+          if (!signal.aborted) resumeRef.current();
+        });
+      };
+      resumeRef.current = () => {
+        if (!attached && reattach.take(runningRef.current)) attach();
+      };
+      const pump = async () => {
         let streak = EMPTY_OVERFLOW_STREAK;
         let overflowClose = false;
         while (!signal.aborted) {
@@ -15052,7 +15087,10 @@ var __t3Client = (() => {
               if (signal.aborted) return;
               const value = frame.value;
               streak = noteOutputFrameForStreak(value, streak, Date.now());
-              if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
+              if (value.kind === "snapshot") {
+                reattach.noteSnapshot(value);
+                panel.noteOutputSnapshot(terminalId, value.status);
+              }
               if (value.kind === "closed") {
                 overflowClose = value.reason === "overflow";
                 resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -15107,9 +15145,17 @@ var __t3Client = (() => {
           if (overflowClose && streak.attempts > 1 && !signal.aborted)
             await new Promise((resolve) => setTimeout(resolve, 300 * streak.attempts));
         }
-      })();
-      return () => controller.abort();
-    }, [host, session, panel, terminalId, visible, running]);
+      };
+      attach();
+      return () => {
+        resumeRef.current = () => {
+        };
+        controller.abort();
+      };
+    }, [host, session, panel, terminalId, visible]);
+    (0, import_react2.useEffect)(() => {
+      if (running) resumeRef.current();
+    }, [running]);
     return state2?.terminalId === terminalId ? state2.buffer : null;
   }
   function useFitResize(panel, terminalId, ref) {

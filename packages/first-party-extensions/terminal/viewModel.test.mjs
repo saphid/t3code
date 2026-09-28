@@ -16,6 +16,7 @@ import {
   describeSession,
   fallbackTerminalLabel,
   isResumableOutputClose,
+  OutputReattach,
   missingSessionRow,
   normalizeTerminalIds,
   noteOutputFrameForStreak,
@@ -1747,4 +1748,20 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
       "a.ts could not be opened — API capability denied: t3.ui/editor.open",
     );
   });
+});
+
+NodeTest.test("OutputReattach reattaches once per dead epoch and never a healthy stream", () => {
+  const snapshot = (streamEpoch, status) => ({ kind: "snapshot", streamEpoch, status });
+  const reattach = new OutputReattach();
+  reattach.noteSnapshot(snapshot("e1", "running"));
+  NodeAssert.equal(reattach.take(true), false, "a healthy stream stays");
+  reattach.noteSnapshot(snapshot("e1", "error"));
+  NodeAssert.equal(reattach.take(false), false, "not until the session runs");
+  NodeAssert.equal(reattach.take(true), true);
+  // A stale `running` against the same dead process does not spin.
+  reattach.noteSnapshot(snapshot("e1", "error"));
+  NodeAssert.equal(reattach.take(true), false);
+  // A later incarnation that fails again earns its own reattach.
+  reattach.noteSnapshot(snapshot("e2", "error"));
+  NodeAssert.equal(reattach.take(true), true);
 });
