@@ -42,7 +42,9 @@ import {
   isFilesViewState,
   MAX_PERSISTED_EXPANDED,
   MAX_PERSISTED_EXPANDED_BYTES,
-  restoredExpanded,
+  restoredFolders,
+  expandedFolders,
+  treeDirectories,
   restoredRenderMarkdown,
   restoredSelection,
   previewKind,
@@ -53,6 +55,9 @@ import {
   toggleExpanded,
   visibleRows,
 } from "./viewModel.ts";
+
+/** Folder expansion with exactly `paths` open. */
+const openOnly = (paths) => ({ all: false, paths });
 
 const fixture = [
   { path: "src/lib", kind: "directory" },
@@ -278,11 +283,11 @@ NodeTest.describe("HTML preview", () => {
   NodeTest.it("persists the source preference and defaults to rendered", () => {
     NodeAssert.equal(ViewModel.restoredRenderHtml(null), true);
     NodeAssert.equal(ViewModel.restoredRenderHtml({ relativePath: "a.html" }), true);
-    const source = copyJson(filesViewState("a.html", new Set(), false, false));
+    const source = copyJson(filesViewState("a.html", openOnly(new Set()), false, false));
     NodeAssert.equal(isFilesViewState(source), true);
     NodeAssert.equal(ViewModel.restoredRenderHtml(source), false);
     NodeAssert.equal(
-      ViewModel.restoredRenderHtml(filesViewState("a.html", new Set(), false, true)),
+      ViewModel.restoredRenderHtml(filesViewState("a.html", openOnly(new Set()), false, true)),
       true,
     );
     NodeAssert.equal(isFilesViewState({ relativePath: "a", renderHtml: "no" }), false);
@@ -614,7 +619,11 @@ NodeTest.describe("open in presentation", () => {
   });
 
   NodeTest.it("view state round-trips selection, expansion and preview mode", () => {
-    const saved = filesViewState("docs/guide.md", new Set(["src/lib", "docs", "src"]), true);
+    const saved = filesViewState(
+      "docs/guide.md",
+      openOnly(new Set(["src/lib", "docs", "src"])),
+      true,
+    );
     NodeAssert.deepEqual(saved, {
       relativePath: "docs/guide.md",
       expanded: ["docs", "src", "src/lib"],
@@ -624,26 +633,28 @@ NodeTest.describe("open in presentation", () => {
     const restored = JSON.parse(JSON.stringify(saved));
     NodeAssert.equal(isFilesViewState(restored), true);
     NodeAssert.equal(restoredSelection(restored), "docs/guide.md");
-    NodeAssert.deepEqual([...restoredExpanded(restored)], ["docs", "src", "src/lib"]);
+    NodeAssert.deepEqual([...restoredFolders(restored).paths], ["docs", "src", "src/lib"]);
     NodeAssert.equal(restoredRenderMarkdown(restored), true);
     // Expansion drives the rendered tree after restore.
-    const paths = visibleRows(fixture, restoredExpanded(restored), "").map((row) => row.entry.path);
+    const paths = visibleRows(fixture, restoredFolders(restored).paths, "").map(
+      (row) => row.entry.path,
+    );
     NodeAssert.ok(paths.includes("src/lib/deep.ts"));
     NodeAssert.ok(paths.includes("docs/guide.md"));
     // No selection persists as the presentation "no file" record.
-    const empty = filesViewState(null, new Set(["docs"]), false);
+    const empty = filesViewState(null, openOnly(new Set(["docs"])), false);
     NodeAssert.equal(empty.relativePath, "");
     NodeAssert.equal(restoredSelection(empty), null);
-    NodeAssert.deepEqual([...restoredExpanded(empty)], ["docs"]);
+    NodeAssert.deepEqual([...restoredFolders(empty).paths], ["docs"]);
   });
 
   NodeTest.it("legacy { relativePath } saves restore with defaults", () => {
     const legacy = { relativePath: "src/app.ts" };
     NodeAssert.equal(isFilesViewState(legacy), true);
     NodeAssert.equal(isFilesViewState(null), true);
-    NodeAssert.deepEqual([...restoredExpanded(legacy)], []);
+    NodeAssert.deepEqual([...restoredFolders(legacy).paths], []);
     NodeAssert.equal(restoredRenderMarkdown(legacy), false);
-    NodeAssert.deepEqual([...restoredExpanded(null)], []);
+    NodeAssert.deepEqual([...restoredFolders(null).paths], []);
     NodeAssert.equal(restoredRenderMarkdown(null), false);
   });
 
@@ -660,16 +671,40 @@ NodeTest.describe("open in presentation", () => {
       { relativePath: "a", expanded: Array.from({ length: MAX_PERSISTED_EXPANDED + 1 }, String) },
     ]) {
       NodeAssert.equal(isFilesViewState(bad), false, JSON.stringify(bad).slice(0, 60));
-      NodeAssert.deepEqual([...restoredExpanded(bad)], []);
+      NodeAssert.deepEqual([...restoredFolders(bad).paths], []);
       NodeAssert.equal(restoredRenderMarkdown(bad), false);
     }
   });
 
   NodeTest.it("persisted expansion is bounded and always restorable", () => {
     const many = new Set(Array.from({ length: MAX_PERSISTED_EXPANDED + 10 }, (_, i) => `d${i}`));
-    const saved = filesViewState("a.ts", many, false);
+    const saved = filesViewState("a.ts", openOnly(many), false);
     NodeAssert.equal(saved.expanded.length, MAX_PERSISTED_EXPANDED);
     NodeAssert.equal(isFilesViewState(saved), true);
+  });
+
+  // Review repro (gaps-files-2 P3): expand-all saves as a flag plus the
+  // folders closed since, so it survives any number of folders.
+  NodeTest.it("expand-all round-trips past the saved-folder bound", () => {
+    const entries = Array.from({ length: MAX_PERSISTED_EXPANDED * 2 }, (_, i) => [
+      { path: `d${i}`, kind: "directory" },
+      { path: `d${i}/f.txt`, kind: "file" },
+    ]).flat();
+    const directories = treeDirectories(entries);
+    const saved = copyJson(filesViewState("a.ts", { all: true, paths: new Set(["d7"]) }, false));
+    NodeAssert.deepEqual(
+      { expandAll: saved.expandAll, collapsed: saved.collapsed, expanded: saved.expanded },
+      { expandAll: true, collapsed: ["d7"], expanded: undefined },
+    );
+    NodeAssert.equal(isFilesViewState(saved), true);
+    const open = expandedFolders(restoredFolders(saved), directories);
+    NodeAssert.equal(open.size, directories.length - 1);
+    NodeAssert.equal(visibleRows(entries, open).length, entries.length - 1);
+    // A legacy record still restores the folders it names.
+    NodeAssert.deepEqual(restoredFolders({ relativePath: "", expanded: ["d1"] }), {
+      all: false,
+      paths: new Set(["d1"]),
+    });
   });
 
   NodeTest.it("deep expanded paths stay under the host's saved-state payload cap", () => {
@@ -678,14 +713,14 @@ NodeTest.describe("open in presentation", () => {
     const deep = new Set(
       Array.from({ length: MAX_PERSISTED_EXPANDED }, (_, i) => `${"nested/".repeat(28)}d${i}`),
     );
-    const saved = filesViewState("a.ts", deep, true);
+    const saved = filesViewState("a.ts", openOnly(deep), true);
     NodeAssert.ok(saved.expanded.length > 0 && saved.expanded.length < MAX_PERSISTED_EXPANDED);
     NodeAssert.ok(
       Buffer.byteLength(JSON.stringify(saved.expanded)) <= MAX_PERSISTED_EXPANDED_BYTES,
     );
     const restored = copyJson(saved);
     NodeAssert.equal(isFilesViewState(restored), true);
-    NodeAssert.equal(restoredExpanded(restored).size, saved.expanded.length);
+    NodeAssert.equal(restoredFolders(restored).paths.size, saved.expanded.length);
     NodeAssert.equal(restoredRenderMarkdown(restored), true);
   });
 

@@ -79,14 +79,39 @@ export function allDirectoriesExpanded(
   return directories.length > 0 && directories.every((path) => expanded.has(path));
 }
 
-/** `expanded` with every directory added; the same set when none was missing. */
-export function withAllDirectories(
-  expanded: ReadonlySet<string>,
+/**
+ * Which folders are open. Normally `paths` lists the open ones; once
+ * "Expand all folders" stands (`all`), it lists the ones closed by hand
+ * instead, so folders that appear later open too and the state stays small
+ * however many folders the tree holds.
+ */
+export type FolderExpansion = { readonly all: boolean; readonly paths: ReadonlySet<string> };
+
+export const noFoldersOpen: FolderExpansion = { all: false, paths: new Set() };
+
+/** Opens or closes one folder. */
+export function toggleFolder(expansion: FolderExpansion, path: string): FolderExpansion {
+  return { all: expansion.all, paths: toggleExpanded(expansion.paths, path) };
+}
+
+/** Opens `paths` (a revealed file's ancestors, a linked folder). */
+export function openFolders(expansion: FolderExpansion, paths: Iterable<string>): FolderExpansion {
+  const next = new Set(expansion.paths);
+  for (const path of paths) {
+    if (expansion.all) next.delete(path);
+    else next.add(path);
+  }
+  return { all: expansion.all, paths: next };
+}
+
+/** The open folders among `directories`. */
+export function expandedFolders(
+  expansion: FolderExpansion,
   directories: readonly string[],
 ): ReadonlySet<string> {
-  return directories.every((path) => expanded.has(path))
-    ? expanded
-    : new Set([...expanded, ...directories]);
+  return expansion.all
+    ? new Set(directories.filter((path) => !expansion.paths.has(path)))
+    : expansion.paths;
 }
 
 /**
@@ -1109,6 +1134,9 @@ export type FilesViewState = {
   readonly renderHtml?: boolean;
   /** Absent means shown, the native default; only a hidden explorer is saved. */
   readonly explorer?: boolean;
+  /** "Expand all folders" stands; `collapsed` lists the folders closed since. */
+  readonly expandAll?: boolean;
+  readonly collapsed?: readonly string[];
   /**
    * The line the selected file last revealed: a file link's line from
    * `t3.file/presentation.open`, then each later reveal of that file, so a
@@ -1129,20 +1157,20 @@ export function isFilesViewState(value: unknown): value is FilesViewState | null
       key !== "renderMarkdown" &&
       key !== "renderHtml" &&
       key !== "explorer" &&
+      key !== "expandAll" &&
+      key !== "collapsed" &&
       key !== "line"
     )
       return false;
   if (typeof record.relativePath !== "string") return false;
-  if (
-    record.expanded !== undefined &&
-    !(
-      Array.isArray(record.expanded) &&
-      record.expanded.length <= MAX_PERSISTED_EXPANDED &&
-      record.expanded.every((path) => typeof path === "string")
-    )
-  )
-    return false;
+  const isPathList = (value: unknown) =>
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= MAX_PERSISTED_EXPANDED &&
+      value.every((path) => typeof path === "string"));
+  if (!isPathList(record.expanded) || !isPathList(record.collapsed)) return false;
   return (
+    (record.expandAll === undefined || typeof record.expandAll === "boolean") &&
     (record.renderMarkdown === undefined || typeof record.renderMarkdown === "boolean") &&
     (record.renderHtml === undefined || typeof record.renderHtml === "boolean") &&
     (record.explorer === undefined || typeof record.explorer === "boolean") &&
@@ -1158,10 +1186,12 @@ export function restoredRevealLine(restoreState: unknown): number | null {
     : null;
 }
 
-/** Expanded directories a restored view reopens; empty for anything malformed. */
-export function restoredExpanded(restoreState: unknown): Set<string> {
-  if (!isFilesViewState(restoreState) || restoreState === null) return new Set();
-  return new Set(restoreState.expanded ?? []);
+/** The folders a restored view reopens; none for anything malformed. */
+export function restoredFolders(restoreState: unknown): FolderExpansion {
+  if (!isFilesViewState(restoreState) || restoreState === null) return noFoldersOpen;
+  return restoreState.expandAll === true
+    ? { all: true, paths: new Set(restoreState.collapsed ?? []) }
+    : { all: false, paths: new Set(restoreState.expanded ?? []) };
 }
 
 /** Whether a restored view resumes in the rendered-markdown preview. */
@@ -1191,14 +1221,14 @@ export function showsFileExplorer(selected: string | null, explorerOpen: boolean
 }
 
 /**
- * The record `session.save` persists. Expansion is sorted so equal view
+ * The record `session.save` persists. Folder paths are sorted so equal view
  * states serialize identically, and bounded by count and bytes so a
  * sprawling tree can neither grow the record without limit nor push it past
  * the host's payload cap (an oversized `session.save` throws).
  */
 export function filesViewState(
   selected: string | null,
-  expanded: ReadonlySet<string>,
+  folders: FolderExpansion,
   renderMarkdown: boolean,
   renderHtml = true,
   explorer = true,
@@ -1206,7 +1236,7 @@ export function filesViewState(
 ): FilesViewState {
   const kept: string[] = [];
   let bytes = 0;
-  for (const path of [...expanded].sort()) {
+  for (const path of [...folders.paths].sort()) {
     if (kept.length >= MAX_PERSISTED_EXPANDED) break;
     // JSON quotes plus the separating comma.
     bytes += textEncoder.encode(path).length + 3;
@@ -1215,7 +1245,8 @@ export function filesViewState(
   }
   return {
     relativePath: selected ?? "",
-    expanded: kept,
+    // Past the bound, a folder closed under expand-all reopens after a reload.
+    ...(folders.all ? { expandAll: true, collapsed: kept } : { expanded: kept }),
     renderMarkdown,
     ...(renderHtml ? {} : { renderHtml: false }),
     ...(explorer ? {} : { explorer: false }),

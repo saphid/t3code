@@ -215,7 +215,16 @@ function packHost(disk: Disk, calls: Calls) {
             ...(disk.directories ?? []).map((path) => ({ path, kind: "directory" })),
             ...Object.keys(disk.files).map((path) => ({ path, kind: "file" })),
           ];
-          yield { type: "data", value: { kind: "chunk", entries, truncated: false } };
+          // The contract's chunks carry at most 200 entries.
+          for (let start = 0; start < entries.length; start += 200)
+            yield {
+              type: "data",
+              value: {
+                kind: "chunk",
+                entries: entries.slice(start, start + 200),
+                truncated: false,
+              },
+            };
           yield {
             type: "data",
             value: { kind: "complete", entryCount: entries.length, truncated: false },
@@ -979,6 +988,31 @@ describe("expanding and collapsing every folder", () => {
       expect(panel.labelled("Collapse all folders")).toBeDefined();
       await act(async () => folder.props.onClick());
       expect(panel.labelled("Expand all folders")).toBeDefined();
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  // Review repro (gaps-files-2 P3): expand-all past the saved-folder bound
+  // still stands after a reload.
+  it("keeps every folder open across a reload, past the saved-folder bound", async () => {
+    const names = Array.from({ length: 600 }, (_, i) => `d${String(i).padStart(3, "0")}`);
+    const panel = await mountPanel({
+      directories: names,
+      files: Object.fromEntries(names.map((name) => [`${name}/f.txt`, "f"])),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "d000/f.txt"));
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      const folder = panel.labelled("Workspace files")!.findAllByType("button")[0]!;
+      // One folder closed by hand stays closed; every other one stays open.
+      await act(async () => folder.props.onClick());
+      await panel.reload();
+      expect(panel.rows().slice(0, 3)).toEqual(["▸ d000/", "▾ d001/", "f.txt"]);
+      await act(async () =>
+        panel.labelled("Workspace files")!.findAllByType("button")[0]!.props.onClick(),
+      );
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
     } finally {
       await panel.unmount();
     }

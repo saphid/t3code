@@ -88,7 +88,7 @@ import {
   presentedPreviewKind,
   filesViewState,
   isFilesViewState,
-  restoredExpanded,
+  restoredFolders,
   restoredExplorerOpen,
   showsFileExplorer,
   restoredRenderHtml,
@@ -96,9 +96,10 @@ import {
   restoredRenderMarkdown,
   restoredSelection,
   watchThemeVars,
-  toggleExpanded,
+  toggleFolder,
+  openFolders,
+  expandedFolders,
   treeDirectories,
-  withAllDirectories,
   allDirectoriesExpanded,
   visibleRows,
   watchPreferences,
@@ -1234,18 +1235,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
   const wordWrap = preferences.wordWrap;
-  const [expandedState, setExpanded] = useState<ReadonlySet<string>>(() =>
-    restoredExpanded(session.restoreState),
-  );
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
-  // that later appear open too; collapsing any folder by hand ends it.
-  const [expandAll, setExpandAll] = useState(false);
+  // that later appear open too, and folders closed by hand stay closed.
+  const [folders, setFolders] = useState(() => restoredFolders(session.restoreState));
   const directories = useMemo(() => treeDirectories(entries), [entries]);
-  const expanded = useMemo(
-    () => (expandAll ? withAllDirectories(expandedState, directories) : expandedState),
-    [expandAll, expandedState, directories],
-  );
+  const expanded = useMemo(() => expandedFolders(folders, directories), [folders, directories]);
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"names" | "contents">("names");
   const [kindFilter, setKindFilter] = useState<SearchKindFilter>("all");
@@ -1333,11 +1328,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
-  const everyFolderOpen = expandAll || allDirectoriesExpanded(directories, expanded);
-  const toggleAllDirectories = () => {
-    setExpandAll(!everyFolderOpen);
-    setExpanded(everyFolderOpen ? new Set() : new Set(directories));
-  };
+  const everyFolderOpen = allDirectoriesExpanded(directories, expanded);
+  const toggleAllDirectories = () => setFolders({ all: !everyFolderOpen, paths: new Set() });
   const expandAllLabel = everyFolderOpen ? "Collapse all folders" : "Expand all folders";
   const [fileOpen, setFileOpen] = useState<{ path: string; state: FileOpenState } | null>(null);
   // Rendered-vs-source is a preference, not a property of one file — the same
@@ -1360,7 +1352,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   useEffect(() => {
     const state = filesViewState(
       selected,
-      expanded,
+      folders,
       renderMarkdown,
       renderHtml,
       explorerOpen,
@@ -1374,7 +1366,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     }
     if (serialized === savedViewStateRef.current) return;
     if (session.save(state)) savedViewStateRef.current = serialized;
-  }, [session, selected, expanded, renderMarkdown, renderHtml, explorerOpen, revealLine]);
+  }, [session, selected, folders, renderMarkdown, renderHtml, explorerOpen, revealLine]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment
@@ -1574,10 +1566,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     } else {
       setRevealRequest(null);
     }
-    const ancestors: string[] = [];
-    for (let ancestor = parentPath(path); ancestor !== null; ancestor = parentPath(ancestor))
-      ancestors.push(ancestor);
-    if (ancestors.length) setExpanded((previous) => new Set([...previous, ...ancestors]));
+    const parent = parentPath(path);
+    if (parent !== null) openFolderChain(parent);
+  };
+
+  /** Opens a folder and every folder above it. */
+  const openFolderChain = (path: string) => {
+    const chain: string[] = [];
+    for (let folder: string | null = path; folder !== null; folder = parentPath(folder))
+      chain.push(folder);
+    setFolders((previous) => openFolders(previous, chain));
   };
 
   // A later open of this view (a file link, "Open in panel") arrives in
@@ -1778,16 +1776,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               return;
             }
             if (kindByPath.get(path) === "directory") {
-              setExpanded((previous) => {
-                const next = new Set(previous);
-                for (
-                  let ancestor: string | null = path;
-                  ancestor !== null;
-                  ancestor = parentPath(ancestor)
-                )
-                  next.add(ancestor);
-                return next;
-              });
+              openFolderChain(path);
               return;
             }
             select(path, line);
@@ -2042,17 +2031,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       onDragStart={(event) => startMentionDrag(event, entry.path)}
                       onClick={() =>
                         entry.kind === "directory"
-                          ? (setQuery(""),
-                            setExpanded((previous) => {
-                              const next = new Set(previous);
-                              for (
-                                let ancestor: string | null = entry.path;
-                                ancestor !== null;
-                                ancestor = parentPath(ancestor)
-                              )
-                                next.add(ancestor);
-                              return next;
-                            }))
+                          ? (setQuery(""), openFolderChain(entry.path))
                           : select(entry.path)
                       }
                       style={{
@@ -2093,8 +2072,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                         select(row.entry.path);
                         return;
                       }
-                      if (expanded.has(row.entry.path)) setExpandAll(false);
-                      setExpanded(toggleExpanded(expanded, row.entry.path));
+                      setFolders((previous) => toggleFolder(previous, row.entry.path));
                     }}
                     style={{
                       display: "block",
