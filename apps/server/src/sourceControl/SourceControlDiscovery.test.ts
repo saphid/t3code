@@ -1130,6 +1130,66 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
   );
 });
 
+it.effect("looks a Forgejo repository up on the requested host's own port, not origin's", () => {
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const urls = yield* provider.getRepositoryCloneUrls({
+      cwd: "/repo",
+      host: "forge.example",
+      repository: "alex/repo",
+      context: {
+        provider: { kind: "forgejo", name: "Forgejo", baseUrl: "https://forge.example:8443" },
+        remoteName: "origin",
+        remoteUrl: "https://forge.example:8443/team/repo.git",
+      },
+    });
+    assert.strictEqual(urls.url, "https://forge.example/alex/repo.git");
+    assert.deepStrictEqual(requests, ["https://forge.example/api/v1/repos/alex/repo"]);
+  }).pipe(
+    Effect.provide(ForgejoCli.layer),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: {
+                "forge.example": { type: "Application", token: "default-port-token" },
+                "forge.example:8443": { type: "Application", token: "other-port-token" },
+              },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        const origin = new URL(request.url).origin;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson({
+                full_name: "alex/repo",
+                clone_url: `${origin}/alex/repo.git`,
+                ssh_url: `git@${new URL(request.url).hostname}:alex/repo.git`,
+              }),
+            ),
+          ),
+        );
+      }),
+    ),
+    Effect.provide(
+      Layer.mock(VcsProcess.VcsProcess)({
+        run: () => Effect.succeed(processOutput("")),
+      }),
+    ),
+  );
+});
+
 it.effect("loads later fj review pages when the server caps pages below the requested size", () => {
   const pages: number[] = [];
   let issueCommentRequests = 0;

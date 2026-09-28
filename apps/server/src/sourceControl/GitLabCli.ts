@@ -287,6 +287,8 @@ export class GitLabCli extends Context.Service<
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
+      /** The GitLab host (with any port) to ask; glab's default host otherwise. */
+      readonly host?: string;
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
@@ -522,7 +524,11 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        args: [
+          "api",
+          `projects/${encodeURIComponent(input.repository)}`,
+          ...(input.host ? ["--hostname", input.host] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>

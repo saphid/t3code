@@ -190,6 +190,38 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads repository clone URLs from the requested GitLab host", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              path_with_namespace: "alex/repo",
+              web_url: "https://gitlab-b.example:8443/alex/repo",
+              http_url_to_repo: "https://gitlab-b.example:8443/alex/repo.git",
+              ssh_url_to_repo: "git@gitlab-b.example:alex/repo.git",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        host: "gitlab-b.example:8443",
+        repository: "alex/repo",
+      });
+
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          args: ["api", "projects/alex%2Frepo", "--hostname", "gitlab-b.example:8443"],
+        }),
+      );
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
