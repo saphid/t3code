@@ -190,7 +190,8 @@ describe("installed package settings", () => {
   });
 });
 
-it("labels a disconnected environment's installations as last known", async () => {
+it("labels a disconnected environment's installations as last known and disables changes", async () => {
+  fixture.manage = true;
   fixture.installations = [
     {
       id: "example.files",
@@ -212,12 +213,18 @@ it("labels a disconnected environment's installations as last known", async () =
     await act(async () => {
       root = create(<InstalledExtensionsSettings />);
     });
+    const rollback = () =>
+      root.root
+        .findAllByType("button")
+        .find((node) => node.children.join("") === "Roll back package")!;
     expect(JSON.stringify(root.toJSON())).toContain(label);
+    expect(rollback().props.disabled).toBe(true);
     fixture.connected = true;
     await act(async () => {
       root.update(<InstalledExtensionsSettings />);
     });
     expect(JSON.stringify(root.toJSON())).not.toContain(label);
+    expect(rollback().props.disabled).toBe(false);
   } finally {
     await act(async () => root?.unmount());
     fixture.connected = true;
