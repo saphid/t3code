@@ -672,7 +672,7 @@ export function diffCapabilityState(
 export async function readWithRetry<T>(
   read: () => Promise<T>,
   signal: AbortSignal,
-  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = abortableDelay,
   attempts = 3,
 ): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
@@ -681,9 +681,24 @@ export async function readWithRetry<T>(
     } catch (error) {
       if (signal.aborted || attempt >= attempts) throw error;
     }
-    await wait(400 * attempt);
+    await wait(400 * attempt, signal);
     signal.throwIfAborted();
   }
+}
+
+/** Resolves after `ms`, or rejects with the abort reason and clears its timer. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /* ---------------- stream-vs-unary delivery policy ---------------- */

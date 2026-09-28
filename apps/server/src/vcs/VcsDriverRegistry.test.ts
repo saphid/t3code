@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as VcsProcess from "./VcsProcess.ts";
@@ -206,6 +207,62 @@ describe("VcsDriverRegistry", () => {
           "/repo",
         );
       }).pipe(Effect.provide(layer));
+    });
+  });
+
+  it.effect("stops a detection still running when the service shuts down", () => {
+    // A cancelled caller leaves the shared lookup running for later callers,
+    // but the lookup must not outlive the registry: closing the service scope
+    // interrupts it, and no further git command starts afterwards.
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const probeInterrupted = yield* Deferred.make<void>();
+      const commands: string[] = [];
+      const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(
+          Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+            resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) => {
+              const command = normalizeGitArgs(input.args).join(" ");
+              commands.push(command);
+              if (command === "rev-parse --is-inside-work-tree") {
+                return Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.onInterrupt(() => Deferred.succeed(probeInterrupted, undefined)),
+                  Effect.as(processOutput("true\n")),
+                );
+              }
+              if (command === "rev-parse --show-toplevel") {
+                return Effect.succeed(processOutput("/repo\n"));
+              }
+              if (command === "rev-parse --git-common-dir") {
+                return Effect.succeed(processOutput("/repo/.git\n"));
+              }
+              return Effect.succeed(processOutput(""));
+            },
+          }),
+        ),
+      );
+
+      const serviceScope = yield* Scope.make();
+      const services = yield* Layer.buildWithScope(layer, serviceScope);
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry.pipe(Effect.provide(services));
+
+      const caller = yield* Effect.forkChild(registry.detect({ cwd: "/repo" }));
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(caller);
+      yield* Scope.close(serviceScope, Exit.void);
+
+      assert.isTrue(yield* Deferred.isDone(probeInterrupted), "lookup outlived the service");
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      assert.deepStrictEqual(commands, ["rev-parse --is-inside-work-tree"]);
     });
   });
 });

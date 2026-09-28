@@ -10326,16 +10326,29 @@ ${prefix}`;
     }
     return { kind: "ready" };
   }
-  async function readWithRetry(read, signal, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = 3) {
+  async function readWithRetry(read, signal, wait = abortableDelay, attempts = 3) {
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await read();
       } catch (error) {
         if (signal.aborted || attempt >= attempts) throw error;
       }
-      await wait(400 * attempt);
+      await wait(400 * attempt, signal);
       signal.throwIfAborted();
     }
+  }
+  function abortableDelay(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
   }
   function isEnvelopeRejection(error) {
     return error instanceof Error && /byte limit/i.test(error.message);

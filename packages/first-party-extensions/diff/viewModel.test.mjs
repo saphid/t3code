@@ -1644,3 +1644,27 @@ NodeTest.test("readWithRetry: an aborted view stops retrying", async () => {
   );
   NodeAssert.equal(calls, 1);
 });
+
+NodeTest.test("readWithRetry: aborting during the default backoff ends it at once", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const controller = new AbortController();
+  let calls = 0;
+  let outcome = null;
+  const pending = readWithRetry(async () => {
+    calls += 1;
+    throw new Error("View cancelled");
+  }, controller.signal).then(
+    () => (outcome = "resolved"),
+    (error) => (outcome = error.message),
+  );
+  // Let the first read fail so the 400 ms backoff is scheduled.
+  await new Promise((resolve) => setImmediate(resolve));
+  NodeAssert.equal(calls, 1);
+  controller.abort(new Error("closed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  // No timer has fired: the abort alone must settle the read.
+  NodeAssert.equal(outcome, "closed");
+  t.mock.timers.runAll();
+  await pending;
+  NodeAssert.equal(calls, 1);
+});

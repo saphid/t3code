@@ -112,6 +112,7 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
+  const serviceScope = yield* Effect.scope;
   const detectionCache = yield* Cache.makeWith<string, VcsDriverHandle | null, VcsError>(
     (key) => detectResolvedKind(parseDetectionCacheKey(key)),
     {
@@ -129,10 +130,12 @@ export const make = Effect.gen(function* () {
       // Concurrent callers share one lookup, and the cache interrupts it when its
       // last awaiter leaves. A caller arriving while that interruption unwinds
       // joins the dying lookup and fails with a bare interrupt. Awaiting from a
-      // detached fiber keeps a cancelled caller from ever interrupting the
-      // shared lookup; the caller itself still stops waiting immediately.
-      const lookup = yield* Effect.forkDetach(
+      // fiber owned by the service scope keeps a cancelled caller from ever
+      // interrupting the shared lookup, while shutdown still interrupts it; the
+      // caller itself still stops waiting immediately.
+      const lookup = yield* Effect.forkIn(
         Cache.get(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind })),
+        serviceScope,
         { startImmediately: true },
       );
       return yield* Fiber.join(lookup);
