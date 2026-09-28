@@ -736,6 +736,17 @@ function TerminalPane(props: {
                 if (value.kind === "closed" && value.reason !== "overflow") {
                   panel.resetInput(terminalId);
                 }
+                // Terminal 29: like the native drawer, say the process exited
+                // and close it — this stream usually beats the sessions list.
+                if (value.kind === "exit") {
+                  const surface = surfaceRef.current;
+                  if (surface !== null)
+                    writeSystemMessage(
+                      surface,
+                      `Process exited (code ${value.exitCode ?? "unknown"})`,
+                    );
+                  panel.noteExit(terminalId, value.exitCode);
+                }
                 yield { streamId: frame.streamId, sequence: frame.sequence, value };
               }
             })();

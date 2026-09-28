@@ -683,7 +683,7 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
 
   NodeTest.it("restart and clear go through confirm; cancel backs out", async () => {
     const control = fakeControl();
-    const panel = new TerminalPanel({ control, launch });
+    const panel = new TerminalPanel({ control, launch, schedule: manualScheduler().schedule });
     panel.applySessionsEvent({
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited" })],
@@ -722,10 +722,57 @@ NodeTest.describe("terminal panel — exit UX", () => {
     scheduler.pending.forEach((cb) => cb());
     NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
     NodeAssert.equal(panel.snapshot.activeTerminalId, null);
+    // Like the native drawer's close, the server session goes too, so it
+    // cannot come back as an exited row on the next mount.
+    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
     panel.dispose();
   });
 
-  NodeTest.it("does not banner a session that arrives already exited", () => {
+  NodeTest.it("closes a session that exited while no view was attached", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1"), meta("term-2", { status: "exited", exitCode: 0 })],
+    });
+    NodeAssert.equal(panel.snapshot.tabs[1].exitBanner, "Process exited (code 0)");
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-2", deleteHistory: true }]]);
+    panel.dispose();
+  });
+
+  NodeTest.it("an output-stream exit closes the session before the list reports it", () => {
+    const control = fakeControl();
+    const scheduler = manualScheduler();
+    const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    panel.noteExit("term-1", 3);
+    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, "Process exited (code 3)");
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-1", deleteHistory: true }]]);
+    // The list's later exited upsert (and a stale snapshot) for the closing
+    // id change nothing; the server's remove ends the closing state.
+    panel.applySessionsEvent({
+      kind: "upsert",
+      terminal: meta("term-1", { status: "exited", exitCode: 3 }),
+    });
+    panel.applySessionsEvent({
+      kind: "snapshot",
+      terminals: [meta("term-1", { status: "exited", exitCode: 3 })],
+    });
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+    NodeAssert.equal(control.calls.length, 1);
+    NodeAssert.ok(panel.allocatableTerminalIds.includes("term-1"));
+    panel.applySessionsEvent({ kind: "remove", terminalId: "term-1" });
+    NodeAssert.ok(!panel.allocatableTerminalIds.includes("term-1"));
+    panel.dispose();
+  });
+
+  NodeTest.it("a start before the tick keeps the session", async () => {
     const control = fakeControl();
     const scheduler = manualScheduler();
     const panel = new TerminalPanel({ control, launch, schedule: scheduler.schedule });
@@ -733,8 +780,13 @@ NodeTest.describe("terminal panel — exit UX", () => {
       kind: "snapshot",
       terminals: [meta("term-1", { status: "exited", exitCode: 0 })],
     });
-    NodeAssert.equal(panel.snapshot.tabs[0].exitBanner, null);
-    NodeAssert.equal(scheduler.pending.length, 0);
+    await panel.startSession("term-1");
+    scheduler.pending.forEach((cb) => cb());
+    NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+    NodeAssert.deepEqual(
+      control.calls.map(([method]) => method),
+      ["attach"],
+    );
     panel.dispose();
   });
 

@@ -1344,3 +1344,122 @@ NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
     }
   });
 });
+
+NodeTest.describe("exit UX (Terminal 29)", () => {
+  const drain = () => new Promise((resolve) => setImmediate(resolve));
+  const stubSurfaces = () => globalThis.__T3_TERMINAL_SURFACE_STUB__.surfaces;
+
+  NodeTest.test("an output-stream exit writes the code and closes the session", async () => {
+    const invokes = [];
+    let releaseExit;
+    const exitReady = new Promise((resolve) => (releaseExit = resolve));
+    const host = {
+      readAsset: async (path) => ({
+        bytes: new Uint8Array([1, 2, 3]),
+        mediaType: path.endsWith(".woff2")
+          ? "font/woff2"
+          : path.endsWith(".txt")
+            ? "text/plain"
+            : "application/wasm",
+        sha256: "0".repeat(64),
+      }),
+      invokeApi: async (request) => {
+        invokes.push({ id: request.id, method: request.method, input: request.input });
+        if (request.id === "t3.ui/theme" && request.method === "getTokens")
+          return { tokens: {}, cssVars: {} };
+        if (request.id === "t3.terminal/control") return {};
+        return { commandSetToken: "token", results: [] };
+      },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list")
+            yield { value: { kind: "snapshot", terminals: [sessionMetadata("ex1")] } };
+          if (request.id === "t3.terminal/output-events") {
+            const base = { terminalId: "ex1", streamEpoch: "epoch-1" };
+            yield {
+              streamId: "s1",
+              sequence: 1,
+              value: {
+                ...base,
+                kind: "snapshot",
+                status: "running",
+                contents: "$ ",
+                retainedByteLength: 2,
+                truncated: false,
+                clearGeneration: 0,
+                contentsUnitStart: 0,
+                boundarySequence: 1,
+              },
+            };
+            await exitReady;
+            yield {
+              streamId: "s1",
+              sequence: 2,
+              value: { ...base, kind: "exit", sequence: 2, exitCode: 3, exitSignal: null },
+            };
+          }
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: {
+        resource: { threadId: "t", environmentId: "e" },
+        workspaceRevision: JSON.stringify(["/ws/root", null]),
+      },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ["ex1"], activeTerminalId: "ex1" },
+    };
+    stubSurfaces().length = 0;
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    try {
+      for (let attempt = 0; stubSurfaces().length === 0 && attempt < 20; attempt++) {
+        await act(async () => {
+          await drain();
+        });
+      }
+      const surface = stubSurfaces()[0];
+      NodeAssert.ok(surface, "terminal surface never mounted");
+      await act(async () => {
+        releaseExit();
+        for (let index = 0; index < 5; index++) await drain();
+        // The panel closes on its next scheduled tick (a zero-delay timer).
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await drain();
+      });
+      NodeAssert.ok(
+        surface.writes.some((data) => data.includes("Process exited (code 3)")),
+        "exit code written on the surface",
+      );
+      NodeAssert.deepEqual(
+        invokes.filter((entry) => entry.id === "t3.terminal/control" && entry.method === "close"),
+        [
+          {
+            id: "t3.terminal/control",
+            method: "close",
+            input: { terminalId: "ex1", deleteHistory: true },
+          },
+        ],
+      );
+      const list = renderer.root.find(
+        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
+      );
+      NodeAssert.equal(list.findAll((node) => node.type === "li").length, 0);
+    } finally {
+      await act(async () => {
+        renderer.unmount();
+      });
+    }
+  });
+});

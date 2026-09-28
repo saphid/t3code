@@ -11990,6 +11990,11 @@ var __t3Client = (() => {
     /** Empty string mirrors the native store's "no active group" sentinel. */
     #activeGroupId = "";
     #tabs = /* @__PURE__ */ new Map();
+    /**
+     * Exited sessions this panel closed whose server `remove` has not landed:
+     * list frames still describing them are stale and must not re-add a tab.
+     */
+    #closing = /* @__PURE__ */ new Set();
     #stream = "connecting";
     #panelError = null;
     #disposed = false;
@@ -12048,7 +12053,7 @@ var __t3Client = (() => {
     }
     /** Ids eligible for allocation: client list plus any tab we are tracking. */
     get allocatableTerminalIds() {
-      return [.../* @__PURE__ */ new Set([...this.#ids, ...this.#tabs.keys()])];
+      return [.../* @__PURE__ */ new Set([...this.#ids, ...this.#tabs.keys(), ...this.#closing])];
     }
     #emit() {
       this.#onChange?.();
@@ -12144,29 +12149,45 @@ var __t3Client = (() => {
       this.#syncGroupsFollowingActive();
       this.#emit();
     }
-    /** Banner + deferred removal on a live→exited/error transition (native #29). */
+    /** Banner, then close + remove on the next tick, for an exited session (native #29). */
     #observeMeta(next) {
       const tab = this.#tab(next.terminalId);
-      const previous = tab.meta;
       tab.meta = next;
-      if (!tab.exiting && (next.status === "exited" || next.status === "error") && previous !== null && (previous.status === "starting" || previous.status === "running")) {
-        tab.exiting = true;
-        tab.exitBanner = next.status === "exited" ? `Process exited (code ${next.exitCode ?? "unknown"})` : "Terminal error";
-        this.#schedule(() => {
-          if (!this.#disposed && this.#tabs.get(next.terminalId)?.exiting) {
-            this.#removeTab(next.terminalId);
-          }
-        });
-      }
+      if (tab.exiting || tab.starting || next.status !== "exited" && next.status !== "error")
+        return;
+      tab.exiting = true;
+      tab.exitBanner = next.status === "exited" ? `Process exited (code ${next.exitCode ?? "unknown"})` : "Terminal error";
+      this.#schedule(() => {
+        if (this.#disposed || !this.#tabs.get(next.terminalId)?.exiting) return;
+        this.#closing.add(next.terminalId);
+        void this.#control.close({ terminalId: next.terminalId, deleteHistory: true }).catch(() => this.#closing.delete(next.terminalId));
+        this.#removeTab(next.terminalId);
+      });
+    }
+    /**
+     * The pane's output stream saw the process exit. It usually lands before
+     * the sessions list's upsert, so the exit handling starts here.
+     */
+    noteExit(terminalId, exitCode) {
+      const meta = this.#tabs.get(terminalId)?.meta;
+      if (this.#disposed || !meta) return;
+      this.#observeMeta({ ...meta, status: "exited", exitCode });
+      this.#emit();
     }
     applySessionsEvent(event) {
       if (this.#disposed) return;
       switch (event.kind) {
         case "snapshot": {
           this.#stream = "live";
-          const serverIds = event.terminals.map((terminal) => terminal.terminalId);
+          for (const id2 of this.#closing)
+            if (!event.terminals.some((terminal) => terminal.terminalId === id2))
+              this.#closing.delete(id2);
+          const terminals = event.terminals.filter(
+            (terminal) => !this.#closing.has(terminal.terminalId)
+          );
+          const serverIds = terminals.map((terminal) => terminal.terminalId);
           this.#ids = reconcileTerminalIds(this.#ids, serverIds);
-          for (const terminal of event.terminals) this.#observeMeta(terminal);
+          for (const terminal of terminals) this.#observeMeta(terminal);
           for (const id2 of this.#tabs.keys()) {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
           }
@@ -12175,10 +12196,12 @@ var __t3Client = (() => {
           break;
         }
         case "upsert":
+          if (this.#closing.has(event.terminal.terminalId)) return;
           this.#observeMeta(event.terminal);
           this.#syncGroups();
           break;
         case "remove":
+          this.#closing.delete(event.terminalId);
           this.#removeTab(event.terminalId);
           return;
         case "closed":
@@ -14759,6 +14782,15 @@ var __t3Client = (() => {
                   const value = frame.value;
                   if (value.kind === "closed" && value.reason !== "overflow") {
                     panel.resetInput(terminalId);
+                  }
+                  if (value.kind === "exit") {
+                    const surface = surfaceRef.current;
+                    if (surface !== null)
+                      writeSystemMessage(
+                        surface,
+                        `Process exited (code ${value.exitCode ?? "unknown"})`
+                      );
+                    panel.noteExit(terminalId, value.exitCode);
                   }
                   yield { streamId: frame.streamId, sequence: frame.sequence, value };
                 }

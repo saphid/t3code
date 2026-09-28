@@ -787,9 +787,11 @@ const clampDimension = (value: number, max: number) =>
 /**
  * Framework-free terminal panel state. The view feeds the sessions list
  * stream and user gestures in; the panel calls the injected control ops and
- * reports immutable snapshots. Exit handling mirrors the native drawer: a
- * live→exited transition writes a banner and removes the tab on the next
- * scheduled tick; `remove` rows drop tabs immediately.
+ * reports immutable snapshots. Exit handling mirrors the native drawer: an
+ * exited session — seen on the list or the pane's output stream, including
+ * one that exited while nothing was attached — writes a banner, then on the
+ * next scheduled tick closes the server session and removes the tab;
+ * `remove` rows drop tabs immediately.
  */
 export class TerminalPanel {
   readonly #control: TerminalControlOps;
@@ -803,6 +805,11 @@ export class TerminalPanel {
   /** Empty string mirrors the native store's "no active group" sentinel. */
   #activeGroupId = "";
   readonly #tabs = new Map<string, TabInternal>();
+  /**
+   * Exited sessions this panel closed whose server `remove` has not landed:
+   * list frames still describing them are stale and must not re-add a tab.
+   */
+  readonly #closing = new Set<string>();
   #stream: "connecting" | "live" | "closed" = "connecting";
   #panelError: string | null = null;
   #disposed = false;
@@ -885,7 +892,7 @@ export class TerminalPanel {
 
   /** Ids eligible for allocation: client list plus any tab we are tracking. */
   get allocatableTerminalIds(): readonly string[] {
-    return [...new Set([...this.#ids, ...this.#tabs.keys()])];
+    return [...new Set([...this.#ids, ...this.#tabs.keys(), ...this.#closing])];
   }
 
   #emit() {
@@ -1006,28 +1013,38 @@ export class TerminalPanel {
     this.#emit();
   }
 
-  /** Banner + deferred removal on a live→exited/error transition (native #29). */
+  /** Banner, then close + remove on the next tick, for an exited session (native #29). */
   #observeMeta(next: TerminalSessionMetadata) {
     const tab = this.#tab(next.terminalId);
-    const previous = tab.meta;
     tab.meta = next;
-    if (
-      !tab.exiting &&
-      (next.status === "exited" || next.status === "error") &&
-      previous !== null &&
-      (previous.status === "starting" || previous.status === "running")
-    ) {
-      tab.exiting = true;
-      tab.exitBanner =
-        next.status === "exited"
-          ? `Process exited (code ${next.exitCode ?? "unknown"})`
-          : "Terminal error";
-      this.#schedule(() => {
-        if (!this.#disposed && this.#tabs.get(next.terminalId)?.exiting) {
-          this.#removeTab(next.terminalId);
-        }
-      });
-    }
+    if (tab.exiting || tab.starting || (next.status !== "exited" && next.status !== "error"))
+      return;
+    tab.exiting = true;
+    tab.exitBanner =
+      next.status === "exited"
+        ? `Process exited (code ${next.exitCode ?? "unknown"})`
+        : "Terminal error";
+    this.#schedule(() => {
+      if (this.#disposed || !this.#tabs.get(next.terminalId)?.exiting) return;
+      // Native closes an exited terminal outright; a failed close still
+      // leaves the tab, like a user close.
+      this.#closing.add(next.terminalId);
+      void this.#control
+        .close({ terminalId: next.terminalId, deleteHistory: true })
+        .catch(() => this.#closing.delete(next.terminalId));
+      this.#removeTab(next.terminalId);
+    });
+  }
+
+  /**
+   * The pane's output stream saw the process exit. It usually lands before
+   * the sessions list's upsert, so the exit handling starts here.
+   */
+  noteExit(terminalId: string, exitCode: number | null) {
+    const meta = this.#tabs.get(terminalId)?.meta;
+    if (this.#disposed || !meta) return;
+    this.#observeMeta({ ...meta, status: "exited", exitCode });
+    this.#emit();
   }
 
   applySessionsEvent(event: TerminalSessionsListEvent) {
@@ -1038,9 +1055,15 @@ export class TerminalPanel {
         // Reconcile before absorbing metadata: #observeMeta registers every
         // server id as a tracked tab, which would turn a disjoint server list
         // into a strict subset and let stale restored ids survive (#17).
-        const serverIds = event.terminals.map((terminal) => terminal.terminalId);
+        for (const id of this.#closing)
+          if (!event.terminals.some((terminal) => terminal.terminalId === id))
+            this.#closing.delete(id);
+        const terminals = event.terminals.filter(
+          (terminal) => !this.#closing.has(terminal.terminalId),
+        );
+        const serverIds = terminals.map((terminal) => terminal.terminalId);
         this.#ids = reconcileTerminalIds(this.#ids, serverIds);
-        for (const terminal of event.terminals) this.#observeMeta(terminal);
+        for (const terminal of terminals) this.#observeMeta(terminal);
         for (const id of this.#tabs.keys()) {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
         }
@@ -1051,12 +1074,14 @@ export class TerminalPanel {
         break;
       }
       case "upsert":
+        if (this.#closing.has(event.terminal.terminalId)) return;
         this.#observeMeta(event.terminal);
         // An upsert for an unknown id appended it to the list — keep the
         // group partition covering every session (new ids earn singletons).
         this.#syncGroups();
         break;
       case "remove":
+        this.#closing.delete(event.terminalId);
         this.#removeTab(event.terminalId);
         return;
       case "closed":
