@@ -265,6 +265,117 @@ export function Tooltip(
   return tooltip === null ? rest.children : host.React.createElement(tooltip.Tooltip, rest);
 }
 
+/** Height assumed for a viewport that has not been (or cannot be) measured. */
+const UNMEASURED_VIEWPORT_HEIGHT = 800;
+
+/**
+ * The rows to mount for a viewport at `scrollTop`: the visible ones plus
+ * `overscan` either side, and `keep` (a focused row) wherever it is.
+ * Ascending.
+ */
+export function windowedRowIndexes(input: {
+  readonly count: number;
+  readonly rowHeight: number;
+  readonly scrollTop: number;
+  readonly viewportHeight: number;
+  readonly overscan: number;
+  readonly keep?: number;
+}): number[] {
+  const { count, rowHeight, scrollTop, viewportHeight, overscan, keep } = input;
+  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const end = Math.min(count, Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan);
+  const indexes: number[] = [];
+  if (keep !== undefined && keep >= 0 && keep < first) indexes.push(keep);
+  for (let index = first; index < end; index++) indexes.push(index);
+  if (keep !== undefined && keep >= end && keep < count) indexes.push(keep);
+  return indexes;
+}
+
+export interface WindowedRows {
+  /** Attach to the scrolling element; it is measured for its height. */
+  readonly ref: (element: HTMLElement | null) => void;
+  /** The element's `onScroll`. */
+  readonly onScroll: (event: { readonly currentTarget: { readonly scrollTop: number } }) => void;
+  /** Row indexes to mount, ascending. Place each at `index * rowHeight`. */
+  readonly indexes: readonly number[];
+  /** Height of every row together: the scroll range to give the element. */
+  readonly height: number;
+  /** Scrolls the least distance that shows row `index` whole. */
+  readonly reveal: (index: number) => void;
+}
+
+/**
+ * Mounts only the rows of a long list that are near its scrolling element,
+ * so a list of any length renders a bounded number of nodes. Every row has
+ * the same `rowHeight`. `keep` holds one more row mounted wherever it is —
+ * the focused one, so keyboard focus survives scrolling it out of view.
+ */
+/* oxlint-disable react/hooks -- React is injected once per host/view lifetime, avoiding a bundled second React. */
+export function useWindowedRows(
+  host: Pick<ClientHost, "React">,
+  options: {
+    readonly count: number;
+    readonly rowHeight: number;
+    /** Rows mounted past each edge of the viewport. Defaults to 8. */
+    readonly overscan?: number;
+    readonly keep?: number;
+  },
+): WindowedRows {
+  const { useCallback, useLayoutEffect, useMemo, useState } = host.React;
+  const { count, rowHeight, overscan = 8, keep } = options;
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+  const [scrolled, setScrolled] = useState(0);
+  useLayoutEffect(() => {
+    if (element === null) return;
+    const measure = () => setMeasured(element.clientHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  const viewportHeight = measured > 0 ? measured : UNMEASURED_VIEWPORT_HEIGHT;
+  const height = count * rowHeight;
+  // A list that shrank under the viewport scrolls back to its end.
+  const scrollTop = Math.max(0, Math.min(scrolled, height - viewportHeight));
+  const indexes = useMemo(
+    () =>
+      windowedRowIndexes({
+        count,
+        rowHeight,
+        scrollTop,
+        viewportHeight,
+        overscan,
+        ...(keep === undefined ? {} : { keep }),
+      }),
+    [count, rowHeight, scrollTop, viewportHeight, overscan, keep],
+  );
+  const onScroll = useCallback(
+    (event: { readonly currentTarget: { readonly scrollTop: number } }) =>
+      setScrolled(event.currentTarget.scrollTop),
+    [],
+  );
+  const reveal = useCallback(
+    (index: number) => {
+      const top = index * rowHeight;
+      const current = element?.scrollTop ?? scrollTop;
+      const next =
+        top < current
+          ? top
+          : top + rowHeight > current + viewportHeight
+            ? top + rowHeight - viewportHeight
+            : current;
+      if (next === current) return;
+      if (element !== null) element.scrollTop = next;
+      setScrolled(next);
+    },
+    [element, rowHeight, scrollTop, viewportHeight],
+  );
+  return { ref: setElement, onScroll, indexes, height, reveal };
+}
+/* oxlint-enable react/hooks */
+
 export type ApiReadState<T> =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly value: T }

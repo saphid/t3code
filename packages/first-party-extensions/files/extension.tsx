@@ -17,11 +17,24 @@ import {
   workspaceTreeApi,
   type WorkspaceTreeEvent,
 } from "@t3tools/extension-sdk/catalogue";
-import { defineExtension, requireApi, Tooltip } from "@t3tools/extension-sdk/authoring";
+import {
+  defineExtension,
+  requireApi,
+  Tooltip,
+  useWindowedRows,
+} from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
@@ -117,6 +130,8 @@ import {
 const manifestId = "t3.files";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
+/** Every tree row's height: the windowed tree places rows by it. */
+const TREE_ROW_HEIGHT = 24;
 
 // Every theme-backed value chains a `--t3-files-*` hop (published on the view
 // root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
@@ -1278,7 +1293,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
-  const treeListRef = useRef<HTMLUListElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   // HTML renders by default; a pending line reveal shows the source it
   // scrolls. The choice is the client's shared preference — the native
@@ -1328,6 +1342,68 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
   const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
+  const rowIndex = useMemo(
+    () => new Map(rows.map((row, index) => [row.entry.path, index])),
+    [rows],
+  );
+  // Native parity (FileBrowserPanel's virtualized tree): only the rows near
+  // the viewport mount, so an expanded tree of any size stays cheap. The
+  // focused row stays mounted so keyboard focus survives scrolling.
+  const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const tree = useWindowedRows(host, {
+    count: rows.length,
+    rowHeight: TREE_ROW_HEIGHT,
+    ...(focusedRow !== null && rowIndex.has(focusedRow) ? { keep: rowIndex.get(focusedRow) } : {}),
+  });
+  const rowButtons = useRef(new Map<string, HTMLButtonElement>());
+  const focusTarget = useRef<string | null>(null);
+  useEffect(() => {
+    const path = focusTarget.current;
+    const button = path === null ? undefined : rowButtons.current.get(path);
+    if (button === undefined) return;
+    focusTarget.current = null;
+    button.focus({ preventScroll: true });
+  });
+  const focusRow = (index: number) => {
+    const path = rows[index]?.entry.path;
+    if (path === undefined) return;
+    focusTarget.current = path;
+    setFocusedRow(path);
+    tree.reveal(index);
+  };
+  // Tree keys, as native's: up/down/home/end move; right opens a folder or
+  // enters it; left closes it or moves to its parent.
+  const onTreeKeyDown = (event: KeyboardEvent) => {
+    const index = focusedRow === null ? undefined : rowIndex.get(focusedRow);
+    const row = index === undefined ? undefined : rows[index];
+    if (index === undefined || row === undefined) return;
+    const open = row.expandable && expanded.has(row.entry.path);
+    let next: number | undefined;
+    if (event.key === "ArrowDown") next = Math.min(rows.length - 1, index + 1);
+    else if (event.key === "ArrowUp") next = Math.max(0, index - 1);
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = rows.length - 1;
+    else if (event.key === "ArrowRight" && row.expandable)
+      next = open ? ((rows[index + 1]?.depth ?? 0) > row.depth ? index + 1 : index) : undefined;
+    else if (event.key === "ArrowLeft") {
+      const parent = parentPath(row.entry.path);
+      next = open ? undefined : parent === null ? index : rowIndex.get(parent);
+    } else return;
+    event.preventDefault();
+    if (next === undefined) setFolders((previous) => toggleFolder(previous, row.entry.path));
+    else focusRow(next);
+  };
+  // A file selected from anywhere — a link, search, the breadcrumb — scrolls
+  // into view in the tree once its folders have opened.
+  const [treeReveal, setTreeReveal] = useState<string | null>(selected);
+  const revealTreeRow = tree.reveal;
+  useEffect(() => {
+    if (treeReveal === null) return;
+    const index = rowIndex.get(treeReveal);
+    if (index === undefined) return;
+    setTreeReveal(null);
+    revealTreeRow(index);
+  }, [treeReveal, rowIndex, revealTreeRow]);
   const everyFolderOpen = allDirectoriesExpanded(directories, expanded);
   const toggleAllDirectories = () => setFolders({ all: !everyFolderOpen, paths: new Set() });
   const expandAllLabel = everyFolderOpen ? "Collapse all folders" : "Expand all folders";
@@ -1569,6 +1645,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
   const select = (path: string, line?: number) => {
     setSelected(path);
+    setTreeReveal(path);
     // Selecting is navigating: any held selection and any open draft die
     // here even when the path (and its contents) did not change.
     clearEditorSelection();
@@ -1785,7 +1862,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               // The workspace root resolves to "" — no tree entry exists for
               // it, so the affordance is revealing the tree's top level.
               setQuery("");
-              treeListRef.current?.scrollTo({ top: 0 });
+              tree.reveal(0);
               return;
             }
             if (kindByPath.get(path) === "directory") {
@@ -1945,15 +2022,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       )}
       {showExplorer && (
         <ul
-          ref={treeListRef}
+          ref={tree.ref}
           aria-label="Workspace files"
+          onScroll={tree.onScroll}
+          onKeyDown={searching ? undefined : onTreeKeyDown}
           style={{
             listStyle: "none",
             margin: 0,
-            padding: 6,
+            padding: searching ? 6 : "0 6px",
             overflow: "auto",
             flex: 1,
             minHeight: 0,
+            position: "relative",
           }}
         >
           {searching
@@ -2071,48 +2151,81 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     </button>
                   </li>
                 ))
-            : rows.map((row) => (
-                <li key={row.entry.path}>
-                  <button
-                    type="button"
-                    aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
-                    aria-current={row.entry.path === selected ? "true" : undefined}
-                    draggable
-                    onDragStart={(event) => startMentionDrag(event, row.entry.path)}
-                    onClick={() => {
-                      if (!row.expandable) {
-                        select(row.entry.path);
-                        return;
-                      }
-                      setFolders((previous) => toggleFolder(previous, row.entry.path));
-                    }}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      font: "inherit",
-                      fontSize: 12,
-                      padding: "4px 6px",
-                      paddingLeft: 6 + row.depth * 14,
-                      border: "1px solid transparent",
-                      borderRadius: 5,
-                      cursor: "pointer",
-                      color: "var(--t3-files-text, var(--foreground, #20252d))",
-                      background:
-                        row.entry.path === selected
-                          ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                          : "transparent",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
-                    {row.entry.path.split("/").at(-1)}
-                    {row.expandable ? "/" : ""}
-                  </button>
-                </li>
-              ))}
+            : [
+                <li
+                  key="tree-extent"
+                  role="none"
+                  aria-hidden="true"
+                  style={{ height: tree.height }}
+                />,
+                ...tree.indexes.map((index) => {
+                  const row = rows[index]!;
+                  return (
+                    <li
+                      key={row.entry.path}
+                      aria-setsize={rows.length}
+                      aria-posinset={index + 1}
+                      style={{
+                        position: "absolute",
+                        top: index * TREE_ROW_HEIGHT,
+                        left: 6,
+                        right: 6,
+                        height: TREE_ROW_HEIGHT,
+                      }}
+                    >
+                      <button
+                        ref={(button) => {
+                          if (button === null) rowButtons.current.delete(row.entry.path);
+                          else rowButtons.current.set(row.entry.path, button);
+                        }}
+                        type="button"
+                        aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
+                        aria-current={row.entry.path === selected ? "true" : undefined}
+                        draggable
+                        onDragStart={(event) => startMentionDrag(event, row.entry.path)}
+                        onFocus={() => setFocusedRow(row.entry.path)}
+                        onBlur={() =>
+                          setFocusedRow((current) => (current === row.entry.path ? null : current))
+                        }
+                        onClick={() => {
+                          if (!row.expandable) {
+                            select(row.entry.path);
+                            return;
+                          }
+                          setFolders((previous) => toggleFolder(previous, row.entry.path));
+                        }}
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          height: TREE_ROW_HEIGHT,
+                          boxSizing: "border-box",
+                          textAlign: "left",
+                          font: "inherit",
+                          fontSize: 12,
+                          lineHeight: "16px",
+                          padding: "3px 6px",
+                          paddingLeft: 6 + row.depth * 14,
+                          border: "1px solid transparent",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          color: "var(--t3-files-text, var(--foreground, #20252d))",
+                          background:
+                            row.entry.path === selected
+                              ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
+                              : "transparent",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
+                        {row.entry.path.split("/").at(-1)}
+                        {row.expandable ? "/" : ""}
+                      </button>
+                    </li>
+                  );
+                }),
+              ]}
         </ul>
       )}
       {showExplorer && (

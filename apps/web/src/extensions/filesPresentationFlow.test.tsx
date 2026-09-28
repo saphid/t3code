@@ -1018,6 +1018,56 @@ describe("expanding and collapsing every folder", () => {
     }
   });
 
+  // Review repro (gaps-files-2 P1): expand-all over a 25,000-entry tree
+  // mounts only the rows around the viewport, as native's virtualized tree does.
+  it("mounts a bounded window of a 25,000-entry tree and still reaches every row", async () => {
+    const names = Array.from({ length: 1000 }, (_, i) => `d${String(i).padStart(3, "0")}`);
+    const files: Record<string, string> = {};
+    for (const name of names)
+      for (let file = 0; file < 24; file++)
+        files[`${name}/f${String(file).padStart(2, "0")}.txt`] = "f";
+    const panel = await mountPanel({ directories: names, files });
+    const list = () => panel.labelled("Workspace files")!;
+    const key = (name: string) =>
+      act(async () => list().props.onKeyDown({ key: name, preventDefault() {} }));
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "d000/f00.txt"));
+      expect(panel.text()).toContain("25000 entries");
+      await act(async () => panel.labelled("Expand all folders")!.props.onClick());
+      expect(panel.rows().length).toBeLessThan(100);
+      expect(panel.rows().slice(0, 2)).toEqual(["▾ d000/", "f00.txt"]);
+      // Scrolling moves the window.
+      await act(async () => list().props.onScroll({ currentTarget: { scrollTop: 300_000 } }));
+      expect(panel.rows().length).toBeLessThan(100);
+      expect(panel.rows()).not.toContain("▾ d000/");
+      // Keys move through rows that were never mounted.
+      await act(async () =>
+        panel.labelled("Workspace files")!.findAllByType("button")[0]!.props.onFocus(),
+      );
+      await key("End");
+      expect(panel.rows().at(-1)).toBe("f23.txt");
+      await key("Home");
+      expect(panel.rows()[0]).toBe("▾ d000/");
+      await key("ArrowDown");
+      await key("ArrowLeft");
+      await key("ArrowLeft");
+      expect(panel.rows().slice(0, 2)).toEqual(["▸ d000/", "▾ d001/"]);
+      await key("ArrowRight");
+      expect(panel.rows().slice(0, 2)).toEqual(["▾ d000/", "f00.txt"]);
+      // A file opened far away is revealed in the tree.
+      await act(async () => panel.labelled("Collapse all folders")!.props.onClick());
+      expect(panel.rows().length).toBeLessThan(100);
+      await act(async () => panel.navigation({ relativePath: "d987/f12.txt" }));
+      const current = list()
+        .findAllByType("button")
+        .filter((row) => row.props["aria-current"] === "true");
+      expect(current.map((row) => row.children.join(""))).toEqual(["f12.txt"]);
+      expect(panel.rows().length).toBeLessThan(100);
+    } finally {
+      await panel.unmount();
+    }
+  }, 30_000);
+
   it("offers no control when the tree has no folders", async () => {
     const panel = await mountPanel({ files: { "only.txt": "o" } });
     try {
