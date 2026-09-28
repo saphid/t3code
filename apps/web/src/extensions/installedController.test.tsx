@@ -91,6 +91,7 @@ function harness(
     ),
     discoverApis: vi.fn(async () => []),
     register,
+    policyChanged: vi.fn(),
     changed: (snapshot: InstalledSnapshot) => snapshots.push(snapshot),
   };
   const controller = createInstalledExtensionController({ ...options, ...extra });
@@ -497,16 +498,38 @@ it("retains receipt negotiation after a transient list failure so the next recei
     await receipts.request();
     expect(h.snapshots.at(-1)?.error).toBe("Temporary HTTP failure");
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+    // A failed list is not a removal: the live client and the catalogue stay.
+    expect(h.snapshots.at(-1)?.installations).toHaveLength(1);
+    expect(h.stop).not.toHaveBeenCalled();
     await receipts.request();
     expect(h.snapshots.at(-1)?.error).toBeNull();
     expect(h.snapshots.at(-1)?.installations).toHaveLength(1);
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
-    expect(h.register).toHaveBeenCalledTimes(2);
+    expect(h.register).toHaveBeenCalledTimes(1);
     h.options.list.mockImplementation(async () => ({ installations: [installation] }));
     await receipts.request();
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(false);
   } finally {
     receipts.dispose();
+    h.controller.dispose();
+  }
+});
+
+it("retires live clients when the environment answers with an invalid catalogue", async () => {
+  const h = harness();
+  try {
+    await h.controller.refresh();
+    expect(h.register).toHaveBeenCalledTimes(1);
+    // The server answered, but the list fails validation (a duplicate entry).
+    h.setCatalog([installation, installation]);
+    await h.controller.refresh();
+    expect(h.snapshots.at(-1)?.error).toBe("Duplicate installed package");
+    expect(h.snapshots.at(-1)?.installations).toEqual([]);
+    expect(h.stop).toHaveBeenCalledTimes(1);
+    expect(h.controller.installationEpoch(installation.id)).toBeNull();
+    // Its API policy is retired with it, so presentation falls back natively.
+    expect(h.options.policyChanged).toHaveBeenLastCalledWith(null);
+  } finally {
     h.controller.dispose();
   }
 });

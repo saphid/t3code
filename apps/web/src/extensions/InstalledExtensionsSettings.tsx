@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Checkbox } from "../components/ui/checkbox";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../components/ui/menu";
 import { useEnvironments } from "../state/environments";
-import { useEnvironmentSessionState } from "../state/session";
+import { useEnvironmentSessionState, usePreparedConnection } from "../state/session";
 import { environmentProjects } from "../state/projects";
 import {
   installEnvironmentExtension,
@@ -21,9 +21,11 @@ import {
 function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }) {
   const snapshot = useInstalledExtensions(environmentId);
   const session = useEnvironmentSessionState(environmentId);
+  const connected = usePreparedConnection(environmentId)._tag === "Some";
   const canManage =
     session.data?.authenticated === true &&
     session.data.scopes?.includes(AuthAccessWriteScope) === true;
+  const canChange = canManage && connected;
   const projects = useAtomValue(environmentProjects.projectsAtom).filter(
     (project) => project.environmentId === environmentId,
   );
@@ -124,7 +126,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
       </p>
       <div className="flex gap-2">
         <Button
-          disabled={!canManage || busy || !trusted || !path.trim()}
+          disabled={!canChange || busy || !trusted || !path.trim()}
           onClick={() =>
             void act(() =>
               installEnvironmentExtension(environmentId, {
@@ -140,7 +142,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
         </Button>
         <Button
           variant="outline"
-          disabled={busy || snapshot.loading}
+          disabled={!connected || busy || snapshot.loading}
           onClick={() => void act(() => refreshInstalledExtensions(environmentId))}
         >
           Refresh extensions
@@ -159,6 +161,11 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             {api.id}: {api.reason?.detail}
           </p>
         ))}
+      {!connected && snapshot.installations.length ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Disconnected. Showing the last known installations.
+        </p>
+      ) : null}
       {!snapshot.loading && !snapshot.installations.length ? (
         <p className="text-sm text-muted-foreground">No installed extensions.</p>
       ) : null}
@@ -202,7 +209,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
                 <Button
                   key={api.id}
                   variant="outline"
-                  disabled={!canManage || busy || !item.enabled}
+                  disabled={!canChange || busy || !item.enabled}
                   onClick={() =>
                     void act(() =>
                       selectInstalledApiProvider(environmentId, {
@@ -220,7 +227,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              disabled={!canManage || busy}
+              disabled={!canChange || busy}
               onClick={() =>
                 void act(() =>
                   manageInstalledExtension(environmentId, {
@@ -238,7 +245,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             </Button>
             <Button
               variant="outline"
-              disabled={!canManage || busy}
+              disabled={!canChange || busy}
               onClick={() =>
                 void act(() =>
                   manageInstalledExtension(environmentId, { id: item.id, action: "rollback" }),
@@ -249,7 +256,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             </Button>
             <Button
               variant="outline"
-              disabled={!canManage || busy}
+              disabled={!canChange || busy}
               onClick={() =>
                 void act(() =>
                   manageInstalledExtension(environmentId, {
@@ -263,7 +270,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             </Button>
             <Button
               variant="outline"
-              disabled={!canManage || busy || !trusted || !path.trim()}
+              disabled={!canChange || busy || !trusted || !path.trim()}
               onClick={() =>
                 void act(() =>
                   manageInstalledExtension(environmentId, {
@@ -279,7 +286,7 @@ function EnvironmentPackages({ environmentId }: { environmentId: EnvironmentId }
             </Button>
             <Button
               variant="outline"
-              disabled={!canManage || busy}
+              disabled={!canChange || busy}
               onClick={() =>
                 void act(() =>
                   manageInstalledExtension(environmentId, { id: item.id, action: "remove" }),
