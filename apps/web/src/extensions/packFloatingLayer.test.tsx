@@ -188,12 +188,23 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-/** Lets settled reads, timers and the updates they queued land. */
+/**
+ * One animation frame: Base UI moves focus in a frame callback, so a callback
+ * queued after its own runs once that focus has moved.
+ */
+async function nextFrame() {
+  await act(async () => {
+    await new Promise((next) => requestAnimationFrame(next));
+  });
+}
+
+/** Lets settled reads, timers, focus frames and the updates they queued land. */
 async function settle() {
   for (let index = 0; index < 5; index += 1)
     await act(async () => {
       await new Promise((next) => setTimeout(next, 0));
     });
+  await nextFrame();
 }
 
 function scriptedHost(handlers: Record<string, (input: unknown) => unknown>): ClientHost {
@@ -266,7 +277,11 @@ async function pressOutside(element: HTMLElement) {
 
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 /** Where a press anywhere outside the dialog lands: the backdrop covering the client. */
-const backdrop = () => document.querySelector<HTMLElement>('[data-slot="dialog-backdrop"]')!;
+const backdrop = () => {
+  const element = document.querySelector<HTMLElement>('[data-slot="dialog-backdrop"]');
+  expect(element, "a modal backdrop").not.toBeNull();
+  return element!;
+};
 
 describe("stack confirmation", () => {
   async function renderPanel(handlers: Record<string, (input: unknown) => unknown>) {
@@ -308,11 +323,24 @@ describe("stack confirmation", () => {
     expect(document.activeElement?.textContent).toBe("Cancel");
   });
 
-  it("keeps focus inside when something outside is focused", async () => {
-    const { repositoryTab } = await renderPanel(handlersFor());
-    await act(async () => repositoryTab.focus());
-    await settle();
-    expect(dialog()?.contains(document.activeElement)).toBe(true);
+  it("wraps Tab at either end back into the dialog", async () => {
+    await renderPanel(handlersFor());
+    const open = dialog()!;
+    // Tab off either end of the dialog lands on the guard beside it, which the
+    // modal hands straight back inside.
+    const guards = [...document.querySelectorAll<HTMLElement>("[data-base-ui-focus-guard]")];
+    const after = guards.filter(
+      (guard) => open.compareDocumentPosition(guard) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const before = guards.filter(
+      (guard) => open.compareDocumentPosition(guard) & Node.DOCUMENT_POSITION_PRECEDING,
+    );
+    expect(after.length > 0 && before.length > 0).toBe(true);
+    for (const guard of [after[0]!, before.at(-1)!]) {
+      await act(async () => guard.focus());
+      await nextFrame();
+      expect(open.contains(document.activeElement)).toBe(true);
+    }
   });
 
   it("closes on an outside press or Escape and hands focus back to its opener", async () => {
