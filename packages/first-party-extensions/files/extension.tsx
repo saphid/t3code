@@ -1351,11 +1351,21 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     restoredExplorerOpen(session.restoreState),
   );
   const showExplorer = showsFileExplorer(selected, explorerOpen);
+  // The latest reveal of the selected file persists with it, so a reload
+  // reveals that line rather than the one the view first opened at.
+  const revealLine = revealRequest?.path === selected ? revealRequest.line : null;
   // Row 12: selection, expansion and preview mode persist through one
   // `session.save`; the ref skips re-saving a state that is already stored.
   const savedViewStateRef = useRef<string | null>(null);
   useEffect(() => {
-    const state = filesViewState(selected, expanded, renderMarkdown, renderHtml, explorerOpen);
+    const state = filesViewState(
+      selected,
+      expanded,
+      renderMarkdown,
+      renderHtml,
+      explorerOpen,
+      revealLine,
+    );
     const serialized = JSON.stringify(state);
     // The first run only records the restored state — nothing changed yet.
     if (savedViewStateRef.current === null) {
@@ -1364,7 +1374,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     }
     if (serialized === savedViewStateRef.current) return;
     if (session.save(state)) savedViewStateRef.current = serialized;
-  }, [session, selected, expanded, renderMarkdown, renderHtml, explorerOpen]);
+  }, [session, selected, expanded, renderMarkdown, renderHtml, explorerOpen, revealLine]);
 
   // Row 14: review comments on file lines. The textarea's character selection
   // expands to full lines; submit lands a real composer draft review comment

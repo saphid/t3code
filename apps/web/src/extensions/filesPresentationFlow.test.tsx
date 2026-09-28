@@ -1074,3 +1074,23 @@ describe("opening a file in the preview browser", () => {
     }
   });
 });
+
+// Review backlog (proof-host-12 P3): a reload restores the latest line a link
+// revealed, as native's persisted `revealLine` does, not the view's first one.
+describe("a line revealed after the view opened", () => {
+  it("is the line a reload reveals", async () => {
+    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
+    const panel = await mountPanel({ files: { "reveal.txt": "one\ntwo\nthree" } });
+    try {
+      await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 2 }));
+      expect(panel.textarea.carets.at(-1)).toBe(4);
+      await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 3 }));
+      expect(panel.textarea.carets.at(-1)).toBe(8);
+      await panel.reload();
+      expect(panel.textarea.carets.at(-1)).toBe(8);
+    } finally {
+      await panel.unmount();
+    }
+  });
+});

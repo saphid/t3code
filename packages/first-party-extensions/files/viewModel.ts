@@ -1109,7 +1109,11 @@ export type FilesViewState = {
   readonly renderHtml?: boolean;
   /** Absent means shown, the native default; only a hidden explorer is saved. */
   readonly explorer?: boolean;
-  /** A file link's line, from `t3.file/presentation.open`; never saved back. */
+  /**
+   * The line the selected file last revealed: a file link's line from
+   * `t3.file/presentation.open`, then each later reveal of that file, so a
+   * reload reveals the latest one as native's persisted `revealLine` does.
+   */
   readonly line?: number;
 };
 
@@ -1198,6 +1202,7 @@ export function filesViewState(
   renderMarkdown: boolean,
   renderHtml = true,
   explorer = true,
+  line: number | null = null,
 ): FilesViewState {
   const kept: string[] = [];
   let bytes = 0;
@@ -1214,6 +1219,7 @@ export function filesViewState(
     renderMarkdown,
     ...(renderHtml ? {} : { renderHtml: false }),
     ...(explorer ? {} : { explorer: false }),
+    ...(selected !== null && line !== null ? { line } : {}),
   };
 }
 
