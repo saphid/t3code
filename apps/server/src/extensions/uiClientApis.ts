@@ -21,6 +21,7 @@ import {
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import {
+  CLIENT_EXTERNAL_V11_RANGE,
   CLIENT_NAVIGATION_V11_RANGE,
   CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
@@ -1092,22 +1093,59 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     availability: ambient(deps, CLIENT_EXTERNAL),
     invoke(method, input, context, signal, metadata): Promise<Json> {
       if (method === "getCapabilities")
-        return capabilities(deps, "host.ui.external", { open: CLIENT_EXTERNAL }, metadata);
-      if (method !== "open")
+        return capabilities(
+          deps,
+          "host.ui.external",
+          { open: CLIENT_EXTERNAL, openLink: CLIENT_EXTERNAL },
+          metadata,
+        );
+      if (method !== "open" && method !== "openLink")
         return Promise.reject(
           providerError("client-provider-unavailable", `Unknown external op: ${method}`),
         );
       // A refused URL never reaches a client: the receipt names the reason.
-      const checked = checkExternalUrl((input as { url: string }).url);
+      const { url, forceSystem } = input as { url: string; forceSystem?: boolean };
+      const checked = checkExternalUrl(url);
       if (!checked.ok)
         return Promise.resolve({ status: "refused", reason: checked.reason } satisfies Json);
-      return forward(deps, CLIENT_EXTERNAL, "open")(
-        method,
-        { url: checked.url },
-        context,
-        signal,
-        metadata,
-      );
+      if (method === "open")
+        return forward(deps, CLIENT_EXTERNAL, "open")(
+          method,
+          { url: checked.url },
+          context,
+          signal,
+          metadata,
+        );
+      // `openLink` is 1.1.0: the "Open links in" setting is client state, so
+      // the caller's own client decides between its preview browser and the
+      // OS opener. A 1.0.0 client has no setting-aware open and keeps the
+      // system browser it always used.
+      return (async () => {
+        const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+          signal,
+        });
+        const { ok } = await clientSupports(
+          connectionId,
+          CLIENT_EXTERNAL,
+          CLIENT_EXTERNAL_V11_RANGE,
+          signal,
+        );
+        return Effect.runPromise(
+          invokeClient(deps, {
+            apiId: CLIENT_EXTERNAL,
+            method: ok ? "openLink" : "open",
+            input: {
+              url: checked.url,
+              ...(ok && forceSystem === true ? { forceSystem } : {}),
+            },
+            context,
+            metadata,
+            signal,
+            connectionId,
+          }),
+          { signal },
+        );
+      })();
     },
   };
 

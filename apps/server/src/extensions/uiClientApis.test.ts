@@ -318,6 +318,63 @@ describe("external adapter", () => {
   });
 });
 
+// fix-d9: terminal URL links ignored "Open links in: in-app browser". The
+// setting is client state, so openLink (1.1.0) reaches the caller's own
+// client, which routes it; a 1.0.0 client keeps the system browser.
+describe("1.1.0 openLink", () => {
+  const seam = (external: string) =>
+    fakeBridge({
+      targets: [
+        { connectionId: "conn-1", providers: [{ id: "t3.client/external", version: external }] },
+      ],
+    });
+  const openLink = (bridge: ReturnType<typeof fakeBridge>, input: Record<string, unknown>) =>
+    makeProviders(bridge).external.invoke("openLink", input as Json, context, signal, metadata());
+
+  it("forwards the checked link and the modifier to a client that routes links", async () => {
+    const current = seam("1.1.0");
+    await openLink(current, { url: "HTTPS://Example.com" });
+    await openLink(current, { url: "https://example.com/b", forceSystem: true });
+    expect(current.invoked.map(({ method, input }) => ({ method, input }))).toEqual([
+      {
+        method: "openLink",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          url: "https://example.com/",
+        },
+      },
+      {
+        method: "openLink",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          url: "https://example.com/b",
+          forceSystem: true,
+        },
+      },
+    ]);
+  });
+
+  it("opens in the system browser on an older client and refuses bad URLs locally", async () => {
+    const older = seam("1.0.0");
+    await openLink(older, { url: "https://example.com/", forceSystem: true });
+    expect(older.invoked.map(({ method, input }) => ({ method, input }))).toEqual([
+      {
+        method: "open",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          url: "https://example.com/",
+        },
+      },
+    ]);
+    const current = seam("1.1.0");
+    await expect(openLink(current, { url: "file:///etc/passwd" })).resolves.toEqual({
+      status: "refused",
+      reason: "scheme-not-allowed",
+    });
+    expect(current.invoked).toHaveLength(0);
+  });
+});
+
 describe("editor adapter", () => {
   it("forwards openPath to the caller's own client", async () => {
     const bridge = fakeBridge();

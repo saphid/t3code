@@ -32,6 +32,8 @@ import {
   clientPreferencesPatchSchema,
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
+  uiExternalLinkInputProperties,
+  uiExternalLinkReceiptSchema,
   uiEditorOpenReceiptSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
@@ -9498,39 +9500,116 @@ export function checkExternalUrl(
     : { ok: false, reason: "scheme-not-allowed" };
 }
 
+export type UiExternalLinkReceipt =
+  | {
+      readonly status: "opened";
+      readonly url: string;
+      readonly opener: "desktop-shell" | "browser-window" | "in-app-browser";
+    }
+  | { readonly status: "refused"; readonly reason: UiExternalRefusalReason };
+
+const uiExternalGetCapabilitiesMethod = {
+  name: "getCapabilities",
+  effect: "read",
+  requiredGrants: [],
+  inputSchema: composerEmptyInputSchema,
+  outputSchema: uiCapabilitiesOutput(["open"]),
+} as const;
+const uiExternalOpenMethod = {
+  name: "open",
+  effect: "write",
+  requiredGrants: [UI_EXTERNAL_OPEN],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["url"],
+    properties: { url: { type: "string", minLength: 1, maxLength: 2048 } },
+  },
+  outputSchema: uiExternalOpenReceiptSchema,
+} as const;
+
 /**
  * Hands a checked URL to the caller's own client: the OS opener on desktop,
  * a `noopener` `window.open` on web. A refusal is a typed receipt, not an
  * error; a missing `t3.ui/external.open` grant fails the invoke.
+ *
+ * `openLink` (1.1.0) opens a link the way a native terminal or chat link
+ * does: the host applies the user's "Open links in" setting, so an http(s)
+ * link can land in the caller's thread's preview browser (`in-app-browser`)
+ * instead of the OS opener. The pack never reads the setting; `forceSystem`
+ * carries native's Cmd/Ctrl-click escape to the system browser.
+ * `openExternalLink` probes for it, so a pack keeps its 1.0.0 requirement.
  */
 export const uiExternalApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  open: { input: { url: string }; output: UiExternalOpenReceipt };
+  openLink: {
+    input: { url: string; forceSystem?: boolean };
+    output: UiExternalLinkReceipt;
+  };
+}>(
+  {
+    id: UI_EXTERNAL,
+    version: "1.1.0",
+    methods: [
+      {
+        ...uiExternalGetCapabilitiesMethod,
+        outputSchema: uiCapabilitiesOutput(["open", "openLink"]),
+      },
+      uiExternalOpenMethod,
+      {
+        name: "openLink",
+        effect: "write",
+        requiredGrants: [UI_EXTERNAL_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["url"],
+          properties: uiExternalLinkInputProperties,
+        },
+        outputSchema: uiExternalLinkReceiptSchema,
+      },
+    ],
+  },
+  // Consumers keep loading on a 1.0.0 host; probe before calling openLink.
+  { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "openLink" }] },
+);
+/** Frozen published 1.0.0 definition, before `openLink`; providers may still declare it. */
+export const uiExternalApiV1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   open: { input: { url: string }; output: UiExternalOpenReceipt };
 }>({
   id: UI_EXTERNAL,
   version: "1.0.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput(["open"]),
-    },
-    {
-      name: "open",
-      effect: "write",
-      requiredGrants: [UI_EXTERNAL_OPEN],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["url"],
-        properties: { url: { type: "string", minLength: 1, maxLength: 2048 } },
-      },
-      outputSchema: uiExternalOpenReceiptSchema,
-    },
-  ],
+  methods: [uiExternalGetCapabilitiesMethod, uiExternalOpenMethod],
 });
+
+/**
+ * Opens a link through `t3.ui/external` where the user's "Open links in"
+ * setting says (1.1.0 `openLink`), with `forceSystem` for a Cmd/Ctrl-click.
+ * A host older than 1.1.0 has no setting-aware open, so the link goes to
+ * `open` — the system browser, as it did before. Needs the
+ * `t3.ui/external.open` grant; rejects only when discovery or the invoke fails.
+ */
+export async function openExternalLink(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  url: string,
+  options: { readonly forceSystem?: boolean; readonly signal: AbortSignal },
+): Promise<UiExternalLinkReceipt> {
+  const discovered = await client.discoverApis(context, options.signal);
+  const routesLinks = discovered.some((api) => {
+    const version = api.id === UI_EXTERNAL ? parseVersion(api.version) : null;
+    return version !== null && version[0] === 1 && compareVersions(version, [1, 1, 0]) >= 0;
+  });
+  if (!routesLinks)
+    return bindApi(uiExternalApi, client, context).invoke("open", { url }, options.signal);
+  return bindApi(uiExternalApi, client, context, "^1.1.0").invoke(
+    "openLink",
+    { url, ...(options.forceSystem === true ? { forceSystem: true } : {}) },
+    options.signal,
+  );
+}
 
 export const UI_EDITOR = "t3.ui/editor";
 export const UI_EDITOR_OPEN = "t3.ui/editor.open";
@@ -10002,6 +10081,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiPreferencesApiV1_1.definition,
   uiPreferencesApiV1.definition,
   uiExternalApi.definition,
+  uiExternalApiV1.definition,
   uiEditorApi.definition,
   uiNavigationApi.definition,
   uiNavigationApiV1_1.definition,

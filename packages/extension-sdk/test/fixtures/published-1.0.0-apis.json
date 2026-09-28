@@ -441,5 +441,159 @@
         }
       }
     ]
+  },
+  "t3.ui/external": {
+    "id": "t3.ui/external",
+    "version": "1.0.0",
+    "methods": [
+      {
+        "name": "getCapabilities",
+        "effect": "read",
+        "requiredGrants": [],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "operations", "clients"],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["open"],
+              "properties": {
+                "open": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "clients": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["connectionId", "providers", "connectedAt"],
+                "properties": {
+                  "connectionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "announcedOrigin": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "surface": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "appVersion": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "os": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "deviceType": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "connectionMethod": {
+                        "type": "string",
+                        "maxLength": 40
+                      }
+                    }
+                  },
+                  "providers": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "version"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      }
+                    }
+                  },
+                  "connectedAt": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "open",
+        "effect": "write",
+        "requiredGrants": ["t3.ui/external.open"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          }
+        },
+        "outputSchema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "url", "opener"],
+              "properties": {
+                "status": {
+                  "const": "opened"
+                },
+                "url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "opener": {
+                  "enum": ["desktop-shell", "browser-window"]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason"],
+              "properties": {
+                "status": {
+                  "const": "refused"
+                },
+                "reason": {
+                  "enum": ["invalid-url", "scheme-not-allowed", "opener-refused"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
   }
 }

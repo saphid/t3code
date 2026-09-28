@@ -42,9 +42,12 @@ Interactive terminal plugin driven entirely by public contracts:
 - `t3.ui/panels@^1.0.0` — the dispatched `toggle` closes the hosting surface
   via `closeSurface`; failures surface on the panel status row.
 - `t3.ui/external@^1.0.0` (`t3.ui/external.open` grant) — activating a
-  detected `http:`/`https:` link opens it on the user's own client (the OS
-  opener on desktop, a new tab on web); a refusal or denied grant is written
-  on the pane.
+  detected `http:`/`https:` link opens it on the user's own client where its
+  "Open links in" setting says, through 1.1.0 `openLink`: the thread's
+  in-app browser, or the OS opener on desktop and a new tab on web.
+  Cmd/Ctrl-click forces the system browser, as in the native drawer. A
+  1.0.0 host has no `openLink`, so links go to the system browser there. A
+  refusal or denied grant is written on the pane.
 - `t3.ui/editor@^1.0.0` (`t3.ui/editor.open` grant) — activating a path link
   sends the link text and the launch cwd to `openPath`, which resolves it
   like the native drawer (`~/`, relative, `:line:column`) and opens the
@@ -83,6 +86,14 @@ stream — the host caps each installation at 8 concurrent plugin streams,
 and the sessions/theme feeds already take 3, so attaching every tracked
 session at once would starve the sessions stream itself. Hidden panes
 re-attach and resume their retained history when their group is shown.
+A restored pane, shown in a newly mounted view, whose session the server
+no longer has (after an app or backend restart) starts a fresh shell once
+the session list is live, as the native drawer does when it attaches the
+panes it shows. A view that stayed mounted across a backend restart can
+keep showing its last-seen session state; reopening the view recovers it.
+The automatic start never relaunches a session that already exists, so a
+start that failed or exited (including one started by another client)
+waits for Start.
 
 The surface declares `claimsTerminalFocus`, so the host tags the frame
 `data-terminal-owner="extension"` and leaves the four focused terminal

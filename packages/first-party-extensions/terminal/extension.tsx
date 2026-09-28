@@ -4,6 +4,7 @@ import {
   terminalOutputApi,
   terminalOutputEventsApi,
   terminalSessionsApi,
+  openExternalLink,
   uiEditorApi,
   uiExternalApi,
   uiKeybindingsApi,
@@ -877,11 +878,12 @@ function TerminalPane(props: {
         onContextMenu: selectionMenu.onContextMenu,
         beforeKey: (event) =>
           handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
-        onLinkActivate: (text) => {
+        onLinkActivate: (text, event) => {
           // Terminal 22: a detected URL opens through t3.ui/external on the
-          // user's own client; a path link opens in the user's preferred
-          // editor through t3.ui/editor, like the native drawer. Both report
-          // failures on the surface.
+          // user's own client, where its "Open links in" setting says
+          // (Cmd/Ctrl-click forces the system browser); a path link opens in
+          // the user's preferred editor through t3.ui/editor, like the native
+          // drawer. Both report failures on the surface.
           if (surface === null) return;
           const paneSurface = surface;
           const signal = session.signal;
@@ -890,9 +892,11 @@ function TerminalPane(props: {
               writeSystemMessage(paneSurface, failure);
           };
           if (isTerminalUrl(text)) {
-            void openTerminalUrl(bindApi(uiExternalApi, host, session.context), text, signal).then(
-              report,
-            );
+            const forceSystem = event.metaKey || event.ctrlKey;
+            void openTerminalUrl(
+              (url) => openExternalLink(host, session.context, url, { forceSystem, signal }),
+              text,
+            ).then(report);
             return;
           }
           const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
@@ -1390,6 +1394,14 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     ...snapshot.terminalIds.filter((id) => !visibleSet.has(id)),
   ];
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
+  // Like native's drawer attaching the panes it shows: a shown restored pane
+  // whose session the server no longer has starts without a Start click.
+  const missingShownKey = visibleTerminalIds
+    .filter((id) => tabById.get(id)?.status === "closed")
+    .join("\n");
+  useEffect(() => {
+    if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));
+  }, [panel, visible, missingShownKey, snapshot.stream]);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const splitLimitNote = hasReachedSplitLimit ? `max ${MAX_TERMINALS_PER_GROUP} per group` : null;
   const newTerminalLabel = terminalActionLabel("New Terminal", shortcutLabel("terminal.new"));

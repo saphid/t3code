@@ -18,7 +18,7 @@ import {
   type UiKeybindingChord,
   type UiKeybindingsHost,
   type UiEditorOpenReceipt,
-  type UiExternalOpenReceipt,
+  type UiExternalLinkReceipt,
   type UiTerminalAppearance,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
@@ -660,23 +660,17 @@ export async function openTerminalPath(
 
 /**
  * Terminal 22, URL half: hands a detected URL to the user's own client
- * through `t3.ui/external` (the native drawer's system-browser fallback).
- * Resolves null once opened — native opens silently — or the surface line
- * naming the refusal or the failed invoke.
+ * through `t3.ui/external` (`openExternalLink`), which lands it where the
+ * user's "Open links in" setting says, like the native drawer. Resolves null
+ * once opened — native opens silently — or the surface line naming the
+ * refusal or the failed invoke.
  */
 export async function openTerminalUrl(
-  external: {
-    invoke(
-      method: "open",
-      input: { url: string },
-      signal: AbortSignal,
-    ): Promise<UiExternalOpenReceipt>;
-  },
+  openLink: (url: string) => Promise<UiExternalLinkReceipt>,
   url: string,
-  signal: AbortSignal,
 ): Promise<string | null> {
   try {
-    const receipt = await external.invoke("open", { url }, signal);
+    const receipt = await openLink(url);
     return receipt.status === "opened" ? null : `${url} was not opened (${receipt.reason}).`;
   } catch (error) {
     return `${url} could not be opened — ${error instanceof Error ? error.message : "unavailable"}`;
@@ -1182,8 +1176,32 @@ export class TerminalPanel {
     return terminalId;
   }
 
-  /** Attach a tracked id that has no live metadata (restore/edge). */
-  async startSession(terminalId: string): Promise<void> {
+  /**
+   * Starts the shown panes the server has no session for — a restored tab
+   * after an app or server restart. Native attaches every pane it shows with
+   * its launch cwd, which spawns a fresh shell for a missing session; this
+   * does the same once the list is live, so the pane does not sit closed
+   * until Start. A server row (even an exited one) or a failed start is left
+   * for the user, as native leaves it. Like native's automatic attach, this
+   * never asks the server to restart: another client's restore may have
+   * already created (and failed or exited) the session since our snapshot,
+   * and only Start may relaunch it.
+   */
+  startMissingSessions(terminalIds: readonly string[]) {
+    if (this.#disposed || this.#stream !== "live") return;
+    for (const terminalId of terminalIds) {
+      const tab = this.#tabs.get(terminalId);
+      if (tab && tab.meta === null && !tab.starting && tab.error === null)
+        void this.#attach(terminalId, false);
+    }
+  }
+
+  /** Start: attach a tracked id that has no live metadata, restarting a stopped session. */
+  startSession(terminalId: string): Promise<void> {
+    return this.#attach(terminalId, true);
+  }
+
+  async #attach(terminalId: string, restartIfNotRunning: boolean): Promise<void> {
     const launch = this.#launch;
     const tab = this.#tabs.get(terminalId);
     if (!tab || !launch || tab.starting) return;
@@ -1198,7 +1216,7 @@ export class TerminalPanel {
         terminalId,
         cwd: launch.cwd,
         worktreePath: launch.worktreePath,
-        restartIfNotRunning: true,
+        ...(restartIfNotRunning ? { restartIfNotRunning: true } : {}),
         ...(launch.cols !== undefined ? { cols: launch.cols } : {}),
         ...(launch.rows !== undefined ? { rows: launch.rows } : {}),
         ...(launch.env !== undefined ? { env: launch.env } : {}),

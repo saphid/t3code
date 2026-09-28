@@ -408,6 +408,79 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
     NodeAssert.deepEqual(reconcileTerminalIds(["c", "a", "b"], ["a", "c", "d"]), ["c", "a", "d"]);
   });
 
+  NodeTest.it(
+    "starts shown restored ids only once the live list lacks them (fix-d9 O2)",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({
+        control,
+        launch,
+        restored: { terminalIds: ["term-1", "term-2", "term-3"], activeTerminalId: "term-1" },
+      });
+      // Before the first snapshot nothing is known to be missing.
+      panel.startMissingSessions(["term-1", "term-2", "term-3"]);
+      NodeAssert.deepEqual(control.calls, []);
+      // The restarted server still has term-2 (exited); term-1 and term-3 are gone.
+      panel.applySessionsEvent({
+        kind: "snapshot",
+        terminals: [{ ...meta("term-2"), status: "exited" }],
+      });
+      panel.startMissingSessions(["term-1", "term-2"]);
+      await Promise.resolve();
+      NodeAssert.deepEqual(
+        control.calls.map(([op, input]) => [op, input.terminalId, input.cwd]),
+        [["attach", "term-1", launch.cwd]],
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "racing restores never relaunch a session another restore just failed (fix-d9 r2)",
+    async () => {
+      // One server, two clients. The fake mirrors Manager.openOrAttach: an
+      // absent session launches; an existing one without a process relaunches
+      // only for restartIfNotRunning. Every launch fails and is retained as an
+      // error row, as the server does.
+      let launches = 0;
+      const sessions = new Map();
+      const serverAttach = (input) => {
+        const existing = sessions.get(input.terminalId);
+        if (existing && input.restartIfNotRunning !== true) return Promise.resolve(existing);
+        launches += 1;
+        const failed = meta(input.terminalId, { status: "error" });
+        sessions.set(input.terminalId, failed);
+        return Promise.resolve(failed);
+      };
+      const clients = [0, 1].map(
+        () =>
+          new TerminalPanel({
+            control: fakeControl({ attach: serverAttach }),
+            launch,
+            restored: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+          }),
+      );
+      // Both see the restarted server's empty list before either attach lands.
+      for (const panel of clients) panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      for (const panel of clients) panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(launches, 1);
+      for (const panel of clients) {
+        NodeAssert.equal(
+          panel.snapshot.tabs.find((tab) => tab.terminalId === "term-1")?.status,
+          "error",
+        );
+        // Observed now: a repeated restore is a no-op; only Start relaunches.
+        panel.startMissingSessions(["term-1"]);
+      }
+      await new Promise(setImmediate);
+      NodeAssert.equal(launches, 1);
+      await clients[1].startSession("term-1");
+      NodeAssert.equal(launches, 2);
+      for (const panel of clients) panel.dispose();
+    },
+  );
+
   NodeTest.it("a restored tab order survives reconcile and is what gets saved", () => {
     const saved = [];
     let panel;
@@ -1670,39 +1743,39 @@ NodeTest.describe("package requirements — t3.ui/* adoption policy", () => {
 });
 
 NodeTest.describe("terminal URL links (Terminal 22 URL half)", () => {
-  const signal = new AbortController().signal;
-  const external = (answer, calls = []) => ({
-    invoke: async (method, input) => {
-      calls.push({ method, input });
+  const openLink =
+    (answer, calls = []) =>
+    async (url) => {
+      calls.push(url);
       if (answer instanceof Error) throw answer;
       return answer;
-    },
-  });
+    };
 
-  NodeTest.it("opens silently through t3.ui/external", async () => {
+  NodeTest.it("opens silently wherever the host sent the link", async () => {
     const calls = [];
-    const opened = external(
-      { status: "opened", url: "https://t3.codes/", opener: "desktop-shell" },
-      calls,
-    );
-    NodeAssert.equal(await openTerminalUrl(opened, "https://t3.codes", signal), null);
-    NodeAssert.deepEqual(calls, [{ method: "open", input: { url: "https://t3.codes" } }]);
+    for (const opener of ["desktop-shell", "in-app-browser"])
+      NodeAssert.equal(
+        await openTerminalUrl(
+          openLink({ status: "opened", url: "https://t3.codes/", opener }, calls),
+          "https://t3.codes",
+        ),
+        null,
+      );
+    NodeAssert.deepEqual(calls, ["https://t3.codes", "https://t3.codes"]);
   });
 
   NodeTest.it("names a refusal and a denied invoke", async () => {
     NodeAssert.equal(
       await openTerminalUrl(
-        external({ status: "refused", reason: "scheme-not-allowed" }),
+        openLink({ status: "refused", reason: "scheme-not-allowed" }),
         "ftp://x",
-        signal,
       ),
       "ftp://x was not opened (scheme-not-allowed).",
     );
     NodeAssert.equal(
       await openTerminalUrl(
-        external(new Error("API capability denied: t3.ui/external.open")),
+        openLink(new Error("API capability denied: t3.ui/external.open")),
         "https://t3.codes",
-        signal,
       ),
       "https://t3.codes could not be opened — API capability denied: t3.ui/external.open",
     );

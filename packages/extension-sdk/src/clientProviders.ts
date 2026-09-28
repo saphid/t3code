@@ -1005,12 +1005,38 @@ export const uiExternalOpenReceiptSchema = {
 } as const;
 
 /**
+ * The `t3.ui/external` link receipt (1.1.0 `openLink`), shared by the public
+ * and private areas: the open receipt plus `in-app-browser` for a link the
+ * user's "Open links in" setting sent to the thread's preview browser.
+ */
+export const uiExternalLinkReceiptSchema = {
+  oneOf: [
+    {
+      ...uiExternalOpenReceiptSchema.oneOf[0],
+      properties: {
+        ...uiExternalOpenReceiptSchema.oneOf[0].properties,
+        opener: { enum: ["desktop-shell", "browser-window", "in-app-browser"] },
+      },
+    },
+    uiExternalOpenReceiptSchema.oneOf[1],
+  ],
+} as const;
+
+/** `openLink` input: the URL and the Cmd/Ctrl-click escape to the system browser. */
+export const uiExternalLinkInputProperties = {
+  url: { type: "string", minLength: 1, maxLength: 2048 },
+  forceSystem: { type: "boolean" },
+} as const;
+
+/**
  * Backs `t3.ui/external`. The adapter forwards only URLs that already passed
  * `checkExternalUrl`; the client re-checks before reaching its OS opener.
+ * `openLink` (1.1.0) routes by the client's own "Open links in" setting; the
+ * adapter sends it only to a client satisfying `CLIENT_EXTERNAL_V11_RANGE`.
  */
 export const CLIENT_EXTERNAL_API = validateApiDefinition({
   id: "t3.client/external",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "open",
@@ -1019,8 +1045,18 @@ export const CLIENT_EXTERNAL_API = validateApiDefinition({
       inputSchema: withTarget({ url: { type: "string", minLength: 1, maxLength: 4096 } }, ["url"]),
       outputSchema: uiExternalOpenReceiptSchema,
     },
+    {
+      name: "openLink",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(uiExternalLinkInputProperties, ["url"]),
+      outputSchema: uiExternalLinkReceiptSchema,
+    },
   ],
 });
+
+/** The external range that carries `openLink`. */
+export const CLIENT_EXTERNAL_V11_RANGE = "^1.1.0";
 
 /** The `t3.ui/editor` open receipt, shared by the public and private areas. */
 export const uiEditorOpenReceiptSchema = {
