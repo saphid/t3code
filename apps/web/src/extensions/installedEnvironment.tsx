@@ -7,7 +7,6 @@ import {
   createExtensionCatalogueAtoms,
   environmentExtensionsHttp,
   environmentExtensionApiStream,
-  environmentResumableExtensionApiStream,
 } from "@t3tools/client-runtime/state/extensions";
 import {
   ExtensionInvokeInput,
@@ -26,7 +25,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import type { HttpClient } from "effect/unstable/http";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -50,6 +48,7 @@ import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
 import { hostCodeView } from "./codeView/hostCodeView";
 import { hostTooltip } from "./hostTooltip";
 import { hostFloatingLayer } from "./floatingLayer/hostFloatingLayer";
+import { authenticatedApiFrames, resumableApiFrames } from "./installedApiFrames";
 import {
   CLIENT_PROVIDER_CLIENT_TAG,
   CLIENT_PROVIDER_DESCRIPTORS,
@@ -115,41 +114,6 @@ function run<A, E>(
     ),
     signal ? { signal } : undefined,
   );
-}
-/** A pull-driven iterator retains only the RPC's bounded delivery window. */
-async function* authenticatedApiFrames(
-  stream:
-    | ReturnType<typeof environmentExtensionApiStream>
-    | ReturnType<typeof environmentResumableExtensionApiStream>,
-  signal: AbortSignal,
-) {
-  const context = await Effect.runPromise(
-    AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
-    { signal },
-  );
-  const iterable = Stream.toAsyncIterableWith(stream, context);
-  const iterator = iterable[Symbol.asyncIterator]();
-  const cancel = () => {
-    void iterator.return?.().catch(() => {});
-  };
-  signal.addEventListener("abort", cancel, { once: true });
-  try {
-    if (signal.aborted) throw new Error("Extension stream cancelled");
-    while (!signal.aborted) {
-      const next = await iterator.next();
-      if (signal.aborted) throw new Error("Extension stream cancelled");
-      if (next.done) return;
-      const { cursor, ...frame } = next.value;
-      yield {
-        ...frame,
-        ...(cursor === undefined ? {} : { cursor }),
-      };
-    }
-    throw new Error("Extension stream cancelled");
-  } finally {
-    signal.removeEventListener("abort", cancel);
-    await iterator.return?.();
-  }
 }
 /** Entries are trusted code. The authenticated server binds this body to the catalog's package hash. */
 async function importInstalledClient(code: string, signal: AbortSignal): Promise<unknown> {
@@ -435,22 +399,12 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             signal,
           ),
         ),
-      // The first open is held like `subscribeApi`; each later transport
-      // session re-reads the socket-bound hint for its payload.
-      subscribeResumableApi: (installationId, expectedContentHash, request, signal) =>
-        withClientConnectionIdFrames(environmentId, signal, () =>
-          authenticatedApiFrames(
-            environmentResumableExtensionApiStream(environmentId, () => {
-              const clientConnectionId = currentClientConnectionId(environmentId);
-              return decodeApiSubscribe({
-                installationId,
-                expectedContentHash,
-                request:
-                  clientConnectionId === undefined ? request : { ...request, clientConnectionId },
-              });
-            }),
-            signal,
-          ),
+      subscribeResumableApi: (installationId, expectedContentHash, request, signal, onSuspended) =>
+        resumableApiFrames(
+          environmentId,
+          decodeApiSubscribe({ installationId, expectedContentHash, request }),
+          signal,
+          onSuspended,
         ),
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({

@@ -285,7 +285,8 @@ var __t3Client = (() => {
               [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) })
             };
           }
-          subscribeApi = resumable.subscribeApi.bind(resumable);
+          const onSuspended = options.onSuspended;
+          subscribeApi = onSuspended ? (request, signal2) => resumable.subscribeApi(request, signal2, { onSuspended }) : resumable.subscribeApi.bind(resumable);
         }
         return subscribeApi({
           id: api.definition.id,
@@ -12005,6 +12006,9 @@ var __t3Client = (() => {
     }
     return nextGroups;
   }
+  function suspendedOutputStatus(state2) {
+    return state2.status === "live" ? { ...state2, status: "connecting", statusText: "Reconnecting\u2026" } : state2;
+  }
   var EMPTY_OUTPUT_BUFFER = {
     contents: "",
     retainedBytes: 0,
@@ -12786,6 +12790,10 @@ var __t3Client = (() => {
     ["mod+n", "new"],
     ["mod+w", "close"]
   ]);
+  function terminalActionLabel(action, shortcutLabel, limitNote = null) {
+    const note = limitNote ?? shortcutLabel;
+    return note ? `${action} (${note})` : action;
+  }
   function terminalCloseLabel(terminalLabel, active, closeShortcutLabel) {
     return `Close ${terminalLabel}${active && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""}`;
   }
@@ -14315,6 +14323,11 @@ var __t3Client = (() => {
         ended: false
       });
     }
+    /** The host is waiting to resume a dropped transport (`onSuspended`). */
+    noteSuspended() {
+      const state2 = suspendedOutputStatus(this.#state);
+      if (state2 !== this.#state) this.#emit(state2);
+    }
     /** The stream itself failed (network/authority), not the terminal. */
     applyTransportError(message) {
       this.#pending = null;
@@ -14607,7 +14620,7 @@ var __t3Client = (() => {
       let overflowClose = false;
       let started = false;
       try {
-        for await (const frame of options.subscribe(signal)) {
+        for await (const frame of options.subscribe(signal, () => attachment.noteSuspended())) {
           if (signal.aborted) return;
           if (frame.sequence === 1 && started) attachment.beginStream();
           started = true;
@@ -15033,9 +15046,15 @@ var __t3Client = (() => {
           }
           let refused = false;
           void pumpTerminalOutput({
-            subscribe: (subscribeSignal) => {
+            subscribe: (subscribeSignal, onSuspended) => {
               reattach.subscribed();
-              const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
+              const source = subscribeOutput(
+                host,
+                session.context,
+                terminalId,
+                subscribeSignal,
+                onSuspended
+              );
               return (async function* () {
                 for await (const frame of source) {
                   const value = frame.value;
@@ -15297,12 +15316,12 @@ var __t3Client = (() => {
       }
     );
   }
-  function subscribeOutput(host, context, terminalId, signal) {
+  function subscribeOutput(host, context, terminalId, signal, onSuspended) {
     return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
       "subscribe",
       { terminalId },
       signal,
-      resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : void 0
+      resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : void 0
     );
   }
   function useTerminalOutput(host, session, panel, terminalId, visible, running) {
@@ -15342,7 +15361,12 @@ var __t3Client = (() => {
           let resurrect = false;
           try {
             reattach.subscribed();
-            const stream = subscribeOutput(host, session.context, terminalId, signal);
+            const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+              const suspended = suspendedOutputStatus(stateRef.current);
+              if (suspended === stateRef.current) return;
+              stateRef.current = suspended;
+              setState({ terminalId, buffer: suspended });
+            });
             for await (const frame of stream) {
               if (signal.aborted) return;
               if (frame.sequence === 1 && stateRef.current.sequence > 0) {
@@ -15532,7 +15556,8 @@ var __t3Client = (() => {
     const snapshot = panel.snapshot;
     const activeId = snapshot.activeTerminalId;
     const activeTab = snapshot.tabs.find((tab) => tab.terminalId === activeId) ?? null;
-    const closeShortcutLabel = host.keybindings?.terminalFocusShortcutLabel?.("terminal.close") ?? null;
+    const shortcutLabel = (command) => host.keybindings?.terminalFocusShortcutLabel?.(command) ?? null;
+    const closeShortcutLabel = shortcutLabel("terminal.close");
     const activeGroup = snapshot.groups.find((group) => group.id === snapshot.activeGroupId) ?? null;
     const visibleTerminalIds = activeGroup?.terminalIds ?? (activeId !== null ? [activeId] : []);
     const visibleSet = new Set(visibleTerminalIds);
@@ -15543,6 +15568,18 @@ var __t3Client = (() => {
     ];
     const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
     const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
+    const splitLimitNote = hasReachedSplitLimit ? `max ${MAX_TERMINALS_PER_GROUP} per group` : null;
+    const newTerminalLabel = terminalActionLabel("New Terminal", shortcutLabel("terminal.new"));
+    const splitHorizontalLabel = terminalActionLabel(
+      "Split Terminal Horizontally",
+      shortcutLabel("terminal.split"),
+      splitLimitNote
+    );
+    const splitVerticalLabel = terminalActionLabel(
+      "Split Terminal Vertically",
+      shortcutLabel("terminal.splitVertical"),
+      splitLimitNote
+    );
     const showGroupHeaders = snapshot.groups.length > 1 || snapshot.groups.some((group) => group.terminalIds.length > 1);
     const textFallback = assets.kind === "unavailable";
     const output = useTerminalOutput(
@@ -15691,40 +15728,37 @@ var __t3Client = (() => {
               children: activeStatus
             }
           ),
-          (activeTab.status === "exited" || activeTab.status === "error" || activeTab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          (activeTab.status === "exited" || activeTab.status === "error" || activeTab.status === "closed") && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Start", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Start ${activeTab.terminalId}`,
-              title: "Start",
               onClick: () => void panel.startSession(activeTab.terminalId),
               style: iconControl,
               children: "\u25B6"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Clear history", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Clear ${activeTab.terminalId}`,
-              title: "Clear history",
               onClick: () => panel.requestAction(activeTab.terminalId, "clear"),
               style: iconControl,
               children: "\u232B"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Restart", side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
               "aria-label": `Restart ${activeTab.terminalId}`,
-              title: "Restart",
               onClick: () => panel.requestAction(activeTab.terminalId, "restart"),
               style: iconControl,
               children: "\u21BB"
             }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: activeCloseLabel, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          ) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: activeCloseLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -15809,7 +15843,7 @@ var __t3Client = (() => {
                 flexWrap: "wrap"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: newTerminalLabel, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -15818,8 +15852,8 @@ var __t3Client = (() => {
                     style: control,
                     children: "New terminal"
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: splitHorizontalLabel, side: "bottom", showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -15828,11 +15862,11 @@ var __t3Client = (() => {
                     style: control,
                     children: [
                       "Split horizontally",
-                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                      splitLimitNote === null ? "" : ` (${splitLimitNote})`
                     ]
                   }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                ) }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: splitVerticalLabel, side: "bottom", showWhenDisabled: true, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "button",
                   {
                     type: "button",
@@ -15841,10 +15875,10 @@ var __t3Client = (() => {
                     style: control,
                     children: [
                       "Split vertically",
-                      hasReachedSplitLimit ? ` (max ${MAX_TERMINALS_PER_GROUP} per group)` : ""
+                      splitLimitNote === null ? "" : ` (${splitLimitNote})`
                     ]
                   }
-                ),
+                ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: snapshot.stream === "closed" ? "Session list disconnected" : snapshot.stream === "connecting" ? "Connecting\u2026" : "" })
               ]
             }

@@ -313,6 +313,19 @@ export function normalizeTerminalGroups(
   return nextGroups;
 }
 
+/**
+ * A live pane whose host stream lost its transport and is waiting for the
+ * next session: say so, as native connection status does, until the resumed
+ * snapshot re-proves the stream. Anything but live keeps its own status.
+ */
+export function suspendedOutputStatus<
+  T extends { readonly status: OutputBuffer["status"]; readonly statusText: string },
+>(state: T): T {
+  return state.status === "live"
+    ? { ...state, status: "connecting", statusText: "Reconnecting…" }
+    : state;
+}
+
 export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   contents: "",
   retainedBytes: 0,
@@ -1469,6 +1482,19 @@ export const TERMINAL_DEFAULT_CHORDS: ReadonlyMap<string, TerminalChordAction> =
   ["mod+n", "new"],
   ["mod+w", "close"],
 ]);
+
+/**
+ * A toolbar action's hover help, as native's terminal drawer words it: the
+ * split limit when one applies, else the host's shortcut when one is bound.
+ */
+export function terminalActionLabel(
+  action: string,
+  shortcutLabel: string | null,
+  limitNote: string | null = null,
+): string {
+  const note = limitNote ?? shortcutLabel;
+  return note ? `${action} (${note})` : action;
+}
 
 /**
  * A tab's close-button tooltip and accessible name, as native's terminal

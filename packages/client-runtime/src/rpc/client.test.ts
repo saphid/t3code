@@ -38,6 +38,7 @@ import {
   runStream,
   subscribe,
   subscribeDynamicUntilComplete,
+  subscribeDynamicUntilCompleteWithSuspensions,
   subscribeDynamicWithSession,
 } from "./client.ts";
 
@@ -583,6 +584,55 @@ describe("environment RPC", () => {
       }),
     );
 
+    it.effect("reports each suspension in order with the frames delivered before it", () =>
+      Effect.gen(function* () {
+        const { activeSession, supervisor } = yield* makeHarness();
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* subscribeDynamicUntilCompleteWithSuspensions(
+          WS_METHODS.subscribeExtensionApi,
+          () => Effect.succeed({}) as never,
+          { streamBufferSize: 1 },
+        ).pipe(
+          Stream.runForEach((value) =>
+            Ref.update(received, (values) => [
+              ...values,
+              Option.match(value, {
+                onNone: () => "suspended",
+                onSome: (frame) => frame as unknown as string,
+              }),
+            ]),
+          ),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        const opens = (frames: Stream.Stream<string, unknown>) =>
+          Option.some(session(extensionClient(() => frames)));
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.make("first", "buffered"), Stream.fail(transportFailure()))),
+        );
+        yield* awaitCount(received, 3);
+        yield* SubscriptionRef.set(activeSession, Option.none());
+        yield* awaitCount(received, 4);
+        yield* SubscriptionRef.set(
+          activeSession,
+          opens(Stream.concat(Stream.succeed("second"), Stream.never)),
+        );
+        yield* awaitCount(received, 5);
+        yield* Fiber.interrupt(fiber);
+
+        // The dropped transport, then the ended session; each after the
+        // frames that were already on their way.
+        expect(yield* Ref.get(received)).toEqual([
+          "first",
+          "buffered",
+          "suspended",
+          "suspended",
+          "second",
+        ]);
+      }),
+    );
+
     it.effect("switches to exactly one fresh subscription when the session is replaced", () =>
       Effect.gen(function* () {
         const events: string[] = [];
@@ -630,6 +680,45 @@ describe("environment RPC", () => {
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(yield* Ref.get(received)).toEqual(["last"]);
         expect(opened).toBe(1);
+      }),
+    );
+
+    it.effect("a paused consumer bounds the session switch like the delivery window", () =>
+      Effect.gen(function* () {
+        let produced = 0;
+        const { activeSession, supervisor } = yield* makeHarness();
+        const delivered = yield* Deferred.make<void>();
+        const paused = yield* Deferred.make<void>();
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(
+            session(
+              extensionClient(() =>
+                // A source that produces as fast as it is pulled, with no RPC
+                // window of its own: only the switch's queue can hold frames.
+                Stream.forever(Stream.fromEffect(Effect.sync(() => `frame ${(produced += 1)}`))),
+              ),
+            ),
+          ),
+        );
+        const fiber = yield* subscribeDynamicUntilComplete(
+          WS_METHODS.subscribeExtensionApi,
+          () => Effect.succeed({}) as never,
+          { streamBufferSize: 1 },
+        ).pipe(
+          Stream.runForEach(() =>
+            Deferred.succeed(delivered, undefined).pipe(Effect.andThen(Deferred.await(paused))),
+          ),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(delivered);
+        for (let attempt = 0; attempt < 200; attempt += 1) yield* Effect.yieldNow;
+
+        // One delivered, one in the switch's queue, one awaiting admission —
+        // not the 16-frame default queue.
+        expect(produced).toBeLessThanOrEqual(3);
+        yield* Fiber.interrupt(fiber);
       }),
     );
 

@@ -19,7 +19,11 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { request as rpcRequest, runStream, subscribeDynamicUntilComplete } from "../rpc/client.ts";
+import {
+  request as rpcRequest,
+  runStream,
+  subscribeDynamicUntilCompleteWithSuspensions,
+} from "../rpc/client.ts";
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -129,9 +133,11 @@ export function environmentExtensionApiStream(
 /**
  * `ClientHost.resumableStreams` transport: follows the environment's transport
  * sessions like native durable subscriptions. Each session opens one fresh
- * subscription with a payload built for it (so session-bound hints are never
- * replayed), and a transport failure waits for the next session. The
- * source's own completion or domain failure ends the stream.
+ * subscription with a payload built for it, and a transport failure waits
+ * for the next session, emitting `Option.none()` in order with the frames
+ * when it starts waiting. `makePayload` only sees state the caller holds,
+ * not which session is opening, so it must not carry session-bound hints.
+ * The source's own completion or domain failure ends the stream.
  */
 export function environmentResumableExtensionApiStream(
   environmentId: EnvironmentId,
@@ -142,7 +148,7 @@ export function environmentResumableExtensionApiStream(
       const registry = yield* EnvironmentRegistry;
       return registry.runStream(
         environmentId,
-        subscribeDynamicUntilComplete(
+        subscribeDynamicUntilCompleteWithSuspensions(
           WS_METHODS.subscribeExtensionApi,
           () => Effect.sync(makePayload),
           { streamBufferSize: 1 },

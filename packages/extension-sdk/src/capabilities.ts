@@ -102,7 +102,20 @@ export interface ApiClient {
  */
 export interface ResumableApiStreams {
   readonly version: 1;
-  subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
+  subscribeApi(
+    request: ApiStreamInvocation,
+    signal: AbortSignal,
+    options?: ResumableStreamOptions,
+  ): AsyncIterable<ApiStreamFrame>;
+}
+export interface ResumableStreamOptions {
+  /**
+   * Runs each time the transport drops and the iterable starts waiting for
+   * the next session, after every frame received before the drop — show
+   * "Reconnecting…" until the resumed snapshot. Hosts that predate it never
+   * call it; then a resumed snapshot is the only sign of the gap.
+   */
+  readonly onSuspended?: () => void;
 }
 /** `id#stream` pairs a version 1 host resumes; it refuses every other stream. */
 export const RESUMABLE_API_STREAMS: readonly string[] = ["t3.terminal/output-events#subscribe"];
@@ -301,6 +314,8 @@ export function bindStreamApi<T extends ApiStreamTypes>(
         readonly cursor?: string;
         readonly expectedGeneration?: number;
         readonly resume?: "fresh-snapshot";
+        /** With `resume`: see `ResumableStreamOptions.onSuspended`. */
+        readonly onSuspended?: () => void;
       },
     ): AsyncIterable<TypedApiStreamFrame<T[K]["event"]>> {
       const addition = unnegotiated.find((item) => "stream" in item && item.stream === name);
@@ -320,7 +335,10 @@ export function bindStreamApi<T extends ApiStreamTypes>(
             [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) }),
           };
         }
-        subscribeApi = resumable.subscribeApi.bind(resumable);
+        const onSuspended = options.onSuspended;
+        subscribeApi = onSuspended
+          ? (request, signal) => resumable.subscribeApi(request, signal, { onSuspended })
+          : resumable.subscribeApi.bind(resumable);
       }
       return subscribeApi(
         {

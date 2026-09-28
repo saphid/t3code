@@ -154,6 +154,25 @@ NodeTest.test(
     NodeAssert.equal(resumed.length, 1);
     NodeAssert.equal(resumed[0].name, "changes");
 
+    // The plugin's suspension handler reaches the host with the request.
+    const handed = [];
+    const onSuspended = () => {};
+    bindStreamApi(
+      api,
+      {
+        ...host,
+        resumableStreams: {
+          version: 1,
+          subscribeApi: (request, _signal, options) => {
+            handed.push(options?.onSuspended);
+            return iterable(resumed)(request);
+          },
+        },
+      },
+      context,
+    ).subscribe("changes", {}, signal, { resume: "fresh-snapshot", onSuspended });
+    NodeAssert.deepEqual(handed, [onSuspended]);
+
     for (const member of [undefined, {}, { version: 0, subscribeApi() {} }, { version: 1 }])
       NodeAssert.equal(resolveResumableStreams({ resumableStreams: member }), null);
     NodeAssert.equal(resolveResumableStreams(host), host.resumableStreams);

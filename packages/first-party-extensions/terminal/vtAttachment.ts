@@ -8,6 +8,7 @@ import {
   EMPTY_OVERFLOW_STREAK,
   isResumableOutputClose,
   noteOutputFrameForStreak,
+  suspendedOutputStatus,
 } from "./viewModel.ts";
 
 /**
@@ -375,6 +376,12 @@ export class TerminalVtAttachment {
       statusText: "Connecting…",
       ended: false,
     });
+  }
+
+  /** The host is waiting to resume a dropped transport (`onSuspended`). */
+  noteSuspended() {
+    const state = suspendedOutputStatus(this.#state);
+    if (state !== this.#state) this.#emit(state);
   }
 
   /** The stream itself failed (network/authority), not the terminal. */
@@ -847,7 +854,10 @@ export interface TerminalOutputFrame {
  * or the signal aborts.
  */
 export async function pumpTerminalOutput(options: {
-  readonly subscribe: (signal: AbortSignal) => AsyncIterable<TerminalOutputFrame>;
+  readonly subscribe: (
+    signal: AbortSignal,
+    onSuspended: () => void,
+  ) => AsyncIterable<TerminalOutputFrame>;
   readonly attachment: TerminalVtAttachment;
   readonly signal: AbortSignal;
   /**
@@ -871,7 +881,7 @@ export async function pumpTerminalOutput(options: {
     let overflowClose = false;
     let started = false;
     try {
-      for await (const frame of options.subscribe(signal)) {
+      for await (const frame of options.subscribe(signal, () => attachment.noteSuspended())) {
         if (signal.aborted) return;
         // A host-resumed subscription restarts at sequence 1 with a fresh
         // snapshot; it re-proves itself exactly like a new subscription.

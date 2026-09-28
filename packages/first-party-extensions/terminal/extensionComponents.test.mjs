@@ -1470,13 +1470,16 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
         ? {
             resumableStreams: {
               version: 1,
-              subscribeApi: (request, signal) => ({
+              subscribeApi: (request, signal, options) => ({
                 async *[Symbol.asyncIterator]() {
                   NodeAssert.equal(request.id, "t3.terminal/output-events");
                   session: for (;;) {
                     const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
                     for (const next of script.frames) {
-                      if (next === TRANSPORT_DROP) continue session;
+                      if (next === TRANSPORT_DROP) {
+                        options?.onSuspended?.();
+                        continue session;
+                      }
                       if (typeof next === "function") await next();
                       else yield next;
                     }
@@ -1866,4 +1869,160 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
           }
         },
       );
+
+  for (const textFallback of [false, true])
+    NodeTest.test(
+      `host resumption (${textFallback ? "fallback" : "VT"}): a dropped transport reads Reconnecting… until the resumed snapshot`,
+      async () => {
+        const id = `reconnect${textFallback ? "f" : "v"}`;
+        const drop = gate();
+        const resume = gate();
+        const failed = { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true };
+        const view = await renderSession({
+          terminalId: id,
+          listed: { ...sessionMetadata(id), status: "error" },
+          textFallback,
+          resumable: true,
+          invoke: startSucceeds,
+          scripts: [
+            ...(textFallback ? [failed] : []),
+            failed,
+            {
+              frames: [outputSnapshot(id, "epoch-2", "running", "$ "), drop.wait, TRANSPORT_DROP],
+              ends: true,
+            },
+            {
+              frames: [resume.wait, outputSnapshot(id, "epoch-2", "running", "$ back")],
+              ends: false,
+            },
+          ],
+        });
+        const status = () =>
+          view.renderer.root
+            .findAll(
+              (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+            )
+            .map((node) => node.children.join(""))
+            .join(" | ");
+        try {
+          await clickStart(view, id);
+          NodeAssert.match(status(), /Watching live output/);
+          drop.open();
+          await view.settle();
+          NodeAssert.equal(status(), `${id}: Reconnecting…`);
+          resume.open();
+          await view.settle();
+          await view.settle();
+          NodeAssert.match(status(), /Watching live output/);
+          NodeAssert.ok(paneOutput(view, textFallback).includes("$ back"));
+        } finally {
+          drop.open();
+          resume.open();
+          await view.unmount();
+        }
+      },
+    );
+});
+
+NodeTest.describe("toolbar hover help", () => {
+  /** A host tooltip that records what each control would show on hover. */
+  function RecordingTooltip({ label, children }) {
+    return children;
+  }
+  const shortcuts = {
+    "terminal.new": "⌘T",
+    "terminal.split": "⌘D",
+    "terminal.splitVertical": "⇧⌘D",
+    "terminal.close": "⌘W",
+  };
+
+  async function renderToolbar(restoreState) {
+    const ids = restoreState.terminalIds;
+    const host = {
+      React,
+      tooltip: { version: 1, Tooltip: RecordingTooltip },
+      keybindings: { terminalFocusShortcutLabel: (command) => shortcuts[command] ?? null },
+      readAsset: () => new Promise(() => {}),
+      invokeApi: async () => ({ tokens: {}, cssVars: {} }),
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list")
+            yield { value: { kind: "snapshot", terminals: ids.map(sessionMetadata) } };
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState,
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    for (let attempt = 0; attempt < 5; attempt++)
+      await act(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+      });
+    // Hover help per control, keyed by the control's own name.
+    const help = new Map(
+      renderer.root.findAllByType(RecordingTooltip).map((tooltip) => {
+        const button = tooltip.findByType("button");
+        const name =
+          button.props["aria-label"] ??
+          button.children.filter((child) => typeof child === "string").join("");
+        return [name, tooltip.props];
+      }),
+    );
+    return { help, unmount: () => act(async () => renderer.unmount()) };
+  }
+
+  NodeTest.test("each toolbar and session action names itself and its shortcut", async () => {
+    const view = await renderToolbar({ terminalIds: ["a", "b"], activeTerminalId: "a" });
+    try {
+      const labels = Object.fromEntries([...view.help].map(([name, props]) => [name, props.label]));
+      NodeAssert.deepEqual(labels, {
+        "New terminal": "New Terminal (⌘T)",
+        "Split horizontally": "Split Terminal Horizontally (⌘D)",
+        "Split vertically": "Split Terminal Vertically (⇧⌘D)",
+        "Clear a": "Clear history",
+        "Restart a": "Restart",
+        "Close a (⌘W)": "Close a (⌘W)",
+      });
+      // Native's action popovers open below their trigger.
+      for (const props of view.help.values()) NodeAssert.equal(props.side, "bottom");
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  NodeTest.test("at the group limit the disabled splits still explain why", async () => {
+    const ids = ["a", "b", "c", "d"];
+    const view = await renderToolbar({
+      terminalIds: ids,
+      activeTerminalId: "a",
+      terminalGroups: [{ id: "g", terminalIds: ids }],
+      activeTerminalGroupId: "g",
+    });
+    try {
+      const horizontal = view.help.get("Split horizontally (max 4 per group)");
+      const vertical = view.help.get("Split vertically (max 4 per group)");
+      NodeAssert.ok(horizontal && vertical, "both splits carry hover help at the limit");
+      NodeAssert.equal(horizontal.label, "Split Terminal Horizontally (max 4 per group)");
+      NodeAssert.equal(vertical.label, "Split Terminal Vertically (max 4 per group)");
+      NodeAssert.equal(horizontal.showWhenDisabled, true);
+      NodeAssert.equal(vertical.showWhenDisabled, true);
+    } finally {
+      await view.unmount();
+    }
+  });
 });
