@@ -15865,6 +15865,10 @@ ${ind(d)}}`;
     if (list === null) return profileId === DEFAULT_PROFILE_ID ? "Default" : profileId;
     return list.profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
   }
+  function profileBadgeName(list, profileId) {
+    if (list === null || profileId === list.defaultProfileId) return null;
+    return profileLabel(list, profileId);
+  }
   function profileFailureMessage(action, error) {
     const text = error instanceof Error ? error.message : String(error);
     const label = ACTION_LABEL[action];
@@ -15948,6 +15952,46 @@ ${ind(d)}}`;
     importCookies: "Importing \u2014 confirm the import in the T3 Code desktop app."
   };
   var firstProfile = (sources, sourceId) => sources.find((source) => source.id === sourceId)?.profiles[0]?.handle ?? "";
+  function ProfileBadge(props) {
+    const { host, session, api, signal } = props;
+    const profileId = sessionProfileId(session);
+    const [list, setList] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
+      let live = true;
+      void api.invoke("list", {}, signal).then(
+        (value) => {
+          if (live) setList(value);
+        },
+        () => {
+          if (live) setList(null);
+        }
+      );
+      return () => {
+        live = false;
+      };
+    }, [api, signal, profileId]);
+    const name = profileBadgeName(list, profileId);
+    if (name === null) return null;
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: name, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      "span",
+      {
+        "data-t3-browser-profile-badge": true,
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          flexShrink: 0,
+          maxWidth: 112,
+          padding: "1px 6px",
+          border: border2,
+          borderRadius: 4,
+          fontSize: 11,
+          fontWeight: 500,
+          whiteSpace: "nowrap"
+        },
+        children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: name })
+      }
+    ) });
+  }
   function ProfileSection(props) {
     const { session, api, signal, onOpenInProfile, report } = props;
     const profileId = sessionProfileId(session);
@@ -17915,6 +17959,7 @@ ${titledTitle}`;
                     style: buttonStyle
                   }
                 ),
+                held && live && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ProfileBadge, { host, session: live, api: profilesApi, signal: session.signal }),
                 /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
                   "input",
                   {

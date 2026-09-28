@@ -60,6 +60,19 @@ export function profileLabel(list: BrowserProfileList | null, profileId: string)
   return list.profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
 }
 
+/**
+ * Native's chrome-row profile badge: the tab's profile name, shown only when
+ * it differs from the default new tabs open under — labelling every tab
+ * "Default" would be noise. Null until the list is known.
+ */
+export function profileBadgeName(
+  list: BrowserProfileList | null,
+  profileId: string,
+): string | null {
+  if (list === null || profileId === list.defaultProfileId) return null;
+  return profileLabel(list, profileId);
+}
+
 /** A thrown call → one named line. The broker names a missing grant `API capability denied: <grant>`. */
 export function profileFailureMessage(action: ProfileAction, error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);

@@ -72,7 +72,7 @@ import {
 import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
 import { panelPopover, type PanelFloating } from "./popover.js";
-import { bindProfilesApi, ProfileSection } from "./profileMenu.js";
+import { bindProfilesApi, ProfileBadge, ProfileSection } from "./profileMenu.js";
 import { profileFailureMessage, reopenRequest } from "./profiles.js";
 import {
   BrowserViewportToolbar,
@@ -1100,6 +1100,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           onPick={() => capture.capture("element")}
           style={buttonStyle}
         />
+        {held && live && (
+          <ProfileBadge host={host} session={live} api={profilesApi} signal={session.signal} />
+        )}
         <input
           type="text"
           aria-label="Address"

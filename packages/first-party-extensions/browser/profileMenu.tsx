@@ -6,6 +6,7 @@
  * missing grant (or desktop-required) in the group's note or the status
  * line, and pending work is static text — no spinner.
  */
+import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import {
   browserProfilesApi,
@@ -21,6 +22,7 @@ import {
   clearResultMessage,
   importableSources,
   importResultMessage,
+  profileBadgeName,
   profileFailureMessage,
   profileLabel,
   sessionProfileId,
@@ -62,6 +64,65 @@ const PENDING: Partial<Record<ProfileAction, string>> = {
 
 const firstProfile = (sources: readonly BrowserImportSourceSummary[], sourceId: string) =>
   sources.find((source) => source.id === sourceId)?.profiles[0]?.handle ?? "";
+
+/**
+ * Native's profile badge beside the address bar: names the tab's profile,
+ * which is otherwise invisible, when it is not the default. The list is read
+ * once per held profile; a refused read shows no badge (the page menu's
+ * profile group names the refusal).
+ */
+export function ProfileBadge(props: {
+  host: Pick<ClientHost, "React" | "tooltip">;
+  session: BrowserSession;
+  api: ProfilesApi;
+  signal: AbortSignal;
+}) {
+  const { host, session, api, signal } = props;
+  const profileId = sessionProfileId(session);
+  const [list, setList] = useState<BrowserProfileList | null>(null);
+  useEffect(() => {
+    let live = true;
+    void api.invoke("list", {}, signal).then(
+      (value) => {
+        if (live) setList(value);
+      },
+      () => {
+        if (live) setList(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // Re-read per held profile: one created after this view mounted would
+    // otherwise read as "Removed profile".
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [api, signal, profileId]);
+  const name = profileBadgeName(list, profileId);
+  if (name === null) return null;
+  // Capped like native's `max-w-28`: an unbounded badge would take its width
+  // from the address field, the only flexible element in the row.
+  return (
+    <Tooltip host={host} label={name}>
+      <span
+        data-t3-browser-profile-badge
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          flexShrink: 0,
+          maxWidth: 112,
+          padding: "1px 6px",
+          border,
+          borderRadius: 4,
+          fontSize: 11,
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+      </span>
+    </Tooltip>
+  );
+}
 
 export function ProfileSection(props: {
   session: BrowserSession;
