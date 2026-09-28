@@ -4,7 +4,9 @@
  * the page in another profile and the settings "Import from" flow. Each
  * control rides its own `t3.browser/profiles` grant; a refusal names the
  * missing grant (or desktop-required) in the group's note or the status
- * line, and pending work is static text — no spinner.
+ * line. Choosing an action closes the menu, as native's items do, so a host
+ * confirmation it raises is never under the menu; its progress and result go
+ * to the status line as static text — no spinner.
  */
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
@@ -28,7 +30,6 @@ import {
   profileFailureMessage,
   profileLabel,
   sessionProfileId,
-  type ProfileAction,
   type ProfileListStore,
 } from "./profiles.js";
 
@@ -92,7 +93,7 @@ type Importer =
       readonly handle: string;
     };
 
-const PENDING: Partial<Record<ProfileAction, string>> = {
+const PENDING: Record<"clearCookies" | "clearCache" | "importCookies", string> = {
   clearCookies: "Clearing cookies…",
   clearCache: "Clearing the cache…",
   importCookies: "Importing — confirm the import in the T3 Code desktop app.",
@@ -157,10 +158,12 @@ export function ProfileSection(props: {
   signal: AbortSignal;
   /** Opens the current page in a new session under `profileId` (a profile is fixed at open). */
   onOpenInProfile: (profileId: string) => void;
-  /** Puts a finished action's named result on the panel's status line. */
+  /** Puts an action's progress, then its named result, on the panel's status line. */
   report: (message: string) => void;
+  /** Closes the menu once an action is chosen. */
+  onChosen: () => void;
 }) {
-  const { session, api, profiles, signal, onOpenInProfile, report } = props;
+  const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
   const profileId = sessionProfileId(session);
   const { list, error } = useProfileList(profiles);
   const listNote =
@@ -169,7 +172,6 @@ export function ProfileSection(props: {
       : error === null
         ? "Loading profiles…"
         : profileFailureMessage("list", error);
-  const [busy, setBusy] = useState<ProfileAction | null>(null);
   const [importer, setImporter] = useState<Importer>({ kind: "closed" });
 
   // Opening the menu refreshes the shared list (a read on hosts without the stream).
@@ -177,15 +179,17 @@ export function ProfileSection(props: {
 
   const name = profileLabel(list, profileId);
 
+  const choose = (action: keyof typeof PENDING) => {
+    onChosen();
+    report(PENDING[action]);
+  };
+
   const clear = (kind: "clearCookies" | "clearCache") => {
-    setBusy(kind);
-    void api
-      .invoke(kind, { profileId }, signal)
-      .then(
-        (result) => report(clearResultMessage(result, kind, name)),
-        (error: unknown) => report(profileFailureMessage(kind, error)),
-      )
-      .finally(() => setBusy(null));
+    choose(kind);
+    void api.invoke(kind, { profileId }, signal).then(
+      (result) => report(clearResultMessage(result, kind, name)),
+      (error: unknown) => report(profileFailureMessage(kind, error)),
+    );
   };
 
   const openImporter = () => {
@@ -207,17 +211,11 @@ export function ProfileSection(props: {
   };
 
   const runImport = (sourceId: string, handle: string) => {
-    setBusy("importCookies");
-    void api
-      .invoke("importCookies", { profileId, sourceId, sourceProfile: handle }, signal)
-      .then(
-        (result) => {
-          report(importResultMessage(result, name));
-          if (result.outcome === "imported") setImporter({ kind: "closed" });
-        },
-        (error: unknown) => report(profileFailureMessage("importCookies", error)),
-      )
-      .finally(() => setBusy(null));
+    choose("importCookies");
+    void api.invoke("importCookies", { profileId, sourceId, sourceProfile: handle }, signal).then(
+      (result) => report(importResultMessage(result, name)),
+      (error: unknown) => report(profileFailureMessage("importCookies", error)),
+    );
   };
 
   const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
@@ -249,7 +247,9 @@ export function ProfileSection(props: {
             aria-label="Open page in profile"
             value=""
             onChange={(event) => {
-              if (event.target.value) onOpenInProfile(event.target.value);
+              if (!event.target.value) return;
+              onChosen();
+              onOpenInProfile(event.target.value);
             }}
             style={{ ...control, maxWidth: 140 }}
           >
@@ -265,7 +265,6 @@ export function ProfileSection(props: {
       <button
         type="button"
         role="menuitem"
-        disabled={busy !== null}
         onClick={() => clear("clearCookies")}
         style={{ ...control, textAlign: "left" }}
       >
@@ -274,7 +273,6 @@ export function ProfileSection(props: {
       <button
         type="button"
         role="menuitem"
-        disabled={busy !== null}
         onClick={() => clear("clearCache")}
         style={{ ...control, textAlign: "left" }}
       >
@@ -284,7 +282,6 @@ export function ProfileSection(props: {
         <button
           type="button"
           role="menuitem"
-          disabled={busy !== null}
           onClick={openImporter}
           style={{ ...control, textAlign: "left" }}
         >
@@ -348,20 +345,13 @@ export function ProfileSection(props: {
           <button
             type="button"
             role="menuitem"
-            disabled={
-              busy !== null || !importer.handle || selectedSource?.unavailable !== undefined
-            }
+            disabled={!importer.handle || selectedSource?.unavailable !== undefined}
             onClick={() => runImport(importer.sourceId, importer.handle)}
             style={{ ...control, textAlign: "left" }}
           >
             Import into {name}
           </button>
         </div>
-      )}
-      {busy !== null && PENDING[busy] && (
-        <p role="note" style={{ margin: 0, color: muted }}>
-          {PENDING[busy]}
-        </p>
       )}
     </div>
   );

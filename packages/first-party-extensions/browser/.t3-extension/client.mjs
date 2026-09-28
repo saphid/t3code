@@ -8997,13 +8997,15 @@ var __t3Client = (() => {
       {
         type: "text",
         "aria-label": "Address",
-        placeholder: "Search or enter address",
+        placeholder: "Search or enter URL",
         ref: inputRef,
         value: focused ? value : committed,
         onChange: (event) => onValueChange(event.target.value),
-        onFocus: () => {
+        onFocus: (event) => {
           onValueChange(committed);
           setFocused(true);
+          const input = event.currentTarget;
+          queueMicrotask(() => input.select());
         },
         onBlur: () => setFocused(false),
         onKeyDown: (event) => {
@@ -16149,7 +16151,7 @@ ${ind(d)}}`;
   ];
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
-    const { zoomFactor, anchor, floating, visible } = props;
+    const { zoomFactor, zIndex, style, visible } = props;
     const [shown, setShown] = (0, import_react5.useState)(null);
     const last = (0, import_react5.useRef)(zoomFactor);
     (0, import_react5.useEffect)(() => {
@@ -16165,17 +16167,18 @@ ${ind(d)}}`;
       return () => clearTimeout(timer);
     }, [zoomFactor]);
     if (shown === null || !visible) return null;
-    const { Popover } = floating;
     return /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
-      Popover,
+      "div",
       {
-        anchor,
-        side: "inset",
-        offset: 12,
         role: "status",
         "aria-label": "Page zoom",
+        ...floatingOverPage,
         style: {
-          ...floating.style,
+          ...style,
+          position: "absolute",
+          top: 12,
+          right: 12,
+          zIndex,
           pointerEvents: "none",
           padding: "3px 10px",
           borderRadius: 999,
@@ -16379,7 +16382,7 @@ ${ind(d)}}`;
                 children: pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"
               }
             ),
-            children
+            children?.(() => setOpen(false))
           ]
         }
       )
@@ -16644,20 +16647,23 @@ ${ind(d)}}`;
     ) });
   }
   function ProfileSection(props) {
-    const { session, api, profiles, signal, onOpenInProfile, report } = props;
+    const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
-    const [busy, setBusy] = (0, import_react6.useState)(null);
     const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
     (0, import_react6.useEffect)(() => profiles.refresh(), [profiles]);
     const name = profileLabel(list, profileId);
+    const choose = (action) => {
+      onChosen();
+      report(PENDING[action]);
+    };
     const clear = (kind) => {
-      setBusy(kind);
+      choose(kind);
       void api.invoke(kind, { profileId }, signal).then(
         (result2) => report(clearResultMessage(result2, kind, name)),
         (error2) => report(profileFailureMessage(kind, error2))
-      ).finally(() => setBusy(null));
+      );
     };
     const openImporter = () => {
       setImporter({ kind: "loading" });
@@ -16676,14 +16682,11 @@ ${ind(d)}}`;
       );
     };
     const runImport = (sourceId, handle) => {
-      setBusy("importCookies");
+      choose("importCookies");
       void api.invoke("importCookies", { profileId, sourceId, sourceProfile: handle }, signal).then(
-        (result2) => {
-          report(importResultMessage(result2, name));
-          if (result2.outcome === "imported") setImporter({ kind: "closed" });
-        },
+        (result2) => report(importResultMessage(result2, name)),
         (error2) => report(profileFailureMessage("importCookies", error2))
-      ).finally(() => setBusy(null));
+      );
     };
     const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
     const selectedSource = importer.kind === "ready" ? importer.sources.find((source) => source.id === importer.sourceId) : void 0;
@@ -16713,7 +16716,9 @@ ${ind(d)}}`;
                 "aria-label": "Open page in profile",
                 value: "",
                 onChange: (event) => {
-                  if (event.target.value) onOpenInProfile(event.target.value);
+                  if (!event.target.value) return;
+                  onChosen();
+                  onOpenInProfile(event.target.value);
                 },
                 style: { ...control2, maxWidth: 140 },
                 children: [
@@ -16728,7 +16733,6 @@ ${ind(d)}}`;
             {
               type: "button",
               role: "menuitem",
-              disabled: busy !== null,
               onClick: () => clear("clearCookies"),
               style: { ...control2, textAlign: "left" },
               children: "Clear cookies"
@@ -16739,7 +16743,6 @@ ${ind(d)}}`;
             {
               type: "button",
               role: "menuitem",
-              disabled: busy !== null,
               onClick: () => clear("clearCache"),
               style: { ...control2, textAlign: "left" },
               children: "Clear cache"
@@ -16750,7 +16753,6 @@ ${ind(d)}}`;
             {
               type: "button",
               role: "menuitem",
-              disabled: busy !== null,
               onClick: openImporter,
               style: { ...control2, textAlign: "left" },
               children: "Import cookies\u2026"
@@ -16788,7 +16790,7 @@ ${ind(d)}}`;
               {
                 type: "button",
                 role: "menuitem",
-                disabled: busy !== null || !importer.handle || selectedSource?.unavailable !== void 0,
+                disabled: !importer.handle || selectedSource?.unavailable !== void 0,
                 onClick: () => runImport(importer.sourceId, importer.handle),
                 style: { ...control2, textAlign: "left" },
                 children: [
@@ -16797,8 +16799,7 @@ ${ind(d)}}`;
                 ]
               }
             )
-          ] }),
-          busy !== null && PENDING[busy] && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: PENDING[busy] })
+          ] })
         ]
       }
     );
@@ -18669,7 +18670,7 @@ ${titledTitle}`;
                     zoomStep,
                     floating,
                     visible,
-                    children: held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                    children: (close) => held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                       ProfileSection,
                       {
                         session: live,
@@ -18677,7 +18678,8 @@ ${titledTitle}`;
                         profiles,
                         signal: session.signal,
                         onOpenInProfile: openInProfile,
-                        report: setNotice
+                        report: setNotice,
+                        onChosen: close
                       }
                     )
                   }
@@ -18780,8 +18782,8 @@ ${titledTitle}`;
               ZoomIndicator,
               {
                 zoomFactor: live?.zoomFactor ?? null,
-                anchor: contentElement,
-                floating,
+                zIndex: layers.transient,
+                style: floating.style,
                 visible
               },
               held.tabId

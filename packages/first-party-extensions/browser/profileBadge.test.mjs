@@ -504,3 +504,121 @@ NodeTest.describe("when no desktop can answer for profiles", () => {
     NodeAssert.equal(mounted.badge(), null);
   });
 });
+
+/**
+ * Mounts the profile group with an api that holds each action open, as the
+ * desktop does while its confirmation is up, and records what the group
+ * asks of the menu and the status line.
+ */
+async function mountActions() {
+  const signal = new AbortController().signal;
+  const fake = fakeProfiles({ stream: true });
+  const profiles = createProfileListStore(fake.source, signal);
+  const calls = [];
+  const pending = new Map();
+  const api = {
+    invoke(method, input) {
+      calls.push(method);
+      if (method === "listImportSources") {
+        return Promise.resolve({
+          sources: [
+            {
+              id: "firefox",
+              name: "Firefox",
+              profiles: [{ handle: "proof-fixture", name: "proof-fixture", cookieCount: 1 }],
+            },
+          ],
+        });
+      }
+      return new Promise((resolve) => pending.set(method, { resolve, input }));
+    },
+  };
+  const log = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      React.createElement(ProfileSection, {
+        session: { profileId: "work" },
+        api,
+        profiles,
+        signal,
+        onOpenInProfile: (profileId) => log.push(`open:${profileId}`),
+        report: (message) => log.push(`report:${message}`),
+        onChosen: () => log.push("chosen"),
+      }),
+    );
+    await settle();
+  });
+  const button = (label) =>
+    renderer.root.find((node) => node.type === "button" && text(node) === label);
+  return {
+    calls,
+    log,
+    async click(label) {
+      await act(async () => {
+        button(label).props.onClick();
+        await settle();
+      });
+    },
+    async select(ariaLabel, value) {
+      await act(async () => {
+        renderer.root
+          .find((node) => node.type === "select" && node.props["aria-label"] === ariaLabel)
+          .props.onChange({ target: { value } });
+        await settle();
+      });
+    },
+    async answer(method, result) {
+      await act(async () => {
+        pending.get(method).resolve(result);
+        await settle();
+      });
+    },
+  };
+}
+
+NodeTest.describe("choosing a profile action", () => {
+  NodeTest.it(
+    "Import into closes the menu before the desktop's confirmation, then reports",
+    async () => {
+      const mounted = await mountActions();
+      await mounted.click("Import cookies…");
+      // Expanding the importer is not a choice: the menu stays open.
+      NodeAssert.deepEqual(mounted.log, []);
+      await mounted.click("Import into Work account");
+      // The confirmation is still up (the invoke is unanswered), and the menu
+      // is already closed, so it can never cover the dialog's buttons.
+      NodeAssert.deepEqual(mounted.log, [
+        "chosen",
+        "report:Importing — confirm the import in the T3 Code desktop app.",
+      ]);
+      await mounted.answer("importCookies", {
+        outcome: "imported",
+        profileId: "work",
+        imported: 1,
+        skipped: 0,
+      });
+      NodeAssert.equal(mounted.log.at(-1), 'report:Imported 1 cookie into "Work account".');
+    },
+  );
+
+  NodeTest.it("Clear cookies and Clear cache close the menu, as native's items do", async () => {
+    for (const [label, method] of [
+      ["Clear cookies", "clearCookies"],
+      ["Clear cache", "clearCache"],
+    ]) {
+      const mounted = await mountActions();
+      await mounted.click(label);
+      NodeAssert.equal(mounted.log[0], "chosen");
+      await mounted.answer(method, { outcome: "cleared", profileId: "work" });
+      NodeAssert.ok(mounted.log.at(-1).startsWith("report:C"));
+      NodeAssert.ok(mounted.calls.includes(method));
+    }
+  });
+
+  NodeTest.it("opening the page in another profile closes the menu", async () => {
+    const mounted = await mountActions();
+    await mounted.select("Open page in profile", "default");
+    NodeAssert.deepEqual(mounted.log, ["chosen", "open:default"]);
+  });
+});

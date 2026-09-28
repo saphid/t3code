@@ -16,8 +16,8 @@ export function committedAddress(input: {
 /**
  * The address field, like native's: unfocused it shows `committed`, so it
  * follows guest navigation, redirects and Back/Forward; focusing starts the
- * edit from that address, and live navigation never overwrites the draft
- * being typed. Enter submits a non-blank draft, trimmed, and leaves the field,
+ * edit from that address, all selected so typing replaces it, and live
+ * navigation never overwrites the draft being typed. Enter submits a non-blank draft, trimmed, and leaves the field,
  * so it follows wherever the page goes next (a redirect included); Escape
  * cancels the edit — the draft returns to `committed` and focus leaves.
  */
@@ -35,13 +35,16 @@ export function AddressInput(props: {
     <input
       type="text"
       aria-label="Address"
-      placeholder="Search or enter address"
+      placeholder="Search or enter URL"
       ref={inputRef}
       value={focused ? value : committed}
       onChange={(event) => onValueChange(event.target.value)}
-      onFocus={() => {
+      onFocus={(event) => {
         onValueChange(committed);
         setFocused(true);
+        // Select the whole address once the edit starts, as native does, so typing replaces it.
+        const input = event.currentTarget;
+        queueMicrotask(() => input.select());
       }}
       onBlur={() => setFocused(false)}
       onKeyDown={(event) => {
