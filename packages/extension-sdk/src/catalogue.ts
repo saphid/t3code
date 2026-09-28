@@ -9181,6 +9181,11 @@ export const uiPreferencesApiV1_1 = defineApi<
     additionalProperties: false,
     properties: uiPreferencesV1_1Schema.properties,
   }),
+  // As published: consumers keep loading on a 1.0.0 host.
+  {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setPreferences", input: "renderBrowserFile" }],
+  },
 );
 
 /** 1.0.0's closed preference shape, before `renderBrowserFile`. */
