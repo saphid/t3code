@@ -410,14 +410,29 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+// `glab api` arguments and environment that ask `host`. glab rejects a port in `--hostname` and
+// keys its credentials by the bare hostname, keeping a server's port in that host's `api_host`
+// (`glab auth login --api-host`); GITLAB_API_HOST overrides it for this one process.
+function hostSelection(
+  host: string | undefined,
+  path: string,
+): { readonly args: ReadonlyArray<string>; readonly env?: NodeJS.ProcessEnv } {
+  if (!host) return { args: ["api", path] };
+  const hostname = /^(.+):\d+$/.exec(host)?.[1];
+  return hostname === undefined
+    ? { args: ["api", path, "--hostname", host] }
+    : { args: ["api", path, "--hostname", hostname], env: { GITLAB_API_HOST: host } };
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
-  const run = (
-    input: Parameters<GitLabCli["Service"]["execute"]>[0],
-    mapError: (error: VcsError) => GitLabCliError,
-  ) =>
+  type RunInput = Parameters<GitLabCli["Service"]["execute"]>[0] & {
+    readonly env?: NodeJS.ProcessEnv;
+  };
+
+  const run = (input: RunInput, mapError: (error: VcsError) => GitLabCliError) =>
     process
       .run({
         operation: "GitLabCli.execute",
@@ -425,12 +440,13 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.env === undefined ? {} : { env: input.env }),
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })
       .pipe(Effect.mapError(mapError));
 
-  const execute: GitLabCli["Service"]["execute"] = (input) =>
+  const execute = (input: RunInput) =>
     run(input, (error) =>
       GitLabCliCommandError.fromVcsError(
         { operation: "execute", command: "glab", cwd: input.cwd },
@@ -524,11 +540,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: [
-          "api",
-          `projects/${encodeURIComponent(input.repository)}`,
-          ...(input.host ? ["--hostname", input.host] : []),
-        ],
+        ...hostSelection(input.host, `projects/${encodeURIComponent(input.repository)}`),
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>

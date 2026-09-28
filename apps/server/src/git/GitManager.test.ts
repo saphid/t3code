@@ -30,6 +30,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   TextGenerationError,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
@@ -5712,7 +5713,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
-  // answers each clone-URL lookup with `cloneUrl(lookup)`.
+  // answers each clone-URL lookup with `cloneUrl(lookup)`. GitLab lookups run the real glab
+  // adapter against a glab that resolves its host as the real one does: `--hostname` rejects any
+  // ':', and GITLAB_API_HOST overrides that host's API host.
   const setUpForkPullRequest = (input: {
     readonly kind: "github" | "gitlab";
     readonly number: number;
@@ -5741,6 +5744,48 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const base = yield* GitHubSourceControlProvider.make.pipe(
         Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
       );
+      const gitLab = yield* GitLabSourceControlProvider.make.pipe(
+        Effect.provide(
+          GitLabCli.layer.pipe(
+            Layer.provide(
+              Layer.mock(VcsProcess.VcsProcess)({
+                run: (call) => {
+                  const flag = call.args.indexOf("--hostname");
+                  const hostname = flag === -1 ? "gitlab.com" : (call.args[flag + 1] ?? "");
+                  if (hostname.includes(":")) {
+                    return Effect.fail(
+                      new VcsProcessExitError({
+                        operation: call.operation,
+                        command: call.command,
+                        cwd: call.cwd,
+                        exitCode: 1,
+                        detail: "error parsing --hostname: invalid hostname.",
+                      }),
+                    );
+                  }
+                  const repository = decodeURIComponent(
+                    call.args[1]?.replace(/^projects\//, "") ?? "",
+                  );
+                  const url = input.cloneUrl({
+                    host: call.env?.GITLAB_API_HOST || hostname,
+                    repository,
+                  });
+                  return Effect.succeed(
+                    fakeGhOutput(
+                      encodeCliJson({
+                        path_with_namespace: repository,
+                        web_url: url,
+                        http_url_to_repo: url,
+                        ssh_url_to_repo: url,
+                      }),
+                    ),
+                  );
+                },
+              }),
+            ),
+          ),
+        ),
+      );
       const provider: SourceControlProvider["Service"] = {
         ...base,
         kind: input.kind,
@@ -5758,10 +5803,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             headRepositoryOwnerLogin: input.headRepository.split("/")[0] ?? "fork",
             updatedAt: Option.none(),
           }),
-        getRepositoryCloneUrls: (lookup) => {
-          const url = input.cloneUrl(lookup);
-          return Effect.succeed({ nameWithOwner: lookup.repository, url, sshUrl: url });
-        },
+        getRepositoryCloneUrls:
+          input.kind === "gitlab"
+            ? gitLab.getRepositoryCloneUrls
+            : (lookup) => {
+                const url = input.cloneUrl(lookup);
+                return Effect.succeed({ nameWithOwner: lookup.repository, url, sshUrl: url });
+              },
         checkoutChangeRequest: () => Effect.die("A worktree checkout never runs the provider's"),
       };
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
@@ -5781,6 +5829,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("worktree PR checkout fetches an HTTP-only GitLab fork on origin's own server", () =>
     Effect.gen(function* () {
+      const lookups: Array<string | undefined> = [];
       const { repoDir, manager, headCommit } = yield* setUpForkPullRequest({
         kind: "gitlab",
         number: 7,
@@ -5789,7 +5838,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headBranch: "feature/http-fork",
         headRepository: "alex/repo",
         forkUrl: "http://forge.example/alex/repo",
-        cloneUrl: () => "http://forge.example/alex/repo",
+        cloneUrl: (lookup) => {
+          lookups.push(lookup.host);
+          return "http://forge.example/alex/repo";
+        },
       });
 
       const result = yield* preparePullRequestThread(manager, {
@@ -5805,11 +5857,14 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         url: "http://forge.example/alex/repo",
         merge: "refs/heads/feature/http-fork",
       });
+      expect(lookups.length).toBeGreaterThan(0);
+      expect(lookups.every((host) => host === "forge.example")).toBe(true);
     }),
   );
 
   it.effect("worktree PR checkout tracks the head on its own HTTPS port, not origin's", () =>
     Effect.gen(function* () {
+      const lookups: Array<string | undefined> = [];
       const { repoDir, manager, headCommit } = yield* setUpForkPullRequest({
         kind: "gitlab",
         number: 8,
@@ -5819,7 +5874,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headBranch: "feature/port-head",
         headRepository: "team/repo",
         forkUrl: "https://forge.example:8443/team/repo.git",
-        cloneUrl: () => "https://forge.example:8443/team/repo.git",
+        cloneUrl: (lookup) => {
+          lookups.push(lookup.host);
+          return "https://forge.example:8443/team/repo.git";
+        },
       });
 
       const result = yield* preparePullRequestThread(manager, {
@@ -5834,6 +5892,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         url: "https://forge.example:8443/team/repo.git",
         merge: "refs/heads/feature/port-head",
       });
+      expect(result.isTrackingPullRequestHead).toBe(true);
+      expect(lookups.length).toBeGreaterThan(0);
+      expect(lookups.every((host) => host === "forge.example:8443")).toBe(true);
     }),
   );
 

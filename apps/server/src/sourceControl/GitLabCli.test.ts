@@ -190,35 +190,74 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads repository clone URLs from the requested GitLab host", () =>
-    Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              path_with_namespace: "alex/repo",
-              web_url: "https://gitlab-b.example:8443/alex/repo",
-              http_url_to_repo: "https://gitlab-b.example:8443/alex/repo.git",
-              ssh_url_to_repo: "git@gitlab-b.example:alex/repo.git",
-            }),
-          ),
-        ),
+  // Answers `glab api projects/<repo>` as glab resolves its API host: `--hostname` must be a bare
+  // hostname (glab's HostnameValidator rejects any ':'), and GITLAB_API_HOST overrides that host's
+  // configured API host. The project's URLs name the authority the request reached.
+  const fakeGlabApi: VcsProcess.VcsProcess["Service"]["run"] = (input) => {
+    const flag = input.args.indexOf("--hostname");
+    const hostname = flag === -1 ? "gitlab.com" : (input.args[flag + 1] ?? "");
+    if (hostname.includes(":")) {
+      return Effect.fail(
+        new VcsProcessExitError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          exitCode: 1,
+          detail: "error parsing --hostname: invalid hostname.",
+        }),
       );
+    }
+    const authority = input.env?.GITLAB_API_HOST || hostname;
+    const repository = decodeURIComponent(input.args[1]?.replace(/^projects\//, "") ?? "");
+    return Effect.succeed(
+      processOutput(
+        JSON.stringify({
+          path_with_namespace: repository,
+          web_url: `https://${authority}/${repository}`,
+          http_url_to_repo: `https://${authority}/${repository}.git`,
+          ssh_url_to_repo: `git@${hostname}:${repository}.git`,
+        }),
+      ),
+    );
+  };
+
+  it.effect.each([
+    {
+      name: "a ported host through its hostname and API host",
+      host: "gitlab-b.example:8443",
+      args: ["api", "projects/alex%2Frepo", "--hostname", "gitlab-b.example"],
+      env: { GITLAB_API_HOST: "gitlab-b.example:8443" },
+      url: "https://gitlab-b.example:8443/alex/repo",
+    },
+    {
+      name: "an ordinary host through its hostname",
+      host: "gitlab-b.example",
+      args: ["api", "projects/alex%2Frepo", "--hostname", "gitlab-b.example"],
+      env: undefined,
+      url: "https://gitlab-b.example/alex/repo",
+    },
+    {
+      name: "glab's default host when none is named",
+      host: undefined,
+      args: ["api", "projects/alex%2Frepo"],
+      env: undefined,
+      url: "https://gitlab.com/alex/repo",
+    },
+  ])("reads repository clone URLs from $name", ({ host, args, env, url }) =>
+    Effect.gen(function* () {
+      mockedRun.mockImplementationOnce(fakeGlabApi);
 
       const glab = yield* GitLabCli.GitLabCli;
-      yield* glab.getRepositoryCloneUrls({
+      const result = yield* glab.getRepositoryCloneUrls({
         cwd: "/repo",
-        host: "gitlab-b.example:8443",
+        ...(host === undefined ? {} : { host }),
         repository: "alex/repo",
       });
 
-      expect(mockedRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          command: "glab",
-          args: ["api", "projects/alex%2Frepo", "--hostname", "gitlab-b.example:8443"],
-        }),
-      );
+      expect(result.url).toBe(url);
+      const call = mockedRun.mock.calls[0]?.[0];
+      expect(call?.args).toEqual(args);
+      expect(call?.env).toEqual(env);
     }),
   );
 
