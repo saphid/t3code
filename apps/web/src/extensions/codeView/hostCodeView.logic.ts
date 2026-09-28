@@ -32,6 +32,18 @@ export interface CodeViewDiffFile {
   readonly item: CodeViewDiffItem<undefined>;
 }
 
+// Parsed files are cached per patch, so each file's content hash is computed
+// once rather than on every fold toggle (same as the native Diff panel).
+const contentVersions = new WeakMap<FileDiffMetadata, number>();
+function contentVersion(fileDiff: FileDiffMetadata): number {
+  let version = contentVersions.get(fileDiff);
+  if (version === undefined) {
+    version = buildFileDiffContentVersion(fileDiff);
+    contentVersions.set(fileDiff, version);
+  }
+  return version;
+}
+
 /** CodeView items for the parsed files, folded where the plugin asked. */
 export function buildCodeViewDiffFiles(
   files: ReadonlyArray<FileDiffMetadata>,
@@ -48,7 +60,7 @@ export function buildCodeViewDiffFiles(
         type: "diff",
         fileDiff,
         collapsed: folded,
-        version: fnv1a32(`${buildFileDiffContentVersion(fileDiff)}:${folded ? "1" : "0"}`),
+        version: fnv1a32(`${contentVersion(fileDiff)}:${folded ? "1" : "0"}`),
       },
     };
   });
