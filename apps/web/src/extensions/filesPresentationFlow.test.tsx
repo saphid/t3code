@@ -1226,7 +1226,7 @@ describe("opening a file in the panel when the presentation refuses", () => {
         {
           severity: "error",
           title: "Unable to open file",
-          body: "Open is denied — this installation is missing the t3.file/open grant",
+          body: "Open is denied — Needs permission t3.file/open. Grant it in Settings → Extensions.",
           durationMs: 5_000,
           anchor: "thread",
           threadId: "t",
