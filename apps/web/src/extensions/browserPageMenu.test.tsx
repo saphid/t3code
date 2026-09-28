@@ -10,8 +10,8 @@ const { PageMenu, ZoomIndicator } = (await import(
 )) as {
   ZoomIndicator: ComponentType<{
     zoomFactor: number | null;
-    anchor: HTMLElement | null;
-    floating: { Popover: ComponentType<FloatingPopoverProps>; style: object };
+    zIndex: number;
+    style: object;
     visible: boolean;
   }>;
   PageMenu: ComponentType<{
@@ -104,8 +104,8 @@ describe("Browser zoom indicator", () => {
   const pill = (zoomFactor: number, visible: boolean) =>
     createElement(ZoomIndicator, {
       zoomFactor,
-      anchor: null,
-      floating: { Popover, style: {} },
+      zIndex: 31,
+      style: {},
       visible,
     });
   const pills = (renderer: ReactTestRenderer) =>

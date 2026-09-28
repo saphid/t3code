@@ -8,8 +8,9 @@
 import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
+import { floatingOverPage } from "./floating.js";
 import {
   DEFAULT_ZOOM_FACTOR,
   ZOOM_LADDER,
@@ -43,21 +44,23 @@ const ZOOM_INDICATOR_MS = 1500;
 /**
  * Transient "X%" pill over the page whenever the engine-reported factor
  * changes. The first reported value never flashes, and there is no animation
- * — the pill appears and disappears.
+ * — the pill appears and disappears. Render it inside the page area: like
+ * native's, it sits in that area's top-right corner, over the page but under
+ * the page menu, which the host's floating layer stacks above both.
  */
 export function ZoomIndicator(props: {
   zoomFactor: number | null;
-  /** The page area; the pill sits inside its top-right corner. */
-  anchor: HTMLElement | null;
-  floating: PanelFloating;
+  /** Stacks the pill over the composited page (`floatingLayers().transient`). */
+  zIndex: number;
+  /** The panel's theme. */
+  style: CSSProperties;
   /**
-   * Whether the panel is shown. The pill portals out of the panel, so it
-   * renders only while shown; its timer runs on while hidden, as native's
-   * in-panel pill does.
+   * Whether the panel is shown; the pill renders only while shown. Its timer
+   * runs on while hidden, as native's in-panel pill does.
    */
   visible: boolean;
 }) {
-  const { zoomFactor, anchor, floating, visible } = props;
+  const { zoomFactor, zIndex, style, visible } = props;
   const [shown, setShown] = useState<number | null>(null);
   const last = useRef(zoomFactor);
   useEffect(() => {
@@ -73,16 +76,17 @@ export function ZoomIndicator(props: {
     return () => clearTimeout(timer);
   }, [zoomFactor]);
   if (shown === null || !visible) return null;
-  const { Popover } = floating;
   return (
-    <Popover
-      anchor={anchor}
-      side="inset"
-      offset={12}
+    <div
       role="status"
       aria-label="Page zoom"
+      {...floatingOverPage}
       style={{
-        ...floating.style,
+        ...style,
+        position: "absolute",
+        top: 12,
+        right: 12,
+        zIndex,
         pointerEvents: "none",
         padding: "3px 10px",
         borderRadius: 999,
@@ -93,7 +97,7 @@ export function ZoomIndicator(props: {
       }}
     >
       {zoomPercent(shown)}
-    </Popover>
+    </div>
   );
 }
 
@@ -116,8 +120,11 @@ export function PageMenu(props: {
    * the retained panel must close it; it stays closed when the panel returns.
    */
   visible: boolean;
-  /** Rendered under the page items while open; profile actions do not need a live page. */
-  children?: ReactNode;
+  /**
+   * Rendered under the page items while open, given the menu's `close`;
+   * profile actions do not need a live page.
+   */
+  children?: (close: () => void) => ReactNode;
 }) {
   const { host, session, blockReason, run, zoomStep, floating, visible, children } = props;
   const [open, setOpen] = useState(false);
@@ -307,7 +314,7 @@ export function PageMenu(props: {
           >
             {pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
           </button>
-          {children}
+          {children?.(() => setOpen(false))}
         </Popover>
       )}
     </div>

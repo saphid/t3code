@@ -2,10 +2,11 @@ import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalo
 
 /**
  * Stacking for the panel's UI that floats over the composited page, from the
- * slot's `overlayZIndex`. The device chrome sits on the overlay layer.
- * Transient UI (the page menu, the zoom pill) goes to the host's floating
- * layer, above both, as native menus do; on hosts without one it renders in
- * place one layer above the device chrome.
+ * slot's `overlayZIndex`. The device chrome sits on the overlay layer, and
+ * transient UI one layer above it: the zoom pill in place, as native's sits
+ * in the page area. The page menu goes to the host's floating layer, above
+ * all of them, as native menus do; on hosts without one it renders in place
+ * on the transient layer.
  */
 export function floatingLayers(overlayZIndex: number) {
   return { deviceChrome: overlayZIndex, transient: overlayZIndex + 1 } as const;

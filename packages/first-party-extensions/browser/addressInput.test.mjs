@@ -77,7 +77,15 @@ function mountAddress(initial) {
     renderer = create(render());
   });
   const input = () => renderer.root.find((node) => node.props["aria-label"] === "Address");
+  /** The DOM field's selection, as `select()` leaves it. */
+  const field = {
+    selection: null,
+    select() {
+      field.selection = [0, value.length];
+    },
+  };
   return {
+    selection: () => field.selection,
     submits,
     value: () => input().props.value,
     /** The page the session shows changes without the field's involvement. */
@@ -86,7 +94,7 @@ function mountAddress(initial) {
       act(() => renderer.update(render()));
     },
     focus() {
-      act(() => input().props.onFocus?.({}));
+      act(() => input().props.onFocus?.({ currentTarget: field }));
     },
     blur() {
       act(() => input().props.onBlur?.({}));
@@ -114,6 +122,16 @@ function mountAddress(initial) {
     },
   };
 }
+
+NodeTest.describe("address field focus", () => {
+  NodeTest.it("selects the whole address, so typing replaces it", async () => {
+    const address = mountAddress("http://127.0.0.1:47952/b");
+    address.focus();
+    // Native selects after the focus settles; so does the field.
+    await Promise.resolve();
+    NodeAssert.deepEqual(address.selection(), [0, "http://127.0.0.1:47952/b".length]);
+  });
+});
 
 NodeTest.describe("address field keys", () => {
   NodeTest.it("Escape cancels the edit: the draft returns to the page and focus leaves", () => {

@@ -1151,16 +1151,20 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           floating={floating}
           visible={visible}
         >
-          {held && live && (
-            <ProfileSection
-              session={live}
-              api={profilesApi}
-              profiles={profiles}
-              signal={session.signal}
-              onOpenInProfile={openInProfile}
-              report={setNotice}
-            />
-          )}
+          {(close) =>
+            held &&
+            live && (
+              <ProfileSection
+                session={live}
+                api={profilesApi}
+                profiles={profiles}
+                signal={session.signal}
+                onOpenInProfile={openInProfile}
+                report={setNotice}
+                onChosen={close}
+              />
+            )
+          }
         </PageMenu>
       </header>
       {tabs.length > 0 && (
@@ -1257,8 +1261,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           <ZoomIndicator
             key={held.tabId}
             zoomFactor={live?.zoomFactor ?? null}
-            anchor={contentElement}
-            floating={floating}
+            zIndex={layers.transient}
+            style={floating.style}
             visible={visible}
           />
           {rails.displayed && (
