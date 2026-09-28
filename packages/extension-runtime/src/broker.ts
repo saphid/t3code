@@ -44,6 +44,14 @@ export interface HostApiInvocationMetadata {
   readonly principal?: HostApiPrincipal;
   readonly assertAuthority?: () => Promise<void>;
   /**
+   * The same live check as `assertAuthority` (root session, caller
+   * installations and project access, required grants, provider generation),
+   * minus the invocation-lifetime guard: it stays callable after the call
+   * settles. Providers that detach work past their return fence each later
+   * phase with it.
+   */
+  readonly assertDetachedAuthority?: () => Promise<void>;
+  /**
    * The session-validated `clientConnectionId` self-hint from the invocation
    * envelope. Providers must verify it against the principal's session before
    * treating it as a routing target.
@@ -455,14 +463,14 @@ export function createApiBroker(options: {
             : undefined;
           if (owner) affected.add(owner.id);
           if (owner && callers.at(-1) !== owner) callers.push(owner);
-          const check = async () => {
-            active();
+          const check = async (live = active) => {
+            live();
             await revalidate();
             for (const caller of callers) {
-              active();
+              live();
               await scope(caller, context);
               for (const grant of method.requiredGrants) {
-                active();
+                live();
                 if (
                   !caller.grants.capabilities.includes(grant) ||
                   !(await options.authorize(caller, grant, context))
@@ -471,11 +479,12 @@ export function createApiBroker(options: {
               }
             }
             if (providerGeneration(provider) !== stamp) throw new Error("Stale API generation");
-            active();
+            live();
           };
           await check();
           outcome = "failed";
-          const assertAuthority = check;
+          const assertAuthority = () => check();
+          const assertDetachedAuthority = () => check(() => {});
           const result = copyJson(
             owner
               ? await options.invokeWorker(
@@ -508,6 +517,7 @@ export function createApiBroker(options: {
                       : {}),
                     ...(authority.root ? { principal: authority.root.principal } : {}),
                     assertAuthority,
+                    assertDetachedAuthority,
                     ...(request.clientConnectionId
                       ? { clientConnectionId: request.clientConnectionId }
                       : {}),

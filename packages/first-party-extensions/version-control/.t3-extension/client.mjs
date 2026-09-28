@@ -8563,6 +8563,9 @@ var __t3Client = (() => {
     }
     return { kind: "ready", capabilities };
   }
+  function repositoryHeaderStatus(repo, status) {
+    return repo.kind === "ready" ? describeStatus(status) : null;
+  }
   var VC_THEME_VARS = {
     mutedForeground: "--t3-version-control-muted-foreground",
     border: "--t3-version-control-border",
@@ -12109,6 +12112,7 @@ ${thread.id}`) === activity,
     );
     const repo = repositoryState(capabilities, capsError);
     const status = useStatusStream(host, session, repositoryVisible && repo.kind === "ready", tick);
+    const headerStatus = repositoryHeaderStatus(repo, status);
     const actionCaps = useVcsActionsCapabilities(
       host,
       session,
@@ -12495,7 +12499,7 @@ ${thread.id}`) === activity,
                   }
                 ),
                 view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
-                view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? describeStatus(status) })
+                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? headerStatus })
               ]
             }
           ),

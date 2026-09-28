@@ -72,7 +72,91 @@ const meta = (
     scopes,
   },
   assertAuthority: async () => {},
+  assertDetachedAuthority: async () => {},
 });
+
+/**
+ * Live host state the broker's detached check reads. Each revocation flips
+ * one field; `detached-authority.test.mjs` proves the real broker rejects
+ * for each of them.
+ */
+interface LiveAuthority {
+  /** True once `run` returned — the broker retires the invocation's assertion. */
+  settled: boolean;
+  session: boolean;
+  mutateGrant: boolean;
+  enabled: boolean;
+  installed: boolean;
+}
+
+const REVOCATIONS: ReadonlyArray<readonly [string, (live: LiveAuthority) => void]> = [
+  ["the root session is revoked", (live) => (live.session = false)],
+  ["t3.vcs/mutate is removed", (live) => (live.mutateGrant = false)],
+  ["the extension is disabled", (live) => (live.enabled = false)],
+  ["the extension is uninstalled", (live) => (live.installed = false)],
+];
+
+const liveAuthority = (): LiveAuthority => ({
+  settled: false,
+  session: true,
+  mutateGrant: true,
+  enabled: true,
+  installed: true,
+});
+
+const assertLive = async (live: LiveAuthority) => {
+  if (!live.session || !live.mutateGrant || !live.enabled || !live.installed) {
+    throw new Error("API capability denied");
+  }
+};
+
+/** Invokes `run` as the broker would, retiring the invocation's assertion once it returns. */
+const startRun = (
+  provider: HostApiProvider,
+  action: "commit_push" | "commit_push_pr",
+  live: LiveAuthority,
+  assertDetachedAuthority = () => assertLive(live),
+) =>
+  Effect.promise(async () => {
+    const result = await provider.invoke("run", { action }, makeContext(), signal, {
+      ...meta(provider),
+      assertAuthority: async () => {
+        if (live.settled) throw new Error("API invocation closed");
+        await assertLive(live);
+      },
+      assertDetachedAuthority,
+    });
+    live.settled = true;
+    return result as { actionId: string };
+  });
+
+/** A composite held at a barrier after it starts, finishing once released. */
+const heldWorkflow = () => {
+  const workStarted = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  const runStackedAction: GitWorkflowService["Service"]["runStackedAction"] = (input, options) =>
+    Effect.gen(function* () {
+      yield* options!.progressReporter!.publish({
+        actionId: input.actionId,
+        cwd: input.cwd,
+        action: input.action,
+        kind: "action_started",
+        phases: ["commit", "push"],
+      });
+      yield* Deferred.succeed(workStarted, undefined);
+      yield* Deferred.await(release);
+      const result = stackedResult({ action: input.action });
+      yield* options!.progressReporter!.publish({
+        actionId: input.actionId,
+        cwd: input.cwd,
+        action: input.action,
+        kind: "action_finished",
+        result,
+      });
+      return result;
+    });
+  return { workStarted, release, runStackedAction };
+};
 
 const gitCapabilities = {
   kind: "git",
@@ -606,6 +690,38 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     }),
   );
 
+  it.effect("runs detached work after the broker retires the invocation's assertion", () =>
+    Effect.gen(function* () {
+      // The broker aborts a unary invocation's `assertAuthority` once the
+      // call settles; the composite outlives the call, so it must not reuse it.
+      const t = makeProvider({ grants: [PRS_WRITE] });
+      let settled = false;
+      const metadata = {
+        ...meta(t.provider),
+        assertAuthority: async () => {
+          if (settled) throw new Error("API invocation closed");
+        },
+      };
+      const started = (yield* Effect.promise(async () => {
+        const result = await t.provider.invoke(
+          "run",
+          { action: "commit_push_pr", commitMessage: "ship it" },
+          makeContext(),
+          signal,
+          metadata,
+        );
+        settled = true;
+        return result;
+      })) as { actionId: string };
+      const events = yield* collectProgress(t.provider, started.actionId);
+      const kinds = events.map((event) => (event.value as { kind: string }).kind);
+      expect(kinds).not.toContain("action_failed");
+      expect(kinds).not.toContain("closed");
+      expect(t.runCalls).toHaveLength(1);
+      expect(yield* Deferred.await(t.refreshed)).toBe(ROOT);
+    }),
+  );
+
   it.effect("surfaces a denied in-flight grant recheck as a named action_failed", () =>
     Effect.gen(function* () {
       // The pre-run chain check passes; the forked work's preflight recheck
@@ -676,6 +792,67 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
         expect(t.dispatched).toHaveLength(0);
         expect(t.refreshes).toHaveLength(0);
       }),
+  );
+
+  for (const action of ["commit_push", "commit_push_pr"] as const) {
+    for (const [label, revoke] of REVOCATIONS) {
+      it.effect(`${action} skips the PR link and refresh when ${label} mid-action`, () =>
+        Effect.gen(function* () {
+          const held = heldWorkflow();
+          const live = liveAuthority();
+          const t = makeProvider({ grants: [PRS_WRITE], runStackedAction: held.runStackedAction });
+          const started = yield* startRun(t.provider, action, live);
+          yield* Deferred.await(held.workStarted);
+          revoke(live);
+          yield* Deferred.succeed(held.release, undefined);
+          const events = yield* collectProgress(t.provider, started.actionId);
+          expect(events.map((event) => event.value)).toEqual([
+            expect.objectContaining({ kind: "action_started" }),
+            expect.objectContaining({ kind: "action_finished" }),
+            { kind: "closed", reason: "authorization-revoked" },
+          ]);
+          expect(t.dispatched).toHaveLength(0);
+          expect(t.refreshes).toHaveLength(0);
+        }),
+      );
+    }
+  }
+
+  for (const [label, revoke] of REVOCATIONS) {
+    it.effect(`never starts the composite when ${label} before the detached work runs`, () =>
+      Effect.gen(function* () {
+        const live = liveAuthority();
+        const t = makeProvider({ grants: [PRS_WRITE] });
+        // Revoked between the broker's admission and the detached fiber's first check.
+        let checks = 0;
+        const started = yield* startRun(t.provider, "commit_push", live, () => {
+          if (++checks === 1) revoke(live);
+          return assertLive(live);
+        });
+        const events = yield* collectProgress(t.provider, started.actionId);
+        expect(events.map((event) => (event.value as { kind: string }).kind)).toEqual([
+          "action_failed",
+        ]);
+        expect(t.runCalls).toHaveLength(0);
+        expect(t.refreshes).toHaveLength(0);
+      }),
+    );
+  }
+
+  it.effect("skips the status refresh when authority is revoked after the PR link", () =>
+    Effect.gen(function* () {
+      const t = makeProvider({ grants: [PRS_WRITE] });
+      const live = liveAuthority();
+      // The session ends the moment the link lands.
+      const started = yield* startRun(t.provider, "commit_push_pr", live, () => {
+        if (t.dispatched.length > 0) live.session = false;
+        return assertLive(live);
+      });
+      const events = yield* collectProgress(t.provider, started.actionId);
+      expect(events.at(-1)?.value).toEqual({ kind: "closed", reason: "authorization-revoked" });
+      expect(t.dispatched).toHaveLength(1);
+      expect(t.refreshes).toHaveLength(0);
+    }),
   );
 
   it.effect("names the composite's own failure phase without double-terminating", () =>
