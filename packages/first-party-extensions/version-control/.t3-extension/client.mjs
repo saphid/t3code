@@ -11580,14 +11580,14 @@ ${writeKey}`;
   }
   function CheckoutMenu(props) {
     const { host, pending, disabled, onPick } = props;
-    const [open, setOpen] = (0, import_react2.useState)(false);
+    const [open, setOpen] = (0, import_react2.useState)(null);
     const trigger = (0, import_react2.useRef)(null);
     const items = (0, import_react2.useRef)([]);
     (0, import_react2.useEffect)(() => {
-      if (open) items.current[0]?.focus();
+      if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
     }, [open]);
     const close = () => {
-      setOpen(false);
+      setOpen(null);
       trigger.current?.focus();
     };
     const move = (step) => {
@@ -11603,10 +11603,16 @@ ${writeKey}`;
           ref: trigger,
           type: "button",
           "aria-haspopup": "menu",
-          "aria-expanded": open,
+          "aria-expanded": open !== null,
           "aria-label": prsCheckoutLabel(pending),
           disabled,
-          onClick: () => setOpen((value) => !value),
+          onClick: () => setOpen((value) => value === null ? "first" : null),
+          onKeyDown: (event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(event.key === "ArrowDown" ? "first" : "last");
+            }
+          },
           style: { ...control, fontSize: 12, border },
           children: [
             prsCheckoutLabel(pending),
@@ -11614,7 +11620,7 @@ ${writeKey}`;
           ]
         }
       ) }),
-      open && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      open !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
         "div",
         {
           role: "menu",
@@ -11623,6 +11629,8 @@ ${writeKey}`;
             if (event.key === "Escape") {
               event.preventDefault();
               close();
+            } else if (event.key === "Tab") {
+              setOpen(null);
             } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               move(event.key === "ArrowDown" ? 1 : -1);
@@ -11632,7 +11640,7 @@ ${writeKey}`;
             }
           },
           onBlur: (event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+            if (!event.currentTarget.contains(event.relatedTarget)) setOpen(null);
           },
           style: {
             position: "absolute",

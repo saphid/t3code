@@ -691,3 +691,44 @@ NodeTest.describe("stacked-on badge", () => {
     view.unmount();
   });
 });
+
+NodeTest.describe("check out menu keyboard", () => {
+  const trigger = (view) => view.find("Check out");
+  const menuOpen = (view) =>
+    view.renderer.root.findAll((node) => node.type === "div" && node.props.role === "menu").length >
+    0;
+
+  NodeTest.it("ArrowDown on the trigger opens the menu on its first option", async () => {
+    const view = mountPanel(defaultHandlers());
+    await flush();
+    const down = dispatch(trigger(view), "onKeyDown", { key: "ArrowDown" });
+    await flush();
+    NodeAssert.equal(down.defaultPrevented, true);
+    NodeAssert.equal(menuOpen(view), true);
+    NodeAssert.match(view.focused() ?? "", /^In a separate worktree/);
+    view.unmount();
+  });
+
+  NodeTest.it("ArrowUp on the trigger opens the menu on its last option", async () => {
+    const view = mountPanel(defaultHandlers());
+    await flush();
+    dispatch(trigger(view), "onKeyDown", { key: "ArrowUp" });
+    await flush();
+    NodeAssert.match(view.focused() ?? "", /^In this repository/);
+    view.unmount();
+  });
+
+  NodeTest.it("Tab closes the menu and lets focus move on", async () => {
+    const view = mountPanel(defaultHandlers());
+    await flush();
+    dispatch(trigger(view), "onKeyDown", { key: "ArrowDown" });
+    await flush();
+    const menu = view.renderer.root.find(
+      (node) => node.type === "div" && node.props.role === "menu",
+    );
+    const tab = dispatch(menu, "onKeyDown", { key: "Tab" });
+    NodeAssert.equal(tab.defaultPrevented, false);
+    NodeAssert.equal(menuOpen(view), false);
+    view.unmount();
+  });
+});

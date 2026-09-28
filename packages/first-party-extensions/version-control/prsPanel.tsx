@@ -1735,8 +1735,9 @@ export function PrsActionButton(props: {
 
 /**
  * Native's Check out menu: a trigger that names the running checkout, and
- * the two places a checkout can land. Arrow keys move between the options,
- * Escape closes back onto the trigger, and leaving the menu closes it.
+ * the two places a checkout can land. ArrowDown/ArrowUp on the trigger open
+ * it on the first/last option, arrow keys move between the options, Escape
+ * closes back onto the trigger, and Tab or leaving the menu closes it.
  */
 function CheckoutMenu(props: {
   host: ClientHost;
@@ -1745,14 +1746,14 @@ function CheckoutMenu(props: {
   onPick: (mode: PrsCheckoutMode) => void;
 }) {
   const { host, pending, disabled, onPick } = props;
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<"first" | "last" | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
-    if (open) items.current[0]?.focus();
+    if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
   }, [open]);
   const close = () => {
-    setOpen(false);
+    setOpen(null);
     trigger.current?.focus();
   };
   const move = (step: number) => {
@@ -1768,16 +1769,22 @@ function CheckoutMenu(props: {
           ref={trigger}
           type="button"
           aria-haspopup="menu"
-          aria-expanded={open}
+          aria-expanded={open !== null}
           aria-label={prsCheckoutLabel(pending)}
           disabled={disabled}
-          onClick={() => setOpen((value) => !value)}
+          onClick={() => setOpen((value) => (value === null ? "first" : null))}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setOpen(event.key === "ArrowDown" ? "first" : "last");
+            }
+          }}
           style={{ ...control, fontSize: 12, border }}
         >
           {prsCheckoutLabel(pending)} ▾
         </button>
       </Tooltip>
-      {open && (
+      {open !== null && (
         <div
           role="menu"
           aria-label="Check out"
@@ -1785,6 +1792,9 @@ function CheckoutMenu(props: {
             if (event.key === "Escape") {
               event.preventDefault();
               close();
+            } else if (event.key === "Tab") {
+              // Focus moves on as Tab would; the menu just goes away.
+              setOpen(null);
             } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               move(event.key === "ArrowDown" ? 1 : -1);
@@ -1794,7 +1804,7 @@ function CheckoutMenu(props: {
             }
           }}
           onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(null);
           }}
           style={{
             position: "absolute",
