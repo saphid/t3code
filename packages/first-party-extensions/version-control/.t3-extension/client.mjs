@@ -8047,7 +8047,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react2 = __toESM(require_react(), 1);
+  var import_react3 = __toESM(require_react(), 1);
 
   // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
@@ -8704,7 +8704,154 @@ var __t3Client = (() => {
   }
 
   // prsPanel.tsx
+  var import_react2 = __toESM(require_react(), 1);
+
+  // mutationToasts.ts
   var import_react = __toESM(require_react(), 1);
+  function useMutationToasts(host, session, enabled, runFollowUp = () => {
+  }) {
+    const [toastsLive, setToastsLive] = (0, import_react.useState)(false);
+    const [followUpsLive, setFollowUpsLive] = (0, import_react.useState)(false);
+    const dead = (0, import_react.useRef)(false);
+    (0, import_react.useEffect)(() => {
+      if (!enabled) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
+        (capabilities) => {
+          if (!signal.aborted && !dead.current) {
+            setToastsLive(
+              capabilities.operations.notify === true && capabilities.operations.update === true
+            );
+            setFollowUpsLive(capabilities.operations.awaitAction === true);
+          }
+        },
+        () => {
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, enabled]);
+    const markDead = () => {
+      if (dead.current || session.signal.aborted) return;
+      dead.current = true;
+      setToastsLive(false);
+    };
+    const begin = (label, onReceiptLost, startTitle) => {
+      if (!toastsLive || dead.current) return null;
+      const api = bindApi(uiNotificationsApi, host, session.context);
+      const resource = session.context.resource;
+      const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
+      });
+      const dismiss = (notificationId) => {
+        void dismissOrReject(notificationId).catch(() => {
+        });
+      };
+      const target = {
+        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
+        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
+      };
+      const posted = api.invoke(
+        "notify",
+        {
+          ...mutationToastStart(label),
+          ...startTitle !== void 0 ? { title: startTitle } : {},
+          ...target
+        },
+        session.signal
+      ).then(
+        (result) => {
+          if (dead.current) dismiss(result.notificationId);
+          return result.notificationId;
+        },
+        () => {
+          markDead();
+          onReceiptLost();
+          return null;
+        }
+      );
+      const receiptSeen = {
+        signal: session.signal,
+        seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
+        onChange: (listener) => {
+          const offView = session.onVisibility(listener);
+          if (typeof document === "undefined" || typeof window === "undefined") return offView;
+          document.addEventListener("visibilitychange", listener);
+          window.addEventListener("focus", listener);
+          window.addEventListener("blur", listener);
+          return () => {
+            offView();
+            document.removeEventListener("visibilitychange", listener);
+            window.removeEventListener("focus", listener);
+            window.removeEventListener("blur", listener);
+          };
+        }
+      };
+      const settleInPlace = (notificationId, patch) => void api.invoke("update", { notificationId, ...patch }, session.signal).then(
+        ({ applied }) => {
+          if (!applied) {
+            onReceiptLost();
+            return;
+          }
+          if (patch.severity === "success")
+            dismissReceiptAfterSeen(
+              receiptSeen,
+              MUTATION_TOAST_DISMISS_MS,
+              () => dismiss(notificationId)
+            );
+        },
+        (error) => {
+          onReceiptLost();
+          if (!isNotificationDismissal(error)) markDead();
+        }
+      );
+      return {
+        settle(result, followUp) {
+          void posted.then(async (notificationId) => {
+            if (notificationId === null) return;
+            if (dead.current) {
+              onReceiptLost();
+              dismiss(notificationId);
+              return;
+            }
+            if (result.ok && followUp && followUpsLive) {
+              const replaced = await postFollowUpReceipt(
+                {
+                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
+                  dismiss: dismissOrReject,
+                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
+                },
+                notificationId,
+                result.detail,
+                followUp,
+                {
+                  onPosted: (receiptId) => dismissReceiptAfterSeen(
+                    receiptSeen,
+                    MUTATION_TOAST_DISMISS_MS,
+                    () => dismiss(receiptId)
+                  ),
+                  run: runFollowUp
+                }
+              );
+              if (replaced) return;
+            }
+            settleInPlace(notificationId, mutationToastSettle(label, result));
+          });
+        },
+        settleWith(patch) {
+          void posted.then((notificationId) => {
+            if (notificationId === null) return;
+            if (dead.current) {
+              onReceiptLost();
+              dismiss(notificationId);
+              return;
+            }
+            settleInPlace(notificationId, patch);
+          });
+        }
+      };
+    };
+    return { begin };
+  }
 
   // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
@@ -10298,8 +10445,8 @@ ${writeKey}`;
   };
   var message = (error, fallback) => error instanceof Error ? error.message : fallback;
   function usePrsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10321,8 +10468,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function usePrsWriteCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [result, setResult] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10344,8 +10491,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useCheckoutSupport(host, session, enabled) {
-    const [supported, setSupported] = (0, import_react.useState)(false);
-    (0, import_react.useEffect)(() => {
+    const [supported, setSupported] = (0, import_react2.useState)(false);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10365,12 +10512,12 @@ ${writeKey}`;
     return enabled && supported;
   }
   function usePrsRefreshes(host, session, enabled) {
-    const [state2, setState] = (0, import_react.useState)({
+    const [state2, setState] = (0, import_react2.useState)({
       tick: 0,
       live: false,
       detail: null
     });
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10426,11 +10573,11 @@ ${writeKey}`;
     return state2;
   }
   function usePrsList(host, session, enabled, input, revision2) {
-    const inputKey = (0, import_react.useMemo)(() => JSON.stringify(input), [input]);
+    const inputKey = (0, import_react2.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
-    const [state2, setState] = (0, import_react.useState)(null);
-    const continuation = (0, import_react.useRef)(null);
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)(null);
+    const continuation = (0, import_react2.useRef)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10526,8 +10673,8 @@ ${writeKey}`;
   function usePrsDetail(host, session, ref, operations, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [sections, setSections] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [sections, setSections] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (ref === null || refKey === null || key === null || operations === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10596,8 +10743,8 @@ ${writeKey}`;
   function usePrsDiff(host, session, ref, enabled, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [state2, setState] = (0, import_react.useState)(null);
-    (0, import_react.useEffect)(() => {
+    const [state2, setState] = (0, import_react2.useState)(null);
+    (0, import_react2.useEffect)(() => {
       if (!enabled || ref === null || key === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -10678,8 +10825,8 @@ ${writeKey}`;
     return { diff: value, loadMore };
   }
   function useDebounced(value, delay) {
-    const [debounced, setDebounced] = (0, import_react.useState)(value);
-    (0, import_react.useEffect)(() => {
+    const [debounced, setDebounced] = (0, import_react2.useState)(value);
+    (0, import_react2.useEffect)(() => {
       const timer = setTimeout(() => setDebounced(value), delay);
       return () => clearTimeout(timer);
     }, [value, delay]);
@@ -11061,8 +11208,8 @@ ${writeKey}`;
     );
   }
   function PrsFileSection({ row }) {
-    const [collapsed, setCollapsed] = (0, import_react.useState)(false);
-    const rows = (0, import_react.useMemo)(
+    const [collapsed, setCollapsed] = (0, import_react2.useState)(false);
+    const rows = (0, import_react2.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row),
       [collapsed, row]
     );
@@ -11220,10 +11367,10 @@ ${writeKey}`;
   }
   function CheckoutMenu(props) {
     const { host, pending, disabled, onPick } = props;
-    const [open, setOpen] = (0, import_react.useState)(false);
-    const trigger = (0, import_react.useRef)(null);
-    const items = (0, import_react.useRef)([]);
-    (0, import_react.useEffect)(() => {
+    const [open, setOpen] = (0, import_react2.useState)(false);
+    const trigger = (0, import_react2.useRef)(null);
+    const items = (0, import_react2.useRef)([]);
+    (0, import_react2.useEffect)(() => {
       if (open) items.current[0]?.focus();
     }, [open]);
     const close = () => {
@@ -11321,12 +11468,12 @@ ${writeKey}`;
   }
   function ConfirmDialog(props) {
     const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
-    const titleId = (0, import_react.useId)();
-    const descriptionId = (0, import_react.useId)();
-    const cancel = (0, import_react.useRef)(null);
-    const confirm = (0, import_react.useRef)(null);
-    const opener = (0, import_react.useRef)(anchor);
-    (0, import_react.useEffect)(() => {
+    const titleId = (0, import_react2.useId)();
+    const descriptionId = (0, import_react2.useId)();
+    const cancel = (0, import_react2.useRef)(null);
+    const confirm = (0, import_react2.useRef)(null);
+    const opener = (0, import_react2.useRef)(anchor);
+    (0, import_react2.useEffect)(() => {
       cancel.current?.focus();
       const returnTo = opener.current;
       return () => returnTo?.focus();
@@ -11404,6 +11551,13 @@ ${writeKey}`;
         children: body
       }
     );
+  }
+  function receiptToast(receipt2) {
+    return {
+      severity: receipt2.tone,
+      title: receipt2.title,
+      ...receipt2.description !== null ? { body: receipt2.description } : {}
+    };
   }
   function ReceiptLine({ receipt: receipt2 }) {
     if (receipt2 === null) return null;
@@ -11488,14 +11642,14 @@ ${writeKey}`;
   }
   function PullRequestsPanel(props) {
     const { host, session, visible, selected, onSelect } = props;
-    const [tick, setTick] = (0, import_react.useState)(0);
-    const [listState, setListState] = (0, import_react.useState)("open");
-    const [involvement, setInvolvement] = (0, import_react.useState)("all");
-    const [query, setQuery] = (0, import_react.useState)("");
-    const [refreshError, setRefreshError] = (0, import_react.useState)(null);
-    const [pagingThreads, setPagingThreads] = (0, import_react.useState)(/* @__PURE__ */ new Map());
-    const [pagedThreads, setPagedThreads] = (0, import_react.useState)(null);
-    const pagedGeneration = (0, import_react.useRef)({
+    const [tick, setTick] = (0, import_react2.useState)(0);
+    const [listState, setListState] = (0, import_react2.useState)("open");
+    const [involvement, setInvolvement] = (0, import_react2.useState)("all");
+    const [query, setQuery] = (0, import_react2.useState)("");
+    const [refreshError, setRefreshError] = (0, import_react2.useState)(null);
+    const [pagingThreads, setPagingThreads] = (0, import_react2.useState)(/* @__PURE__ */ new Map());
+    const [pagedThreads, setPagedThreads] = (0, import_react2.useState)(null);
+    const pagedGeneration = (0, import_react2.useRef)({
       scope: null,
       activity: null,
       generation: 0
@@ -11507,16 +11661,16 @@ ${writeKey}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [drafts, setDrafts] = (0, import_react.useState)({});
-    const [writeState, setWriteState] = (0, import_react.useState)(null);
-    const [lastMergeMethod, setLastMergeMethod] = (0, import_react.useState)(null);
-    const [openError, setOpenError] = (0, import_react.useState)(null);
-    const [stackConfirm, setStackConfirm] = (0, import_react.useState)(null);
-    const stackMergeOpener = (0, import_react.useRef)(null);
-    const stackRebaseOpener = (0, import_react.useRef)(null);
-    const [stackReceipt, setStackReceipt] = (0, import_react.useState)(null);
-    const [handoff, setHandoff] = (0, import_react.useState)(null);
-    const [handoffReceipt, setHandoffReceipt] = (0, import_react.useState)(null);
+    const [drafts, setDrafts] = (0, import_react2.useState)({});
+    const [writeState, setWriteState] = (0, import_react2.useState)(null);
+    const [lastMergeMethod, setLastMergeMethod] = (0, import_react2.useState)(null);
+    const [openError, setOpenError] = (0, import_react2.useState)(null);
+    const [stackConfirm, setStackConfirm] = (0, import_react2.useState)(null);
+    const stackMergeOpener = (0, import_react2.useRef)(null);
+    const stackRebaseOpener = (0, import_react2.useRef)(null);
+    const [stackReceipt, setStackReceipt] = (0, import_react2.useState)(null);
+    const [handoff, setHandoff] = (0, import_react2.useState)(null);
+    const [handoffReceipt, setHandoffReceipt] = (0, import_react2.useState)(null);
     const openOnHost = (url) => {
       setOpenError(null);
       void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
@@ -11536,7 +11690,7 @@ ${writeKey}`;
     );
     const revision2 = `${tick}:${refreshes.tick}`;
     const debouncedQuery = useDebounced(query, 250);
-    const listInput = (0, import_react.useMemo)(
+    const listInput = (0, import_react2.useMemo)(
       () => prsListInput(listState, involvement, debouncedQuery),
       [listState, involvement, debouncedQuery]
     );
@@ -11575,11 +11729,34 @@ ${writeKey}`;
     };
     const selectedKey = selected === null ? null : prsRefKey(selected);
     const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const toasts = useMutationToasts(host, session, visible && ready);
+    const beginReport = (label, startTitle, showInline) => {
+      let settled = null;
+      let lost = false;
+      const toast = toasts.begin(
+        label,
+        () => {
+          lost = true;
+          if (settled !== null) showInline(settled);
+        },
+        startTitle
+      );
+      return (receipt2) => {
+        settled = receipt2;
+        if (toast === null || lost) showInline(receipt2);
+        else toast.settleWith(receiptToast(receipt2));
+      };
+    };
     const startCheckout = (url, mode) => {
       if (selectedKey === null || handoff !== null) return;
       const refKey = selectedKey;
       setHandoff(`checkout:${mode}`);
       setHandoffReceipt(null);
+      const report = beginReport(
+        "Check out",
+        "Preparing the pull request checkout...",
+        (receipt2) => setHandoffReceipt({ refKey, receipt: receipt2 })
+      );
       void bindApi(vcsActionsApi, host, session.context).invoke("preparePullRequestThread", { reference: url, mode }, session.signal).then(
         (value) => ({ ok: true, value }),
         (error) => ({
@@ -11589,7 +11766,7 @@ ${writeKey}`;
       ).then((outcome) => {
         if (session.signal.aborted) return;
         setHandoff(null);
-        setHandoffReceipt({ refKey, receipt: prsCheckoutReceipt(mode, outcome) });
+        report(prsCheckoutReceipt(mode, outcome));
       });
     };
     const draftKey = (key) => prsDraftKey(selectedKey, key);
@@ -11669,7 +11846,7 @@ ${writeKey}`;
     };
     const pagedScope = selectedKey === null ? null : `${revision2}
 ${selectedKey}`;
-    (0, import_react.useEffect)(() => {
+    (0, import_react2.useEffect)(() => {
       const current = pagedGeneration.current;
       if (current.scope !== pagedScope || current.activity !== sections.activity)
         pagedGeneration.current = {
@@ -11775,16 +11952,18 @@ ${thread.id}`;
       const refKey = selectedKey;
       const { action } = confirming;
       setStackReceipt(null);
+      const report = beginReport(
+        action === "merge" ? "Merge stack" : "Rebase stack",
+        void 0,
+        (receipt2) => setStackReceipt({ refKey, receipt: receipt2 })
+      );
       runWrite(
         `stack:${action}`,
         (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
         void 0,
         (outcome) => {
           setStackConfirm(null);
-          setStackReceipt({
-            refKey,
-            receipt: action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome)
-          });
+          report(action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome));
         }
       );
     };
@@ -12125,6 +12304,12 @@ ${thread.id}`;
                     ]
                   }
                 ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  ReceiptLine,
+                  {
+                    receipt: stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null
+                  }
+                ),
                 sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.stackError }),
                 ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Stack information is not supported by this host (prs.stack)." }),
                 sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
@@ -12207,12 +12392,6 @@ ${thread.id}`;
                         ),
                         stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
                       ]
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                    ReceiptLine,
-                    {
-                      receipt: stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null
                     }
                   )
                 ] }),
@@ -12429,8 +12608,8 @@ ${thread.id}`) === activity,
     ) && (record.selectedPath === void 0 || typeof record.selectedPath === "string") && (record.selectedLane === void 0 || typeof record.selectedLane === "string" && LANES.has(record.selectedLane)) && (record.view === void 0 || typeof record.view === "string" && VIEWS.has(record.view)) && (record.prHost === void 0 || typeof record.prHost === "string") && (record.prRepository === void 0 || typeof record.prRepository === "string") && (record.prNumber === void 0 || typeof record.prNumber === "number");
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12452,8 +12631,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusStream(host, session, visible, tick) {
-    const [model, setModel] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [model, setModel] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12510,8 +12689,8 @@ ${thread.id}`) === activity,
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
   function useVcsActionsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12533,8 +12712,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useChangesList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12560,8 +12739,8 @@ ${thread.id}`) === activity,
     return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12584,8 +12763,8 @@ ${thread.id}`) === activity,
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   function useRemotesList(host, session, visible, enabled, revision2) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible || !enabled || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12608,8 +12787,8 @@ ${thread.id}`) === activity,
     return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [vars, setVars] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12651,130 +12830,6 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  function useMutationToasts(host, session, enabled, runFollowUp) {
-    const [toastsLive, setToastsLive] = (0, import_react2.useState)(false);
-    const [followUpsLive, setFollowUpsLive] = (0, import_react2.useState)(false);
-    const dead = (0, import_react2.useRef)(false);
-    (0, import_react2.useEffect)(() => {
-      if (!enabled) return;
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(uiNotificationsApi, host, session.context).invoke("getCapabilities", {}, signal).then(
-        (capabilities) => {
-          if (!signal.aborted && !dead.current) {
-            setToastsLive(
-              capabilities.operations.notify === true && capabilities.operations.update === true
-            );
-            setFollowUpsLive(capabilities.operations.awaitAction === true);
-          }
-        },
-        () => {
-        }
-      );
-      return () => controller.abort();
-    }, [host, session, enabled]);
-    const markDead = () => {
-      if (dead.current || session.signal.aborted) return;
-      dead.current = true;
-      setToastsLive(false);
-    };
-    const begin = (label, onReceiptLost) => {
-      if (!toastsLive || dead.current) return null;
-      const api = bindApi(uiNotificationsApi, host, session.context);
-      const resource = session.context.resource;
-      const dismissOrReject = (notificationId) => api.invoke("dismiss", { notificationId }, session.signal).then(() => {
-      });
-      const dismiss = (notificationId) => {
-        void dismissOrReject(notificationId).catch(() => {
-        });
-      };
-      const target = {
-        ...resource.threadId !== void 0 ? { anchor: "thread", threadId: resource.threadId } : {},
-        ...resource.projectId !== void 0 ? { projectId: resource.projectId } : {}
-      };
-      const posted = api.invoke("notify", { ...mutationToastStart(label), ...target }, session.signal).then(
-        (result) => {
-          if (dead.current) dismiss(result.notificationId);
-          return result.notificationId;
-        },
-        () => {
-          markDead();
-          onReceiptLost();
-          return null;
-        }
-      );
-      const receiptSeen = {
-        signal: session.signal,
-        seen: () => session.visible && (typeof document === "undefined" || typeof window === "undefined" || document.visibilityState === "visible" && document.hasFocus()),
-        onChange: (listener) => {
-          const offView = session.onVisibility(listener);
-          if (typeof document === "undefined" || typeof window === "undefined") return offView;
-          document.addEventListener("visibilitychange", listener);
-          window.addEventListener("focus", listener);
-          window.addEventListener("blur", listener);
-          return () => {
-            offView();
-            document.removeEventListener("visibilitychange", listener);
-            window.removeEventListener("focus", listener);
-            window.removeEventListener("blur", listener);
-          };
-        }
-      };
-      const settleInPlace = (notificationId, result) => void api.invoke("update", { notificationId, ...mutationToastSettle(label, result) }, session.signal).then(
-        ({ applied }) => {
-          if (!applied) {
-            onReceiptLost();
-            return;
-          }
-          if (result.ok)
-            dismissReceiptAfterSeen(
-              receiptSeen,
-              MUTATION_TOAST_DISMISS_MS,
-              () => dismiss(notificationId)
-            );
-        },
-        (error) => {
-          onReceiptLost();
-          if (!isNotificationDismissal(error)) markDead();
-        }
-      );
-      return {
-        settle(result, followUp) {
-          void posted.then(async (notificationId) => {
-            if (notificationId === null) return;
-            if (dead.current) {
-              onReceiptLost();
-              dismiss(notificationId);
-              return;
-            }
-            if (result.ok && followUp && followUpsLive) {
-              const replaced = await postFollowUpReceipt(
-                {
-                  notify: (input) => api.invoke("notify", { ...input, ...target }, session.signal),
-                  dismiss: dismissOrReject,
-                  awaitAction: (id2) => api.invoke("awaitAction", { notificationId: id2 }, session.signal)
-                },
-                notificationId,
-                result.detail,
-                followUp,
-                {
-                  onPosted: (receiptId) => dismissReceiptAfterSeen(
-                    receiptSeen,
-                    MUTATION_TOAST_DISMISS_MS,
-                    () => dismiss(receiptId)
-                  ),
-                  run: runFollowUp
-                }
-              );
-              if (replaced) return;
-            }
-            settleInPlace(notificationId, result);
-          });
-        }
-      };
-    };
-    return { begin };
-  }
   var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var control2 = {
@@ -12789,48 +12844,48 @@ ${thread.id}`) === activity,
   };
   function VersionControlView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react2.useState)(session.visible);
-    const [tick, setTick] = (0, import_react2.useState)(0);
-    const [refreshError, setRefreshError] = (0, import_react2.useState)(null);
-    const [mutation, setMutation] = (0, import_react2.useState)(IDLE_MUTATION);
-    const [mutationSerial, setMutationSerial] = (0, import_react2.useState)(0);
-    const [commitMessage, setCommitMessage] = (0, import_react2.useState)("");
-    const [stackedChoice, setStackedChoice] = (0, import_react2.useState)(null);
-    const [featureBranch, setFeatureBranch] = (0, import_react2.useState)(false);
-    const [pendingConfirm, setPendingConfirm] = (0, import_react2.useState)(null);
-    const [pendingDiscard, setPendingDiscard] = (0, import_react2.useState)(null);
-    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react2.useState)(null);
-    const [stacked, setStacked] = (0, import_react2.useState)(null);
-    const [newRefName, setNewRefName] = (0, import_react2.useState)("");
-    const [newWorktreeName, setNewWorktreeName] = (0, import_react2.useState)("");
-    const [publishOpen, setPublishOpen] = (0, import_react2.useState)(false);
-    const [publishProvider, setPublishProvider] = (0, import_react2.useState)("github");
-    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react2.useState)("");
-    const [publishVisibility, setPublishVisibility] = (0, import_react2.useState)("private");
-    const [publishRemoteName, setPublishRemoteName] = (0, import_react2.useState)("origin");
-    const [publishProtocol, setPublishProtocol] = (0, import_react2.useState)("ssh");
-    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react2.useState)(false);
-    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react2.useState)(
+    const [visible, setVisible] = (0, import_react3.useState)(session.visible);
+    const [tick, setTick] = (0, import_react3.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react3.useState)(null);
+    const [mutation, setMutation] = (0, import_react3.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react3.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react3.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react3.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react3.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react3.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react3.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react3.useState)(null);
+    const [stacked, setStacked] = (0, import_react3.useState)(null);
+    const [newRefName, setNewRefName] = (0, import_react3.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react3.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react3.useState)(false);
+    const [publishProvider, setPublishProvider] = (0, import_react3.useState)("github");
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react3.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react3.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react3.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react3.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react3.useState)(false);
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react3.useState)(
       /* @__PURE__ */ new Set()
     );
-    const inFlight = (0, import_react2.useRef)(false);
-    (0, import_react2.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const inFlight = (0, import_react3.useRef)(false);
+    (0, import_react3.useEffect)(() => session.onVisibility(setVisible), [session]);
     const themeVars = useThemeVars(host, session, visible);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [selection, setSelection] = (0, import_react2.useState)(
+    const [selection, setSelection] = (0, import_react3.useState)(
       () => restored?.selectedPath && restored.selectedLane && LANES.has(restored.selectedLane) ? { path: restored.selectedPath, lane: restored.selectedLane } : null
     );
-    const [view, setView] = (0, import_react2.useState)(
+    const [view, setView] = (0, import_react3.useState)(
       restored?.view === "repository" ? "repository" : "pull-requests"
     );
-    const [selectedPr, setSelectedPr] = (0, import_react2.useState)(
+    const [selectedPr, setSelectedPr] = (0, import_react3.useState)(
       () => restored?.prRepository !== void 0 && typeof restored.prNumber === "number" ? {
         repository: restored.prRepository,
         number: restored.prNumber,
         ...restored.prHost !== void 0 && restored.prHost !== "" ? { host: restored.prHost } : {}
       } : null
     );
-    const savedState = (0, import_react2.useRef)({ ...restored });
+    const savedState = (0, import_react3.useRef)({ ...restored });
     const persist = (patch) => {
       const next = { ...savedState.current, ...patch };
       for (const key of Object.keys(next)) if (next[key] === void 0) delete next[key];
@@ -12838,7 +12893,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const runFollowUpRef = (0, import_react2.useRef)(() => {
+    const runFollowUpRef = (0, import_react3.useRef)(() => {
     });
     const { begin: beginToast } = useMutationToasts(
       host,
@@ -12873,15 +12928,15 @@ ${thread.id}`) === activity,
       isRepo && ops?.["repository.listRemotes"] === true,
       listRevision
     );
-    const lanes = (0, import_react2.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    const lanes = (0, import_react3.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
-    const rows = (0, import_react2.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const remoteList = (0, import_react2.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
-    const worktrees = (0, import_react2.useMemo)(() => worktreeRows(rows), [rows]);
+    const rows = (0, import_react3.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const remoteList = (0, import_react3.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react3.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
@@ -12904,7 +12959,7 @@ ${thread.id}`) === activity,
       repository: publishRepositoryPath,
       remoteName: publishRemoteName
     });
-    const stackedOffers = (0, import_react2.useMemo)(
+    const stackedOffers = (0, import_react3.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
     );
@@ -13168,7 +13223,7 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       runFollowUpRef.current = (action) => {
         switchView("repository");
         setStackedChoice(action);

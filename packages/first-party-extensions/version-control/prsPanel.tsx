@@ -40,6 +40,7 @@ import { resolveFloatingLayer, type ClientHost } from "@t3tools/extension-sdk/en
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
 import {
   PRS_CHECKOUT_OPTIONS,
   PRS_INVOLVEMENTS,
@@ -1688,6 +1689,15 @@ function ConfirmDialog(props: {
   );
 }
 
+/** A receipt in toast form: the tone is the severity, the description the body. */
+function receiptToast(receipt: PrsReceipt): MutationToastPatch {
+  return {
+    severity: receipt.tone,
+    title: receipt.title,
+    ...(receipt.description !== null ? { body: receipt.description } : {}),
+  };
+}
+
 function ReceiptLine({ receipt }: { receipt: PrsReceipt | null }) {
   if (receipt === null) return null;
   return (
@@ -1969,6 +1979,32 @@ export function PullRequestsPanel(props: {
 
   const selectedKey = selected === null ? null : prsRefKey(selected);
   const canCheckout = useCheckoutSupport(host, session, visible && ready && selected !== null);
+  const toasts = useMutationToasts(host, session, visible && ready);
+  /**
+   * Starts one outcome's report: native's toast when the host delivers
+   * them, else — or once delivery is lost — the inline receipt.
+   */
+  const beginReport = (
+    label: string,
+    startTitle: string | undefined,
+    showInline: (receipt: PrsReceipt) => void,
+  ) => {
+    let settled: PrsReceipt | null = null;
+    let lost = false;
+    const toast = toasts.begin(
+      label,
+      () => {
+        lost = true;
+        if (settled !== null) showInline(settled);
+      },
+      startTitle,
+    );
+    return (receipt: PrsReceipt) => {
+      settled = receipt;
+      if (toast === null || lost) showInline(receipt);
+      else toast.settleWith(receiptToast(receipt));
+    };
+  };
 
   /** `t3.vcs/actions` prepares the checkout; the receipt names where it landed. */
   const startCheckout = (url: string, mode: PrsCheckoutMode) => {
@@ -1976,6 +2012,9 @@ export function PullRequestsPanel(props: {
     const refKey = selectedKey;
     setHandoff(`checkout:${mode}`);
     setHandoffReceipt(null);
+    const report = beginReport("Check out", "Preparing the pull request checkout...", (receipt) =>
+      setHandoffReceipt({ refKey, receipt }),
+    );
     void bindApi(vcsActionsApi, host, session.context)
       .invoke("preparePullRequestThread", { reference: url, mode }, session.signal)
       .then(
@@ -1988,7 +2027,7 @@ export function PullRequestsPanel(props: {
       .then((outcome) => {
         if (session.signal.aborted) return;
         setHandoff(null);
-        setHandoffReceipt({ refKey, receipt: prsCheckoutReceipt(mode, outcome) });
+        report(prsCheckoutReceipt(mode, outcome));
       });
   };
   const draftKey = (key: string) => prsDraftKey(selectedKey, key);
@@ -2269,17 +2308,18 @@ export function PullRequestsPanel(props: {
     const refKey = selectedKey;
     const { action } = confirming;
     setStackReceipt(null);
+    const report = beginReport(
+      action === "merge" ? "Merge stack" : "Rebase stack",
+      undefined,
+      (receipt) => setStackReceipt({ refKey, receipt }),
+    );
     runWrite(
       `stack:${action}`,
       (signal) => writeApi().invoke("runAction", { ...ref, ...confirmPlan.input }, signal),
       undefined,
       (outcome) => {
         setStackConfirm(null);
-        setStackReceipt({
-          refKey,
-          receipt:
-            action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome),
-        });
+        report(action === "merge" ? prsStackMergeReceipt(outcome) : prsStackRebaseReceipt(outcome));
       },
     );
   };
@@ -2728,6 +2768,10 @@ export function PullRequestsPanel(props: {
                   </section>
                 )}
 
+                {/* Outside the Stack section: a merged stack can vanish on the next read. */}
+                <ReceiptLine
+                  receipt={stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null}
+                />
                 {sections.stackError !== null && (
                   <p role="alert" style={{ ...noteStyle, fontSize: 12 }}>
                     {sections.stackError}
@@ -2819,9 +2863,6 @@ export function PullRequestsPanel(props: {
                           )}
                       </div>
                     )}
-                    <ReceiptLine
-                      receipt={stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null}
-                    />
                   </section>
                 )}
 

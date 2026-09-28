@@ -365,3 +365,135 @@ NodeTest.describe("stack merge uses native's merge-method preference", () => {
     view.unmount();
   });
 });
+
+NodeTest.describe("PR outcomes report through toasts, inline without them", () => {
+  const withToasts = (overrides = {}) => {
+    const notices = [];
+    const handlers = defaultHandlers({
+      "t3.ui/notifications#getCapabilities": () => ({
+        adapter: "web",
+        operations: { notify: true, update: true, dismiss: true, awaitAction: false },
+        clients: [],
+      }),
+      "t3.ui/notifications#notify": (input) => {
+        notices.push({ op: "notify", ...input });
+        return { notificationId: `n${notices.length}` };
+      },
+      "t3.ui/notifications#update": (input) => {
+        notices.push({ op: "update", ...input });
+        return { applied: true };
+      },
+      "t3.ui/notifications#dismiss": () => ({ dismissed: true }),
+      ...overrides,
+    });
+    return { handlers, notices };
+  };
+  const checkOutHere = async (view) => {
+    dispatch(view.find("Check out"), "onClick");
+    await flush();
+    const item = view.renderer.root
+      .findAll((node) => node.type === "button" && node.props.role === "menuitem")
+      .find((node) => nodeName(node).startsWith("In this repository"));
+    dispatch(item, "onClick");
+    await flush();
+  };
+  const prepared = { branch: "b3", worktreePath: null, isOnPullRequestHead: true };
+  const mergeTheStack = async (view) => {
+    dispatch(mergeStackButton(view), "onClick");
+    await flush();
+    const dialog = view.renderer.root.find(
+      (node) => typeof node.type === "string" && node.props.role === "dialog",
+    );
+    dispatch(
+      dialog
+        .findAll((node) => node.type === "button")
+        .find((node) => nodeName(node) === "Merge stack"),
+      "onClick",
+    );
+    await flush();
+  };
+
+  NodeTest.it("checkout shows native's loading toast and settles it to the outcome", async () => {
+    const { handlers, notices } = withToasts({
+      "t3.vcs/actions#preparePullRequestThread": () => prepared,
+    });
+    const view = mountPanel(handlers);
+    await flush();
+    await checkOutHere(view);
+    NodeAssert.deepEqual(
+      notices.map((notice) => [notice.op, notice.severity, notice.title]),
+      [
+        ["notify", "loading", "Preparing the pull request checkout..."],
+        ["update", "success", "Checked out here"],
+      ],
+    );
+    NodeAssert.equal(view.text().includes("Checked out here"), false);
+    view.unmount();
+  });
+
+  NodeTest.it("a failed checkout settles the loading toast to its error", async () => {
+    const { handlers, notices } = withToasts({
+      "t3.vcs/actions#preparePullRequestThread": () => {
+        throw new Error("This repository has uncommitted changes.");
+      },
+    });
+    const view = mountPanel(handlers);
+    await flush();
+    await checkOutHere(view);
+    NodeAssert.deepEqual(notices.at(-1), {
+      op: "update",
+      notificationId: "n1",
+      severity: "error",
+      title: "Could not prepare the pull request checkout",
+      body: "This repository has uncommitted changes.",
+    });
+    view.unmount();
+  });
+
+  NodeTest.it("a stack merge reports through a toast", async () => {
+    const { handlers, notices } = withToasts();
+    const view = mountPanel(handlers);
+    await flush();
+    await mergeTheStack(view);
+    NodeAssert.deepEqual(notices.at(-1), {
+      op: "update",
+      notificationId: "n1",
+      severity: "success",
+      title: "Stack merge request completed",
+      body: "GitHub merged the stack or added it to its merge queue.",
+    });
+    view.unmount();
+  });
+
+  NodeTest.it("without toasts the receipt stays inline after the stack goes away", async () => {
+    let merged = false;
+    const view = mountPanel(
+      defaultHandlers({
+        "t3.prs/read#stack": () => (merged ? null : stackOf([layer(2), layer(3)])),
+        "t3.prs/write#runAction": () => {
+          merged = true;
+          return {};
+        },
+      }),
+    );
+    await flush();
+    await mergeTheStack(view);
+    NodeAssert.equal(view.byName("Stack").length, 0);
+    NodeAssert.match(view.text(), /Stack merge request completed/);
+    view.unmount();
+  });
+
+  NodeTest.it("a denied toast hands the receipt back inline", async () => {
+    const { handlers } = withToasts({
+      "t3.ui/notifications#notify": () => {
+        throw new Error("grant denied");
+      },
+      "t3.vcs/actions#preparePullRequestThread": () => prepared,
+    });
+    const view = mountPanel(handlers);
+    await flush();
+    await checkOutHere(view);
+    NodeAssert.match(view.text(), /Checked out here/);
+    view.unmount();
+  });
+});

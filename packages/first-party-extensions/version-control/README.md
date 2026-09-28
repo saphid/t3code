@@ -44,8 +44,10 @@ The PR browser consumes the `t3.prs/read` grant:
   grant is named under the header rather than swallowed;
 - Check out (`t3.vcs/actions` `preparePullRequestThread`, offered only when
   the workspace's driver reports it): native's menu — "In a separate
-  worktree" or "In this repository" — with the receipt naming where the
-  checkout landed, a stale checkout, or the host's own refusal. No thread
+  worktree" or "In this repository" — with native's loading toast settling
+  to where the checkout landed, a stale checkout, or the host's own refusal.
+  Stack merges and rebases report through toasts too; without a toast
+  provider (or when delivery is lost) the same words show inline. No thread
   opens alongside it: no extension contract creates one, so the worktree
   option does not promise one either;
 - PR writes via `t3.prs/write`: comments, review-thread replies, and
