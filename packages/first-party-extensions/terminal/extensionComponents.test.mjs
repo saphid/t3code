@@ -1287,3 +1287,60 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
     }
   });
 });
+
+NodeTest.describe("session list with many sessions (Terminal 27b)", () => {
+  NodeTest.test("scrolls within a fixed cap so the panes keep the dock floor", async () => {
+    const ids = Array.from({ length: 10 }, (_, index) => `many${index + 1}`);
+    const host = {
+      readAsset: async () => {
+        throw new Error("assets unused");
+      },
+      invokeApi: async (request) =>
+        request.id === "t3.ui/theme" && request.method === "getTokens"
+          ? { tokens: {}, cssVars: {} }
+          : { commandSetToken: "token", results: [] },
+      subscribeApi: (request, signal) => ({
+        async *[Symbol.asyncIterator]() {
+          if (request.id === "t3.terminal/sessions" && request.name === "list")
+            yield { value: { kind: "snapshot", terminals: ids.map(sessionMetadata) } };
+          await new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        },
+      }),
+    };
+    const session = {
+      signal: new AbortController().signal,
+      context: { resource: { threadId: "t", environmentId: "e" } },
+      visible: true,
+      save() {},
+      onVisibility: () => () => {},
+      bindCommands: () => () => {},
+      restoreState: { terminalIds: ids, activeTerminalId: ids[0] },
+    };
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+        createNodeMock: nodeMock,
+      });
+    });
+    try {
+      const list = renderer.root.find(
+        (node) => node.type === "ul" && node.props["aria-label"] === "Terminal sessions",
+      );
+      NodeAssert.equal(list.findAll((node) => node.type === "li").length >= ids.length, true);
+      // The host's dock floor sums the intrinsic heights of non-growing
+      // children, so the list's cap must be a fixed length, not a share of
+      // the frame, and the overflow must scroll instead of pushing the panes.
+      const { maxHeight, overflowY, minHeight } = list.props.style;
+      NodeAssert.equal(typeof maxHeight, "number");
+      NodeAssert.ok(maxHeight > 0 && maxHeight <= 200, `maxHeight ${maxHeight}`);
+      NodeAssert.equal(overflowY, "auto");
+      NodeAssert.equal(minHeight, 0);
+    } finally {
+      await act(async () => {
+        renderer.unmount();
+      });
+    }
+  });
+});

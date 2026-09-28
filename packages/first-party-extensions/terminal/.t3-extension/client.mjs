@@ -14372,6 +14372,7 @@ var __t3Client = (() => {
   var GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
   var GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
   var SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+  var SESSION_LIST_MAX_HEIGHT = 168;
   var UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
   var RESTORED_GROUP_KEYS = /* @__PURE__ */ new Set(["id", "terminalIds", "splitDirection"]);
   function isRestoredGroup(value) {
@@ -15313,6 +15314,11 @@ var __t3Client = (() => {
                 margin: 0,
                 padding: 6,
                 flexShrink: 0,
+                // Many sessions scroll here instead of squeezing the panes. A fixed
+                // cap keeps the list's height intrinsic for the host's dock floor.
+                maxHeight: SESSION_LIST_MAX_HEIGHT,
+                minHeight: 0,
+                overflowY: "auto",
                 display: "flex",
                 flexDirection: "column",
                 gap: 2

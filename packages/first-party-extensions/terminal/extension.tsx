@@ -85,6 +85,8 @@ const streamHub = new TerminalStreamHub();
 const GHOSTTY_VT_ASSET = "assets/ghostty-vt.wasm";
 const GHOSTTY_WRITE_PTY_ASSET = "assets/ghostty-write-pty.wasm";
 const SYMBOLS_FONT_ASSET = "assets/SymbolsNerdFontMono-Regular.woff2";
+/** About five session rows; longer lists scroll. */
+const SESSION_LIST_MAX_HEIGHT = 168;
 /** `t3.ui/panels` 1.1.0 added `openFile`. */
 const UI_PANELS_OPEN_FILE_RANGE = "^1.1.0";
 
@@ -1391,6 +1393,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
           margin: 0,
           padding: 6,
           flexShrink: 0,
+          // Many sessions scroll here instead of squeezing the panes. A fixed
+          // cap keeps the list's height intrinsic for the host's dock floor.
+          maxHeight: SESSION_LIST_MAX_HEIGHT,
+          minHeight: 0,
+          overflowY: "auto",
           display: "flex",
           flexDirection: "column",
           gap: 2,
