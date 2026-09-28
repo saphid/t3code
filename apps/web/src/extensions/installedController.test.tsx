@@ -514,6 +514,23 @@ it("retains receipt negotiation after a transient list failure so the next recei
   }
 });
 
+it("retires live clients when the environment answers with an invalid catalogue", async () => {
+  const h = harness();
+  try {
+    await h.controller.refresh();
+    expect(h.register).toHaveBeenCalledTimes(1);
+    // The server answered, but the list fails validation (a duplicate entry).
+    h.setCatalog([installation, installation]);
+    await h.controller.refresh();
+    expect(h.snapshots.at(-1)?.error).toBe("Duplicate installed package");
+    expect(h.snapshots.at(-1)?.installations).toEqual([]);
+    expect(h.stop).toHaveBeenCalledTimes(1);
+    expect(h.controller.installationEpoch(installation.id)).toBeNull();
+  } finally {
+    h.controller.dispose();
+  }
+});
+
 it("loads format 3 only after explicit negotiation and unloads it on downgrade", async () => {
   const h = harness();
   const streamed: ExtensionInstallation = {

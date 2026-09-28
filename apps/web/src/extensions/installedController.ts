@@ -248,8 +248,21 @@ export function createInstalledExtensionController(options: {
       const current = ++generation;
       const live = () => !disposed && generation === current && !controller.signal.aborted;
       publish({ ...snapshot, loading: true, error: null });
+      let response: Awaited<ReturnType<typeof options.list>>;
       try {
-        const response = await options.list(controller.signal);
+        response = await options.list(controller.signal);
+      } catch (error) {
+        if (!live()) return;
+        // An unanswered list says nothing about what is installed: keep the
+        // live clients and the last known catalogue until a list succeeds.
+        publish({
+          ...snapshot,
+          loading: false,
+          error: error instanceof Error ? error.message : "Could not load environment extensions",
+        });
+        return;
+      }
+      try {
         if (!live()) return;
         if (response.installations.length > 64)
           throw new Error("Environment extension limit exceeded");
@@ -631,10 +644,14 @@ export function createInstalledExtensionController(options: {
           });
       } catch (error) {
         if (!live()) return;
-        // A failed list says nothing about what is installed: keep the live
-        // clients and the last known catalogue until a list succeeds.
+        // The environment answered with a catalogue that fails validation:
+        // nothing in it can be trusted, so retire every registration.
+        clear();
         publish({
-          ...snapshot,
+          installations: [],
+          supportsCatalogueChanges: snapshot.supportsCatalogueChanges === true,
+          supportsApiStreams: snapshot.supportsApiStreams === true,
+          supportedPackageFormats: snapshot.supportedPackageFormats ?? [1, 2],
           loading: false,
           error: error instanceof Error ? error.message : "Could not load environment extensions",
         });
