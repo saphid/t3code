@@ -2464,11 +2464,13 @@ export function PullRequestsPanel(props: {
     const refKey = selectedKey;
     setHandoff(task === "checkout" ? `checkout:${mode}` : "conflicts");
     setHandoffReceipt(null);
+    // Host-owned once accepted: opening its thread disposes this view, so the call does not take
+    // the view's signal. Uninstall, disable and lost grants still stop it on the host.
     void bindApi(vcsActionsApi, host, session.context, "^1.1.0")
       .invoke(
         "handoffPullRequest",
         task === "checkout" ? { reference: url, task, mode } : { reference: url, task },
-        session.signal,
+        new AbortController().signal,
       )
       .then(
         () => {

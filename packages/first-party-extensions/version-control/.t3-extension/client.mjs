@@ -12609,7 +12609,7 @@ ${writeKey}`;
       void bindApi(vcsActionsApi, host, session.context, "^1.1.0").invoke(
         "handoffPullRequest",
         task === "checkout" ? { reference: url, task, mode } : { reference: url, task },
-        session.signal
+        new AbortController().signal
       ).then(
         () => {
           if (!session.signal.aborted) setHandoff(null);
