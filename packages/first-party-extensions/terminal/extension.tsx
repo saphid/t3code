@@ -611,7 +611,7 @@ function TerminalPane(props: {
   /** Member of the visible split group — hidden panes stay mounted offscreen. */
   readonly shown: boolean;
   readonly visible: boolean;
-  /** The session reports a running process; reattaches an ended stream (Start). */
+  /** The session reports a running process; its rising edge reattaches an ended stream. */
   readonly running: boolean;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
@@ -673,12 +673,12 @@ function TerminalPane(props: {
   // slot says so honestly and retries when one frees.
   const [streamBlocked, setStreamBlocked] = useState(false);
   const acquireStreamRef = useRef((_mandatory: boolean) => {});
-  const resumeStreamRef = useRef(() => {});
+  const runningChangedRef = useRef((_running: boolean) => {});
   useEffect(() => {
     if (!visible) return;
     let stopped = false;
     let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
-    const reattach = new OutputReattach();
+    const reattach = new OutputReattach(runningRef.current);
     let retryRegistration: (() => void) | null = null;
     // Broker refusals are capacity this hub cannot see (another client
     // document of the installation, or the environment's 64-stream pool):
@@ -734,6 +734,7 @@ function TerminalPane(props: {
         let refused = false;
         void pumpTerminalOutput({
           subscribe: (subscribeSignal) => {
+            reattach.subscribed();
             const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
               "subscribe",
               { terminalId },
@@ -753,10 +754,7 @@ function TerminalPane(props: {
                 // resubscribes and the fresh snapshot says whether the
                 // session's current process is the exited one (close it) or
                 // a restart that replaced it.
-                if (value.kind === "snapshot") {
-                  reattach.noteSnapshot(value);
-                  panel.noteOutputSnapshot(terminalId, value.status);
-                }
+                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                 if (value.kind === "exit") {
                   const surface = surfaceRef.current;
                   if (surface !== null)
@@ -804,8 +802,8 @@ function TerminalPane(props: {
           // A clean end (stream finished or aborted, never refused) earns a
           // fresh backoff budget; refusals keep escalating to the cap.
           if (!refused) brokerRefusals = 0;
-          // Start may have reported running while this stream drained.
-          if (endedOnItsOwn && !refused) resumeStreamRef.current();
+          // The session may have started running while this stream drained.
+          if (endedOnItsOwn && !refused) resume();
         });
       });
     };
@@ -816,24 +814,26 @@ function TerminalPane(props: {
       }
       run.lease.setPriority(mandatory);
     };
-    resumeStreamRef.current = () => {
-      if (stopped || run !== null) return;
-      if (reattach.take(runningRef.current)) acquire(shownRef.current);
+    const resume = () => {
+      if (!stopped && run === null && reattach.take()) acquire(shownRef.current);
+    };
+    runningChangedRef.current = (next: boolean) => {
+      reattach.noteRunning(next);
+      resume();
     };
     acquire(shownRef.current);
     return () => {
       stopped = true;
       acquireStreamRef.current = () => {};
-      resumeStreamRef.current = () => {};
+      runningChangedRef.current = () => {};
       stopRun();
     };
   }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
 
-  // Start on a failed session runs a new process whose output the ended
-  // stream will never carry: reattach once the session reports running
-  // (or, if the old stream was still draining, once it ends).
+  // A session that starts running again (Start, restart, reconnect) has output
+  // an ended stream will never carry: reattach (OutputReattach).
   useEffect(() => {
-    if (running) resumeStreamRef.current();
+    runningChangedRef.current(running);
   }, [running]);
 
   // Group switches inside the view re-prioritize the pane's slot: shown
@@ -1064,8 +1064,8 @@ function TerminalPane(props: {
 /**
  * Live output via the public output-events stream; chunk groups reassemble in
  * the view model. Exits are decided as in the VT pane: an exit resubscribes
- * and the fresh snapshot goes to the panel. A stream a failed start ended
- * resubscribes once the session reports running (OutputReattach).
+ * and the fresh snapshot goes to the panel. An ended stream resubscribes when
+ * the session starts running again (OutputReattach).
  */
 function useTerminalOutput(
   host: ClientHost,
@@ -1079,24 +1079,28 @@ function useTerminalOutput(
   const pendingRef = useRef<{ sequence: number; count: number; parts: string[] } | null>(null);
   const runningRef = useRef(running);
   runningRef.current = running;
-  const resumeRef = useRef(() => {});
+  const runningChangedRef = useRef((_running: boolean) => {});
   useEffect(() => {
     pendingRef.current = null;
     if (!visible || terminalId === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    const reattach = new OutputReattach();
+    const reattach = new OutputReattach(runningRef.current);
     let attached = false;
     const attach = () => {
       attached = true;
       void pump().finally(() => {
         attached = false;
-        // Start may have reported running while this stream drained.
-        if (!signal.aborted) resumeRef.current();
+        // The session may have started running while this stream drained.
+        resume();
       });
     };
-    resumeRef.current = () => {
-      if (!attached && reattach.take(runningRef.current)) attach();
+    const resume = () => {
+      if (!signal.aborted && !attached && reattach.take()) attach();
+    };
+    runningChangedRef.current = (next: boolean) => {
+      reattach.noteRunning(next);
+      resume();
     };
     const pump = async () => {
       let streak = EMPTY_OVERFLOW_STREAK;
@@ -1106,6 +1110,7 @@ function useTerminalOutput(
         const stateRef = { current: EMPTY_OUTPUT_BUFFER as OutputBuffer };
         let resurrect = false;
         try {
+          reattach.subscribed();
           const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
             "subscribe",
             { terminalId },
@@ -1115,10 +1120,7 @@ function useTerminalOutput(
             if (signal.aborted) return;
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
-            if (value.kind === "snapshot") {
-              reattach.noteSnapshot(value);
-              panel.noteOutputSnapshot(terminalId, value.status);
-            }
+            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "closed") {
               overflowClose = value.reason === "overflow";
               resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -1176,12 +1178,12 @@ function useTerminalOutput(
     };
     attach();
     return () => {
-      resumeRef.current = () => {};
+      runningChangedRef.current = () => {};
       controller.abort();
     };
   }, [host, session, panel, terminalId, visible]);
   useEffect(() => {
-    if (running) resumeRef.current();
+    runningChangedRef.current(running);
   }, [running]);
   return state?.terminalId === terminalId ? state.buffer : null;
 }

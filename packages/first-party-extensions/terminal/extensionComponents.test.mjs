@@ -1514,141 +1514,6 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
     };
   }
 
-  NodeTest.test("an output-stream exit writes the code and closes the session", async () => {
-    let releaseExit;
-    const exitReady = new Promise((resolve) => (releaseExit = resolve));
-    const view = await renderSession({
-      terminalId: "ex1",
-      listed: sessionMetadata("ex1"),
-      scripts: [
-        {
-          frames: [
-            outputSnapshot("ex1", "epoch-1", "running"),
-            () => exitReady,
-            outputExit("ex1", "epoch-1", 3),
-          ],
-          ends: true,
-        },
-        // The resubscription reads the server's current state: still exited.
-        { frames: [outputSnapshot("ex1", "epoch-1", "exited")], ends: true },
-      ],
-    });
-    try {
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      releaseExit();
-      await view.settle();
-      NodeAssert.ok(
-        surface.writes.some((data) => data.includes("Process exited (code 3)")),
-        "exit code written on the surface",
-      );
-      NodeAssert.deepEqual(view.closes(), [
-        {
-          id: "t3.terminal/control",
-          method: "close",
-          input: { terminalId: "ex1", deleteHistory: true },
-        },
-      ]);
-      NodeAssert.equal(view.rows(), 0);
-    } finally {
-      await view.unmount();
-    }
-  });
-
-  NodeTest.test(
-    "an exit whose resubscription finds a replacement keeps it, then closes its exit",
-    async () => {
-      // Another client restarted the session between the old process's exit
-      // and this pane reading it: the fresh snapshot is the new process.
-      let releaseExit;
-      const exitReady = new Promise((resolve) => (releaseExit = resolve));
-      let releaseSecondExit;
-      const secondExitReady = new Promise((resolve) => (releaseSecondExit = resolve));
-      const view = await renderSession({
-        terminalId: "ex2",
-        listed: sessionMetadata("ex2"),
-        scripts: [
-          {
-            frames: [
-              outputSnapshot("ex2", "epoch-1", "running"),
-              () => exitReady,
-              outputExit("ex2", "epoch-1", 0),
-            ],
-            ends: true,
-          },
-          {
-            frames: [
-              outputSnapshot("ex2", "epoch-2", "running", "$ new"),
-              () => secondExitReady,
-              outputExit("ex2", "epoch-2", 7),
-            ],
-            ends: true,
-          },
-          { frames: [outputSnapshot("ex2", "epoch-2", "exited")], ends: true },
-        ],
-      });
-      try {
-        const surface = stubSurfaces()[0];
-        NodeAssert.ok(surface, "terminal surface never mounted");
-        releaseExit();
-        await view.settle();
-        await view.settle();
-        NodeAssert.deepEqual(view.closes(), []);
-        NodeAssert.equal(view.rows(), 1);
-        NodeAssert.equal(view.outputSubscriptions(), 2);
-        NodeAssert.ok(surface.writes.includes("$ new"), "the replacement's output renders");
-        releaseSecondExit();
-        await view.settle();
-        NodeAssert.equal(view.closes().length, 1);
-        NodeAssert.equal(view.rows(), 0);
-      } finally {
-        await view.unmount();
-      }
-    },
-  );
-
-  NodeTest.test("Start on a failed session reattaches its output", async () => {
-    const view = await renderSession({
-      terminalId: "retry1",
-      listed: { ...sessionMetadata("retry1"), status: "error" },
-      invoke: async (request) =>
-        request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
-      scripts: [
-        { frames: [outputSnapshot("retry1", "epoch-1", "error", "")], ends: true },
-        { frames: [outputSnapshot("retry1", "epoch-2", "running", "$ ready")], ends: false },
-      ],
-    });
-    try {
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      await view.settle();
-      NodeAssert.equal(view.outputSubscriptions(), 1);
-      const start = view.renderer.root.find(
-        (node) => node.type === "button" && node.props["aria-label"] === "Start retry1",
-      );
-      await act(async () => {
-        start.props.onClick();
-      });
-      await view.settle();
-      NodeAssert.equal(
-        view.invokes.filter((entry) => entry.method === "attach").length,
-        1,
-        "Start attached once",
-      );
-      NodeAssert.equal(view.outputSubscriptions(), 2, "output reattached after Start");
-      NodeAssert.ok(surface.writes.includes("$ ready"), "the restarted shell's output renders");
-      const status = view.renderer.root.findAll(
-        (node) => node.type === "output" && node.props["aria-label"] === "Output status",
-      );
-      NodeAssert.ok(
-        status.some((node) => node.children.join("").includes("Watching live output")),
-        "pane status is live",
-      );
-    } finally {
-      await view.unmount();
-    }
-  });
-
   const clickStart = async (view, terminalId) => {
     const start = view.renderer.root.find(
       (node) => node.type === "button" && node.props["aria-label"] === `Start ${terminalId}`,
@@ -1658,105 +1523,225 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
     });
     await view.settle();
   };
+  const gate = () => {
+    let open;
+    const wait = new Promise((resolve) => (open = resolve));
+    return { wait: () => wait, open: () => open() };
+  };
+  const startSucceeds = async (request) =>
+    request.method === "attach" ? sessionMetadata(request.input.terminalId) : {};
+  const paneOutput = (view, textFallback) =>
+    textFallback ? view.fallbackText() : stubSurfaces()[0].writes.join("");
 
-  NodeTest.test("Start reattaches when the failed stream finishes after Start", async () => {
-    // The host tears the old stream down asynchronously: Start can report
-    // running while the error stream is still draining.
-    let releaseOldEnd;
-    const oldEnd = new Promise((resolve) => (releaseOldEnd = resolve));
-    const view = await renderSession({
-      terminalId: "retry2",
-      listed: { ...sessionMetadata("retry2"), status: "error" },
-      invoke: async (request) =>
-        request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
-      scripts: [
-        { frames: [outputSnapshot("retry2", "epoch-1", "error", ""), () => oldEnd], ends: true },
-        { frames: [outputSnapshot("retry2", "epoch-2", "running", "$ ready")], ends: false },
+  /**
+   * Output reattach, ported from the native drawer's durable attach
+   * subscription: an ended stream resubscribes once per new session edge
+   * (non-running → running), latched while the old stream drains, and never
+   * replaces a healthy stream. `added` counts subscriptions after mount.
+   */
+  const outputCases = [
+    {
+      name: "delayed Retry: Start after the failed stream ended",
+      listed: "error",
+      invoke: startSucceeds,
+      scripts: (id) => [
+        { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ ready")], ends: false },
       ],
-    });
-    try {
-      const surface = stubSurfaces()[0];
-      NodeAssert.ok(surface, "terminal surface never mounted");
-      await view.settle();
-      await clickStart(view, "retry2");
-      NodeAssert.equal(view.invokes.filter((entry) => entry.method === "attach").length, 1);
-      NodeAssert.equal(view.outputSubscriptions(), 1, "the old stream is still draining");
-      releaseOldEnd();
-      await view.settle();
-      NodeAssert.equal(view.outputSubscriptions(), 2, "output reattached after the old end");
-      NodeAssert.ok(surface.writes.includes("$ ready"), "the restarted shell's output renders");
-      const status = view.renderer.root.findAll(
-        (node) => node.type === "output" && node.props["aria-label"] === "Output status",
-      );
-      NodeAssert.ok(
-        status.some((node) => node.children.join("").includes("Watching live output")),
-        "pane status is live",
-      );
-    } finally {
-      await view.unmount();
-    }
-  });
-
-  NodeTest.test("text fallback keeps a healthy stream across running-state changes", async () => {
-    const view = await renderSession({
-      terminalId: "fb1",
-      listed: sessionMetadata("fb1"),
-      textFallback: true,
-      scripts: [
-        { frames: [outputSnapshot("fb1", "epoch-1", "running", "$ one")], ends: false },
-        { frames: [outputSnapshot("fb1", "epoch-1", "running", "$ one")], ends: false },
+      drive: (view, id) => clickStart(view, id),
+      added: 1,
+      output: "$ ready",
+    },
+    {
+      name: "Start before the old stream ends",
+      listed: "error",
+      invoke: startSucceeds,
+      setup: () => ({ oldEnd: gate() }),
+      scripts: (id, { oldEnd }) => [
+        { frames: [outputSnapshot(id, "epoch-1", "error", ""), oldEnd.wait], ends: true },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ ready")], ends: false },
       ],
-    });
-    try {
-      await view.settle();
-      NodeAssert.ok(view.fallbackText().includes("$ one"));
-      const attached = view.outputSubscriptions();
-      await view.relist({ ...sessionMetadata("fb1"), status: "starting" });
-      await view.relist(sessionMetadata("fb1"));
-      NodeAssert.equal(view.outputSubscriptions(), attached, "no resubscribe on status flips");
-      NodeAssert.ok(view.fallbackText().includes("$ one"));
-    } finally {
-      await view.unmount();
-    }
-  });
-
-  for (const delayed of [false, true])
-    NodeTest.test(
-      `text fallback Start reattaches once${delayed ? " when the failed stream ends late" : ""}`,
-      async () => {
-        let releaseOldEnd;
-        const oldEnd = delayed
-          ? new Promise((resolve) => (releaseOldEnd = resolve))
-          : Promise.resolve();
-        const failed = { frames: [outputSnapshot("fb2", "epoch-1", "error", "")], ends: true };
-        const view = await renderSession({
-          terminalId: "fb2",
-          listed: { ...sessionMetadata("fb2"), status: "error" },
-          textFallback: true,
-          invoke: async (request) =>
-            request.method === "attach" ? sessionMetadata(request.input.terminalId) : {},
-          scripts: [
-            // The loading VT pane's brief subscription before assets fail.
-            failed,
-            { frames: [...failed.frames, () => oldEnd], ends: true },
-            { frames: [outputSnapshot("fb2", "epoch-2", "running", "$ ready")], ends: false },
-          ],
-        });
-        try {
-          await view.settle();
-          const before = view.outputSubscriptions();
-          await clickStart(view, "fb2");
-          releaseOldEnd?.();
-          await view.settle();
-          NodeAssert.equal(
-            view.outputSubscriptions(),
-            before + 1,
-            "exactly one fresh subscription",
-          );
-          NodeAssert.ok(view.fallbackText().includes("$ ready"), "fresh output renders");
-        } finally {
-          await view.unmount();
-        }
+      drive: async (view, id, { oldEnd }, before) => {
+        await clickStart(view, id);
+        NodeAssert.equal(view.outputSubscriptions(), before, "the old stream is still draining");
+        oldEnd.open();
+        await view.settle();
       },
-    );
+      added: 1,
+      output: "$ ready",
+    },
+    {
+      name: "transport drop, then running",
+      listed: "running",
+      setup: () => ({ drop: gate() }),
+      scripts: (id, { drop }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running", "$ old"),
+            drop.wait,
+            () => {
+              throw new Error("socket closed");
+            },
+          ],
+          ends: true,
+        },
+        { frames: [outputSnapshot(id, "epoch-2", "running", "$ recovered")], ends: false },
+      ],
+      drive: async (view, id, { drop }) => {
+        drop.open();
+        await view.settle();
+        await view.relist({ ...sessionMetadata(id), status: "starting" });
+        await view.relist(sessionMetadata(id));
+      },
+      added: 1,
+      output: "$ recovered",
+    },
+    {
+      name: "stale running row, then a later Start",
+      listed: "running",
+      // The server keeps returning the failed process until Start runs a new one.
+      setup: () => ({ started: false }),
+      invoke: (request, state) => {
+        if (request.method === "attach") state.started = true;
+        return startSucceeds(request);
+      },
+      scripts: (id, state) =>
+        Array.from({ length: 6 }, () => ({
+          get frames() {
+            return [
+              state.started
+                ? outputSnapshot(id, "epoch-2", "running", "$ restarted")
+                : outputSnapshot(id, "epoch-1", "error", ""),
+            ];
+          },
+          get ends() {
+            return !state.started;
+          },
+        })),
+      drive: async (view, id, _state, before) => {
+        NodeAssert.equal(view.outputSubscriptions(), before, "a stale row never resubscribes");
+        await view.relist({ ...sessionMetadata(id), status: "error" });
+        await clickStart(view, id);
+      },
+      added: 1,
+      output: "$ restarted",
+    },
+    {
+      name: "exit closes the session",
+      listed: "running",
+      setup: () => ({ exit: gate() }),
+      scripts: (id, { exit }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running"),
+            exit.wait,
+            outputExit(id, "epoch-1", 3),
+          ],
+          ends: true,
+        },
+        // The resubscription reads the server's current state: still exited.
+        { frames: [outputSnapshot(id, "epoch-1", "exited")], ends: true },
+      ],
+      drive: async (view, _id, { exit }) => {
+        exit.open();
+        await view.settle();
+      },
+      added: 1,
+      closes: 1,
+      rows: 0,
+    },
+    {
+      name: "replacement process is kept, then its own exit closes",
+      listed: "running",
+      setup: () => ({ exit: gate(), secondExit: gate() }),
+      scripts: (id, { exit, secondExit }) => [
+        {
+          frames: [
+            outputSnapshot(id, "epoch-1", "running"),
+            exit.wait,
+            outputExit(id, "epoch-1", 0),
+          ],
+          ends: true,
+        },
+        {
+          frames: [
+            outputSnapshot(id, "epoch-2", "running", "$ new"),
+            secondExit.wait,
+            outputExit(id, "epoch-2", 7),
+          ],
+          ends: true,
+        },
+        { frames: [outputSnapshot(id, "epoch-2", "exited")], ends: true },
+      ],
+      drive: async (view, _id, { exit, secondExit }, _before, textFallback) => {
+        exit.open();
+        await view.settle();
+        await view.settle();
+        NodeAssert.deepEqual(view.closes(), []);
+        NodeAssert.equal(view.rows(), 1);
+        NodeAssert.ok(paneOutput(view, textFallback).includes("$ new"), "the replacement renders");
+        secondExit.open();
+        await view.settle();
+      },
+      added: 2,
+      closes: 1,
+      rows: 0,
+    },
+    {
+      name: "healthy stream keeps its subscription across status flips",
+      listed: "running",
+      scripts: (id) => [
+        { frames: [outputSnapshot(id, "epoch-1", "running", "$ one")], ends: false },
+        { frames: [outputSnapshot(id, "epoch-1", "running", "$ one")], ends: false },
+      ],
+      drive: async (view, id) => {
+        await view.relist({ ...sessionMetadata(id), status: "starting" });
+        await view.relist(sessionMetadata(id));
+      },
+      added: 0,
+      output: "$ one",
+    },
+  ];
+
+  for (const [index, testCase] of outputCases.entries())
+    for (const textFallback of [false, true])
+      NodeTest.test(
+        `output reattach (${textFallback ? "fallback" : "VT"}): ${testCase.name}`,
+        async () => {
+          const id = `reattach${index}${textFallback ? "f" : "v"}`;
+          const state = testCase.setup?.() ?? {};
+          const scripts = testCase.scripts(id, state);
+          const view = await renderSession({
+            terminalId: id,
+            listed: { ...sessionMetadata(id), status: testCase.listed },
+            textFallback,
+            ...(testCase.invoke ? { invoke: (request) => testCase.invoke(request, state) } : {}),
+            // The fallback first mounts a loading VT pane whose brief
+            // subscription sees the same initial snapshot.
+            scripts: textFallback
+              ? [{ frames: [scripts[0].frames[0]], ends: false }, ...scripts]
+              : scripts,
+          });
+          try {
+            await view.settle();
+            const before = view.outputSubscriptions();
+            await testCase.drive(view, id, state, before, textFallback);
+            if (testCase.output !== undefined)
+              NodeAssert.ok(
+                paneOutput(view, textFallback).includes(testCase.output),
+                `renders ${testCase.output}`,
+              );
+            NodeAssert.equal(view.closes().length, testCase.closes ?? 0, "close calls");
+            if (testCase.rows !== undefined) NodeAssert.equal(view.rows(), testCase.rows);
+            NodeAssert.equal(
+              view.outputSubscriptions() - before,
+              testCase.added,
+              "subscriptions added",
+            );
+          } finally {
+            for (const value of Object.values(state)) value?.open?.();
+            await view.unmount();
+          }
+        },
+      );
 });

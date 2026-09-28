@@ -1750,18 +1750,57 @@ NodeTest.describe("terminal path links (Terminal 22 path half)", () => {
   });
 });
 
-NodeTest.test("OutputReattach reattaches once per dead epoch and never a healthy stream", () => {
-  const snapshot = (streamEpoch, status) => ({ kind: "snapshot", streamEpoch, status });
-  const reattach = new OutputReattach();
-  reattach.noteSnapshot(snapshot("e1", "running"));
-  NodeAssert.equal(reattach.take(true), false, "a healthy stream stays");
-  reattach.noteSnapshot(snapshot("e1", "error"));
-  NodeAssert.equal(reattach.take(false), false, "not until the session runs");
-  NodeAssert.equal(reattach.take(true), true);
-  // A stale `running` against the same dead process does not spin.
-  reattach.noteSnapshot(snapshot("e1", "error"));
-  NodeAssert.equal(reattach.take(true), false);
-  // A later incarnation that fails again earns its own reattach.
-  reattach.noteSnapshot(snapshot("e2", "error"));
-  NodeAssert.equal(reattach.take(true), true);
+NodeTest.describe("OutputReattach (native durable-attach port)", () => {
+  // Each step: a running report ("run:<bool>"), a subscription ("sub"), or a
+  // stream end asking take() — expected result in the table.
+  const cases = [
+    { name: "a healthy mount never reattaches", running: true, steps: [["take", false]] },
+    {
+      name: "a stale running row spends nothing",
+      running: true,
+      steps: [
+        ["take", false],
+        ["take", false],
+      ],
+    },
+    {
+      name: "Retry after the stream ended",
+      running: false,
+      steps: [["run:true"], ["take", true], ["take", false]],
+    },
+    {
+      name: "an edge latched while the old stream drains",
+      running: false,
+      steps: [["run:true"], ["take", true]],
+    },
+    {
+      name: "transport drop, then starting → running",
+      running: true,
+      steps: [["take", false], ["run:false"], ["run:true"], ["take", true]],
+    },
+    {
+      name: "a later Start after a stale row re-arms",
+      running: true,
+      steps: [["take", false], ["run:false"], ["run:true"], ["take", true]],
+    },
+    {
+      name: "a subscription consumes the edge it read",
+      running: true,
+      steps: [["run:false"], ["run:true"], ["sub"], ["take", false]],
+    },
+    {
+      name: "running → running is no edge",
+      running: false,
+      steps: [["run:true"], ["sub"], ["run:true"], ["take", false]],
+    },
+  ];
+  for (const { name, running, steps } of cases)
+    NodeTest.test(name, () => {
+      const reattach = new OutputReattach(running);
+      for (const [step, expected] of steps) {
+        if (step === "sub") reattach.subscribed();
+        else if (step === "take") NodeAssert.equal(reattach.take(), expected, `${name}: take`);
+        else reattach.noteRunning(step === "run:true");
+      }
+    });
 });

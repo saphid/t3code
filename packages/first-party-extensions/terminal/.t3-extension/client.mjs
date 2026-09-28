@@ -11673,17 +11673,24 @@ var __t3Client = (() => {
   };
   var isResumableOutputClose = (reason, overflowAttempts) => reason === "identity-changed" || reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX;
   var OutputReattach = class {
-    #deadEpoch = null;
-    #reattachedEpoch = null;
-    noteSnapshot(value) {
-      this.#deadEpoch = value.status === "error" || value.status === "exited" ? value.streamEpoch : null;
+    #running;
+    #pending = false;
+    constructor(running) {
+      this.#running = running;
+    }
+    noteRunning(running) {
+      if (running && !this.#running) this.#pending = true;
+      this.#running = running;
+    }
+    /** A subscription reads the current session, so it consumes a latched edge. */
+    subscribed() {
+      this.#pending = false;
     }
     /** Call only while no stream is attached; true when one should subscribe now. */
-    take(running) {
-      if (!running || this.#deadEpoch === null || this.#deadEpoch === this.#reattachedEpoch)
-        return false;
-      this.#reattachedEpoch = this.#deadEpoch;
-      return true;
+    take() {
+      const pending = this.#pending;
+      this.#pending = false;
+      return pending;
     }
   };
   var textEncoder2 = new TextEncoder();
@@ -14734,13 +14741,13 @@ var __t3Client = (() => {
     const [streamBlocked, setStreamBlocked] = (0, import_react2.useState)(false);
     const acquireStreamRef = (0, import_react2.useRef)((_mandatory) => {
     });
-    const resumeStreamRef = (0, import_react2.useRef)(() => {
+    const runningChangedRef = (0, import_react2.useRef)((_running) => {
     });
     (0, import_react2.useEffect)(() => {
       if (!visible) return;
       let stopped = false;
       let run = null;
-      const reattach = new OutputReattach();
+      const reattach = new OutputReattach(runningRef.current);
       let retryRegistration = null;
       let brokerRefusals = 0;
       let brokerRefusalTimer = null;
@@ -14780,6 +14787,7 @@ var __t3Client = (() => {
           let refused = false;
           void pumpTerminalOutput({
             subscribe: (subscribeSignal) => {
+              reattach.subscribed();
               const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
                 "subscribe",
                 { terminalId },
@@ -14791,10 +14799,7 @@ var __t3Client = (() => {
                   if (value.kind === "closed" && value.reason !== "overflow") {
                     panel.resetInput(terminalId);
                   }
-                  if (value.kind === "snapshot") {
-                    reattach.noteSnapshot(value);
-                    panel.noteOutputSnapshot(terminalId, value.status);
-                  }
+                  if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                   if (value.kind === "exit") {
                     const surface = surfaceRef.current;
                     if (surface !== null)
@@ -14831,7 +14836,7 @@ var __t3Client = (() => {
             }
             lease.streamSettled();
             if (!refused) brokerRefusals = 0;
-            if (endedOnItsOwn && !refused) resumeStreamRef.current();
+            if (endedOnItsOwn && !refused) resume();
           });
         });
       };
@@ -14842,22 +14847,25 @@ var __t3Client = (() => {
         }
         run.lease.setPriority(mandatory);
       };
-      resumeStreamRef.current = () => {
-        if (stopped || run !== null) return;
-        if (reattach.take(runningRef.current)) acquire(shownRef.current);
+      const resume = () => {
+        if (!stopped && run === null && reattach.take()) acquire(shownRef.current);
+      };
+      runningChangedRef.current = (next) => {
+        reattach.noteRunning(next);
+        resume();
       };
       acquire(shownRef.current);
       return () => {
         stopped = true;
         acquireStreamRef.current = () => {
         };
-        resumeStreamRef.current = () => {
+        runningChangedRef.current = () => {
         };
         stopRun();
       };
     }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
     (0, import_react2.useEffect)(() => {
-      if (running) resumeStreamRef.current();
+      runningChangedRef.current(running);
     }, [running]);
     (0, import_react2.useEffect)(() => {
       acquireStreamRef.current(shown && visible);
@@ -15051,24 +15059,28 @@ var __t3Client = (() => {
     const pendingRef = (0, import_react2.useRef)(null);
     const runningRef = (0, import_react2.useRef)(running);
     runningRef.current = running;
-    const resumeRef = (0, import_react2.useRef)(() => {
+    const runningChangedRef = (0, import_react2.useRef)((_running) => {
     });
     (0, import_react2.useEffect)(() => {
       pendingRef.current = null;
       if (!visible || terminalId === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      const reattach = new OutputReattach();
+      const reattach = new OutputReattach(runningRef.current);
       let attached = false;
       const attach = () => {
         attached = true;
         void pump().finally(() => {
           attached = false;
-          if (!signal.aborted) resumeRef.current();
+          resume();
         });
       };
-      resumeRef.current = () => {
-        if (!attached && reattach.take(runningRef.current)) attach();
+      const resume = () => {
+        if (!signal.aborted && !attached && reattach.take()) attach();
+      };
+      runningChangedRef.current = (next) => {
+        reattach.noteRunning(next);
+        resume();
       };
       const pump = async () => {
         let streak = EMPTY_OVERFLOW_STREAK;
@@ -15078,6 +15090,7 @@ var __t3Client = (() => {
           const stateRef = { current: EMPTY_OUTPUT_BUFFER };
           let resurrect = false;
           try {
+            reattach.subscribed();
             const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
               "subscribe",
               { terminalId },
@@ -15087,10 +15100,7 @@ var __t3Client = (() => {
               if (signal.aborted) return;
               const value = frame.value;
               streak = noteOutputFrameForStreak(value, streak, Date.now());
-              if (value.kind === "snapshot") {
-                reattach.noteSnapshot(value);
-                panel.noteOutputSnapshot(terminalId, value.status);
-              }
+              if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               if (value.kind === "closed") {
                 overflowClose = value.reason === "overflow";
                 resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -15148,13 +15158,13 @@ var __t3Client = (() => {
       };
       attach();
       return () => {
-        resumeRef.current = () => {
+        runningChangedRef.current = () => {
         };
         controller.abort();
       };
     }, [host, session, panel, terminalId, visible]);
     (0, import_react2.useEffect)(() => {
-      if (running) resumeRef.current();
+      runningChangedRef.current(running);
     }, [running]);
     return state2?.terminalId === terminalId ? state2.buffer : null;
   }

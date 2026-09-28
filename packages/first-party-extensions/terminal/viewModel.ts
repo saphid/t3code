@@ -79,28 +79,38 @@ export const isResumableOutputClose = (
   (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
 
 /**
- * When a pane's output needs a fresh subscription after Start. A stream that
- * ended on its own after an error/exited snapshot carried a dead process; a
- * new one reports `running` and needs a new stream. Both the stream's end
- * and the running report must land, in either order, so each calls `take`
- * and the later one wins. Keyed on the dead snapshot's epoch: one reattach
- * per dead process, and a healthy stream is never replaced.
+ * When an ended output stream resubscribes. Ported from the native drawer's
+ * durable attach subscription (client-runtime rpc/client.ts
+ * subscribeDynamicMapped): one stream per pane that, once ended — a dead
+ * process or a lost transport — waits for the next session and subscribes
+ * again, never on a loop and never replacing a live stream. Native's "next
+ * session" is a new transport session; here it is the session report's
+ * non-running → running edge. An edge seen while the old stream still drains
+ * is latched until that stream ends; a subscription consumes it.
  */
 export class OutputReattach {
-  #deadEpoch: string | null = null;
-  #reattachedEpoch: string | null = null;
+  #running: boolean;
+  #pending = false;
 
-  noteSnapshot(value: TerminalOutputEventsSnapshot) {
-    this.#deadEpoch =
-      value.status === "error" || value.status === "exited" ? value.streamEpoch : null;
+  constructor(running: boolean) {
+    this.#running = running;
+  }
+
+  noteRunning(running: boolean) {
+    if (running && !this.#running) this.#pending = true;
+    this.#running = running;
+  }
+
+  /** A subscription reads the current session, so it consumes a latched edge. */
+  subscribed() {
+    this.#pending = false;
   }
 
   /** Call only while no stream is attached; true when one should subscribe now. */
-  take(running: boolean): boolean {
-    if (!running || this.#deadEpoch === null || this.#deadEpoch === this.#reattachedEpoch)
-      return false;
-    this.#reattachedEpoch = this.#deadEpoch;
-    return true;
+  take(): boolean {
+    const pending = this.#pending;
+    this.#pending = false;
+    return pending;
   }
 }
 
