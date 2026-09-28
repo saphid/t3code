@@ -1078,6 +1078,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
           floating={floating}
+          visible={visible}
         >
           {held && live && (
             <ProfileSection

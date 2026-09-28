@@ -102,11 +102,17 @@ export function PageMenu(props: {
   /** One ladder step from the last requested factor (shared with the chords). */
   zoomStep: (direction: "in" | "out") => void;
   floating: PanelFloating;
+  /**
+   * Whether the panel is shown. The menu portals out of the panel, so hiding
+   * the retained panel must close it; it stays closed when the panel returns.
+   */
+  visible: boolean;
   /** Rendered under the page items while open; profile actions do not need a live page. */
   children?: ReactNode;
 }) {
-  const { session, blockReason, run, zoomStep, floating, children } = props;
+  const { session, blockReason, run, zoomStep, floating, visible, children } = props;
   const [open, setOpen] = useState(false);
+  if (open && !visible) setOpen(false);
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   const root = useRef<HTMLDivElement | null>(null);
   // The host layer portals the menu out of `root`, so it is checked on its own.

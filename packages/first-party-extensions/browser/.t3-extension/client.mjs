@@ -15126,8 +15126,9 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
-    const { session, blockReason, run: run2, zoomStep, floating, children } = props;
+    const { session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
     const [open, setOpen] = (0, import_react4.useState)(false);
+    if (open && !visible) setOpen(false);
     const [trigger, setTrigger] = (0, import_react4.useState)(null);
     const root = (0, import_react4.useRef)(null);
     const menu = (0, import_react4.useRef)(null);
@@ -16945,6 +16946,7 @@ ${titledTitle}`;
                     run: (verb) => runPage(verb),
                     zoomStep,
                     floating,
+                    visible,
                     children: held && live && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
                       ProfileSection,
                       {
