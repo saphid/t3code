@@ -16088,12 +16088,13 @@ var __t3Client = (() => {
               children: group.terminalIds.map((terminalId) => {
                 const tab = tabById.get(terminalId);
                 if (!tab) return null;
-                return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { "data-t3-terminal-session": tab.terminalId, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                const status = sessionStatusText(tab);
+                return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { "data-t3-terminal-session": tab.terminalId, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: status ?? tab.label, side: "bottom", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
+                    "aria-label": status ? [tab.label, status].join(" \u2014 ") : void 0,
                     "aria-current": tab.terminalId === activeId ? "true" : void 0,
-                    title: sessionStatusText(tab) ?? tab.label,
                     onClick: () => panel.activate(tab.terminalId),
                     style: {
                       display: "block",
@@ -16114,7 +16115,7 @@ var __t3Client = (() => {
                     },
                     children: tab.label
                   }
-                ) }, tab.terminalId);
+                ) }) }, tab.terminalId);
               })
             }
           )

@@ -1225,7 +1225,12 @@ function WorkflowGroupView(props: {
           </div>
           <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
             {phase.members.map((member) => (
-              <AgentRow key={member.id} agent={member} sessionControl={sessionControl} readLog={readLog} />
+              <AgentRow
+                key={member.id}
+                agent={member}
+                sessionControl={sessionControl}
+                readLog={readLog}
+              />
             ))}
           </ul>
         </div>
@@ -1233,7 +1238,12 @@ function WorkflowGroupView(props: {
       {group.unphasedMembers.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: "0 0 0 12px" }}>
           {group.unphasedMembers.map((member) => (
-            <AgentRow key={member.id} agent={member} sessionControl={sessionControl} readLog={readLog} />
+            <AgentRow
+              key={member.id}
+              agent={member}
+              sessionControl={sessionControl}
+              readLog={readLog}
+            />
           ))}
         </ul>
       )}
@@ -1801,7 +1811,12 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
                     />
                   ))}
                   {model.directAgents.map((agent) => (
-                    <AgentRow key={agent.id} agent={agent} sessionControl={sessionControl} readLog={readLog} />
+                    <AgentRow
+                      key={agent.id}
+                      agent={agent}
+                      sessionControl={sessionControl}
+                      readLog={readLog}
+                    />
                   ))}
                 </ul>
               )}

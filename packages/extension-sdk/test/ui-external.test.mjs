@@ -1,6 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import {
   checkExternalUrl,
   GENERIC_API_CATALOGUE,
@@ -72,7 +72,7 @@ NodeTest.test("openLink is a 1.1.0 addition over a frozen 1.0.0", async () => {
   ]);
   // The published 1.0.0 stays in the catalogue, unchanged.
   const published = JSON.parse(
-    readFileSync(new URL("./fixtures/published-1.0.0-apis.json", import.meta.url), "utf8"),
+    NodeFS.readFileSync(new URL("./fixtures/published-1.0.0-apis.json", import.meta.url), "utf8"),
   );
   NodeAssert.deepEqual(uiExternalApiV1.definition, published["t3.ui/external"]);
   NodeAssert.equal(uiExternalApiV1.definition.version, "1.0.0");

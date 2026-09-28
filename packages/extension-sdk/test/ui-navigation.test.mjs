@@ -1,6 +1,6 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 import {
   GENERIC_API_CATALOGUE,
   UI_EXTERNAL_OPEN,
@@ -235,7 +235,7 @@ NodeTest.test(
   async () => {
     const { validateEnvironmentPackage } = await import("../dist/environment.js");
     const published = JSON.parse(
-      readFileSync(new URL("./fixtures/published-1.0.0-apis.json", import.meta.url), "utf8"),
+      NodeFS.readFileSync(new URL("./fixtures/published-1.0.0-apis.json", import.meta.url), "utf8"),
     );
     const accepted = {};
     for (const [id, definition] of Object.entries(published)) {

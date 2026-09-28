@@ -10,24 +10,24 @@
 // installation, so healthCalls / installationCount is the exact number of full
 // resolveCapabilities runs. installationsCalls are recorded as a cross-check.
 
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-import { performance } from "node:perf_hooks";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodePerfHooks from "node:perf_hooks";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 import { createApiBroker } from "../dist/broker.js";
 import { resolveCapabilities } from "../dist/resolution.js";
 import { createExtensionRuntime } from "../dist/index.js";
 import { createExtensionHost } from "@t3tools/extension-sdk/host";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const arg = (name, fallback) => {
   const i = args.indexOf("--" + name);
   return i >= 0 ? args[i + 1] : fallback;
 };
-const OUT = arg("out", path.join(here, "out"));
+const OUT = arg("out", NodePath.join(here, "out"));
 const SMOKE = args.includes("--smoke");
 const ITERATIONS = SMOKE ? 2 : Number(arg("iterations", 12));
 const EVENTS = SMOKE ? 8 : Number(arg("events", 50));
@@ -143,7 +143,7 @@ const summarize = (samples) => {
     mean: sum / samples.length,
   };
 };
-const now = () => performance.now();
+const now = () => NodePerfHooks.performance.now();
 
 function makeBroker(counters) {
   return createApiBroker({
@@ -290,17 +290,17 @@ const implFor = (pkg) =>
   "]};";
 
 async function writeSource(dir, pkg, code) {
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, "t3-extension.json"), JSON.stringify(pkg));
-  await fs.writeFile(path.join(dir, "server.mjs"), code);
+  await NodeFSP.mkdir(dir, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(dir, "t3-extension.json"), JSON.stringify(pkg));
+  await NodeFSP.writeFile(NodePath.join(dir, "server.mjs"), code);
 }
 
 async function scenarioDiscovery({ slowProvider }) {
   const runs = [];
   for (let iter = 0; iter < ITERATIONS; iter++) {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "t3-f5-discovery-"));
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-f5-discovery-"));
     const runtime = await createExtensionRuntime({
-      rootDir: path.join(directory, "state"),
+      rootDir: NodePath.join(directory, "state"),
       environmentId: "env",
       services: [],
       authorize: () => true,
@@ -311,7 +311,7 @@ async function scenarioDiscovery({ slowProvider }) {
       const records = [];
       for (const id of ["d.one", "d.two", "d.three", "d.four"]) {
         const pkg = pkgJson("perf." + id, [pluginApi("perf." + id)]);
-        const src = path.join(directory, "src-" + id);
+        const src = NodePath.join(directory, "src-" + id);
         await writeSource(src, pkg, implFor(pkg));
         records.push(
           await runtime.install(src, { capabilities: [grant], projectIds: ["project"] }),
@@ -320,9 +320,9 @@ async function scenarioDiscovery({ slowProvider }) {
       if (slowProvider) {
         // Readies once (install handshake), then hangs on later starts so the
         // worker startup deadline (runtime timeoutMs) bounds discovery.
-        const marker = path.join(directory, "slow-staged");
+        const marker = NodePath.join(directory, "slow-staged");
         const pkg = pkgJson("perf.d.slow", [pluginApi("perf.d.slow")]);
-        const src = path.join(directory, "src-slow");
+        const src = NodePath.join(directory, "src-slow");
         await writeSource(
           src,
           pkg,
@@ -359,7 +359,7 @@ async function scenarioDiscovery({ slowProvider }) {
       runs.push({ coldMs, warmMs, discovered: discovery.length });
     } finally {
       await runtime.dispose();
-      await fs.rm(directory, { recursive: true, force: true });
+      await NodeFSP.rm(directory, { recursive: true, force: true });
     }
   }
   return {
@@ -457,9 +457,12 @@ async function scenarioCreateView() {
 const meta = () => ({
   machine: "macbook-pro",
   node: process.version,
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone perf script has no Effect runtime; it records the actual host.
   platform: process.platform + " " + process.arch,
-  sha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: here }).toString().trim(),
-  branch: execFileSync("git", ["branch", "--show-current"], { cwd: here }).toString().trim(),
+  sha: NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], { cwd: here }).toString().trim(),
+  branch: NodeChildProcess.execFileSync("git", ["branch", "--show-current"], { cwd: here })
+    .toString()
+    .trim(),
   startedAt: new Date().toISOString(),
   iterations: ITERATIONS,
   events: EVENTS,
@@ -467,12 +470,12 @@ const meta = () => ({
 });
 
 async function main() {
-  await fs.mkdir(OUT, { recursive: true });
+  await NodeFSP.mkdir(OUT, { recursive: true });
   const results = {};
   const write = async (name, data) => {
     const payload = { scenario: name, ...meta(), ...data };
     results[name] = payload;
-    await fs.writeFile(path.join(OUT, name + ".json"), JSON.stringify(payload, null, 2));
+    await NodeFSP.writeFile(NodePath.join(OUT, name + ".json"), JSON.stringify(payload, null, 2));
     console.log(
       name.padEnd(24),
       "p50=" + payload.summary.p50.toFixed(3) + "ms",
@@ -529,13 +532,13 @@ async function main() {
       counters: r.counters,
     });
   }
-  await fs.writeFile(
-    path.join(OUT, "index.json"),
+  await NodeFSP.writeFile(
+    NodePath.join(OUT, "index.json"),
     JSON.stringify({ ...meta(), scenarios: Object.keys(results) }, null, 2),
   );
   if (SMOKE) {
     for (const name of Object.keys(results))
-      JSON.parse(await fs.readFile(path.join(OUT, name + ".json"), "utf8"));
+      JSON.parse(await NodeFSP.readFile(NodePath.join(OUT, name + ".json"), "utf8"));
     console.log("smoke: all outputs parse");
   }
 }
