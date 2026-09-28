@@ -257,6 +257,148 @@ NodeTest.describe("useFileEditor", () => {
   });
 });
 
+// Review repro (proof-host-4 P1): switching an HTML file source → rendered →
+// source must not throw away edits the user has not resolved. The rendered
+// page is the same file, so the editor session — buffer, save state and the
+// recovery actions — outlives the presentation switch.
+NodeTest.describe("useFileEditor across the HTML source/rendered toggle", () => {
+  const USER_EDIT = "<p>user unsaved edit</p>";
+  function editorHarness(save) {
+    const calls = { reads: 0, saves: [] };
+    const host = {
+      invokeApi(request) {
+        if (request.method === "readSnapshot") {
+          calls.reads++;
+          return Promise.resolve({
+            kind: "editable",
+            contents: "<p>disk copy</p>",
+            revision: `disk-rev-${calls.reads}`,
+          });
+        }
+        if (request.method === "save") {
+          calls.saves.push(request.input);
+          return save(request.input, calls.saves.length);
+        }
+        return Promise.reject(new Error(`unexpected ${request.method}`));
+      },
+    };
+    let editor;
+    function Probe(props) {
+      editor = useFileEditor(host, session, "index.html", props.kind, 0, true);
+      return null;
+    }
+    return { calls, host, Probe, editor: () => editor };
+  }
+  async function toggleThroughRendered(root, Probe) {
+    await act(async () => root.update(e(Probe, { kind: "html" })));
+    await act(async () => root.update(e(Probe, { kind: "text" })));
+  }
+
+  NodeTest.it("keeps a conflicted buffer and its recovery actions", async () => {
+    const harness = editorHarness((_input, count) =>
+      Promise.resolve(count === 1 ? { kind: "conflict" } : { kind: "saved", revision: "mine" }),
+    );
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(harness.Probe, { kind: "text" }));
+      });
+      await act(async () => {
+        harness.editor().change(USER_EDIT);
+        harness.editor().retry();
+      });
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "conflict");
+
+      await toggleThroughRendered(root, harness.Probe);
+      NodeAssert.deepEqual(
+        {
+          contents: harness.editor().surface.contents,
+          state: harness.editor().surface.saveState.kind,
+        },
+        { contents: USER_EDIT, state: "conflict" },
+      );
+      NodeAssert.equal(
+        harness.calls.reads,
+        1,
+        "returning to source must not re-read the disk copy",
+      );
+
+      // "Keep mine" still writes the user's buffer over the fresh remote revision.
+      await act(async () => harness.editor().keepMine());
+      await act(async () => {});
+      NodeAssert.deepEqual(harness.calls.saves.at(-1), {
+        relativePath: "index.html",
+        expectedRevision: "disk-rev-2",
+        contents: USER_EDIT,
+      });
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "saved");
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("keeps a failed save's buffer without retrying it behind the user", async () => {
+    const harness = editorHarness(() => Promise.reject(new Error("disk full")));
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(harness.Probe, { kind: "text" }));
+      });
+      await act(async () => {
+        harness.editor().change(USER_EDIT);
+        harness.editor().retry();
+      });
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "error");
+
+      await toggleThroughRendered(root, harness.Probe);
+      NodeAssert.deepEqual(
+        {
+          contents: harness.editor().surface.contents,
+          state: harness.editor().surface.saveState.kind,
+        },
+        { contents: USER_EDIT, state: "error" },
+      );
+      NodeAssert.equal(harness.calls.saves.length, 1);
+      NodeAssert.equal(harness.calls.reads, 1);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+
+  NodeTest.it("keeps an in-flight save's buffer and lands its outcome", async () => {
+    let land;
+    const harness = editorHarness(
+      () =>
+        new Promise((resolve) => {
+          land = () => resolve({ kind: "saved", revision: "rev-saved" });
+        }),
+    );
+    let root;
+    try {
+      await act(async () => {
+        root = create(e(harness.Probe, { kind: "text" }));
+      });
+      await act(async () => {
+        harness.editor().change(USER_EDIT);
+        harness.editor().retry();
+      });
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "saving");
+
+      await toggleThroughRendered(root, harness.Probe);
+      NodeAssert.equal(harness.editor().surface.contents, USER_EDIT);
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "saving");
+      NodeAssert.equal(harness.calls.reads, 1);
+
+      await act(async () => land());
+      NodeAssert.equal(harness.editor().surface.saveState.kind, "saved");
+      NodeAssert.equal(harness.editor().surface.contents, USER_EDIT);
+      NodeAssert.equal(harness.calls.saves.length, 1);
+    } finally {
+      if (root) await act(async () => root.unmount());
+    }
+  });
+});
+
 NodeTest.describe("useMutationRefresh", () => {
   let calls;
   function Probe(props) {

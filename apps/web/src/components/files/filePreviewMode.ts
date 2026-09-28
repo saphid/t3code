@@ -1,5 +1,8 @@
 import { isAbsolutePath } from "~/terminal-links";
 
+/** Rendered (true) or source (false) for HTML files; shared with extension packs. */
+export const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
+
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
 export function shouldShowFileExplorer(input: {

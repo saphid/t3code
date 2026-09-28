@@ -9,8 +9,10 @@ package-owned rendered-markdown preview — all through public contracts only
 `t3.workspace/text-edits`, `t3.resources/lease`). It also provides
 `t3.file/presentation`, the only first-party provider of it, so the
 ordinary Files open path resolves here with no selection, and
-exposes an "Open in…" file action that resolves through whichever provider
-the host selected for that API (grant `t3.file/open`). Breadcrumbs over the
+exposes an "Open in panel" file action: `t3.ui/navigation@^1.0.0`
+`openFile` (grant `t3.ui/navigation.open`) opens the file in this view's
+thread where the host's own file links land, presented by whichever provider
+the host selected for `t3.file/presentation`. Breadcrumbs over the
 tree snapshot, workspace link resolution in rendered markdown, centered line
 reveals for search hits and `#L…`/`path:line` targets, and composer-mention
 drags are package-owned; the drag payload uses the MIME the host
@@ -36,11 +38,11 @@ without its grant or provider):
   losing it — renders the pre-contract appearance unchanged.
 - `t3.ui/keybindings@^1.0.0` — under `t3.ui/keybindings`: the panel's actions
   register as a `surface`-scope command set (Refresh files `mod+r`, Focus
-  file search `mod+f`, Open file in…, Toggle rendered preview) bound through
+  file search `mod+f`, Open file in panel, Toggle rendered preview) bound through
   the view session, so the host's arbitration decides dispatch — user rules
   and native defaults outrank the plugin `defaultKey`s, which fire only while
   the panel is focused. Element-local keys (Escape) stay element-local.
-- `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in…"
+- `t3.ui/notifications@^1.0.0` — under `t3.ui/notify`: a failed "Open in panel"
   toasts, matching the native panel's thread toast; every other status stays
   inline because the native panel keeps it there.
 - `t3.ui/preferences@^1.0.0` — under `t3.ui/preferences.read`: the client's
@@ -49,7 +51,9 @@ without its grant or provider):
   `t3.ui/preferences.write` the toolbar's word-wrap toggle writes it back
   through `setPreferences`; the view changes only when the persisted value
   arrives. Without the read grant the toggle is hidden and wrapping stays as
-  before.
+  before. The HTML rendered/source choice rides the same preference
+  (`renderBrowserFile`, the native preview's own), so it carries across files,
+  presentations and reloads; hosts without it keep the choice per view.
 
 Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that
@@ -72,5 +76,5 @@ image resolution; task checkboxes are read-only. Contents search reports the
 contract's match lines and truncation verbatim. The breadcrumb root is
 labeled "Workspace" — no contract reports the project title to this view —
 and crumbs are non-navigable when the selected path is host-absolute.
-"Open in…" resolves the presentation descriptor the selected
-provider returns; mounting that surface is the host's concern.
+"Open in panel" needs a thread-scoped view context; a view opened without a
+thread reports the refusal inline. It is not an external-editor launch.

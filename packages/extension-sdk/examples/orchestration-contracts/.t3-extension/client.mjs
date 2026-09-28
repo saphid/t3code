@@ -1845,14 +1845,17 @@ var __t3Client = (() => {
     additionalProperties: false,
     required: ["wordWrap"],
     properties: {
-      wordWrap: { type: "boolean" }
+      wordWrap: { type: "boolean" },
+      // Optional so hosts that predate it still answer; absent means rendered.
+      renderBrowserFile: { type: "boolean" }
     }
   };
   var clientPreferencesPatchSchema = {
     type: "object",
     additionalProperties: false,
     properties: {
-      wordWrap: { type: "boolean" }
+      wordWrap: { type: "boolean" },
+      renderBrowserFile: { type: "boolean" }
     }
   };
   var clientPreferencesReceiptSchema = {
@@ -2012,6 +2015,32 @@ var __t3Client = (() => {
       }
     ]
   };
+  var uiNavigationFileReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "relativePath"],
+        properties: {
+          status: { const: "opened" },
+          relativePath: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] }
+        }
+      }
+    ]
+  };
+  var uiNavigationFileInputProperties = {
+    relativePath: { type: "string", minLength: 1, maxLength: 512 },
+    line: { type: "integer", minimum: 1, maximum: 1e7 }
+  };
   var uiNavigationSessionReceiptSchema = {
     oneOf: [
       {
@@ -2058,6 +2087,13 @@ var __t3Client = (() => {
           url: { type: "string", minLength: 1, maxLength: 4096 }
         }, ["agentId", "url"]),
         outputSchema: uiNavigationSessionReceiptSchema
+      },
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
+        outputSchema: uiNavigationFileReceiptSchema
       }
     ]
   });
@@ -7597,7 +7633,7 @@ var __t3Client = (() => {
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"])
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
       },
       {
         name: "openThread",
@@ -7625,6 +7661,18 @@ var __t3Client = (() => {
           properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
         },
         outputSchema: uiNavigationSessionReceiptSchema
+      },
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputProperties
+        },
+        outputSchema: uiNavigationFileReceiptSchema
       }
     ]
   });

@@ -13,6 +13,7 @@ import {
   UI_PREFERENCES_API,
   UI_THEME_API,
   checkExternalUrl,
+  isWorkspaceFilePath,
   UI_EXTERNAL_API,
   UI_NAVIGATION_API,
 } from "@t3tools/extension-sdk/catalogue";
@@ -1026,7 +1027,11 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
         return capabilities(
           deps,
           "host.ui.navigation",
-          { openThread: CLIENT_NAVIGATION, openAgentSession: CLIENT_NAVIGATION },
+          {
+            openThread: CLIENT_NAVIGATION,
+            openAgentSession: CLIENT_NAVIGATION,
+            openFile: CLIENT_NAVIGATION,
+          },
           metadata,
         );
       if (method === "openAgentSession")
@@ -1044,6 +1049,26 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           return forward(deps, CLIENT_NAVIGATION, "openSession")(
             method,
             { agentId, url: checked.url },
+            context,
+            signal,
+            metadata,
+          );
+        })();
+      if (method === "openFile")
+        return (async () => {
+          const { relativePath, line } = input as { relativePath: string; line?: number };
+          if (!isWorkspaceFilePath(relativePath))
+            return { status: "refused", reason: "invalid-path" } satisfies Json;
+          // Only the caller's own (broker-scoped) thread; the input cannot name another.
+          const threadId = context.resource.threadId;
+          const project = threadId ? await deps.resolveThreadProject(threadId) : null;
+          if (project === null)
+            return { status: "refused", reason: "unknown-thread" } satisfies Json;
+          if (project !== context.resource.projectId)
+            return { status: "refused", reason: "out-of-scope" } satisfies Json;
+          return forward(deps, CLIENT_NAVIGATION, "openFile")(
+            method,
+            { relativePath, ...(line === undefined ? {} : { line }) },
             context,
             signal,
             metadata,

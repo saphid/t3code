@@ -1,9 +1,11 @@
 import {
-  filePresentationApi,
+  describeOpenFileRefusal,
   messagesEnrichmentApi,
+  openWorkspaceFile,
   orchestrationControlApi,
   orchestrationStatusApi,
   uiKeybindingsApi,
+  uiNavigationApi,
   uiNotificationsApi,
   uiPanelsApi,
   uiThemeApi,
@@ -56,7 +58,6 @@ import {
   CONNECTING_DIFF_STATUS,
   contentsDeliveryKey,
   checkpointRevertInput,
-  describePresentation,
   describeRevertReceipt,
   describeSource,
   diffCapabilityState,
@@ -1648,7 +1649,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     });
   };
 
-  const openInEditor = (row: DiffFileRow) => {
+  const openInPanel = (row: DiffFileRow) => {
     const path = presentationPath(row.path);
     if (path === null) {
       setAction({
@@ -1660,23 +1661,32 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
     }
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    setAction({ key: row.key, status: "loading", detail: "Resolving presentation…" });
-    void bindApi(filePresentationApi, host, session.context)
-      .invoke("open", { relativePath: path }, signal)
-      .then(
-        (result) => {
-          if (!signal.aborted)
-            setAction({ key: row.key, status: "resolved", detail: describePresentation(result) });
-        },
-        (error) => {
-          if (!signal.aborted)
-            setAction({
-              key: row.key,
-              status: "error",
-              detail: error instanceof Error ? error.message : "Presentation unavailable",
-            });
-        },
-      );
+    setAction({ key: row.key, status: "loading", detail: "Opening…" });
+    // Native parity: the diff's primary file action opens the file in the
+    // thread's file panel, presented by the selected t3.file/presentation
+    // provider — the host does the opening, the pack names the path.
+    void openWorkspaceFile(host, session.context, path, { signal }).then(
+      (receipt) => {
+        if (signal.aborted) return;
+        setAction(
+          receipt.status === "opened"
+            ? { key: row.key, status: "resolved", detail: `Opened ${path}` }
+            : {
+                key: row.key,
+                status: "error",
+                detail: `${displayPath(row)} cannot be opened — ${describeOpenFileRefusal(receipt.reason)}.`,
+              },
+        );
+      },
+      (error) => {
+        if (!signal.aborted)
+          setAction({
+            key: row.key,
+            status: "error",
+            detail: error instanceof Error ? error.message : "Open failed",
+          });
+      },
+    );
   };
 
   const copyPath = (row: DiffFileRow) => {
@@ -2220,7 +2230,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                         onToggleCollapsed: (key) =>
                           setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
                         onFileAction: (action, row) =>
-                          action === "open" ? openInEditor(row) : copyPath(row),
+                          action === "open" ? openInPanel(row) : copyPath(row),
                         ...(mode === "workspace" ? { loadContents: loadHostContents } : {}),
                       })
                     }
@@ -2242,7 +2252,7 @@ function DiffPanelView(props: { host: ClientHost; session: ViewSession }) {
                             setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key))
                           }
                           onExpand={expandFile}
-                          onOpen={openInEditor}
+                          onOpen={openInPanel}
                           onCopy={copyPath}
                           registerSection={(el) => {
                             if (el !== null) sectionRefs.current.set(row.key, el);
@@ -2286,7 +2296,6 @@ const authored = defineExtension({
     requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
     requireApi(vcsStatusApi),
     requireApi(vcsRefsApi),
-    requireApi(filePresentationApi),
     requireApi(orchestrationStatusApi),
     requireApi(orchestrationControlApi),
     requireApi(messagesEnrichmentApi),
@@ -2295,6 +2304,7 @@ const authored = defineExtension({
     requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiPanelsApi),
     requireApi(uiNotificationsApi),
+    requireApi(uiNavigationApi),
   ],
   surfaces: [
     {

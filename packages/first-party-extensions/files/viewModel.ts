@@ -1043,11 +1043,9 @@ export function describeContentSearch(
 }
 
 /* ------------------------------------------------------------------------
- * Open in external editor: the public `t3.file/presentation.open`
- * path. The host's provider selection IS the picker — files, browser, or a
- * future editor provider can all provide the API — so resolving honestly is
- * the entire surface: report the descriptor or name the failure, never fake
- * an editor launch.
+ * Open in panel: `t3.ui/navigation.openFile` opens the file where the host's
+ * own file links land, presented by the selected `t3.file/presentation`
+ * provider. It is not an external-editor launch.
  * --------------------------------------------------------------------- */
 
 /**
@@ -1159,10 +1157,10 @@ export function filesViewState(
 }
 
 /**
- * Safety check before `t3.file/presentation.open`: the path must be
+ * Safety check before `t3.ui/navigation.openFile`: the path must be
  * workspace-relative — reject absolute, empty, `..` and backslash segments.
- * Same predicate the diff panel ported; kept package-local because the
- * sibling package's view model is not a shared contract.
+ * The SDK's `openWorkspaceFile` and the host check again; this keeps the
+ * inline refusal naming the selected path.
  */
 export function presentationPath(path: string): string | null {
   if (
@@ -1176,14 +1174,6 @@ export function presentationPath(path: string): string | null {
   return path;
 }
 
-/** Honest report of a resolved `t3.file/presentation.open` descriptor. */
-export function describePresentation(result: {
-  readonly surfaceId: string;
-  readonly placement: string;
-}): string {
-  return `opens in ${result.surfaceId} · ${result.placement}`;
-}
-
 export type FileOpenState =
   | { readonly status: "idle" }
   | { readonly status: "resolving" }
@@ -1192,11 +1182,11 @@ export type FileOpenState =
   | { readonly status: "unavailable"; readonly message: string };
 
 /**
- * `presentation.open` invoke failure → named state. The broker delivers the
- * resolution reason code or the capability denial as the error message, so
- * match those strings exactly: grant denial is `denied` (recoverable by
- * granting `t3.file/open` at install), resolution failures are `unavailable`,
- * and anything else reports its detail — never a silent no-op.
+ * `t3.ui/navigation.openFile` invoke failure → named state. The broker
+ * delivers the capability denial or the resolution reason as the error
+ * message, so match those strings: grant denial is `denied` (recoverable by
+ * granting `t3.ui/navigation.open` at install), a host without the API is
+ * `unavailable`, and anything else reports its detail — never a silent no-op.
  */
 export function fileOpenFailed(
   error: unknown,
@@ -1205,22 +1195,17 @@ export function fileOpenFailed(
   if (text.includes("capability denied"))
     return {
       status: "denied",
-      message: "Open is denied — this installation is missing the t3.file/open grant",
-    };
-  if (text.includes("provider-selection-required"))
-    return {
-      status: "unavailable",
-      message:
-        "Several providers can open files — pick one for t3.file/presentation in extension settings",
+      message: "Open is denied — this installation is missing the t3.ui/navigation.open grant",
     };
   if (
     text.includes("missing-api") ||
     text.includes("selected-provider-unavailable") ||
-    text.includes("API unavailable")
+    text.includes("API unavailable") ||
+    text.includes("Unknown navigation op")
   )
     return {
       status: "unavailable",
-      message: "Open is unavailable — no provider is selected for t3.file/presentation",
+      message: "Open is unavailable — this client cannot open files for extensions",
     };
   return {
     status: "unavailable",
@@ -1228,13 +1213,13 @@ export function fileOpenFailed(
   };
 }
 
-/** Status line for the open-in-presentation action. */
+/** Status line for the open action. */
 export function describeFileOpen(state: FileOpenState): string {
   switch (state.status) {
     case "idle":
       return "";
     case "resolving":
-      return "Resolving presentation…";
+      return "Opening…";
     case "resolved":
     case "denied":
     case "unavailable":
@@ -1350,9 +1335,9 @@ export function watchThemeVars(options: {
 // ---------------------------------------------------------------------------
 
 /**
- * Drives the client's word-wrap preference — the one client setting the
- * native file preview honors. `apply` receives each value the stream
- * carries (snapshot, then one frame per change) and `null` whenever the feed
+ * Drives the client preferences the native file preview honors: word wrap,
+ * and HTML rendered/source when the host has it. `apply` receives each value
+ * the stream carries (snapshot, then one frame per change) and `null` whenever the feed
  * can't vouch for one: at subscription start, on a denied read, and on a
  * closed or lost stream. `null` means "no preference": the panel keeps its
  * pre-contract wrapping and hides the toggle.
@@ -1375,11 +1360,17 @@ export function watchPreferences(options: {
         if (frame.type === "closed") break;
         if (frame.type === "snapshot" || frame.type === "data") {
           const value = frame.value;
-          const wordWrap =
-            typeof value === "object" && value !== null && "wordWrap" in value
-              ? value.wordWrap
-              : undefined;
-          options.apply(typeof wordWrap === "boolean" ? { wordWrap } : null);
+          const { wordWrap, renderBrowserFile } = (
+            typeof value === "object" && value !== null ? value : {}
+          ) as Partial<Record<keyof UiPreferences, unknown>>;
+          options.apply(
+            typeof wordWrap === "boolean"
+              ? {
+                  wordWrap,
+                  ...(typeof renderBrowserFile === "boolean" ? { renderBrowserFile } : {}),
+                }
+              : null,
+          );
         }
       }
       clear();
@@ -1390,25 +1381,51 @@ export function watchPreferences(options: {
 }
 
 /**
- * Writes the word-wrap preference. Resolves to `null` on an applied receipt
- * (the stream carries the new value) or to the reason the write did not land.
+ * One preference write. Resolves to `null` on an applied receipt (the stream
+ * carries the new value) or to the reason the write did not land.
  */
-export async function writeWordWrap(options: {
+async function writePreference(
+  options: {
+    readonly client: Pick<ApiClient, "invokeApi">;
+    readonly context: ViewContext;
+    readonly signal: AbortSignal;
+  },
+  patch: Partial<UiPreferences>,
+  label: string,
+): Promise<string | null> {
+  try {
+    const receipt = await bindApi(uiPreferencesApi, options.client, options.context).invoke(
+      "setPreferences",
+      patch,
+      options.signal,
+    );
+    return receipt.applied ? null : `${label} not saved — ${receipt.reason ?? "rejected"}`;
+  } catch (error) {
+    return `${label} not saved — ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** Writes the word-wrap preference; see `writePreference`. */
+export function writeWordWrap(options: {
   readonly client: Pick<ApiClient, "invokeApi">;
   readonly context: ViewContext;
   readonly signal: AbortSignal;
   readonly wordWrap: boolean;
 }): Promise<string | null> {
-  try {
-    const receipt = await bindApi(uiPreferencesApi, options.client, options.context).invoke(
-      "setPreferences",
-      { wordWrap: options.wordWrap },
-      options.signal,
-    );
-    return receipt.applied ? null : `Word wrap not saved — ${receipt.reason ?? "rejected"}`;
-  } catch (error) {
-    return `Word wrap not saved — ${error instanceof Error ? error.message : String(error)}`;
-  }
+  return writePreference(options, { wordWrap: options.wordWrap }, "Word wrap");
+}
+
+/**
+ * Writes the HTML rendered/source choice to the client preference the native
+ * file preview reads, so every presentation starts from it; see `writePreference`.
+ */
+export function writeRenderHtml(options: {
+  readonly client: Pick<ApiClient, "invokeApi">;
+  readonly context: ViewContext;
+  readonly signal: AbortSignal;
+  readonly renderHtml: boolean;
+}): Promise<string | null> {
+  return writePreference(options, { renderBrowserFile: options.renderHtml }, "HTML preview choice");
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,7 +1468,7 @@ export const FILES_VIEW_COMMANDS: readonly {
     when: "extension.t3.files/view.focus",
     scope: "surface",
   },
-  { id: "openIn", title: "Open file in…", scope: "surface" },
+  { id: "openIn", title: "Open file in panel", scope: "surface" },
   { id: "toggleMarkdown", title: "Toggle rendered preview", scope: "surface" },
 ];
 

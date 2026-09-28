@@ -273,4 +273,68 @@ describe("navigation provider", () => {
       }
     });
   });
+
+  describe("openFile", () => {
+    const openFile = (
+      input: Record<string, unknown>,
+      threadId: string | null = "thread-a",
+    ): ClientProviderInvokeCall => {
+      const { threadId: _dropped, ...resource } = context.resource;
+      return {
+        method: "openFile",
+        input: { target: { kind: "self" }, ...input } as ClientProviderInvokeCall["input"],
+        context: { ...context, resource: threadId ? { ...resource, threadId } : resource },
+        caller,
+        signal: new AbortController().signal,
+      };
+    };
+    const panelOf = (threadId: string) =>
+      selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make(threadId)),
+      );
+
+    it("opens and activates the file on the caller's own thread, where native file links land", async () => {
+      const { provider: granted, navigate } = provider();
+      await expect(
+        granted.invoke(openFile({ relativePath: "src/app.ts", line: 7 })),
+      ).resolves.toEqual({ status: "opened", relativePath: "src/app.ts" });
+      const panel = panelOf("thread-a");
+      expect(panel.isOpen).toBe(true);
+      expect(panel.activeSurfaceId).toBe("file:src/app.ts");
+      // The host's own file surface: it renders through the selected
+      // t3.file/presentation provider (SelectedApiPresentation) or native.
+      expect(panel.surfaces.find((surface) => surface.id === "file:src/app.ts")).toMatchObject({
+        kind: "file",
+        relativePath: "src/app.ts",
+        revealLine: 7,
+      });
+      // Opening a file never routes the client to another thread.
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it("is grant-gated and refuses unknown, foreign and unsafe targets without opening", async () => {
+      const { provider: denied } = provider([]);
+      await expect(denied.invoke(openFile({ relativePath: "a.ts" }))).rejects.toMatchObject({
+        code: "client-target-denied",
+      });
+      const { provider: granted } = provider();
+      await expect(
+        granted.invoke(openFile({ relativePath: "a.ts" }, "thread-gone")),
+      ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
+      await expect(granted.invoke(openFile({ relativePath: "a.ts" }, null))).resolves.toEqual({
+        status: "refused",
+        reason: "unknown-thread",
+      });
+      await expect(
+        granted.invoke(openFile({ relativePath: "a.ts" }, "thread-other")),
+      ).resolves.toEqual({ status: "refused", reason: "out-of-scope" });
+      await expect(granted.invoke(openFile({ relativePath: "../a.ts" }))).resolves.toEqual({
+        status: "refused",
+        reason: "invalid-path",
+      });
+      for (const threadId of ["thread-gone", "thread-other", "thread-b"])
+        expect(panelOf(threadId).surfaces.some((surface) => surface.kind === "file")).toBe(false);
+    });
+  });
 });

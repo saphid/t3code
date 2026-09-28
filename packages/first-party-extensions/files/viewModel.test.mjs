@@ -12,7 +12,6 @@ import {
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
-  describePresentation,
   describeResourcePreview,
   describeResourceRead,
   describeRead,
@@ -673,27 +672,16 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.equal(restoredRenderMarkdown(restored), true);
   });
 
-  NodeTest.it("describePresentation reports the resolved descriptor", () => {
-    NodeAssert.equal(
-      describePresentation({ surfaceId: "t3.files/view", placement: "side-panel" }),
-      "opens in t3.files/view · side-panel",
-    );
-  });
-
-  NodeTest.it("fileOpenFailed names the t3.file/open grant denial", () => {
-    const state = fileOpenFailed(new Error("API capability denied: t3.file/open"));
+  NodeTest.it("fileOpenFailed names the t3.ui/navigation.open grant denial", () => {
+    const state = fileOpenFailed(new Error("API capability denied: t3.ui/navigation.open"));
     NodeAssert.equal(state.status, "denied");
-    NodeAssert.match(state.message, /t3\.file\/open grant/);
+    NodeAssert.match(state.message, /t3\.ui\/navigation\.open grant/);
   });
 
-  NodeTest.it("fileOpenFailed maps resolution failures to unavailable", () => {
-    NodeAssert.equal(
-      fileOpenFailed(new Error("provider-selection-required")).status,
-      "unavailable",
-    );
+  NodeTest.it("fileOpenFailed maps a host without the open API to unavailable", () => {
     NodeAssert.match(
-      fileOpenFailed(new Error("provider-selection-required")).message,
-      /pick one for t3\.file\/presentation/,
+      fileOpenFailed(new Error("Unknown navigation op openFile")).message,
+      /cannot open files for extensions/,
     );
     NodeAssert.equal(fileOpenFailed(new Error("missing-api")).status, "unavailable");
     NodeAssert.equal(
@@ -711,7 +699,7 @@ NodeTest.describe("open in presentation", () => {
 
   NodeTest.it("describeFileOpen labels every state", () => {
     NodeAssert.equal(describeFileOpen({ status: "idle" }), "");
-    NodeAssert.equal(describeFileOpen({ status: "resolving" }), "Resolving presentation…");
+    NodeAssert.equal(describeFileOpen({ status: "resolving" }), "Opening…");
     NodeAssert.equal(
       describeFileOpen({ status: "resolved", message: "opens in x · y" }),
       "opens in x · y",

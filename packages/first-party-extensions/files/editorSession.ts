@@ -170,10 +170,14 @@ export function useFileEditor(
   } | null>(null);
   const lastRefreshRef = useRef(-1);
   const editing = selected !== null && selectedKind === "text" && visible;
+  // An HTML file's rendered page is the same file: its editor session (buffer,
+  // save state, recovery actions) outlives the source/rendered switch.
+  const retained = selectedKind === "html" && visible;
 
   useEffect(() => {
     const active = activeRef.current;
     if (!editing || selected === null) {
+      if (retained && active?.path === selected) return;
       if (active) {
         active.coordinator.dispose();
         activeRef.current = null;
@@ -263,7 +267,7 @@ export function useFileEditor(
           return;
         }
         const kind = coordinator.state().kind;
-        if (kind === "dirty" || kind === "saving" || kind === "error") {
+        if (kind === "dirty" || kind === "saving" || kind === "error" || kind === "conflict") {
           // Refresh reconciliation: the remote file moved under pending edits —
           // latch the conflict rather than clobbering the user's buffer.
           coordinator.noteRemoteRevision(open.revision);
@@ -298,7 +302,7 @@ export function useFileEditor(
       }
     })();
     return () => controller.abort();
-  }, [host, session, selected, editing, refreshRevision]);
+  }, [host, session, selected, editing, retained, refreshRevision]);
 
   // Unmount flush: pending edits persist, exactly like the native panel's
   // coordinator disposal.

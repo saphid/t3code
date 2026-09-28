@@ -71,6 +71,21 @@ describe("first-party pack manifests", () => {
     }),
   );
 
+  // proof-host-4 P3: the package-asset proof lives in the SDK examples; the
+  // production Files pack must not ship (or render) its fixture.
+  it.effect("Files ships no package-asset fixture", () =>
+    Effect.gen(function* () {
+      const pack = "files";
+      const files = yield* Effect.promise(
+        () => import(`../../../../packages/first-party-extensions/${pack}/extension.ts`),
+      );
+      // Declared asset paths ride the authored extension; the package only
+      // carries the packer's placeholder, and any asset bumps it to format 4.
+      expect(files.default.assets ?? []).toEqual([]);
+      expect(files.default.package.format).toBeLessThan(4);
+    }),
+  );
+
   it.effect("load on a host whose t3.ui/notifications is still 1.0.0", () =>
     Effect.gen(function* () {
       const installations = yield* loadInstallations;

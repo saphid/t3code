@@ -54,3 +54,14 @@ NodeTest.test("the public read and receipt share the client area's typed shape",
   NodeAssert.equal(publicMethods.setPreferences.inputSchema.additionalProperties, false);
   NodeAssert.equal(publicMethods.getPreferences.outputSchema.additionalProperties, false);
 });
+
+NodeTest.test("renderBrowserFile is an optional boolean so older hosts stay valid", () => {
+  const publicMethods = Object.fromEntries(UI_PREFERENCES_API.methods.map((m) => [m.name, m]));
+  const read = publicMethods.getPreferences.outputSchema;
+  NodeAssert.deepEqual(read.properties.renderBrowserFile, { type: "boolean" });
+  // A host that predates the key still answers { wordWrap } alone.
+  NodeAssert.deepEqual(read.required, ["wordWrap"]);
+  NodeAssert.deepEqual(publicMethods.setPreferences.inputSchema.properties.renderBrowserFile, {
+    type: "boolean",
+  });
+});

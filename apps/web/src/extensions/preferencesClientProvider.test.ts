@@ -22,6 +22,12 @@ import {
   getClientSettings,
   persistClientSettingsPatch,
 } from "../hooks/useSettings";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "../hooks/useLocalStorage";
+import * as Schema from "effect/Schema";
 import { createPreferencesClientProvider, type ClientProviderDeps } from "./clientProviders";
 import type { ClientProviderInvokeCall } from "./clientProviderTypes";
 import type { InstalledPackage } from "./installedController";
@@ -30,6 +36,8 @@ const ENV = "env-a";
 const INSTALL = "ext.a";
 const READ = "t3.ui/preferences.read";
 const WRITE = "t3.ui/preferences.write";
+/** The native file preview's own key: both panels share one HTML preference. */
+const RENDER_BROWSER_FILE_KEY = "t3code.renderBrowserFile";
 
 const caller: ClientProviderCaller = {
   installationId: INSTALL,
@@ -77,6 +85,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: false });
   persistenceMocks.setClientSettings.mockReset().mockResolvedValue(undefined);
+  removeLocalStorageItem(RENDER_BROWSER_FILE_KEY);
 });
 
 describe("preferences client provider", () => {
@@ -84,6 +93,7 @@ describe("preferences client provider", () => {
     const provider = createPreferencesClientProvider(makeDeps([READ]));
     await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toEqual({
       wordWrap: false,
+      renderBrowserFile: true,
     });
   });
 
@@ -115,7 +125,10 @@ describe("preferences client provider", () => {
     const receipt = await provider.invoke(
       invokeCall("applyPreferences", { writer: INSTALL, patch: { wordWrap: true } }),
     );
-    expect(receipt).toEqual({ applied: true, preferences: { wordWrap: true } });
+    expect(receipt).toEqual({
+      applied: true,
+      preferences: { wordWrap: true, renderBrowserFile: true },
+    });
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledWith({
       ...DEFAULT_CLIENT_SETTINGS,
       wordWrap: true,
@@ -132,7 +145,7 @@ describe("preferences client provider", () => {
     expect(receipt).toEqual({
       applied: false,
       reason: "persist-failed",
-      preferences: { wordWrap: false },
+      preferences: { wordWrap: false, renderBrowserFile: true },
     });
     expect(getClientSettings().wordWrap).toBe(false);
   });
@@ -152,7 +165,11 @@ describe("preferences client provider", () => {
     const provider = createPreferencesClientProvider(makeDeps([READ, WRITE]));
     await expect(
       provider.invoke(invokeCall("applyPreferences", { writer: INSTALL, patch: {} })),
-    ).resolves.toEqual({ applied: false, reason: "empty-patch", preferences: { wordWrap: false } });
+    ).resolves.toEqual({
+      applied: false,
+      reason: "empty-patch",
+      preferences: { wordWrap: false, renderBrowserFile: true },
+    });
     expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
   });
 
@@ -166,17 +183,104 @@ describe("preferences client provider", () => {
       caller,
       emit: (event) => events.push(event),
     });
-    expect(events).toEqual([{ type: "snapshot", value: { wordWrap: false } }]);
+    expect(events).toEqual([
+      { type: "snapshot", value: { wordWrap: false, renderBrowserFile: true } },
+    ]);
     // An unrelated setting is not a preference change.
     await persistClientSettingsPatch({ fontSizeTerminal: 20 }, async () => {});
     expect(events).toHaveLength(1);
     await persistClientSettingsPatch({ wordWrap: true }, async () => {});
     expect(events).toEqual([
-      { type: "snapshot", value: { wordWrap: false } },
-      { type: "data", value: { wordWrap: true } },
+      { type: "snapshot", value: { wordWrap: false, renderBrowserFile: true } },
+      { type: "data", value: { wordWrap: true, renderBrowserFile: true } },
     ]);
     close();
     await persistClientSettingsPatch({ wordWrap: false }, async () => {});
     expect(events).toHaveLength(2);
+  });
+
+  describe("HTML render preference", () => {
+    it("reads the native file preview's stored choice, rendered when never chosen", async () => {
+      const provider = createPreferencesClientProvider(makeDeps([READ]));
+      await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toMatchObject({
+        renderBrowserFile: true,
+      });
+      setLocalStorageItem(RENDER_BROWSER_FILE_KEY, false, Schema.Boolean);
+      await expect(provider.invoke(invokeCall("getPreferences", {}))).resolves.toEqual({
+        wordWrap: false,
+        renderBrowserFile: false,
+      });
+    });
+
+    it("persists a pack's choice where a fresh presentation and the native panel read it", async () => {
+      const writer = createPreferencesClientProvider(makeDeps([READ, WRITE]));
+      await expect(
+        writer.invoke(
+          invokeCall("applyPreferences", { writer: INSTALL, patch: { renderBrowserFile: false } }),
+        ),
+      ).resolves.toEqual({
+        applied: true,
+        preferences: { wordWrap: false, renderBrowserFile: false },
+      });
+      expect(getLocalStorageItem(RENDER_BROWSER_FILE_KEY, Schema.Boolean)).toBe(false);
+      // Client settings are untouched: the key is the native panel's own.
+      expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+      // A new provider stands in for a reloaded client or another view.
+      const fresh = createPreferencesClientProvider(makeDeps([READ]));
+      await expect(fresh.invoke(invokeCall("getPreferences", {}))).resolves.toMatchObject({
+        renderBrowserFile: false,
+      });
+    });
+
+    it("rejects a non-boolean value", async () => {
+      const provider = createPreferencesClientProvider(makeDeps([READ, WRITE]));
+      await expect(
+        provider.invoke(
+          invokeCall("applyPreferences", { writer: INSTALL, patch: { renderBrowserFile: "no" } }),
+        ),
+      ).rejects.toMatchObject({ code: "provider-rejected" });
+      expect(getLocalStorageItem(RENDER_BROWSER_FILE_KEY, Schema.Boolean)).toBeNull();
+    });
+
+    it("streams changes the native panel or another tab makes", async () => {
+      const storage = new Map<string, string>();
+      const target = Object.assign(new EventTarget(), {
+        localStorage: {
+          getItem: (key: string) => storage.get(key) ?? null,
+          setItem: (key: string, value: string) => void storage.set(key, value),
+          removeItem: (key: string) => void storage.delete(key),
+        },
+      });
+      vi.stubGlobal("window", target);
+      try {
+        const provider = createPreferencesClientProvider(makeDeps([READ]));
+        const events: ClientProviderEmitEvent[] = [];
+        const close = await provider.openStream!({
+          name: "watchPreferences",
+          input: null,
+          context,
+          caller,
+          emit: (event) => events.push(event),
+        });
+        storage.set(RENDER_BROWSER_FILE_KEY, "false");
+        // Same-tab writes announce themselves the way useLocalStorage does.
+        target.dispatchEvent(
+          new CustomEvent("t3code:local_storage_change", {
+            detail: { key: RENDER_BROWSER_FILE_KEY },
+          }),
+        );
+        storage.set(RENDER_BROWSER_FILE_KEY, "true");
+        const crossTab = Object.assign(new Event("storage"), { key: RENDER_BROWSER_FILE_KEY });
+        target.dispatchEvent(crossTab);
+        expect(events).toEqual([
+          { type: "snapshot", value: { wordWrap: false, renderBrowserFile: true } },
+          { type: "data", value: { wordWrap: false, renderBrowserFile: false } },
+          { type: "data", value: { wordWrap: false, renderBrowserFile: true } },
+        ]);
+        close();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

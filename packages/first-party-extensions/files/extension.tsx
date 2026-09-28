@@ -1,10 +1,13 @@
 import {
   composerContextApi,
+  describeOpenFileRefusal,
   filePresentationApi,
   messagesEnrichmentApi,
+  openWorkspaceFile,
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
   uiThemeApi,
@@ -59,7 +62,6 @@ import {
   describeContentSearch,
   describeFileOpen,
   describeMediaLease,
-  describePresentation,
   describeResourcePreview,
   describeSaveState,
   describeSearch,
@@ -92,6 +94,7 @@ import {
   toggleExpanded,
   visibleRows,
   watchPreferences,
+  writeRenderHtml,
   writeWordWrap,
   type ContentSearchResults,
   type FileOpenState,
@@ -103,7 +106,6 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.files";
-const PACKAGE_ASSET_PATH = "assets/asset-fixture.png";
 const SEARCH_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 150;
 
@@ -184,44 +186,6 @@ function useWorkspaceTree(host: ClientHost, session: ViewSession) {
     visible,
     refresh: () => setRefresh((value) => value + 1),
   };
-}
-
-/**
- * Verified package-asset read: `readAsset` re-resolves and
- * re-verifies bytes on every call, so a stale object URL is renewed by
- * re-running the effect rather than trusting a cached URL.
- */
-function usePackageAsset(host: ClientHost, session: ViewSession, visible: boolean) {
-  const [asset, setAsset] = useState<{ url: string; status: string } | null>(null);
-  useEffect(() => {
-    if (!visible) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.signal]);
-    let url: string | null = null;
-    void (async () => {
-      try {
-        if (!host.readAsset) throw new Error("This host cannot load package assets.");
-        const result = await host.readAsset(PACKAGE_ASSET_PATH, signal);
-        if (signal.aborted) return;
-        url = URL.createObjectURL(new Blob([result.bytes as BlobPart], { type: "image/png" }));
-        setAsset({
-          url,
-          status: `Package asset verified — ${result.bytes.byteLength.toLocaleString("en-US")} bytes, sha256 ${result.sha256.slice(0, 12)}…`,
-        });
-      } catch (error) {
-        if (!signal.aborted)
-          setAsset({
-            url: "",
-            status: error instanceof Error ? error.message : "Package asset unavailable",
-          });
-      }
-    })();
-    return () => {
-      controller.abort();
-      if (url !== null) URL.revokeObjectURL(url);
-    };
-  }, [host, session, visible]);
-  return asset;
 }
 
 /**
@@ -403,15 +367,18 @@ function useThemeVars(
 }
 
 /**
- * `t3.ui/preferences` consumer for the client's word-wrap setting — the same
- * value (and the same toggle) the native file preview uses. `value` is null
- * while the preference is unavailable (ungranted, provider-less host, lost
- * stream): the panel then keeps its pre-contract wrapping and hides the
- * toggle. Toggling writes through `setPreferences`; the displayed value
- * changes only when the stream carries the persisted one, never optimistically.
+ * `t3.ui/preferences` consumer for the client settings the native file
+ * preview honors. `wordWrap.value` is null while the preference is
+ * unavailable (ungranted, provider-less host, lost stream): the panel then
+ * keeps its pre-contract wrapping and hides the toggle. Toggling writes
+ * through `setPreferences`; the displayed value changes only when the stream
+ * carries the persisted one, never optimistically. `renderHtml` is the last
+ * HTML rendered/source choice the host reported, undefined until it reports
+ * one (older hosts never do).
  */
-function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
+function useFilePreferences(host: ClientHost, session: ViewSession, visible: boolean) {
   const [value, setValue] = useState<boolean | null>(null);
+  const [renderHtml, setRenderHtml] = useState<boolean | undefined>(undefined);
   const [writeError, setWriteError] = useState<string | null>(null);
   useEffect(() => {
     if (!visible) return;
@@ -420,7 +387,11 @@ function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
       client: host,
       context: session.context,
       signal: AbortSignal.any([controller.signal, session.signal]),
-      apply: (preferences) => setValue(preferences?.wordWrap ?? null),
+      apply: (preferences) => {
+        setValue(preferences?.wordWrap ?? null);
+        if (preferences?.renderBrowserFile !== undefined)
+          setRenderHtml(preferences.renderBrowserFile);
+      },
     });
     return () => controller.abort();
   }, [host, session, visible]);
@@ -436,7 +407,7 @@ function useWordWrap(host: ClientHost, session: ViewSession, visible: boolean) {
       if (!session.signal.aborted) setWriteError(error);
     });
   };
-  return { value, writeError, toggle };
+  return { wordWrap: { value, writeError, toggle }, renderHtml };
 }
 
 /**
@@ -1203,7 +1174,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     session,
   );
   const themeVars = useThemeVars(host, session, visible);
-  const wordWrap = useWordWrap(host, session, visible);
+  const preferences = useFilePreferences(host, session, visible);
+  const wordWrap = preferences.wordWrap;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
     restoredExpanded(session.restoreState),
   );
@@ -1240,19 +1212,21 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const treeListRef = useRef<HTMLUListElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  // HTML renders by default and persists a source preference, like the
-  // native panel; a pending line reveal shows the source it scrolls.
+  // HTML renders by default; a pending line reveal shows the source it
+  // scrolls. The choice is the client's shared preference — the native
+  // panel's own — so it carries across files, presentations and reloads; the
+  // view record keeps it too for hosts that predate the preference.
   const [renderHtml, setRenderHtml] = useState(() => restoredRenderHtml(session.restoreState));
+  const [reportedRenderHtml, setReportedRenderHtml] = useState(preferences.renderHtml);
+  if (preferences.renderHtml !== reportedRenderHtml) {
+    setReportedRenderHtml(preferences.renderHtml);
+    if (preferences.renderHtml !== undefined) setRenderHtml(preferences.renderHtml);
+  }
   const selectedKind: PreviewKind = selected
     ? presentedPreviewKind(selected, { renderHtml, revealPath: revealRequest?.path ?? null })
     : "text";
   const editor = useFileEditor(host, session, selected, selectedKind, revision, visible);
   const media = useMediaLease(host, session, selected, selectedKind, revision, visible);
-  const packageAsset = usePackageAsset(
-    host,
-    session,
-    visible && selected !== null && selectedKind !== "text",
-  );
   const currentRead = read?.relativePath === selected && read.revision === revision ? read : null;
   const changes = useWorkspaceChanges(host, session, visible);
   // Native parity: a bump while the selected file's save state is latched
@@ -1459,13 +1433,17 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       : null;
 
   // Choosing the rendered page also settles a reveal that forced the source.
+  // A failed preference write (an older host) leaves the per-view choice.
   const toggleHtml = () => {
-    if (selectedKind === "html") {
-      setRenderHtml(false);
-      return;
-    }
-    setRenderHtml(true);
-    setRevealRequest(null);
+    const next = selectedKind !== "html";
+    setRenderHtml(next);
+    if (next) setRevealRequest(null);
+    void writeRenderHtml({
+      client: host,
+      context: session.context,
+      signal: session.signal,
+      renderHtml: next,
+    });
   };
 
   const select = (path: string, line?: number) => {
@@ -1503,13 +1481,11 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     event.dataTransfer.effectAllowed = "copy";
   };
 
-  // The public open path is `t3.file/presentation.open` — the host's
-  // provider selection is the picker, so this resolves the descriptor and
-  // reports it (or the named failure) verbatim. Requires stays without the
-  // self-provided API: files provides t3.file/presentation, and a
-  // self-requirement would trip the resolver's cyclic-dependency check.
+  // "Open in panel" opens the file where the host's own file links land —
+  // `t3.ui/navigation.openFile` on this view's thread, presented by the
+  // selected t3.file/presentation provider (this pack, by default).
   // Native parity: a failed open toasts (the native panel raises a thread
-  // toast on preview-open failure) while resolving/resolved stay inline.
+  // toast on preview-open failure) while opening/opened stay inline.
   // When `t3.ui/notifications` is unavailable the inline row stands as the
   // degraded surface — the failure is never dropped silently.
   const failFileOpen = (path: string, state: FileOpenState) => {
@@ -1538,7 +1514,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       );
   };
 
-  const openInPresentation = () => {
+  const openInPanel = () => {
     if (selected === null) return;
     const path = presentationPath(selected);
     if (path === null) {
@@ -1551,14 +1527,16 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     setFileOpen({ path, state: { status: "resolving" } });
-    void bindApi(filePresentationApi, host, session.context)
-      .invoke("open", { relativePath: path }, signal)
+    void openWorkspaceFile(host, session.context, path, { signal })
       .then(
-        (result) => {
-          if (!signal.aborted)
-            setFileOpen({
-              path,
-              state: { status: "resolved", message: describePresentation(result) },
+        (receipt) => {
+          if (signal.aborted) return;
+          if (receipt.status === "opened")
+            setFileOpen({ path, state: { status: "resolved", message: `Opened ${path}` } });
+          else
+            failFileOpen(path, {
+              status: "unavailable",
+              message: `${path} cannot be opened — ${describeOpenFileRefusal(receipt.reason)}`,
             });
         },
         (error) => {
@@ -1574,7 +1552,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   useFilesCommands(host, session, visible, {
     refresh,
     focusSearch: () => searchRef.current?.focus(),
-    openIn: openInPresentation,
+    openIn: openInPanel,
     toggleMarkdown: () => {
       if (selected !== null && isMarkdownPath(selected) && selectedKind === "text")
         setRenderMarkdown((value) => !value);
@@ -2025,8 +2003,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             flexShrink: 0,
           }}
         >
-          <button type="button" onClick={openInPresentation}>
-            Open in…
+          <button type="button" onClick={openInPanel}>
+            Open in panel
           </button>
           {addChat.blockReason === null ? (
             <button
@@ -2404,30 +2382,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           ) : null}
         </figure>
       )}
-      {selected && selectedKind !== "text" && (
-        <figure
-          aria-label="Package asset preview"
-          style={{
-            margin: 0,
-            padding: 12,
-            borderTop: "1px solid var(--t3-files-border, var(--border, #dfe3e8))",
-            display: "grid",
-            gap: 8,
-            justifyItems: "start",
-          }}
-        >
-          {packageAsset?.url ? (
-            <img
-              src={packageAsset.url}
-              alt="Verified package asset rendered through the public asset surface"
-              style={{ imageRendering: "pixelated", width: 64, height: 64 }}
-            />
-          ) : null}
-          <figcaption style={{ color: muted, fontSize: 12 }}>
-            {packageAsset?.status ?? "Loading package asset"}
-          </figcaption>
-        </figure>
-      )}
     </section>
   );
 }
@@ -2436,7 +2390,6 @@ export default defineExtension({
   id: manifestId,
   version: "0.9.0",
   provides: [filePresentationApi.definition],
-  assets: [{ path: PACKAGE_ASSET_PATH, mediaType: "application/octet-stream" }],
   serverEntry: "server.ts",
   requires: [
     requireApi(workspaceTreeApi),
@@ -2450,6 +2403,7 @@ export default defineExtension({
     requireApi(uiKeybindingsApi, "^1.1.0"),
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
+    requireApi(uiNavigationApi),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

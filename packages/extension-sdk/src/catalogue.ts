@@ -5,8 +5,10 @@ import {
 } from "./orchestration.js";
 export * from "./orchestration.js";
 import {
+  bindApi,
   defineApi,
   defineStreamApi,
+  type ApiClient,
   type ApiDefinition,
   type ApiMethod,
   type TypedApi,
@@ -16,7 +18,7 @@ import type { JsonObject } from "./environment.js";
 import type { GlobalCommandDescriptor } from "./environment.js";
 import { MAX_PAYLOAD_BYTES, type ViewContext } from "./contracts.js";
 import type { WorkspaceReadTextInput, WorkspaceReadTextResult } from "./workspace.js";
-import { textEditsApi, textEditsApiV1 } from "./textEdits.js";
+import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
 import {
@@ -30,6 +32,8 @@ import {
   clientPreferencesReceiptSchema,
   uiExternalOpenReceiptSchema,
   browserHistoryEntriesSchema,
+  uiNavigationFileInputProperties,
+  uiNavigationFileReceiptSchema,
   uiNavigationReceiptSchema,
   uiNavigationSessionReceiptSchema,
 } from "./clientProviders.js";
@@ -8878,6 +8882,11 @@ export const uiPanelsApi = defineApi<{
 /** The client preferences a pack can read — see `clientPreferencesSchema`. */
 export type UiPreferences = {
   readonly wordWrap: boolean;
+  /**
+   * HTML files open rendered (true) or as source (false) — the native file
+   * preview's own choice. Absent on hosts that predate it.
+   */
+  readonly renderBrowserFile?: boolean;
 };
 
 /**
@@ -9047,6 +9056,17 @@ export type UiNavigationSessionReceipt =
   | { readonly status: "refused"; readonly reason: UiNavigationSessionRefusalReason };
 
 /**
+ * Closed refusal set for `openFile`: `unknown-thread` (the caller's context
+ * names no live thread), `out-of-scope` (that thread is outside the caller's
+ * project), `invalid-path` (not a safe workspace-relative path).
+ */
+export type UiNavigationFileRefusalReason = "unknown-thread" | "out-of-scope" | "invalid-path";
+
+export type UiNavigationFileReceipt =
+  | { readonly status: "opened"; readonly relativePath: string }
+  | { readonly status: "refused"; readonly reason: UiNavigationFileRefusalReason };
+
+/**
  * Moves the caller's own client to a thread in the caller's project, and
  * optionally opens one of the caller's own surfaces there. The pack names a
  * thread, never a URL or route; the host resolves and performs the
@@ -9057,6 +9077,11 @@ export type UiNavigationSessionReceipt =
  * caller's own thread. The pack names the agent; the host resolves its
  * session URL from its own roster and hands it to the OS opener, so the pack
  * never supplies a URL. It needs its own `t3.ui/navigation.open-session` grant.
+ *
+ * `openFile` opens a workspace file in the caller's own thread exactly where
+ * the host's native file links land: the host's file panel, presented by the
+ * selected `t3.file/presentation` provider (or the native preview). The pack
+ * names a path, never a surface or provider.
  */
 export const uiNavigationApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
@@ -9068,6 +9093,10 @@ export const uiNavigationApi = defineApi<{
     input: { agentId: string };
     output: UiNavigationSessionReceipt;
   };
+  openFile: {
+    input: { relativePath: string; line?: number };
+    output: UiNavigationFileReceipt;
+  };
 }>({
   id: UI_NAVIGATION,
   version: "1.0.0",
@@ -9077,7 +9106,7 @@ export const uiNavigationApi = defineApi<{
       effect: "read",
       requiredGrants: [],
       inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"]),
+      outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"]),
     },
     {
       name: "openThread",
@@ -9106,8 +9135,63 @@ export const uiNavigationApi = defineApi<{
       },
       outputSchema: uiNavigationSessionReceiptSchema,
     },
+    {
+      name: "openFile",
+      effect: "write",
+      requiredGrants: [UI_NAVIGATION_OPEN],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["relativePath"],
+        properties: uiNavigationFileInputProperties,
+      },
+      outputSchema: uiNavigationFileReceiptSchema,
+    },
   ],
 });
+
+/** Whether `path` is a safe workspace-relative path `openFile` will accept. */
+export function isWorkspaceFilePath(path: string): boolean {
+  try {
+    validateEditableRelativePath(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens a workspace file in the caller's own thread through
+ * `t3.ui/navigation.openFile` (grant `t3.ui/navigation.open`). An unsafe path
+ * is refused here without a host round trip; the host checks again. Rejects
+ * only when the invoke itself fails (missing grant, host without the API).
+ */
+export function openWorkspaceFile(
+  client: Pick<ApiClient, "invokeApi">,
+  context: ViewContext,
+  relativePath: string,
+  options: { readonly line?: number; readonly signal: AbortSignal },
+): Promise<UiNavigationFileReceipt> {
+  if (!isWorkspaceFilePath(relativePath))
+    return Promise.resolve({ status: "refused", reason: "invalid-path" });
+  return bindApi(uiNavigationApi, client, context).invoke(
+    "openFile",
+    { relativePath, ...(options.line === undefined ? {} : { line: options.line }) },
+    options.signal,
+  );
+}
+
+/** One user-facing sentence per `openFile` refusal. */
+export function describeOpenFileRefusal(reason: UiNavigationFileRefusalReason): string {
+  switch (reason) {
+    case "unknown-thread":
+      return "Files open in a thread — this view has none";
+    case "out-of-scope":
+      return "The thread is outside this extension's project";
+    case "invalid-path":
+      return "Not a workspace-relative path";
+  }
+}
 
 export const UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
 export const UI_PANELS_API = uiPanelsApi.definition;

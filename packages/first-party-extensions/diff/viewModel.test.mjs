@@ -13,7 +13,6 @@ import {
   collectFileContentsStream,
   collectPreviewStream,
   contentsDeliveryKey,
-  describePresentation,
   describeRevertReceipt,
   describeSource,
   commentSectionFor,
@@ -1395,13 +1394,6 @@ NodeTest.test("presentationPath: workspace-relative only", () => {
   NodeAssert.equal(presentationPath("a\\b"), null);
   NodeAssert.equal(presentationPath(""), null);
   NodeAssert.equal(presentationPath("a//b"), null);
-});
-
-NodeTest.test("describePresentation: honest resolution report", () => {
-  NodeAssert.equal(
-    describePresentation({ surfaceId: "t3.files/view", placement: "side-panel" }),
-    "opens in t3.files/view · side-panel",
-  );
 });
 
 /* ---------------- turn/checkpoint mode (t3.orchestration) ---------------- */

@@ -63,6 +63,11 @@ function fakeBridge(options?: {
           agentId: (request.input as { agentId: string }).agentId,
           opener: "desktop-shell",
         });
+      if (request.method === "openFile")
+        return Effect.succeed({
+          status: "opened",
+          relativePath: (request.input as { relativePath: string }).relativePath,
+        });
       if (request.method === "openThread")
         return Effect.succeed({
           status: "opened",
@@ -396,7 +401,7 @@ describe("navigation adapter", () => {
       navigation.invoke("getCapabilities", {}, context, signal, metadata()),
     ).resolves.toMatchObject({
       adapter: "host.ui.navigation",
-      operations: { openThread: true, openAgentSession: true },
+      operations: { openThread: true, openAgentSession: true, openFile: true },
     });
   });
 
@@ -442,6 +447,52 @@ describe("navigation adapter", () => {
     await expect(
       open("workflow-1", { ...context, resource: unthreaded } as ViewContext),
     ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
+    expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+describe("navigation adapter openFile", () => {
+  const openFile = (input: Record<string, unknown>, ctx: ViewContext = context) =>
+    makeProviders(bridge).navigation.invoke("openFile", input as Json, ctx, signal, metadata());
+  let bridge = fakeBridge();
+
+  it("forwards a workspace path to the caller's own client for its context thread", async () => {
+    bridge = fakeBridge();
+    await expect(openFile({ relativePath: "src/app.ts", line: 12 })).resolves.toEqual({
+      status: "opened",
+      relativePath: "src/app.ts",
+    });
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/navigation",
+        method: "openFile",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          relativePath: "src/app.ts",
+          line: 12,
+        },
+      },
+    ]);
+  });
+
+  it("refuses unsafe paths and foreign or missing threads before any client frame", async () => {
+    bridge = fakeBridge();
+    for (const relativePath of ["../secret", "/etc/passwd", "a//b", "a\\b", "src/../x"])
+      await expect(openFile({ relativePath })).resolves.toEqual({
+        status: "refused",
+        reason: "invalid-path",
+      });
+    const { threadId: _dropped, ...unthreaded } = context.resource;
+    await expect(
+      openFile({ relativePath: "a.ts" }, { ...context, resource: unthreaded } as ViewContext),
+    ).resolves.toEqual({ status: "refused", reason: "unknown-thread" });
+    await expect(
+      openFile({ relativePath: "a.ts" }, {
+        ...context,
+        resource: { ...context.resource, threadId: "thread-other" },
+      } as ViewContext),
+    ).resolves.toEqual({ status: "refused", reason: "out-of-scope" });
     expect(bridge.invoked).toHaveLength(0);
   });
 });

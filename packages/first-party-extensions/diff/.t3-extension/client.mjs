@@ -812,6 +812,14 @@ var __t3Client = (() => {
       }
     ]
   });
+  function validateEditableRelativePath(value) {
+    if (typeof value !== "string")
+      throw new Error("Expected a workspace-relative path");
+    const path3 = value;
+    if (!path3 || path3 !== path3.trim() || path3.length > 512 || /[\\:]/.test(path3) || [...path3].some((character) => character.charCodeAt(0) < 32) || path3.startsWith("/") || path3.split("/").some((part) => !part || part === "." || part === ".."))
+      throw new Error("Expected a workspace-relative path using forward slashes");
+    return path3;
+  }
 
   // node_modules/@t3tools/extension-sdk/dist/workspaceResources.js
   var WORKSPACE_RESOURCES = "t3.workspace/resources";
@@ -1910,14 +1918,17 @@ var __t3Client = (() => {
     additionalProperties: false,
     required: ["wordWrap"],
     properties: {
-      wordWrap: { type: "boolean" }
+      wordWrap: { type: "boolean" },
+      // Optional so hosts that predate it still answer; absent means rendered.
+      renderBrowserFile: { type: "boolean" }
     }
   };
   var clientPreferencesPatchSchema = {
     type: "object",
     additionalProperties: false,
     properties: {
-      wordWrap: { type: "boolean" }
+      wordWrap: { type: "boolean" },
+      renderBrowserFile: { type: "boolean" }
     }
   };
   var clientPreferencesReceiptSchema = {
@@ -2077,6 +2088,32 @@ var __t3Client = (() => {
       }
     ]
   };
+  var uiNavigationFileReceiptSchema = {
+    oneOf: [
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "relativePath"],
+        properties: {
+          status: { const: "opened" },
+          relativePath: { type: "string", minLength: 1, maxLength: 512 }
+        }
+      },
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "reason"],
+        properties: {
+          status: { const: "refused" },
+          reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] }
+        }
+      }
+    ]
+  };
+  var uiNavigationFileInputProperties = {
+    relativePath: { type: "string", minLength: 1, maxLength: 512 },
+    line: { type: "integer", minimum: 1, maximum: 1e7 }
+  };
   var uiNavigationSessionReceiptSchema = {
     oneOf: [
       {
@@ -2123,6 +2160,13 @@ var __t3Client = (() => {
           url: { type: "string", minLength: 1, maxLength: 4096 }
         }, ["agentId", "url"]),
         outputSchema: uiNavigationSessionReceiptSchema
+      },
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
+        outputSchema: uiNavigationFileReceiptSchema
       }
     ]
   });
@@ -7662,7 +7706,7 @@ var __t3Client = (() => {
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession"])
+        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"])
       },
       {
         name: "openThread",
@@ -7690,9 +7734,44 @@ var __t3Client = (() => {
           properties: { agentId: { type: "string", minLength: 1, maxLength: 256 } }
         },
         outputSchema: uiNavigationSessionReceiptSchema
+      },
+      {
+        name: "openFile",
+        effect: "write",
+        requiredGrants: [UI_NAVIGATION_OPEN],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["relativePath"],
+          properties: uiNavigationFileInputProperties
+        },
+        outputSchema: uiNavigationFileReceiptSchema
       }
     ]
   });
+  function isWorkspaceFilePath(path3) {
+    try {
+      validateEditableRelativePath(path3);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function openWorkspaceFile(client, context, relativePath, options) {
+    if (!isWorkspaceFilePath(relativePath))
+      return Promise.resolve({ status: "refused", reason: "invalid-path" });
+    return bindApi(uiNavigationApi, client, context).invoke("openFile", { relativePath, ...options.line === void 0 ? {} : { line: options.line } }, options.signal);
+  }
+  function describeOpenFileRefusal(reason) {
+    switch (reason) {
+      case "unknown-thread":
+        return "Files open in a thread \u2014 this view has none";
+      case "out-of-scope":
+        return "The thread is outside this extension's project";
+      case "invalid-path":
+        return "Not a workspace-relative path";
+    }
+  }
   var UI_NOTIFICATIONS_API = uiNotificationsApi.definition;
   var UI_PANELS_API = uiPanelsApi.definition;
   var UI_PREFERENCES_API = uiPreferencesApi.definition;
@@ -10133,9 +10212,6 @@ ${prefix}`;
     }
     return path3;
   }
-  function describePresentation(result) {
-    return `opens in ${result.surfaceId} \xB7 ${result.placement}`;
-  }
   function restoreDiffState(value) {
     if (value === null) return true;
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -11410,7 +11486,7 @@ ${prefix}`;
         );
       });
     };
-    const openInEditor = (row) => {
+    const openInPanel = (row) => {
       const path3 = presentationPath(row.path);
       if (path3 === null) {
         setAction({
@@ -11422,18 +11498,24 @@ ${prefix}`;
       }
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      setAction({ key: row.key, status: "loading", detail: "Resolving presentation\u2026" });
-      void bindApi(filePresentationApi, host, session.context).invoke("open", { relativePath: path3 }, signal).then(
-        (result) => {
-          if (!signal.aborted)
-            setAction({ key: row.key, status: "resolved", detail: describePresentation(result) });
+      setAction({ key: row.key, status: "loading", detail: "Opening\u2026" });
+      void openWorkspaceFile(host, session.context, path3, { signal }).then(
+        (receipt2) => {
+          if (signal.aborted) return;
+          setAction(
+            receipt2.status === "opened" ? { key: row.key, status: "resolved", detail: `Opened ${path3}` } : {
+              key: row.key,
+              status: "error",
+              detail: `${displayPath(row)} cannot be opened \u2014 ${describeOpenFileRefusal(receipt2.reason)}.`
+            }
+          );
         },
         (error) => {
           if (!signal.aborted)
             setAction({
               key: row.key,
               status: "error",
-              detail: error instanceof Error ? error.message : "Presentation unavailable"
+              detail: error instanceof Error ? error.message : "Open failed"
             });
         }
       );
@@ -11901,7 +11983,7 @@ ${prefix}`;
                           wrap,
                           reveal: hostReveal,
                           onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
-                          onFileAction: (action2, row) => action2 === "open" ? openInEditor(row) : copyPath(row),
+                          onFileAction: (action2, row) => action2 === "open" ? openInPanel(row) : copyPath(row),
                           ...mode === "workspace" ? { loadContents: loadHostContents } : {}
                         }),
                         renderRows: () => files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -11919,7 +12001,7 @@ ${prefix}`;
                             ui,
                             onToggleCollapsed: (key) => setCollapsedFiles(toggleCollapsedKey(collapsedFiles, key)),
                             onExpand: expandFile,
-                            onOpen: openInEditor,
+                            onOpen: openInPanel,
                             onCopy: copyPath,
                             registerSection: (el) => {
                               if (el !== null) sectionRefs.current.set(row.key, el);
@@ -11961,7 +12043,6 @@ ${prefix}`;
       requireApi(vcsRepositoryApi, REPOSITORY_API_RANGE),
       requireApi(vcsStatusApi),
       requireApi(vcsRefsApi),
-      requireApi(filePresentationApi),
       requireApi(orchestrationStatusApi),
       requireApi(orchestrationControlApi),
       requireApi(messagesEnrichmentApi),
@@ -11969,7 +12050,8 @@ ${prefix}`;
       // Explicit floor until the defineApi `baseline` option unifies these at merge.
       requireApi(uiKeybindingsApi, "^1.1.0"),
       requireApi(uiPanelsApi),
-      requireApi(uiNotificationsApi)
+      requireApi(uiNotificationsApi),
+      requireApi(uiNavigationApi)
     ],
     surfaces: [
       {

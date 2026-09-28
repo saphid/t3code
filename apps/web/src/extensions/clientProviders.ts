@@ -7,9 +7,11 @@ import {
   BROWSER_RECORD_HISTORY,
   checkExternalUrl,
   fitBrowserHistoryList,
+  isWorkspaceFilePath,
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
+  type UiNavigationFileReceipt,
   type UiNavigationReceipt,
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
@@ -35,6 +37,14 @@ import {
   persistClientSettingsUpdate,
   subscribeClientSettings,
 } from "../hooks/useSettings";
+import {
+  dispatchLocalStorageChange,
+  getLocalStorageItem,
+  setLocalStorageItem,
+  subscribeLocalStorageKey,
+} from "../hooks/useLocalStorage";
+import { RENDER_BROWSER_FILE_STORAGE_KEY } from "../components/files/filePreviewMode";
+import * as Schema from "effect/Schema";
 import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { Spinner } from "../components/ui/spinner";
@@ -1222,8 +1232,17 @@ export function createTerminalAppearanceClientProvider(
 // ---------------------------------------------------------------------------
 // Preferences — a named subset of the persisted client settings.
 
+/** The native file preview's own choice; unset means rendered, as there. */
+function renderBrowserFile(): boolean {
+  try {
+    return getLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, Schema.Boolean) ?? true;
+  } catch {
+    return true;
+  }
+}
+
 function preferencesSnapshot(): Json {
-  return { wordWrap: getClientSettings().wordWrap };
+  return { wordWrap: getClientSettings().wordWrap, renderBrowserFile: renderBrowserFile() };
 }
 
 /**
@@ -1259,20 +1278,28 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
               "Writer must be the calling installation",
             );
           const patch = readInputObject(input.patch ?? null);
-          const wordWrap = patch.wordWrap;
+          const { wordWrap, renderBrowserFile: renderHtml } = patch;
           if (wordWrap !== undefined && typeof wordWrap !== "boolean")
             throw new ClientProviderOpError("provider-rejected", "Invalid wordWrap");
-          if (wordWrap === undefined)
+          if (renderHtml !== undefined && typeof renderHtml !== "boolean")
+            throw new ClientProviderOpError("provider-rejected", "Invalid renderBrowserFile");
+          if (wordWrap === undefined && renderHtml === undefined)
             return {
               applied: false,
               reason: "empty-patch",
               preferences: await hydratedPreferences(),
             } as unknown as Json;
           // Persist-then-publish: the receipt reports only what storage holds,
-          // and the watch stream sees the change through the settings store.
+          // and the watch stream sees each change through its own store.
           try {
-            const next = await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
-            return { applied: true, preferences: { wordWrap: next.wordWrap } } as unknown as Json;
+            await ensureClientSettingsHydrated();
+            if (wordWrap !== undefined)
+              await persistClientSettingsUpdate((current) => ({ ...current, wordWrap }));
+            if (renderHtml !== undefined) {
+              setLocalStorageItem(RENDER_BROWSER_FILE_STORAGE_KEY, renderHtml, Schema.Boolean);
+              dispatchLocalStorageChange(RENDER_BROWSER_FILE_STORAGE_KEY);
+            }
+            return { applied: true, preferences: preferencesSnapshot() } as unknown as Json;
           } catch {
             // Hydrated like every read: a failure caused by hydration itself
             // must not report schema defaults as the stored value.
@@ -1300,13 +1327,20 @@ export function createPreferencesClientProvider(deps: ClientProviderDeps): Clien
       const snapshot = await hydratedPreferences();
       call.emit({ type: "snapshot", value: snapshot });
       let last = JSON.stringify(snapshot);
-      return subscribeClientSettings(() => {
+      const push = () => {
         const next = preferencesSnapshot();
         const encoded = JSON.stringify(next);
         if (encoded === last) return;
         last = encoded;
         call.emit({ type: "data", value: next });
-      });
+      };
+      const unsubs = [
+        subscribeClientSettings(push),
+        subscribeLocalStorageKey(RENDER_BROWSER_FILE_STORAGE_KEY, push),
+      ];
+      return () => {
+        for (const unsub of unsubs) unsub();
+      };
     },
   };
 }
@@ -1430,7 +1464,9 @@ export function createNavigationClientProvider(
   opener: () => ExternalOpener | undefined = localExternalOpener,
 ): ClientLocalProvider {
   return {
-    async invoke(call): Promise<UiNavigationReceipt | UiNavigationSessionReceipt> {
+    async invoke(
+      call,
+    ): Promise<UiNavigationReceipt | UiNavigationSessionReceipt | UiNavigationFileReceipt> {
       if (call.method === "openSession") {
         authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
         // The adapter resolved this URL from the caller's own thread roster;
@@ -1449,6 +1485,26 @@ export function createNavigationClientProvider(
         return { status: "opened", agentId, opener: target.kind };
       }
       const installation = authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN]);
+      if (call.method === "openFile") {
+        const input = readInputObject(call.input);
+        const relativePath = readInputString(input, "relativePath")!;
+        const line = typeof input.line === "number" ? input.line : undefined;
+        if (!isWorkspaceFilePath(relativePath))
+          return { status: "refused", reason: "invalid-path" } as UiNavigationFileReceipt;
+        const threadId = call.context.resource.threadId;
+        const ref = threadId ? scopeThreadRef(deps.environmentId, ThreadId.make(threadId)) : null;
+        const shell = ref ? readThreadShell(ref) : null;
+        if (!ref || !shell?.projectId) return refused("unknown-thread");
+        if (
+          shell.projectId !== call.context.resource.projectId ||
+          !installation.grants.projectIds.some((id) => id === shell.projectId)
+        )
+          return refused("out-of-scope");
+        // The native file-link path: the file surface resolves the selected
+        // t3.file/presentation provider (SelectedApiPresentation) or native.
+        useRightPanelStore.getState().openFile(ref, relativePath, line);
+        return { status: "opened", relativePath } as UiNavigationFileReceipt;
+      }
       if (call.method !== "openThread")
         throw new ClientProviderOpError(
           "client-provider-unavailable",

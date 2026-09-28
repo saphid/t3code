@@ -836,6 +836,8 @@ export const clientPreferencesSchema = {
   required: ["wordWrap"],
   properties: {
     wordWrap: { type: "boolean" },
+    // Optional so hosts that predate it still answer; absent means rendered.
+    renderBrowserFile: { type: "boolean" },
   },
 } as const;
 
@@ -845,6 +847,7 @@ export const clientPreferencesPatchSchema = {
   additionalProperties: false,
   properties: {
     wordWrap: { type: "boolean" },
+    renderBrowserFile: { type: "boolean" },
   },
 } as const;
 
@@ -1037,6 +1040,36 @@ export const uiNavigationReceiptSchema = {
   ],
 } as const;
 
+/** The `t3.ui/navigation` file-open receipt, shared by the public and private areas. */
+export const uiNavigationFileReceiptSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "relativePath"],
+      properties: {
+        status: { const: "opened" },
+        relativePath: { type: "string", minLength: 1, maxLength: 512 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "reason"],
+      properties: {
+        status: { const: "refused" },
+        reason: { enum: ["unknown-thread", "out-of-scope", "invalid-path"] },
+      },
+    },
+  ],
+} as const;
+
+/** `openFile` input: a workspace-relative path and an optional 1-based line. */
+export const uiNavigationFileInputProperties = {
+  relativePath: { type: "string", minLength: 1, maxLength: 512 },
+  line: { type: "integer", minimum: 1, maximum: 10_000_000 },
+} as const;
+
 /** The `t3.ui/navigation` agent-session receipt, shared by the public and private areas. */
 export const uiNavigationSessionReceiptSchema = {
   oneOf: [
@@ -1064,8 +1097,9 @@ export const uiNavigationSessionReceiptSchema = {
 
 /**
  * Backs `t3.ui/navigation`. The adapter forwards only threads it resolved in
- * the caller's own project, and only session URLs it resolved from the
- * caller's own thread roster; the client re-checks before routing or opening.
+ * the caller's own project, only session URLs it resolved from the caller's
+ * own thread roster, and only safe workspace paths for the caller's own
+ * thread; the client re-checks before routing or opening.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
@@ -1096,6 +1130,13 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
         ["agentId", "url"],
       ),
       outputSchema: uiNavigationSessionReceiptSchema,
+    },
+    {
+      name: "openFile",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
+      outputSchema: uiNavigationFileReceiptSchema,
     },
   ],
 });

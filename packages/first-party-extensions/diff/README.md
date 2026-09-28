@@ -5,7 +5,7 @@ with streamed diffs and a turn/checkpoint mode, on `t3.vcs/*` and
 `t3.orchestration/*`.
 
 This is a read-oriented panel. It consumes `t3.vcs/read` plus the
-`t3.file/open` grant (open-in-editor resolution):
+`t3.ui/navigation.open` grant (opening a diff file in the file panel):
 
 - repository capability gate via `t3.vcs/repository.getCapabilities`
   (detected driver, per-operation support — no fabricated clean state),
@@ -37,8 +37,9 @@ This is a read-oriented panel. It consumes `t3.vcs/read` plus the
   is what makes a `truncated:true` body deliverable at all,
 - B-slice chrome: grouped file tree with directory collapse, collapse/
   expand-all, reveal-in-file (select → uncollapse → scroll), copy path,
-  open-in-editor via `t3.file/presentation.open` (reports the resolved
-  surface — mounting it awaits the unshipped `t3.ui/surfaces` contract),
+  open via `t3.ui/navigation.openFile` — like the native primary action,
+  the file opens in the thread's file panel, presented by the selected
+  `t3.file/presentation` provider,
   base-ref picker over `t3.vcs/refs.list`, ignore-whitespace and
   word-wrap toggles, unified/split layout toggle — the layout persists
   per view through `session.save` (records saved before split shipped
