@@ -505,8 +505,13 @@ export const make = Effect.gen(function* () {
     }
     const result = yield* Deferred.await(deferred).pipe(
       Effect.timeout(timeoutMs + 2_000),
+      // A timeout cancels the client's work as an abort does, so it stops too.
       Effect.catchTag("TimeoutError", () =>
-        Effect.fail(error("client-request-timeout", "Client provider request timed out.")),
+        Effect.sync(onAbort).pipe(
+          Effect.andThen(
+            Effect.fail(error("client-request-timeout", "Client provider request timed out.")),
+          ),
+        ),
       ),
       // Every exit — resolve, client error, timeout, interruption — drops the
       // pending record and the abort listener. A respond that lands later

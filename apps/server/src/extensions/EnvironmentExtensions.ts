@@ -58,7 +58,7 @@ import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { makeWorkspaceResourcesApiProvider } from "./workspaceResourcesApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
-import { makeVcsActionsApiProvider } from "./vcsActionsApi.ts";
+import { makePrHandoffClient, makeVcsActionsApiProvider } from "./vcsActionsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { makeComposerApiProviders } from "./composerApi.ts";
 import { makePrsApiProvider } from "./prs/v1.ts";
@@ -202,7 +202,7 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const vcsActionsApi = yield* makeVcsActionsApiProvider(async (callerId, grant, context) => {
     const entry = extensionRuntime?.list().find((item) => item.id === callerId);
     return entry !== undefined && (await authorize(entry, grant, context));
-  });
+  }, makePrHandoffClient({ environmentId, clientApiProviders }));
   const prsWriteApi = yield* makePrsWriteApiProvider();
   const read = Effect.fn("EnvironmentExtensions.readWorkspace")(function* (
     input: unknown,

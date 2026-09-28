@@ -6,6 +6,7 @@ import {
   PRS_WRITE_API,
   VCS_ACTIONS,
   VCS_ACTIONS_API,
+  VCS_HANDOFF,
   VCS_MUTATE,
   VCS_READ,
   prsWriteApi,
@@ -21,9 +22,9 @@ const vcsMethods = methodsOf(VCS_ACTIONS_API);
 const vcsStreams = streamsOf(VCS_ACTIONS_API);
 const prsMethods = methodsOf(PRS_WRITE_API);
 
-NodeTest.test("t3.vcs/actions is a frozen 1.0.0 catalogue entry registered once", () => {
+NodeTest.test("t3.vcs/actions is a 1.1.0 catalogue entry registered once", () => {
   NodeAssert.equal(VCS_ACTIONS_API.id, VCS_ACTIONS);
-  NodeAssert.equal(VCS_ACTIONS_API.version, "1.0.0");
+  NodeAssert.equal(VCS_ACTIONS_API.version, "1.1.0");
   NodeAssert.equal(vcsActionsApi.definition, VCS_ACTIONS_API);
   NodeAssert.deepEqual(
     GENERIC_API_CATALOGUE.filter((d) => d.id === VCS_ACTIONS),
@@ -44,6 +45,7 @@ NodeTest.test("t3.prs/write is a frozen 1.0.0 catalogue entry registered once", 
 NodeTest.test("vcs mutations ride t3.vcs/mutate; progress rides t3.vcs/read", () => {
   NodeAssert.deepEqual(Object.keys(vcsMethods).sort(), [
     "getCapabilities",
+    "handoffPullRequest",
     "preparePullRequestThread",
     "publishRepository",
     "resolvePullRequest",
@@ -53,7 +55,11 @@ NodeTest.test("vcs mutations ride t3.vcs/mutate; progress rides t3.vcs/read", ()
     NodeAssert.equal(method.inputSchema.additionalProperties, false, name);
     NodeAssert.deepEqual(
       method.requiredGrants,
-      [name === "getCapabilities" ? VCS_READ : VCS_MUTATE],
+      name === "getCapabilities"
+        ? [VCS_READ]
+        : name === "handoffPullRequest"
+          ? [VCS_MUTATE, VCS_HANDOFF]
+          : [VCS_MUTATE],
       name,
     );
   }

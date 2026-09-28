@@ -2,6 +2,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  type ClientProvidersError,
   CommandId,
   ExtensionOperationError,
   PullRequestUnavailableError,
@@ -14,9 +15,12 @@ import {
 import {
   PRS_WRITE,
   VCS_ACTIONS_API,
+  VCS_HANDOFF,
+  VCS_MUTATE,
   type VcsActionProgressEvent,
   type VcsActionPublishResult,
   type VcsActionResolvePullRequestResult,
+  type VcsActionHandoffResult,
   type VcsActionPrepareThreadResult,
   type VcsActionResult,
   type VcsActionRunResult,
@@ -24,6 +28,7 @@ import {
   type VcsActionsOperationsSupport,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
+import { PULL_REQUEST_HANDOFF_DEADLINE_MS } from "@t3tools/client-runtime/state/extensions";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -46,7 +51,9 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import type { ClientApiProviders } from "./ClientApiProviders.ts";
 import { makeExtensionScopeResolver } from "./scope.ts";
+import { invokeClient, resolveConnectionId } from "./uiClientApis.ts";
 
 /**
  * t3.vcs/actions — the native stacked-action composite plus the
@@ -77,6 +84,11 @@ const MAX_PR_TITLE = 2_048;
 const MAX_BRANCH_NAME = 4_096;
 const MAX_PR_URL = 4_096;
 const MAX_WORKTREE_PATH = 32_768;
+/** The broker's deadline for the whole handoff: the pull request lookup, then the client's own wait. */
+const HANDOFF_DEADLINE_MS = PULL_REQUEST_HANDOFF_DEADLINE_MS;
+/** A handoff opens a thread and checks out; like native, it is not raced against a short deadline. */
+const HANDOFF_TIMEOUT_MS = HANDOFF_DEADLINE_MS - 60_000;
+const CLIENT_PR_HANDOFF = "t3.client/pr-handoff";
 
 const decode = <A, I>(schema: Schema.Codec<A, I>) =>
   Schema.decodeUnknownSync(schema, { onExcessProperty: "error" });
@@ -120,6 +132,21 @@ const publishInput = decode(
     ),
     protocol: Schema.optional(Schema.Literals(["auto", "ssh", "https"])),
   }),
+);
+const handoffReference = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_REFERENCE),
+);
+// Native resolves conflicts in a worktree only, so the mode belongs to checkout.
+const handoffInput = decode(
+  Schema.Union([
+    Schema.Struct({
+      reference: handoffReference,
+      task: Schema.Literal("checkout"),
+      mode: Schema.optional(Schema.Literals(["worktree", "local"])),
+    }),
+    Schema.Struct({ reference: handoffReference, task: Schema.Literal("resolve-conflicts") }),
+  ]),
 );
 const progressInput = decode(
   Schema.Struct({
@@ -231,7 +258,54 @@ interface VcsActionsApiDependencies extends ScopeDependencies {
     grant: string,
     context: ViewContext,
   ) => Promise<boolean>;
+  /**
+   * The caller's own client, where `handoffPullRequest` runs: thread creation,
+   * the composer and navigation are client-owned. Absent, the handoff is
+   * reported unsupported.
+   */
+  readonly prHandoffClient?: PrHandoffClient;
 }
+
+export interface PrHandoffClient {
+  /** Whether the connection this caller's frames reach hosts `t3.client/pr-handoff`. */
+  readonly available: (metadata: HostApiInvocationMetadata) => Effect.Effect<boolean>;
+  readonly start: (request: {
+    readonly input: Json;
+    readonly context: ViewContext;
+    readonly metadata: HostApiInvocationMetadata;
+    readonly signal: AbortSignal;
+  }) => Effect.Effect<VcsActionHandoffResult, ClientProvidersError>;
+}
+
+/** Reaches `t3.client/pr-handoff` on the caller's own connection, with no failover. */
+export const makePrHandoffClient = (bridge: {
+  readonly environmentId: string;
+  readonly clientApiProviders: ClientApiProviders["Service"];
+}): PrHandoffClient => ({
+  available: (metadata) =>
+    resolveConnectionId(bridge, metadata).pipe(
+      Effect.flatMap((connectionId) =>
+        Effect.map(bridge.clientApiProviders.listTargets(bridge.environmentId), (targets) =>
+          targets.some(
+            (target) =>
+              target.connectionId === connectionId &&
+              target.providers.some((provider) => provider.id === CLIENT_PR_HANDOFF),
+          ),
+        ),
+      ),
+      Effect.orElseSucceed(() => false),
+    ),
+  start: ({ input, context, metadata, signal }) =>
+    invokeClient(bridge, {
+      apiId: CLIENT_PR_HANDOFF,
+      method: "start",
+      input,
+      context,
+      metadata,
+      signal,
+      timeoutMs: HANDOFF_TIMEOUT_MS,
+    }).pipe(Effect.map((result) => result as VcsActionHandoffResult)),
+});
 
 type Scope = Effect.Success<ReturnType<ReturnType<typeof makeExtensionScopeResolver>>>;
 type MethodHandler = (call: {
@@ -304,6 +378,23 @@ export function createVcsActionsApiProvider(
     }).pipe(
       Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(grantDenied(operation, grant)))),
     );
+
+  /**
+   * Reported only where the call would be let through: the handoff grant is
+   * optional on install, and a pack told "no" keeps its plain checkout.
+   */
+  const handoffAvailable = (context: ViewContext, metadata: HostApiInvocationMetadata) => {
+    const client = dependencies.prHandoffClient;
+    if (client === undefined || metadata.principal?.kind === "provider-session")
+      return Effect.succeed(false);
+    return Effect.all([
+      requireChainGrant("vcs.actions.getCapabilities", VCS_MUTATE, context, metadata),
+      requireChainGrant("vcs.actions.getCapabilities", VCS_HANDOFF, context, metadata),
+    ]).pipe(
+      Effect.andThen(client.available(metadata)),
+      Effect.orElseSucceed(() => false),
+    );
+  };
 
   const actions = new Map<string, ActionRecord>();
 
@@ -479,6 +570,7 @@ export function createVcsActionsApiProvider(
       call: {
         readonly context: ViewContext;
         readonly metadata: HostApiInvocationMetadata;
+        readonly signal: AbortSignal;
       },
     ) => Effect.Effect<Output, Error>;
     readonly refreshAfter?: boolean;
@@ -499,7 +591,7 @@ export function createVcsActionsApiProvider(
         yield* requireChainGrant(args.operation, args.chainGrant, context, metadata);
       }
       const result = yield* args
-        .run(safe, scope, { context, metadata })
+        .run(safe, scope, { context, metadata, signal })
         .pipe(Effect.mapError(operationError(args.operation)));
       if (args.refreshAfter) yield* refreshAfterMutation(scope.cwd);
       yield* Effect.tryPromise({
@@ -570,14 +662,18 @@ export function createVcsActionsApiProvider(
     providerId: "t3.host-vcs-actions",
     definition: VCS_ACTIONS_API,
     requiresRootAuthority: true,
+    deadlineMs: (method) => (method === "handoffPullRequest" ? HANDOFF_DEADLINE_MS : undefined),
     invoke: invokeProvider({
       getCapabilities: runMethod({
         operation: "vcs.actions.getCapabilities",
         requiredScope: AuthOrchestrationReadScope,
         decode: emptyInput,
-        run: (_safe, scope) =>
-          dependencies.vcsRegistry.detect({ cwd: scope.cwd }).pipe(
-            Effect.map((handle): VcsActionsCapabilitiesResult => {
+        run: (_safe, scope, { context, metadata }) =>
+          Effect.all([
+            dependencies.vcsRegistry.detect({ cwd: scope.cwd }),
+            handoffAvailable(context, metadata),
+          ]).pipe(
+            Effect.map(([handle, handoff]): VcsActionsCapabilitiesResult => {
               const git = handle?.kind === "git";
               const operations: VcsActionsOperationsSupport = {
                 "actions.run": git,
@@ -585,6 +681,7 @@ export function createVcsActionsApiProvider(
                 "actions.preparePullRequestThread": git,
                 "actions.publishRepository": git,
                 "actions.actionProgress": git,
+                "actions.handoffPullRequest": git && handoff,
               };
               return handle === null
                 ? { detected: false, kind: null, detail: null, driver: null, operations }
@@ -611,6 +708,7 @@ export function createVcsActionsApiProvider(
                   "actions.preparePullRequestThread": false,
                   "actions.publishRepository": false,
                   "actions.actionProgress": false,
+                  "actions.handoffPullRequest": false,
                 },
               } satisfies VcsActionsCapabilitiesResult),
             ),
@@ -811,6 +909,57 @@ export function createVcsActionsApiProvider(
             );
           }
           return result satisfies VcsActionPrepareThreadResult;
+        }),
+      }),
+      handoffPullRequest: runMethod({
+        operation: "vcs.actions.handoffPullRequest",
+        requiredScope: AuthOrchestrationOperateScope,
+        decode: handoffInput,
+        // No refresh here: native's preparation RPC refreshes after a checkout.
+        run: Effect.fn("vcs.actions.handoffPullRequest")(function* (
+          safe,
+          scope,
+          { metadata, signal },
+        ) {
+          const client = dependencies.prHandoffClient;
+          if (client === undefined || !(yield* client.available(metadata))) {
+            return yield* failure(
+              "vcs.actions.handoffPullRequest",
+              "client-provider-unavailable: The caller's client cannot open a thread for the handoff.",
+            );
+          }
+          yield* requireGit("vcs.actions.handoffPullRequest", scope.cwd);
+          // The client gets the pull request as the host resolved it, so the
+          // task text it writes names nothing the pack supplied.
+          const { pullRequest } = yield* dependencies.gitWorkflow
+            .resolvePullRequest({ cwd: scope.cwd, reference: safe.reference })
+            .pipe(
+              Effect.flatMap((result) =>
+                toResolvedPullRequest("vcs.actions.handoffPullRequest", result),
+              ),
+            );
+          return yield* client
+            .start({
+              input: {
+                task: safe.task,
+                mode: (safe.task === "checkout" ? safe.mode : undefined) ?? "worktree",
+                pullRequest: {
+                  number: pullRequest.number,
+                  url: pullRequest.url,
+                  headBranch: pullRequest.headBranch,
+                  baseBranch: pullRequest.baseBranch,
+                },
+              },
+              // The resolved scope names the project even when the view named only its thread.
+              context: scope.context,
+              metadata,
+              signal,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure("vcs.actions.handoffPullRequest", `${error.code}: ${error.detail}`),
+              ),
+            );
         }),
       }),
       publishRepository: runMethod({
@@ -1016,6 +1165,7 @@ export function createVcsActionsApiProvider(
 
 export const makeVcsActionsApiProvider = Effect.fn("VcsActionsApi.make")(function* (
   authorizeGrant: VcsActionsApiDependencies["authorizeGrant"],
+  prHandoffClient?: PrHandoffClient,
 ) {
   const environment = yield* ServerEnvironment;
   return createVcsActionsApiProvider({
@@ -1029,5 +1179,6 @@ export const makeVcsActionsApiProvider = Effect.fn("VcsActionsApi.make")(functio
     orchestrationEngine: yield* OrchestrationEngine.OrchestrationEngineService,
     projectionSnapshotQuery: yield* ProjectionSnapshotQuery,
     authorizeGrant,
+    ...(prHandoffClient === undefined ? {} : { prHandoffClient }),
   });
 });

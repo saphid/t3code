@@ -6,7 +6,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ClientApiProviders, layer as clientApiProvidersLayer } from "./ClientApiProviders.ts";
 
@@ -351,6 +353,39 @@ it.effect("a mid-flight abort cancels the pending invoke and a late respond is d
       .pipe(Effect.forkChild);
     expect((yield* nextFrame(frames))?.type).toBe("invoke");
     yield* Fiber.interrupt(followUp);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("a timed-out invoke cancels the client's work as an abort does", () =>
+  Effect.gen(function* () {
+    const providers = yield* ClientApiProviders;
+    const stream = yield* providers.connect(socket("conn-timeout"), connectInput());
+    const frames = frameIterator(stream);
+    yield* nextFrame(frames); // registered
+    const pending = yield* providers
+      .invoke({
+        connectionId: "conn-timeout",
+        apiId: "t3.client/theme",
+        method: "getState",
+        input: SELF_INPUT,
+        context,
+        caller,
+        timeoutMs: 30_000,
+      })
+      .pipe(Effect.forkChild);
+    const invokeFrame = yield* nextFrame(frames);
+    expect(invokeFrame?.type).toBe("invoke");
+    yield* TestClock.adjust(32_001);
+    const exit = yield* Fiber.await(pending);
+    expect(String((exit as { cause: unknown }).cause)).toContain("timed out");
+    // The cancel is queued as the waiter fails; a missing one reads as "none", not a hang.
+    const cancel = yield* TestClock.withLive(
+      nextFrame(frames).pipe(Effect.timeoutOption("100 millis")),
+    );
+    expect(Option.getOrElse(cancel, () => "none")).toEqual({
+      type: "cancel",
+      requestId: invokeFrame?.type === "invoke" ? invokeFrame.requestId : "",
+    });
   }).pipe(Effect.provide(testLayer)),
 );
 

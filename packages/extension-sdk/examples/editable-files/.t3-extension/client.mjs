@@ -2281,6 +2281,74 @@ var __t3Client = (() => {
       }
     ]
   });
+  var CLIENT_PR_HANDOFF_TASKS = ["checkout", "resolve-conflicts"];
+  var CLIENT_PR_HANDOFF_MODES = ["worktree", "local"];
+  var prHandoffResultSchema = {
+    oneOf: [
+      {
+        // The task is in the caller's own thread's composer, for the reader to send.
+        type: "object",
+        additionalProperties: false,
+        required: ["status"],
+        properties: { status: { const: "drafted" } }
+      },
+      {
+        // Checked out, into its own worktree or this repository (`worktreePath`
+        // null), with a thread open on it; a task other than checkout is in that
+        // thread's composer.
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "branch", "worktreePath", "isOnPullRequestHead"],
+        properties: {
+          status: { const: "ready" },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+          isOnPullRequestHead: { type: "boolean" }
+        }
+      },
+      {
+        // `thread`: no thread could be opened, so nothing was checked out.
+        // `checkout`: the checkout failed; `detail` is the host's own sentence.
+        // `thread-move`: checked out on `branch`, but the thread stayed put.
+        type: "object",
+        additionalProperties: false,
+        required: ["status", "stage"],
+        properties: {
+          status: { const: "failed" },
+          stage: { enum: ["thread", "checkout", "thread-move"] },
+          branch: { type: "string", minLength: 1, maxLength: 4096 },
+          detail: { type: "string", minLength: 1, maxLength: 2048 }
+        }
+      }
+    ]
+  };
+  var CLIENT_PR_HANDOFF_API = validateApiDefinition({
+    id: "t3.client/pr-handoff",
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+          mode: { enum: [...CLIENT_PR_HANDOFF_MODES] },
+          pullRequest: {
+            type: "object",
+            additionalProperties: false,
+            required: ["number", "url", "headBranch", "baseBranch"],
+            properties: {
+              number: { type: "integer", minimum: 1 },
+              url: { type: "string", minLength: 1, maxLength: 4096 },
+              headBranch: { type: "string", minLength: 1, maxLength: 4096 },
+              baseBranch: { type: "string", minLength: 1, maxLength: 4096 }
+            }
+          }
+        }, ["task", "mode", "pullRequest"]),
+        outputSchema: prHandoffResultSchema
+      }
+    ]
+  });
   var CLIENT_PROVIDER_APIS = new Map([
     CLIENT_THEME_API,
     CLIENT_NOTIFICATIONS_API,
@@ -2292,7 +2360,8 @@ var __t3Client = (() => {
     CLIENT_EXTERNAL_API,
     CLIENT_EDITOR_API,
     CLIENT_BROWSER_HISTORY_API,
-    CLIENT_NAVIGATION_API
+    CLIENT_NAVIGATION_API,
+    CLIENT_PR_HANDOFF_API
   ].map((definition) => [definition.id, definition]));
 
   // node_modules/@t3tools/extension-sdk/dist/catalogue.js
@@ -5311,6 +5380,7 @@ var __t3Client = (() => {
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
   var VCS_ACTIONS = "t3.vcs/actions";
+  var VCS_HANDOFF = "t3.vcs/handoff";
   var vcsActionKindSchema = {
     enum: ["commit", "push", "create_pr", "commit_push", "commit_push_pr"]
   };
@@ -5545,7 +5615,8 @@ var __t3Client = (() => {
       "actions.resolvePullRequest": { type: "boolean" },
       "actions.preparePullRequestThread": { type: "boolean" },
       "actions.publishRepository": { type: "boolean" },
-      "actions.actionProgress": { type: "boolean" }
+      "actions.actionProgress": { type: "boolean" },
+      "actions.handoffPullRequest": { type: "boolean" }
     }
   };
   var vcsActionsCapabilitiesResultSchema = {
@@ -5560,145 +5631,176 @@ var __t3Client = (() => {
       operations: vcsActionsOperationsSupportSchema
     }
   };
-  var vcsActionsApi = defineStreamApi({
-    id: VCS_ACTIONS,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [VCS_READ],
-        inputSchema: prsEmptyInputSchema,
-        outputSchema: vcsActionsCapabilitiesResultSchema
-      },
-      {
-        name: "run",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["action"],
-          properties: {
-            action: vcsActionKindSchema,
-            commitMessage: { type: "string", maxLength: 1e4 },
-            featureBranch: { type: "boolean" },
-            paths: {
-              type: "array",
-              minItems: 1,
-              maxItems: 100,
-              items: { type: "string", minLength: 1, maxLength: 512 }
+  var vcsActionsApi = defineStreamApi(
+    {
+      id: VCS_ACTIONS,
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [VCS_READ],
+          inputSchema: prsEmptyInputSchema,
+          outputSchema: vcsActionsCapabilitiesResultSchema
+        },
+        {
+          name: "run",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["action"],
+            properties: {
+              action: vcsActionKindSchema,
+              commitMessage: { type: "string", maxLength: 1e4 },
+              featureBranch: { type: "boolean" },
+              paths: {
+                type: "array",
+                minItems: 1,
+                maxItems: 100,
+                items: { type: "string", minLength: 1, maxLength: 512 }
+              }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["actionId"],
+            properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+          }
+        },
+        {
+          name: "resolvePullRequest",
+          // Read-shaped but Operate-gated: it shells the provider CLI, matching
+          // the native RPC's Operate scope (design: `t3.vcs/mutate`).
+          effect: "read",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: vcsActionReferenceInputSchema,
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pullRequest"],
+            properties: { pullRequest: vcsActionResolvedPullRequestSchema }
+          }
+        },
+        {
+          name: "preparePullRequestThread",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["reference", "mode"],
+            properties: {
+              reference: { type: "string", minLength: 1, maxLength: 2048 },
+              mode: { enum: ["local", "worktree"] }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
+            properties: {
+              pullRequest: vcsActionResolvedPullRequestSchema,
+              branch: { type: "string", minLength: 1, maxLength: 4096 },
+              worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
+              isOnPullRequestHead: { type: "boolean" }
             }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["actionId"],
-          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
-        }
-      },
-      {
-        name: "resolvePullRequest",
-        // Read-shaped but Operate-gated: it shells the provider CLI, matching
-        // the native RPC's Operate scope (design: `t3.vcs/mutate`).
-        effect: "read",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: vcsActionReferenceInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["pullRequest"],
-          properties: { pullRequest: vcsActionResolvedPullRequestSchema }
-        }
-      },
-      {
-        name: "preparePullRequestThread",
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["reference", "mode"],
-          properties: {
-            reference: { type: "string", minLength: 1, maxLength: 2048 },
-            mode: { enum: ["local", "worktree"] }
+        {
+          name: "publishRepository",
+          // Declared `t3.vcs/mutate`; the adapter additionally requires every
+          // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
+          // G3 — a comment-only grant must never reach pushCurrentBranch).
+          effect: "write",
+          requiredGrants: [VCS_MUTATE],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["provider", "repository", "visibility"],
+            properties: {
+              provider: {
+                enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+              },
+              repository: { type: "string", minLength: 1, maxLength: 512 },
+              visibility: { enum: ["private", "public"] },
+              remoteName: { type: "string", minLength: 1, maxLength: 256 },
+              protocol: { enum: ["auto", "ssh", "https"] }
+            }
+          },
+          outputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
+            properties: {
+              repository: {
+                type: "object",
+                additionalProperties: false,
+                required: ["provider", "nameWithOwner", "url", "sshUrl"],
+                properties: {
+                  provider: {
+                    enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
+                  },
+                  nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
+                  url: { type: "string", minLength: 1, maxLength: 4096 },
+                  sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
+                }
+              },
+              remoteName: { type: "string", minLength: 1, maxLength: 256 },
+              remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
+              branch: { type: "string", minLength: 1, maxLength: 4096 },
+              upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
+              status: { enum: ["pushed", "remote_added"] }
+            }
           }
         },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["pullRequest", "branch", "worktreePath", "isOnPullRequestHead"],
-          properties: {
-            pullRequest: vcsActionResolvedPullRequestSchema,
-            branch: { type: "string", minLength: 1, maxLength: 4096 },
-            worktreePath: { type: ["string", "null"], minLength: 1, maxLength: 32768 },
-            isOnPullRequestHead: { type: "boolean" }
-          }
+        {
+          // Native's pull-request handoff, run by the host: it resolves the pull
+          // request, opens a thread, checks the pull request out (running the
+          // project's setup script for that thread), points the thread at the
+          // checkout, and leaves any task in the composer as a draft for the
+          // reader to send. `checkout` lands in its own worktree, or with
+          // `mode: "local"` in this repository; `resolve-conflicts` always takes
+          // a worktree and refuses a mode, and from a view beside a thread
+          // drafts into that thread instead, as native does. The pack names a
+          // task, never text. The host reports every outcome in native's toasts,
+          // which survive the move to the new thread, so the pack adds none.
+          name: "handoffPullRequest",
+          effect: "write",
+          requiredGrants: [VCS_MUTATE, VCS_HANDOFF],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["reference", "task"],
+            properties: {
+              reference: { type: "string", minLength: 1, maxLength: 2048 },
+              task: { enum: [...CLIENT_PR_HANDOFF_TASKS] },
+              mode: { enum: [...CLIENT_PR_HANDOFF_MODES] }
+            }
+          },
+          outputSchema: prHandoffResultSchema
         }
-      },
-      {
-        name: "publishRepository",
-        // Declared `t3.vcs/mutate`; the adapter additionally requires every
-        // caller in the chain to hold `t3.prs/write` (P-a conjunctive under
-        // G3 — a comment-only grant must never reach pushCurrentBranch).
-        effect: "write",
-        requiredGrants: [VCS_MUTATE],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["provider", "repository", "visibility"],
-          properties: {
-            provider: {
-              enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
-            },
-            repository: { type: "string", minLength: 1, maxLength: 512 },
-            visibility: { enum: ["private", "public"] },
-            remoteName: { type: "string", minLength: 1, maxLength: 256 },
-            protocol: { enum: ["auto", "ssh", "https"] }
-          }
-        },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["repository", "remoteName", "remoteUrl", "branch", "status"],
-          properties: {
-            repository: {
-              type: "object",
-              additionalProperties: false,
-              required: ["provider", "nameWithOwner", "url", "sshUrl"],
-              properties: {
-                provider: {
-                  enum: ["github", "gitlab", "azure-devops", "bitbucket", "forgejo", "unknown"]
-                },
-                nameWithOwner: { type: "string", minLength: 1, maxLength: 512 },
-                url: { type: "string", minLength: 1, maxLength: 4096 },
-                sshUrl: { type: "string", minLength: 1, maxLength: 4096 }
-              }
-            },
-            remoteName: { type: "string", minLength: 1, maxLength: 256 },
-            remoteUrl: { type: "string", minLength: 1, maxLength: 4096 },
-            branch: { type: "string", minLength: 1, maxLength: 4096 },
-            upstreamBranch: { type: "string", minLength: 1, maxLength: 4096 },
-            status: { enum: ["pushed", "remote_added"] }
-          }
+      ],
+      streams: [
+        {
+          name: "actionProgress",
+          requiredGrants: [VCS_READ],
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["actionId"],
+            properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
+          },
+          eventSchema: vcsActionProgressEventSchema
         }
-      }
-    ],
-    streams: [
-      {
-        name: "actionProgress",
-        requiredGrants: [VCS_READ],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["actionId"],
-          properties: { actionId: { type: "string", minLength: 1, maxLength: 128 } }
-        },
-        eventSchema: vcsActionProgressEventSchema
-      }
-    ]
-  });
+      ]
+    },
+    // Existing consumers keep loading on a 1.0.0 host; probe
+    // `actions.handoffPullRequest`, then bind at ^1.1.0 to call it.
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", method: "handoffPullRequest" }] }
+  );
   var VCS_ACTIONS_API = vcsActionsApi.definition;
   var PRS_WRITE = "t3.prs/write";
   var prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 };

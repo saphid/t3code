@@ -1,4 +1,10 @@
-import { EnvironmentId, ThreadId, type EditorId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type EditorId,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
@@ -13,13 +19,20 @@ import {
   UI_EXTERNAL_OPEN,
   UI_NAVIGATION_OPEN,
   UI_NAVIGATION_OPEN_SESSION,
+  VCS_HANDOFF,
+  VCS_MUTATE,
+  type VcsActionHandoffResult,
   type UiNavigationFileReceipt,
   type UiNavigationFileRefusalReason,
   type UiNavigationReceipt,
   type UiNavigationSessionReceipt,
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
-import { LISTED_ANNOTATION_TEXT_MAX } from "@t3tools/extension-sdk/clientProviders";
+import {
+  CLIENT_PR_HANDOFF_MODES,
+  CLIENT_PR_HANDOFF_TASKS,
+  LISTED_ANNOTATION_TEXT_MAX,
+} from "@t3tools/extension-sdk/clientProviders";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -58,6 +71,10 @@ import {
 } from "../components/files/filePreviewMode";
 import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
+import {
+  beginPullRequestCheckoutToast,
+  showTaskAddedToComposerToast,
+} from "../components/pullRequest/pullRequestHandoffToast";
 import { Spinner } from "../components/ui/spinner";
 import { terminalThemeFromApp } from "../components/ThreadTerminalDrawer";
 import {
@@ -67,7 +84,15 @@ import {
 } from "../rightPanelStore";
 import { openInstalledSurface } from "./installedSurfaceOpen";
 import { readProject, readThreadShell } from "../state/entities";
-import { useComposerDraftStore, type ComposerImageAttachment } from "../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type ComposerImageAttachment,
+  type DraftId,
+  type DraftThreadEnvMode,
+} from "../composerDraftStore";
+import { buildResolveConflictsPrompt } from "../components/pullRequest/pullRequestDetail.logic";
+import { writePullRequestTaskToComposer } from "../components/pullRequest/pullRequestHandoffDraft";
+import { gitEnvironment } from "../state/git";
 import {
   fetchBrowserCaptureArtifact,
   releaseBrowserCaptureArtifact,
@@ -1769,11 +1794,229 @@ export function createNavigationClientProvider(
 }
 
 // ---------------------------------------------------------------------------
+// Pull-request handoff — native's checkout and resolve-conflicts flows, run for a pack.
+
+/** The native steps a handoff runs; injected so tests can substitute fakes. */
+export interface PrHandoffHost {
+  /**
+   * Native's new-thread action: opens a draft thread on the project and navigates to it, or
+   * points it at a workspace. Null when no thread could be opened.
+   */
+  readonly openThread: (
+    projectRef: ScopedProjectRef,
+    workspace?: {
+      readonly branch: string;
+      readonly worktreePath: string | null;
+      readonly envMode: DraftThreadEnvMode;
+    },
+  ) => Promise<{ readonly draftId: DraftId; readonly threadId: ThreadId } | null>;
+  /** Native's checkout; the project's setup script runs for `threadId`. */
+  readonly prepare: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly reference: string;
+    readonly mode: (typeof CLIENT_PR_HANDOFF_MODES)[number];
+    readonly threadId: ThreadId;
+  }) => Promise<
+    | {
+        readonly ok: true;
+        readonly value: {
+          readonly branch: string;
+          readonly worktreePath: string | null;
+          readonly isOnPullRequestHead: boolean;
+        };
+      }
+    | { readonly ok: false; readonly detail: string | null }
+  >;
+}
+
+export const nativePrHandoffPrepare: PrHandoffHost["prepare"] = async ({
+  environmentId,
+  ...input
+}) => {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    gitEnvironment.preparePullRequestThread,
+    { environmentId, input },
+    { reportFailure: false },
+  );
+  if (result._tag === "Success") return { ok: true, value: result.value };
+  const failure = squashAtomCommandFailure(result);
+  return { ok: false, detail: failure instanceof Error ? failure.message : null };
+};
+
+const PR_HANDOFF_KEYS = new Set(["target", "task", "mode", "pullRequest"]);
+const PR_HANDOFF_PULL_REQUEST_KEYS = new Set(["number", "url", "headBranch", "baseBranch"]);
+
+/** A host-resolved pull request, a closed task and a checkout mode — nothing else is accepted. */
+function readPrHandoffInput(value: Json) {
+  const input = readInputObject(value);
+  const task = CLIENT_PR_HANDOFF_TASKS.find((kind) => kind === input.task);
+  const mode = CLIENT_PR_HANDOFF_MODES.find((kind) => kind === input.mode);
+  const pullRequest = readInputObject(input.pullRequest ?? null);
+  if (
+    task === undefined ||
+    mode === undefined ||
+    Object.keys(input).some((key) => !PR_HANDOFF_KEYS.has(key)) ||
+    Object.keys(pullRequest).some((key) => !PR_HANDOFF_PULL_REQUEST_KEYS.has(key)) ||
+    typeof pullRequest.number !== "number"
+  )
+    throw new ClientProviderOpError("provider-rejected", "Invalid pull-request handoff");
+  return {
+    task,
+    mode,
+    pullRequest: {
+      number: pullRequest.number,
+      url: readInputString(pullRequest, "url")!,
+      headBranch: readInputString(pullRequest, "headBranch")!,
+      baseBranch: readInputString(pullRequest, "baseBranch")!,
+    },
+  };
+}
+
+/**
+ * Native's pull-request handoff for a pack: the pack names a task, and the host writes the prompt,
+ * opens the thread, checks out, navigates and reports it in native's toasts exactly as the native
+ * panel does. It only prepares a draft; the reader sends it.
+ */
+export function createPrHandoffClientProvider(
+  deps: ClientProviderDeps,
+  host: PrHandoffHost,
+): ClientLocalProvider {
+  return {
+    async invoke(call): Promise<VcsActionHandoffResult> {
+      if (call.method !== "start")
+        throw new ClientProviderOpError(
+          "client-provider-unavailable",
+          `Unknown handoff op ${call.method}`,
+        );
+      const authorize = () => {
+        const installation = authorizeCaller(deps, call.caller, call.context, [
+          VCS_MUTATE,
+          VCS_HANDOFF,
+        ]);
+        if (!installation.enabled)
+          throw new ClientProviderOpError("client-target-denied", "Caller is disabled");
+        return installation;
+      };
+      const installation = authorize();
+      const { task, mode, pullRequest } = readPrHandoffInput(call.input);
+      const projectId = installation.grants.projectIds.find(
+        (id) => id === call.context.resource.projectId,
+      );
+      const project = projectId
+        ? readProject(scopeProjectRef(deps.environmentId, projectId))
+        : null;
+      // Native offers no checkout without a project to check out into, and opens nothing; saying
+      // a thread failed to open would name a step that never ran.
+      if (!projectId || !project)
+        throw new ClientProviderOpError("provider-rejected", "Unknown project");
+      const prompt = task === "resolve-conflicts" ? buildResolveConflictsPrompt(pullRequest) : null;
+      // Beside a thread, native hands a task to that thread's composer and checks nothing out.
+      const threadId = call.context.resource.threadId;
+      const beside = threadId ? scopeThreadRef(deps.environmentId, ThreadId.make(threadId)) : null;
+      if (
+        prompt !== null &&
+        beside !== null &&
+        (readThreadShell(beside)?.projectId ??
+          useComposerDraftStore.getState().getDraftThread(beside)?.projectId) === projectId
+      ) {
+        writePullRequestTaskToComposer(beside, { prompt });
+        showTaskAddedToComposerToast();
+        return { status: "drafted" };
+      }
+      const projectRef = scopeProjectRef(deps.environmentId, projectId);
+      // Global and posted before the thread opens, so it is still on screen on that thread.
+      const toast = beginPullRequestCheckoutToast();
+      // A cancelled call or a caller that lost its install or grants starts nothing further; what
+      // already ran stays, as native leaves a partial checkout.
+      const live = () => {
+        try {
+          if (call.signal.aborted)
+            throw new ClientProviderOpError("client-target-denied", "Handoff cancelled");
+          authorize();
+        } catch (error) {
+          toast.close();
+          throw error;
+        }
+      };
+      // A call cancelled or timed out while a host step runs fails at once, saying which step it
+      // stopped in; the step itself is not undone, and nothing starts from what it later returns.
+      const step = <A>(work: Promise<A>, stage: "thread" | "checkout" | "thread-move") =>
+        new Promise<A>((resolve, reject) => {
+          const abandon = () => {
+            toast.settle({ kind: "stopped", stage });
+            reject(new ClientProviderOpError("client-target-denied", "Handoff cancelled"));
+          };
+          if (call.signal.aborted) return abandon();
+          call.signal.addEventListener("abort", abandon, { once: true });
+          const done = () => call.signal.removeEventListener("abort", abandon);
+          work.then(
+            (value) => (done(), resolve(value)),
+            (error: unknown) => (done(), reject(error)),
+          );
+        });
+      // The thread is opened before the checkout because the project's setup script only runs
+      // for a checkout that knows which thread it is for.
+      const opened = await step(
+        host.openThread(projectRef).catch(() => null),
+        "thread",
+      );
+      live();
+      if (opened === null) {
+        toast.settle({ kind: "thread-failed" });
+        return { status: "failed", stage: "thread" };
+      }
+      const prepared = await step(
+        host.prepare({
+          environmentId: deps.environmentId,
+          cwd: project.workspaceRoot,
+          reference: pullRequest.url,
+          mode,
+          threadId: opened.threadId,
+        }),
+        "checkout",
+      );
+      live();
+      if (!prepared.ok) {
+        toast.settle({ kind: "checkout-failed", detail: prepared.detail });
+        return {
+          status: "failed",
+          stage: "checkout",
+          ...(prepared.detail ? { detail: prepared.detail.slice(0, 2048) } : {}),
+        };
+      }
+      const { branch, worktreePath, isOnPullRequestHead } = prepared.value;
+      const pointed = await step(
+        host
+          .openThread(projectRef, {
+            branch,
+            worktreePath,
+            envMode: worktreePath === null ? "local" : "worktree",
+          })
+          .catch(() => null),
+        "thread-move",
+      );
+      live();
+      // Writing the task now would aim the agent at whatever the thread was already open on.
+      if (pointed === null) {
+        toast.settle({ kind: "thread-move-failed", branch });
+        return { status: "failed", stage: "thread-move", branch };
+      }
+      if (prompt !== null) writePullRequestTaskToComposer(opened.draftId, { prompt });
+      toast.settle({ kind: "ready", mode, withTask: prompt !== null, isOnPullRequestHead });
+      return { status: "ready", branch, worktreePath, isOnPullRequestHead };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 
 /** All host-owned `t3.client/*` providers for one environment connection. */
 export function createClientProviders(
   deps: ClientProviderDeps,
   navigate: ThreadNavigator,
+  prHandoff: PrHandoffHost,
 ): ReadonlyMap<string, ClientLocalProvider> {
   return new Map<string, ClientLocalProvider>([
     ["t3.client/theme", createThemeClientProvider(deps)],
@@ -1787,6 +2030,7 @@ export function createClientProviders(
     ["t3.client/editor", createEditorClientProvider(deps)],
     ["t3.client/browser-history", createBrowserHistoryClientProvider(deps)],
     ["t3.client/navigation", createNavigationClientProvider(deps, navigate)],
+    ["t3.client/pr-handoff", createPrHandoffClientProvider(deps, prHandoff)],
   ]);
 }
 
@@ -1802,6 +2046,7 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/editor", version: "1.0.0" },
   { id: "t3.client/browser-history", version: "1.1.0" },
   { id: "t3.client/navigation", version: "1.2.0" },
+  { id: "t3.client/pr-handoff", version: "1.0.0" },
 ] as const;
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

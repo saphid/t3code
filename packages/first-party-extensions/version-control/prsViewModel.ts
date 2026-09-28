@@ -413,26 +413,30 @@ export function prsOpenRefusedLabel(
 export type PrsCheckoutMode = "worktree" | "local";
 
 /**
- * Native's checkout menu. The worktree option drops native's "and thread":
- * `t3.vcs/actions` prepares the checkout but no extension contract opens a
- * thread, so the pack does not claim one.
+ * Native's checkout menu. The worktree option says "and thread" only where the
+ * host runs the checkout as a handoff (`t3.vcs/actions#handoffPullRequest`),
+ * which opens that thread; a host without it only prepares the folder.
  */
-export const PRS_CHECKOUT_OPTIONS: readonly {
+export function prsCheckoutOptions(handoff: boolean): readonly {
   readonly mode: PrsCheckoutMode;
   readonly label: string;
   readonly description: string;
-}[] = [
-  {
-    mode: "worktree",
-    label: "In a separate worktree",
-    description: "Its own folder. Nothing you have open moves.",
-  },
-  {
-    mode: "local",
-    label: "In this repository",
-    description: "Switches the branch you are working in, like `gh pr checkout`.",
-  },
-];
+}[] {
+  return [
+    {
+      mode: "worktree",
+      label: "In a separate worktree",
+      description: handoff
+        ? "Its own folder and thread. Nothing you have open moves."
+        : "Its own folder. Nothing you have open moves.",
+    },
+    {
+      mode: "local",
+      label: "In this repository",
+      description: "Switches the branch you are working in, like `gh pr checkout`.",
+    },
+  ];
+}
 
 export function prsCheckoutLabel(pending: boolean): string {
   return pending ? "Checking out..." : "Check out";
@@ -443,6 +447,13 @@ export interface PrsReceipt {
   readonly title: string;
   readonly description: string | null;
 }
+
+const STALE_CHECKOUT_RECEIPT: PrsReceipt = {
+  tone: "warning",
+  title: "Checked out, but the latest commits are unconfirmed",
+  description:
+    "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
+};
 
 /** Native's checkout toasts as one receipt: where it landed, stale, or the host's own refusal. */
 export function prsCheckoutReceipt(
@@ -457,13 +468,7 @@ export function prsCheckoutReceipt(
       title: "Could not prepare the pull request checkout",
       description: outcome.detail,
     };
-  if (!outcome.value.isOnPullRequestHead)
-    return {
-      tone: "warning",
-      title: "Checked out, but the latest commits are unconfirmed",
-      description:
-        "The pull request's latest commits could not be confirmed or applied here, so this checkout may be behind the pull request.",
-    };
+  if (!outcome.value.isOnPullRequestHead) return STALE_CHECKOUT_RECEIPT;
   return mode === "local" || outcome.value.worktreePath === null
     ? {
         tone: "success",
@@ -475,6 +480,27 @@ export function prsCheckoutReceipt(
         title: "Checked out",
         description: `The pull request is in its own worktree at ${outcome.value.worktreePath}.`,
       };
+}
+
+/* ---------------- host handoffs ---------------- */
+
+/**
+ * Native's Resolve conflicts button: on an open pull request that conflicts
+ * with its base, reading "Preparing..." while its own handoff (`conflicts`)
+ * runs and waiting while any other does.
+ */
+export function prsResolveConflictsControl(
+  detail: {
+    readonly state: "open" | "closed" | "merged";
+    readonly mergeability?: "mergeable" | "conflicting" | "unknown";
+  },
+  handoff: string | null,
+): { readonly visible: boolean; readonly label: string; readonly disabled: boolean } {
+  return {
+    visible: detail.state === "open" && detail.mergeability === "conflicting",
+    label: handoff === "conflicts" ? "Preparing..." : "Resolve conflicts",
+    disabled: handoff !== null,
+  };
 }
 
 /* ---------------- detail projections ---------------- */

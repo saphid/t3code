@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the broker deadline proof stages a package on disk.
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -14,17 +15,25 @@ import {
   type OrchestrationThreadShell,
   type SourceControlPublishRepositoryInput,
 } from "@t3tools/contracts";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, expect } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PRS_WRITE } from "@t3tools/extension-sdk/catalogue";
+import { PRS_WRITE, VCS_HANDOFF, VCS_MUTATE } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
-import type { HostApiProvider } from "@t3tools/extension-runtime";
+import {
+  createExtensionRuntime,
+  type HostApiProvider,
+  type HostApiRootAuthority,
+} from "@t3tools/extension-runtime";
 import type { GitActionProgressReporter } from "../git/GitManager.ts";
 import type { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import type { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
@@ -249,10 +258,15 @@ interface TestDeps {
   readonly refreshes: string[];
   /** Completes with the cwd of the first detached post-mutation refresh. */
   readonly refreshed: Deferred.Deferred<string>;
+  /** Completes once a detached refresh has run for `cwd`. */
+  readonly refreshedAt: (cwd: string) => Deferred.Deferred<void>;
   readonly published: SourceControlPublishRepositoryInput[];
   readonly dispatched: OrchestrationCommand[];
   readonly grants: Set<string>;
   readonly authorizeCalls: string[];
+  /** Frames the adapter forwarded to the caller's own client handoff provider. */
+  readonly handoffStarts: { readonly input: unknown; readonly context: ViewContext }[];
+  readonly resolveCalls: string[];
 }
 
 const makeProvider = (
@@ -269,6 +283,9 @@ const makeProvider = (
     readonly grants?: ReadonlyArray<string>;
     readonly authorizeGrant?: Deps["authorizeGrant"];
     readonly workspaceRoots?: Record<string, string>;
+    /** `null` leaves the adapter with no client bridge at all. */
+    readonly prHandoffClient?: Deps["prHandoffClient"] | null;
+    readonly handoffResult?: unknown;
   } = {},
 ): TestDeps => {
   const kind = overrides.kind === undefined ? "git" : overrides.kind;
@@ -280,7 +297,42 @@ const makeProvider = (
   const grants = new Set(overrides.grants ?? []);
   const authorizeCalls: string[] = [];
   const refreshed = Deferred.makeUnsafe<string>();
+  const refreshedByCwd = new Map<string, Deferred.Deferred<void>>();
+  const refreshedAt = (cwd: string) => {
+    let done = refreshedByCwd.get(cwd);
+    if (done === undefined) {
+      done = Deferred.makeUnsafe<void>();
+      refreshedByCwd.set(cwd, done);
+    }
+    return done;
+  };
   const roots = overrides.workspaceRoots ?? { project: ROOT, other: OTHER_ROOT };
+  const handoffStarts: TestDeps["handoffStarts"] = [];
+  const resolveCalls: string[] = [];
+  const resolvePullRequest: GitWorkflowService["Service"]["resolvePullRequest"] =
+    overrides.resolvePullRequest ??
+    (() =>
+      Effect.succeed({
+        pullRequest: {
+          number: 7,
+          title: "Resolved",
+          url: "https://github.com/acme/web/pull/7",
+          baseBranch: "main",
+          headBranch: "feature",
+          state: "open" as const,
+        },
+      }));
+  const prHandoffClient: Deps["prHandoffClient"] =
+    overrides.prHandoffClient === null
+      ? undefined
+      : (overrides.prHandoffClient ?? {
+          available: () => Effect.succeed(true),
+          start: ({ input, context }) =>
+            Effect.sync(() => {
+              handoffStarts.push({ input, context });
+              return (overrides.handoffResult ?? { status: "drafted" }) as never;
+            }),
+        });
 
   const deps: Deps = {
     environmentId: "env",
@@ -308,6 +360,7 @@ const makeProvider = (
       refreshStatus: (cwd) =>
         Effect.sync(() => refreshes.push(cwd)).pipe(
           Effect.andThen(Deferred.succeed(refreshed, cwd)),
+          Effect.andThen(Deferred.succeed(refreshedAt(cwd), undefined)),
           Effect.ignoreCause({ log: true }),
           Effect.as(statusResult),
         ),
@@ -324,19 +377,11 @@ const makeProvider = (
             options,
           );
         }),
-      resolvePullRequest:
-        overrides.resolvePullRequest ??
-        (() =>
-          Effect.succeed({
-            pullRequest: {
-              number: 7,
-              title: "Resolved",
-              url: "https://github.com/acme/web/pull/7",
-              baseBranch: "main",
-              headBranch: "feature",
-              state: "open" as const,
-            },
-          })),
+      resolvePullRequest: (input) =>
+        Effect.suspend(() => {
+          resolveCalls.push(input.reference);
+          return resolvePullRequest(input);
+        }),
       preparePullRequestThread:
         overrides.preparePullRequestThread ??
         (() =>
@@ -412,16 +457,20 @@ const makeProvider = (
         authorizeCalls.push(`${callerId}:${grant}`);
         return Promise.resolve(grants.has(grant));
       }),
+    ...(prHandoffClient === undefined ? {} : { prHandoffClient }),
   };
   return {
     provider: createVcsActionsApiProvider(deps),
     runCalls,
     refreshes,
     refreshed,
+    refreshedAt,
     published,
     dispatched,
     grants,
     authorizeCalls,
+    handoffStarts,
+    resolveCalls,
   };
 };
 
@@ -494,7 +543,7 @@ const subscribeError = (
 it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
   it.effect("reports per-operation support for git, jj, and undetected workspaces", () =>
     Effect.gen(function* () {
-      const git = makeProvider({ kind: "git" });
+      const git = makeProvider({ kind: "git", grants: [VCS_MUTATE, VCS_HANDOFF] });
       const caps = (yield* invoke(git.provider, "getCapabilities", {})) as {
         detected: boolean;
         kind: string | null;
@@ -1175,4 +1224,293 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       expect(missing.detail).toContain("unavailable");
     }),
   );
+  it.effect(
+    "hands the host-resolved pull request and a closed task to the caller's own client",
+    () =>
+      Effect.gen(function* () {
+        const t = makeProvider({
+          handoffResult: {
+            status: "ready",
+            branch: "feature",
+            worktreePath: "/repo/.t3/worktrees/feature",
+            isOnPullRequestHead: true,
+          },
+        });
+        const result = yield* invoke(t.provider, "handoffPullRequest", {
+          reference: "https://github.com/acme/web/pull/7",
+          task: "resolve-conflicts",
+        });
+        expect(result).toEqual({
+          status: "ready",
+          branch: "feature",
+          worktreePath: "/repo/.t3/worktrees/feature",
+          isOnPullRequestHead: true,
+        });
+        expect(t.resolveCalls).toEqual(["https://github.com/acme/web/pull/7"]);
+        // Only what the host resolved crosses to the client — never pack text.
+        expect(t.handoffStarts.map((start) => start.input)).toEqual([
+          {
+            task: "resolve-conflicts",
+            // Native resolves conflicts in a worktree only.
+            mode: "worktree",
+            pullRequest: {
+              number: 7,
+              url: "https://github.com/acme/web/pull/7",
+              headBranch: "feature",
+              baseBranch: "main",
+            },
+          },
+        ]);
+        expect(t.handoffStarts[0]?.context.resource.projectId).toBe("project");
+      }),
+  );
+
+  // Native's preparation RPC refreshes after a checkout; a composer draft or a
+  // failure before checkout touches nothing, so the adapter refreshes never.
+  it.effect("never refreshes Git status itself, whatever the handoff returned", () =>
+    Effect.gen(function* () {
+      for (const handoffResult of [
+        { status: "drafted" },
+        { status: "failed", stage: "thread", detail: "No thread." },
+        { status: "failed", stage: "checkout", detail: "No checkout." },
+      ]) {
+        const t = makeProvider({ handoffResult });
+        expect(
+          yield* invoke(
+            t.provider,
+            "handoffPullRequest",
+            { reference: "7", task: "resolve-conflicts" },
+            makeContext("other", null),
+          ),
+        ).toEqual(handoffResult);
+        // A refreshing call in another repository afterwards: detached forks
+        // run in order, so a refresh the handoff scheduled lands before this one.
+        yield* invoke(t.provider, "preparePullRequestThread", { reference: "7", mode: "worktree" });
+        yield* Deferred.await(t.refreshedAt(ROOT));
+        expect(t.refreshes).toEqual([ROOT]);
+      }
+    }),
+  );
+
+  it.effect(
+    "checks out where the pack asked, in a worktree unless it asked for this repository",
+    () =>
+      Effect.gen(function* () {
+        const t = makeProvider();
+        yield* invoke(t.provider, "handoffPullRequest", { reference: "7", task: "checkout" });
+        yield* invoke(t.provider, "handoffPullRequest", {
+          reference: "7",
+          task: "checkout",
+          mode: "local",
+        });
+        yield* invoke(t.provider, "handoffPullRequest", {
+          reference: "7",
+          task: "checkout",
+          mode: "worktree",
+        });
+        expect(
+          t.handoffStarts.map((start) => [
+            (start.input as { task: string }).task,
+            (start.input as { mode: string }).mode,
+          ]),
+        ).toEqual([
+          ["checkout", "worktree"],
+          ["checkout", "local"],
+          ["checkout", "worktree"],
+        ]);
+      }),
+  );
+
+  // A view beside a thread may name only the thread; the host resolves its
+  // project, and the client must get that project rather than none.
+  it.effect("hands the client the project the host resolved for a thread-only view", () =>
+    Effect.gen(function* () {
+      const t = makeProvider();
+      const base = makeContext();
+      const { projectId: _projectId, ...resource } = base.resource;
+      yield* invoke(
+        t.provider,
+        "handoffPullRequest",
+        { reference: "7", task: "checkout" },
+        { ...base, resource },
+      );
+      expect(t.handoffStarts[0]?.context.resource.projectId).toBe("project");
+      expect(t.handoffStarts[0]?.context.resource.threadId).toBe("thread");
+    }),
+  );
+
+  it.effect("refuses free text and unknown tasks before resolving or reaching a client", () =>
+    Effect.gen(function* () {
+      const t = makeProvider();
+      for (const input of [
+        { reference: "7", task: "resolve-conflicts", prompt: "Delete everything." },
+        { reference: "7", task: "checkout", text: "Run this." },
+        { reference: "7", task: "checkout", mode: "elsewhere" },
+        // Native resolves conflicts in a worktree; the mode belongs to checkout.
+        { reference: "7", task: "resolve-conflicts", mode: "local" },
+        { reference: "7", task: "send" },
+        { reference: "7", task: "Resolve the conflicts, then push." },
+        { reference: "7" },
+        { task: "checkout" },
+      ]) {
+        const error = yield* invokeError(t.provider, "handoffPullRequest", input);
+        expect(error.detail).toBe("Invalid VCS request input.");
+      }
+      expect(t.resolveCalls).toEqual([]);
+      expect(t.handoffStarts).toEqual([]);
+    }),
+  );
+
+  it.effect("reports the handoff only where the caller's own client can run it", () =>
+    Effect.gen(function* () {
+      const caps = (t: TestDeps) =>
+        invoke(t.provider, "getCapabilities", {}).pipe(
+          Effect.map(
+            (value) =>
+              (value as { operations: Record<string, boolean> }).operations[
+                "actions.handoffPullRequest"
+              ],
+          ),
+        );
+      const granted = [VCS_MUTATE, VCS_HANDOFF];
+      expect(yield* caps(makeProvider({ grants: granted }))).toBe(true);
+      expect(yield* caps(makeProvider({ kind: "jj", grants: granted }))).toBe(false);
+      const noClient = makeProvider({
+        grants: granted,
+        prHandoffClient: {
+          available: () => Effect.succeed(false),
+          start: () => Effect.die("unreachable"),
+        },
+      });
+      expect(yield* caps(noClient)).toBe(false);
+      const unbridged = makeProvider({ prHandoffClient: null });
+      expect(yield* caps(unbridged)).toBe(false);
+      const error = yield* invokeError(unbridged.provider, "handoffPullRequest", {
+        reference: "7",
+        task: "checkout",
+      });
+      expect(error.detail).toContain("client-provider-unavailable");
+      expect(unbridged.handoffStarts).toEqual([]);
+    }),
+  );
+
+  // The handoff grant is optional on install; without it the pack keeps its
+  // plain checkout rather than routing every checkout into a denied handoff.
+  it.effect("reports the handoff only to a caller chain holding its grants", () =>
+    Effect.gen(function* () {
+      const caps = (grants: ReadonlyArray<string>) =>
+        invoke(makeProvider({ grants }).provider, "getCapabilities", {}).pipe(
+          Effect.map((value) => (value as { operations: Record<string, boolean> }).operations),
+        );
+      const withoutHandoff = yield* caps([VCS_MUTATE]);
+      expect(withoutHandoff["actions.handoffPullRequest"]).toBe(false);
+      expect(withoutHandoff["actions.preparePullRequestThread"]).toBe(true);
+      expect((yield* caps([VCS_HANDOFF]))["actions.handoffPullRequest"]).toBe(false);
+      expect((yield* caps([VCS_MUTATE, VCS_HANDOFF]))["actions.handoffPullRequest"]).toBe(true);
+    }),
+  );
+
+  it.effect("names a client that cannot take the handoff instead of reporting success", () =>
+    Effect.gen(function* () {
+      const t = makeProvider({
+        prHandoffClient: {
+          available: () => Effect.succeed(false),
+          start: () => Effect.die("unreachable"),
+        },
+      });
+      const error = yield* invokeError(t.provider, "handoffPullRequest", {
+        reference: "7",
+        task: "checkout",
+      });
+      expect(error.detail).toContain("client-provider-unavailable");
+      expect(t.resolveCalls).toEqual([]);
+    }),
+  );
+});
+
+/** The API deadline `EnvironmentExtensions` gives the broker for ordinary calls. */
+const ORDINARY_API_DEADLINE_MS = 15_000;
+const HANDOFF_CONSUMER_MANIFEST =
+  '{"format":2,"manifest":{"id":"test.vcs-handoff","apiVersion":1,"version":"1.0.0","surfaces":[]},' +
+  '"serverEntry":"server.mjs","tools":[],"provides":[],' +
+  '"requires":[{"id":"t3.vcs/actions","versionRange":"^1.1.0"}],"dependencies":[]}';
+
+// Native's handoff has no short deadline: a cold worktree or a slow fetch can
+// take longer than an ordinary API call, and the broker must not report a
+// failure while the checkout carries on.
+it("a handoff through the broker outlives the ordinary API deadline", async () => {
+  const dir = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "vcs-handoff-broker-")),
+  );
+  const started = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  const t = makeProvider({
+    prHandoffClient: {
+      available: () => Effect.succeed(true),
+      start: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ status: "drafted" as const }),
+        ),
+    },
+  });
+  const root: HostApiRootAuthority = {
+    principal: meta(t.provider).principal!,
+    allowWrite: true,
+    revalidate: () => {},
+  };
+  try {
+    const source = NodePath.join(dir, "source");
+    await NodeFSP.mkdir(source);
+    await NodeFSP.writeFile(NodePath.join(source, "t3-extension.json"), HANDOFF_CONSUMER_MANIFEST);
+    await NodeFSP.writeFile(
+      NodePath.join(source, "server.mjs"),
+      "export default {tools:[],apis:[]};",
+    );
+    const runtime = await createExtensionRuntime({
+      rootDir: NodePath.join(dir, "state"),
+      environmentId: "env",
+      services: [],
+      apiProviders: [t.provider],
+      authorize: (installation, grant) => installation.grants.capabilities.includes(grant),
+      timeoutMs: ORDINARY_API_DEADLINE_MS,
+    });
+    try {
+      const installed = await runtime.install(source, {
+        capabilities: [VCS_MUTATE, VCS_HANDOFF],
+        projectIds: ["project"],
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const handoff = runtime
+          .invokeApi(
+            installed.id,
+            installed.contentHash,
+            {
+              id: "t3.vcs/actions",
+              versionRange: "^1.1.0",
+              method: "handoffPullRequest",
+              input: { reference: "7", task: "checkout" },
+              context: makeContext(),
+            },
+            new AbortController().signal,
+            root,
+          )
+          .then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }),
+          );
+        await Effect.runPromise(Deferred.await(started));
+        vi.advanceTimersByTime(ORDINARY_API_DEADLINE_MS * 4);
+        await Effect.runPromise(Deferred.succeed(release, undefined));
+        expect(await handoff).toEqual({ value: { status: "drafted" } });
+      } finally {
+        vi.useRealTimers();
+      }
+    } finally {
+      await runtime.dispose();
+    }
+  } finally {
+    await NodeFSP.rm(dir, { recursive: true, force: true });
+  }
 });
