@@ -2090,6 +2090,9 @@ NodeTest.describe("toolbar hover help", () => {
         // The toolbar closes whichever terminal is active, so it names the
         // action as native's drawer toolbar does, not the tab.
         "Close Terminal (⌘W)": "Close Terminal (⌘W)",
+        // Session rows show their status, or their label while running.
+        a: "a",
+        b: "b",
       });
       // Native's action popovers open below their trigger.
       for (const props of view.help.values()) NodeAssert.equal(props.side, "bottom");

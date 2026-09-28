@@ -633,7 +633,7 @@ export function workspaceLaunchFromRevision(
 
 /**
  * Terminal 22, path half: hands the link text and the launch cwd to
- * `t3.ui/editor`, which resolves them the native way (`~/`, relative, and a
+ * `t3.ui/editor`, which resolves them the native way (home-relative, relative, and a
  * `:line:column` suffix) and opens the user's preferred editor. Resolves null
  * once opened — native opens silently — or the surface line naming the
  * refusal (the host's own wording) or the failed invoke.

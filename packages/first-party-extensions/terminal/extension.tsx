@@ -1510,34 +1510,35 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
               if (!tab) return null;
               return (
                 <li key={tab.terminalId} data-t3-terminal-session={tab.terminalId}>
-                  <button
-                    type="button"
-                    aria-current={tab.terminalId === activeId ? "true" : undefined}
-                    title={sessionStatusText(tab) ?? tab.label}
-                    onClick={() => panel.activate(tab.terminalId)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      height: 24,
-                      textAlign: "left",
-                      padding: "0 6px",
-                      border: "1px solid transparent",
-                      borderRadius: 5,
-                      cursor: "pointer",
-                      font: "inherit",
-                      fontSize: 12,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: tab.terminalId === activeId ? "inherit" : muted,
-                      background:
-                        tab.terminalId === activeId
-                          ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
-                          : "transparent",
-                    }}
-                  >
-                    {tab.label}
-                  </button>
+                  <Tooltip host={host} label={sessionStatusText(tab) ?? tab.label} side="bottom">
+                    <button
+                      type="button"
+                      aria-current={tab.terminalId === activeId ? "true" : undefined}
+                      onClick={() => panel.activate(tab.terminalId)}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        height: 24,
+                        textAlign: "left",
+                        padding: "0 6px",
+                        border: "1px solid transparent",
+                        borderRadius: 5,
+                        cursor: "pointer",
+                        font: "inherit",
+                        fontSize: 12,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: tab.terminalId === activeId ? "inherit" : muted,
+                        background:
+                          tab.terminalId === activeId
+                            ? "var(--t3-terminal-accent-surface, var(--accent, #e8eef7))"
+                            : "transparent",
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  </Tooltip>
                 </li>
               );
             })}
