@@ -180,12 +180,15 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       ? catalogueChanges({ environmentId, input: {} })
       : idleCatalogue,
   );
+  // The controller lives as long as the environment, not one transport session:
+  // a dropped connection keeps mounted packs (their resumable streams report the
+  // suspension), and each new connection re-lists what is installed.
   useEffect(() => {
-    if (Option.isNone(prepared)) {
-      changed(environmentId, EMPTY_INSTALLED);
-      return;
-    }
-    const connection = prepared.value;
+    const connection = () => {
+      const current = readPreparedConnection(environmentId);
+      if (!current) throw new Error("Environment is not connected");
+      return current;
+    };
     const providers = createClientProviders(
       {
         environmentId,
@@ -235,7 +238,10 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             clientConnectionId,
           },
         });
-        const result = await run(environmentExtensionsHttp.invokeApi(connection, payload), signal);
+        const result = await run(
+          environmentExtensionsHttp.invokeApi(connection(), payload),
+          signal,
+        );
         return result.result as {
           commandSetToken?: string;
           results?: readonly { commandId: string; status: string; reason?: string }[];
@@ -346,7 +352,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           supportsApiStreams,
           supportedPackageFormats,
           ...result
-        } = await run(environmentExtensionsHttp.list(connection), signal);
+        } = await run(environmentExtensionsHttp.list(connection()), signal);
         return {
           ...result,
           supportsCatalogueChanges: supportsCatalogueChanges === true,
@@ -373,9 +379,12 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         };
       },
       client: (id, expectedContentHash, signal) =>
-        run(environmentExtensionsHttp.client(connection, { id, expectedContentHash }), signal),
+        run(environmentExtensionsHttp.client(connection(), { id, expectedContentHash }), signal),
       readAsset: (id, expectedContentHash, path, signal) =>
-        run(environmentExtensionsHttp.asset(connection, { id, expectedContentHash, path }), signal),
+        run(
+          environmentExtensionsHttp.asset(connection(), { id, expectedContentHash, path }),
+          signal,
+        ),
       invoke: async (toolId, input, context, expectedContentHash, signal) => {
         const payload = decodeInvoke({
           toolId,
@@ -383,7 +392,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           context,
           expectedContentHash,
         });
-        return (await run(environmentExtensionsHttp.invoke(connection, payload), signal)).result;
+        return (await run(environmentExtensionsHttp.invoke(connection(), payload), signal)).result;
       },
       // The session-validated `self` hint: stamps the socket-bound id the
       // seam minted so client-provider-backed contracts reach this client.
@@ -395,11 +404,12 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             request:
               clientConnectionId === undefined ? request : { ...request, clientConnectionId },
           });
+          const current = connection();
           const { result } = await run(
-            environmentExtensionsHttp.invokeApi(connection, payload),
+            environmentExtensionsHttp.invokeApi(current, payload),
             signal,
           );
-          return resolveLeasePresentationUrl(request, result, connection.httpBaseUrl);
+          return resolveLeasePresentationUrl(request, result, current.httpBaseUrl);
         }),
       subscribeApi: (installationId, expectedContentHash, request, signal) =>
         withClientConnectionIdFrames(environmentId, signal, (clientConnectionId) =>
@@ -430,7 +440,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           context,
         });
         return (
-          await run(environmentExtensionsHttp.discoverApis(connection, payload), signal)
+          await run(environmentExtensionsHttp.discoverApis(connection(), payload), signal)
         ).apis.map(({ pluginId, reason, ...item }) => ({
           ...item,
           ...(pluginId === undefined ? {} : { pluginId }),
@@ -481,7 +491,6 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
     const refreshQueue = createCatalogueRefreshQueue(() => controller.refresh());
     controllers.set(environmentId, controller);
     refreshQueues.set(environmentId, refreshQueue);
-    void refreshQueue.request();
     return () => {
       providerConnection.stop();
       unconfigureExtensionCommandEnvironment(environmentId);
@@ -494,7 +503,10 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         changed(environmentId, EMPTY_INSTALLED);
       }
     };
-  }, [environmentId, prepared, router]);
+  }, [environmentId, router]);
+  useEffect(() => {
+    if (Option.isSome(prepared)) void refreshInstalledExtensions(environmentId);
+  }, [environmentId, prepared]);
   useEffect(() => {
     if (catalogue._tag === "Success") void refreshInstalledExtensions(environmentId);
   }, [environmentId, catalogue]);

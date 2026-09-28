@@ -631,12 +631,10 @@ export function createInstalledExtensionController(options: {
           });
       } catch (error) {
         if (!live()) return;
-        clear();
+        // A failed list says nothing about what is installed: keep the live
+        // clients and the last known catalogue until a list succeeds.
         publish({
-          installations: [],
-          supportsCatalogueChanges: snapshot.supportsCatalogueChanges === true,
-          supportsApiStreams: snapshot.supportsApiStreams === true,
-          supportedPackageFormats: snapshot.supportedPackageFormats ?? [1, 2],
+          ...snapshot,
           loading: false,
           error: error instanceof Error ? error.message : "Could not load environment extensions",
         });

@@ -497,11 +497,14 @@ it("retains receipt negotiation after a transient list failure so the next recei
     await receipts.request();
     expect(h.snapshots.at(-1)?.error).toBe("Temporary HTTP failure");
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
+    // A failed list is not a removal: the live client and the catalogue stay.
+    expect(h.snapshots.at(-1)?.installations).toHaveLength(1);
+    expect(h.stop).not.toHaveBeenCalled();
     await receipts.request();
     expect(h.snapshots.at(-1)?.error).toBeNull();
     expect(h.snapshots.at(-1)?.installations).toHaveLength(1);
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(true);
-    expect(h.register).toHaveBeenCalledTimes(2);
+    expect(h.register).toHaveBeenCalledTimes(1);
     h.options.list.mockImplementation(async () => ({ installations: [installation] }));
     await receipts.request();
     expect(h.snapshots.at(-1)?.supportsCatalogueChanges).toBe(false);
