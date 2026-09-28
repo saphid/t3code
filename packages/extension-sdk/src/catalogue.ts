@@ -9420,7 +9420,9 @@ const uiNavigationOpenAgentSessionMethod = {
  * pack names a path, never a surface or provider. `openWorkspaceFile` probes
  * for it, so a pack keeps its 1.0.0 requirement. 1.2.0 adds `openIn:
  * "browser"`, which opens an `.html`, `.htm` or `.pdf` file in the thread's
- * preview browser instead, as native's "Open file in preview browser" does.
+ * preview browser instead, as native's "Open file in preview browser" does,
+ * and `getCapabilities` answers `openFileInBrowser` for the invoking client
+ * (`canOpenFilesInBrowser`), since only some clients have a preview browser.
  */
 export const uiNavigationApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
@@ -9446,7 +9448,14 @@ export const uiNavigationApi = defineApi<{
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["openThread", "openAgentSession", "openFile"]),
+        // `openFileInBrowser` (1.2.0) is the invoking client's own answer:
+        // whether it has a preview browser for `openIn: "browser"`.
+        outputSchema: uiCapabilitiesOutput([
+          "openThread",
+          "openAgentSession",
+          "openFile",
+          "openFileInBrowser",
+        ]),
       },
       uiNavigationOpenThreadMethod,
       uiNavigationOpenAgentSessionMethod,
@@ -9600,6 +9609,36 @@ export async function openWorkspaceFile(
     },
     options.signal,
   );
+}
+
+/**
+ * Whether the invoking client can open a file in its preview browser
+ * (`openWorkspaceFile` with `openIn: "browser"`), as native decides whether to
+ * offer "Open file in preview browser". False on a host whose
+ * `t3.ui/navigation` predates the question (1.2.0), and when it cannot say.
+ * The open itself can still be refused if the client changes in between.
+ */
+export async function canOpenFilesInBrowser(
+  client: Pick<ApiClient, "invokeApi" | "discoverApis">,
+  context: ViewContext,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const discovered = await client.discoverApis(context, signal);
+    const asks = discovered.some((api) => {
+      const version = api.id === UI_NAVIGATION ? parseVersion(api.version) : null;
+      return version !== null && version[0] === 1 && compareVersions(version, [1, 2, 0]) >= 0;
+    });
+    if (!asks) return false;
+    const answer = await bindApi(uiNavigationApi, client, context, "^1.2.0").invoke(
+      "getCapabilities",
+      {},
+      signal,
+    );
+    return answer.operations.openFileInBrowser === true;
+  } catch {
+    return false;
+  }
 }
 
 /** One user-facing sentence per `openWorkspaceFile` refusal. */

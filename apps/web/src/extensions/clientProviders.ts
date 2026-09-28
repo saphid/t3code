@@ -94,6 +94,7 @@ import { isElectron } from "../env";
 import { randomUUID } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
   isAtomCommandInterrupted,
   runAtomCommand,
@@ -1625,11 +1626,20 @@ export function createNavigationClientProvider(
   navigate: ThreadNavigator,
   opener: () => ExternalOpener | undefined = localExternalOpener,
   previewFile: FilePreviewOpener = openWorkspaceFileInPreview,
+  previewSupported: () => boolean = isPreviewSupportedInRuntime,
 ): ClientLocalProvider {
   return {
     async invoke(
       call,
-    ): Promise<UiNavigationReceipt | UiNavigationSessionReceipt | UiNavigationFileReceipt> {
+    ): Promise<
+      | UiNavigationReceipt
+      | UiNavigationSessionReceipt
+      | UiNavigationFileReceipt
+      | { readonly openFileInBrowser: boolean }
+    > {
+      // Native shows "Open file in preview browser" only where this client
+      // has one; asking needs no grant, as the public getCapabilities does not.
+      if (call.method === "getCapabilities") return { openFileInBrowser: previewSupported() };
       if (call.method === "openSession") {
         authorizeCaller(deps, call.caller, call.context, [UI_NAVIGATION_OPEN_SESSION]);
         // The adapter resolved this URL from the caller's own thread roster;

@@ -64,6 +64,7 @@ function fakeBridge(options?: {
           agentId: (request.input as { agentId: string }).agentId,
           opener: "desktop-shell",
         });
+      if (request.method === "getCapabilities") return Effect.succeed({ openFileInBrowser: true });
       if (request.method === "openFile")
         return Effect.succeed({
           status: "opened",
@@ -690,6 +691,42 @@ describe("1.2.0 file explorer preference", () => {
       ),
     ).rejects.toMatchObject({ code: "provider-rejected" });
     expect(bridge.invoked).toHaveLength(0);
+  });
+});
+
+// Review repro (gaps-files-2 P2): whether the invoking client has a preview
+// browser is its own answer, asked only of a 1.2.0 navigation client.
+describe("1.2.0 preview-browser capability", () => {
+  const seam = (navigation: string) =>
+    fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-1",
+          providers: [{ id: "t3.client/navigation", version: navigation }],
+        },
+      ],
+    });
+
+  it("reports the invoking client's answer, and false for an older client", async () => {
+    const operations = async (version: string) => {
+      const bridge = seam(version);
+      const answer = (await makeProviders(bridge).navigation.invoke(
+        "getCapabilities",
+        {} as Json,
+        context,
+        signal,
+        metadata(),
+      )) as { operations: Record<string, boolean> };
+      return {
+        openFileInBrowser: answer.operations.openFileInBrowser,
+        asked: bridge.invoked.map(({ method }) => method),
+      };
+    };
+    expect(await operations("1.2.0")).toEqual({
+      openFileInBrowser: true,
+      asked: ["getCapabilities"],
+    });
+    expect(await operations("1.1.0")).toEqual({ openFileInBrowser: false, asked: [] });
   });
 });
 

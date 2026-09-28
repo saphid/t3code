@@ -520,6 +520,45 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     return { connectionId, include: include.length > 0 ? { include } : {} };
   };
 
+  /**
+   * Whether the invoking client has a preview browser: its own 1.2.0
+   * navigation answer. An older client, or one that cannot be reached, has none.
+   */
+  const opensFilesInBrowser = async (
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ): Promise<boolean> => {
+    if (metadata.principal?.kind === "provider-session") return false;
+    try {
+      const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+        signal,
+      });
+      const { ok } = await clientSupports(
+        connectionId,
+        CLIENT_NAVIGATION,
+        CLIENT_NAVIGATION_V12_RANGE,
+        signal,
+      );
+      if (!ok) return false;
+      const answer = await Effect.runPromise(
+        invokeClient(deps, {
+          apiId: CLIENT_NAVIGATION,
+          method: "getCapabilities",
+          input: {},
+          context,
+          metadata,
+          signal,
+          connectionId,
+        }),
+        { signal },
+      );
+      return (answer as { openFileInBrowser?: unknown }).openFileInBrowser === true;
+    } catch {
+      return false;
+    }
+  };
+
   const themeProvider: HostApiProvider = {
     providerId: "host.ui.theme",
     definition: UI_THEME_API,
@@ -1125,16 +1164,25 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     availability: ambient(deps, CLIENT_NAVIGATION),
     invoke(method, input, context, signal, metadata): Promise<Json> {
       if (method === "getCapabilities")
-        return capabilities(
-          deps,
-          "host.ui.navigation",
-          {
-            openThread: CLIENT_NAVIGATION,
-            openAgentSession: CLIENT_NAVIGATION,
-            openFile: CLIENT_NAVIGATION,
-          },
-          metadata,
-        );
+        return (async () => {
+          const answer = (await capabilities(
+            deps,
+            "host.ui.navigation",
+            {
+              openThread: CLIENT_NAVIGATION,
+              openAgentSession: CLIENT_NAVIGATION,
+              openFile: CLIENT_NAVIGATION,
+            },
+            metadata,
+          )) as { readonly operations: Record<string, boolean> };
+          return {
+            ...answer,
+            operations: {
+              ...answer.operations,
+              openFileInBrowser: await opensFilesInBrowser(context, signal, metadata),
+            },
+          } as unknown as Json;
+        })();
       if (method === "openAgentSession")
         return (async () => {
           const { agentId } = input as { agentId: string };

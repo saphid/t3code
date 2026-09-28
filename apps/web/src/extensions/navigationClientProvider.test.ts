@@ -85,6 +85,7 @@ function provider(
   capabilities: readonly string[] = [GRANT],
   opener: ExternalOpener | undefined = undefined,
   previewFile: (...args: unknown[]) => Promise<unknown> = async () => "opened",
+  previewSupported = true,
 ) {
   const navigate = vi.fn(async () => {});
   const installed = installation(capabilities);
@@ -100,6 +101,7 @@ function provider(
       navigate,
       () => opener,
       previewFile as never,
+      () => previewSupported,
     ),
   };
 }
@@ -369,6 +371,23 @@ describe("navigation provider", () => {
       ]);
       // The page opens in the browser, not as a file surface.
       expect(panelOf("thread-a").surfaces).toBe(surfaces);
+    });
+
+    // Review repro (gaps-files-2 P2): native shows "Open file in preview
+    // browser" only where this client has one; a pack asks the same question.
+    it("says whether this client has a preview browser, without a grant", async () => {
+      for (const supported of [true, false]) {
+        const { provider: client } = provider([], undefined, undefined, supported);
+        await expect(
+          client.invoke({
+            method: "getCapabilities",
+            input: { target: { kind: "self" } } as ClientProviderInvokeCall["input"],
+            context,
+            caller,
+            signal: new AbortController().signal,
+          }),
+        ).resolves.toEqual({ openFileInBrowser: supported });
+      }
     });
 
     it("refuses a file the browser cannot show and names a failed open", async () => {

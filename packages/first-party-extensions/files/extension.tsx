@@ -1,4 +1,5 @@
 import {
+  canOpenFilesInBrowser,
   composerContextApi,
   describeOpenFileRefusal,
   filePresentationApi,
@@ -1819,6 +1820,19 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       .finally(() => controller.abort());
   };
   const openInPanel = () => openSelected("panel");
+  // Native parity (FilePreviewPanel): the preview-browser open is offered only
+  // where this client has a preview browser. The open's own refusal still
+  // covers a client that changes in between.
+  const [browserPreview, setBrowserPreview] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, session.signal]);
+    void canOpenFilesInBrowser(host, session.context, signal).then((supported) => {
+      if (!signal.aborted) setBrowserPreview(supported);
+    });
+    return () => controller.abort();
+  }, [host, session, visible]);
 
   // The panel's commands register through `t3.ui/keybindings` so the
   // host arbitrates them — user rules and native defaults outrank the plugin
@@ -2332,7 +2346,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
-          {opensInPreviewBrowser(selected) && (
+          {browserPreview && opensInPreviewBrowser(selected) && (
             <button type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
             </button>

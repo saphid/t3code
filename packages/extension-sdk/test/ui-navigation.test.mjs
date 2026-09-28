@@ -346,3 +346,55 @@ NodeTest.test("openWorkspaceFile opens a page in the preview browser on a 1.2.0 
   for (const reason of ["not-previewable", "browser-unavailable", "open-failed"])
     NodeAssert.match(Catalogue.describeOpenFileRefusal(reason), /\S/);
 });
+
+// Review repro (gaps-files-2 P2): native offers "Open file in preview
+// browser" only on a client that has one; a pack asks the invoking client.
+NodeTest.test("canOpenFilesInBrowser asks a 1.2.0 host about the invoking client", async () => {
+  const context = { client: "web", resource: { namespace: "ext", id: "ext.a", threadId: "t" } };
+  const signal = new AbortController().signal;
+  const host = (version, openFileInBrowser) => {
+    const requests = [];
+    return {
+      requests,
+      discoverApis: async () => [{ id: "t3.ui/navigation", version }],
+      invokeApi: async (request) => {
+        requests.push([request.method, request.versionRange]);
+        return {
+          adapter: "host.ui.navigation",
+          operations: {
+            openThread: true,
+            openAgentSession: true,
+            openFile: true,
+            openFileInBrowser,
+          },
+          clients: [],
+        };
+      },
+    };
+  };
+  const answers = [];
+  for (const [version, supported] of [
+    ["1.2.0", true],
+    ["1.2.0", false],
+    ["1.1.0", true],
+  ]) {
+    const client = host(version, supported);
+    answers.push([
+      await Catalogue.canOpenFilesInBrowser?.(client, context, signal),
+      client.requests,
+    ]);
+  }
+  NodeAssert.deepEqual(answers, [
+    [true, [["getCapabilities", "^1.2.0"]]],
+    [false, [["getCapabilities", "^1.2.0"]]],
+    [false, []],
+  ]);
+  const capabilities = uiNavigationApi.definition.methods.find((m) => m.name === "getCapabilities");
+  NodeAssert.ok(
+    capabilities.outputSchema.properties.operations.required.includes("openFileInBrowser"),
+  );
+  const frozen = Catalogue.uiNavigationApiV1_1.definition.methods.find(
+    (m) => m.name === "getCapabilities",
+  );
+  NodeAssert.ok(!frozen.outputSchema.properties.operations.required.includes("openFileInBrowser"));
+});

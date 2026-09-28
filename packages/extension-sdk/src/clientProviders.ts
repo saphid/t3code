@@ -1220,7 +1220,8 @@ export const uiNavigationSessionReceiptSchema = {
  * thread; the client re-checks before routing or opening. `openFile` is
  * 1.1.0: the adapter sends it only to a client satisfying
  * `CLIENT_NAVIGATION_V11_RANGE`, and `openIn` (1.2.0) only to one satisfying
- * `CLIENT_NAVIGATION_V12_RANGE`.
+ * `CLIENT_NAVIGATION_V12_RANGE`. `getCapabilities` (1.2.0) says whether this
+ * client has a preview browser for `openIn: "browser"`.
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
@@ -1258,6 +1259,18 @@ export const CLIENT_NAVIGATION_API = validateApiDefinition({
       requiredGrants: [],
       inputSchema: withTarget(uiNavigationFileInputProperties, ["relativePath"]),
       outputSchema: uiNavigationFileReceiptSchema,
+    },
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openFileInBrowser"],
+        properties: { openFileInBrowser: { type: "boolean" } },
+      },
     },
   ],
 });

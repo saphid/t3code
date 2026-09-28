@@ -125,6 +125,10 @@ interface Disk {
   readonly preferenceWrite?: Promise<unknown>;
   /** The host's preview-browser open; records its calls and says how it went. */
   readonly previewFile?: (...args: unknown[]) => Promise<string>;
+  /** Whether this client has a preview browser; it does unless given. */
+  readonly previewSupported?: boolean;
+  /** The host's `t3.ui/navigation` version; the SDK's own unless given. */
+  readonly navigationVersion?: string;
 }
 
 type Calls = {
@@ -150,7 +154,7 @@ const preferenceFrame = (disk: Disk) =>
   });
 
 function packHost(disk: Disk, calls: Calls) {
-  const navigationVersion = uiNavigationApi.definition.version;
+  const navigationVersion = disk.navigationVersion ?? uiNavigationApi.definition.version;
   const host: PackHost = {
     React,
     async discoverApis() {
@@ -288,16 +292,25 @@ async function mountPanel(disk: Disk) {
     async () => {},
     undefined,
     (disk.previewFile ?? (async () => "opened")) as never,
+    () => disk.previewSupported ?? true,
   );
-  useNavigation(async (request, signal) =>
-    navigation.invoke({
+  useNavigation(async (request, signal) => {
+    const answer = await navigation.invoke({
       method: request.method,
       input: request.input,
       context: request.context,
       caller,
       signal,
-    } as unknown as Parameters<typeof navigation.invoke>[0]),
-  );
+    } as unknown as Parameters<typeof navigation.invoke>[0]);
+    if (request.method !== "getCapabilities") return answer;
+    // The server adapter's part: the invoking client's answer, as an operation.
+    const { openFileInBrowser } = answer as { openFileInBrowser: boolean };
+    return {
+      adapter: "host.ui.navigation",
+      operations: { openThread: true, openAgentSession: true, openFile: true, openFileInBrowser },
+      clients: [],
+    };
+  });
   const cleanups = [
     registerWorkspaceExtension(files.client(host) as never, undefined, {
       environmentId: ref.environmentId,
@@ -1187,6 +1200,8 @@ describe("opening a file in the preview browser", () => {
     }
   });
 
+  // A client that loses its preview browser after saying it had one still
+  // refuses, and the refusal is named.
   it("names a browser that cannot open the page", async () => {
     stubFetch();
     const panel = await mountPanel({
@@ -1200,6 +1215,28 @@ describe("opening a file in the preview browser", () => {
       expect(panel.text()).toContain(
         "page.html cannot be opened — The preview browser is unavailable in this client",
       );
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+// Review repro (gaps-files-2 P2): as native, the action shows only on a client
+// with a preview browser, and only where the host can say so.
+describe("a client without a preview browser", () => {
+  it.each([
+    ["a web client", { previewSupported: false }],
+    ["a host whose navigation predates the question", { navigationVersion: "1.1.0" }],
+  ])("offers no preview-browser open on %s", async (_name, client) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) })),
+    );
+    const panel = await mountPanel({ files: { "page.html": "<p>page</p>" }, ...client });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "page.html"));
+      expect(panel.button("Open in panel")).toBeDefined();
+      expect(panel.button("Open file in preview browser")).toBeUndefined();
     } finally {
       await panel.unmount();
     }
