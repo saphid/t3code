@@ -499,7 +499,7 @@ NodeTest.describe("when no desktop can answer for profiles", () => {
     const mounted = await mountSection("work", fake);
     NodeAssert.equal(
       mounted.note(),
-      "Listing browser profiles needs the t3.browser/profiles grant — this installation is missing it.",
+      "Listing browser profiles — Needs permission t3.browser/profiles. Grant it in Settings → Extensions.",
     );
     NodeAssert.equal(mounted.badge(), null);
   });

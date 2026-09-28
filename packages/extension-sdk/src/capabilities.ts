@@ -400,6 +400,33 @@ export function bindStreamApi<T extends ApiStreamTypes>(
   };
 }
 
+/** A call the host refused because the installation lacks a grant. */
+export interface GrantDenial {
+  readonly grant: string;
+  /** The line a pack shows for it: names the permission and where to grant it. */
+  readonly message: string;
+}
+
+/** The actionable line for a missing grant; only the user grants it, in Settings. */
+export function grantDenialMessage(grant: string): string {
+  return `Needs permission ${grant}. Grant it in Settings → Extensions.`;
+}
+
+// The broker's wording is `API capability denied: <grant>`; hosts may wrap it,
+// so the grant ends at its last name character, not at trailing punctuation.
+const CAPABILITY_DENIED = /capability denied: ([\w.\-/]*[\w\-/])/;
+
+/**
+ * A thrown invoke or stream error → the grant it was denied, or null for any
+ * other failure. Use at a call's catch so the view names the fix instead of
+ * showing the raw broker text.
+ */
+export function describeGrantDenial(error: unknown): GrantDenial | null {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const grant = CAPABILITY_DENIED.exec(text)?.[1];
+  return grant ? { grant, message: grantDenialMessage(grant) } : null;
+}
+
 export function validateRangeText(value: unknown): asserts value is string {
   if (typeof value !== "string" || !value.trim() || value.length > 200)
     throw new Error("Invalid API or dependency version range");

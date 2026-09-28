@@ -6,6 +6,7 @@
  * Nothing is applied optimistically: every message reports what the desktop
  * answered.
  */
+import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
 import {
   BROWSER_CLEAR_CACHE,
   BROWSER_CLEAR_COOKIES,
@@ -74,14 +75,12 @@ export function profileBadgeName(
   return profileLabel(list, profileId);
 }
 
-/** A thrown call → one named line. The broker names a missing grant `API capability denied: <grant>`. */
+/** A thrown call → one named line; a missing grant names the permission to grant. */
 export function profileFailureMessage(action: ProfileAction, error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const label = ACTION_LABEL[action];
-  const denied = /capability denied: (\S+)/.exec(text);
-  if (denied) {
-    return `${label} needs the ${denied[1]} grant — this installation is missing it.`;
-  }
+  const denial = describeGrantDenial(error);
+  if (denial) return `${label} — ${denial.message}`;
   if (text.includes("(desktop-required)")) {
     return `${label} needs the T3 Code desktop app — no desktop browser engine is connected (desktop-required).`;
   }
@@ -99,7 +98,7 @@ export function profileFailureMessage(action: ProfileAction, error: unknown): st
 
 /** Whether a failure line is a missing grant, which only a grant change can fix. */
 export function isGrantDenial(error: unknown): boolean {
-  return (error instanceof Error ? error.message : String(error)).includes("capability denied");
+  return describeGrantDenial(error) !== null;
 }
 
 export function clearResultMessage(

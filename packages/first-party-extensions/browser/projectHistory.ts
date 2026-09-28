@@ -7,6 +7,7 @@
  * until the project list arrives, and whenever the contract cannot serve it,
  * the panel shows its own rows. A failure is a named state, never a spinner.
  */
+import { describeGrantDenial, grantDenialMessage } from "@t3tools/extension-sdk/capabilities";
 import {
   BROWSER_READ_HISTORY,
   BROWSER_RECORD_HISTORY,
@@ -49,9 +50,9 @@ export interface ProjectHistoryApi {
 }
 
 /**
- * A failed op → named state. The broker names a missing grant as
- * `API capability denied: <grant>`; a host with no connected history
- * provider (or any other failure) is reported with its detail.
+ * A failed op → named state. A missing grant names the permission to grant;
+ * a host with no connected history provider (or any other failure) is
+ * reported with its detail.
  */
 export function projectHistoryErrorState(
   op: HistoryOp,
@@ -59,12 +60,13 @@ export function projectHistoryErrorState(
 ): Extract<ProjectHistoryState, { readonly kind: "unavailable" }> {
   const text = error instanceof Error ? error.message : String(error);
   if (text.includes("capability denied")) {
-    const named = /capability denied: (\S+)/.exec(text)?.[1];
     // Reads need the read grant; writes need both, and the broker names the first missing.
-    const grant = named ?? (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
+    const grant =
+      describeGrantDenial(error)?.grant ??
+      (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
     return {
       kind: "unavailable",
-      message: `Showing this view's history only — this installation is missing the ${grant} grant.`,
+      message: `Showing this view's history only — ${grantDenialMessage(grant)}`,
     };
   }
   return {

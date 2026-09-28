@@ -9,10 +9,8 @@
  * process name or configured-URL enrichment — so every row is the native
  * card's unenriched form: title "Listening", description `host:port`.
  */
-import {
-  BROWSER_READ_LOCAL_SERVERS,
-  type BrowserLocalServersEvent,
-} from "@t3tools/extension-sdk/catalogue";
+import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
+import { type BrowserLocalServersEvent } from "@t3tools/extension-sdk/catalogue";
 
 export interface LocalServerRow {
   /** The loopback URL the row opens — submitted exactly like a typed address. */
@@ -111,18 +109,19 @@ export function localServersFromSnapshot(
 }
 
 /**
- * A failed subscribe → named state. The broker names a missing grant as
- * `API capability denied: <grant>`; anything else is reported with its detail.
+ * A failed subscribe → named state. A missing grant names the permission to
+ * grant; anything else is reported with its detail.
  */
 export function localServersErrorState(
   error: unknown,
 ): Extract<LocalServersState, { readonly kind: "denied" | "unavailable" }> {
   const text = error instanceof Error ? error.message : String(error);
-  if (text.includes("capability denied"))
+  const denial = describeGrantDenial(error);
+  if (denial)
     return {
       kind: "denied",
-      grant: BROWSER_READ_LOCAL_SERVERS,
-      message: `Local servers are hidden — this installation is missing the ${BROWSER_READ_LOCAL_SERVERS} grant.`,
+      grant: denial.grant,
+      message: `Local servers are hidden — ${denial.message}`,
     };
   return {
     kind: "unavailable",

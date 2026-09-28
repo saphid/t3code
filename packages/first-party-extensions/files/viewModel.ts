@@ -5,11 +5,18 @@ import {
 import {
   uiPreferencesApi,
   uiThemeApi,
+  WORKSPACE_RESOURCES,
   type UiPreferences,
   type WorkspaceResourceReadEvent,
   type WorkspaceResourceReason,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi, bindStreamApi, type ApiClient } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  bindStreamApi,
+  describeGrantDenial,
+  grantDenialMessage,
+  type ApiClient,
+} from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 
 /**
@@ -395,7 +402,7 @@ const LEASE_DENIALS: ReadonlyArray<{
   {
     name: "ResourceLeaseGrantDeniedError",
     reason: "grant-denied",
-    message: "Media preview denied — the installation is missing the t3.workspace/resources grant",
+    message: `Media preview denied — ${grantDenialMessage(WORKSPACE_RESOURCES)}`,
   },
   {
     name: "ResourceLeaseKindDeniedError",
@@ -1281,19 +1288,16 @@ export type FileOpenState =
 /**
  * `t3.ui/navigation.openFile` invoke failure → named state. The broker
  * delivers the capability denial or the resolution reason as the error
- * message, so match those strings: grant denial is `denied` (recoverable by
- * granting `t3.ui/navigation.open` at install), a host without the API is
- * `unavailable`, and anything else reports its detail — never a silent no-op.
+ * message: grant denial is `denied` (recoverable by granting the named
+ * permission in Settings), a host without the API is `unavailable`, and
+ * anything else reports its detail — never a silent no-op.
  */
 export function fileOpenFailed(
   error: unknown,
 ): Extract<FileOpenState, { readonly status: "denied" | "unavailable" }> {
   const text = error instanceof Error ? error.message : String(error);
-  if (text.includes("capability denied"))
-    return {
-      status: "denied",
-      message: "Open is denied — this installation is missing the t3.ui/navigation.open grant",
-    };
+  const denial = describeGrantDenial(error);
+  if (denial) return { status: "denied", message: `Open is denied — ${denial.message}` };
   if (
     text.includes("missing-api") ||
     text.includes("selected-provider-unavailable") ||

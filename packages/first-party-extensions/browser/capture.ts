@@ -18,7 +18,12 @@ import {
   type BrowserCaptureTarget,
   type BrowserSurfaceLeaseState,
 } from "@t3tools/extension-sdk/catalogue";
-import { bindApi, type ApiClient, type ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  grantDenialMessage,
+  type ApiClient,
+  type ApiDiscovery,
+} from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -158,11 +163,12 @@ export async function captureToChat(
   if (signal.aborted) return { kind: "cancelled" };
   if (!captured.ok) {
     if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
-    const grant = captured.failure.grant ? ` (missing grant: ${captured.failure.grant})` : "";
     return {
       kind: "failed",
       stage: IMAGE_LOST_REASONS.has(captured.failure.reason) ? "image" : "request",
-      message: `Capture failed — ${captured.failure.reason}${grant}: ${captured.failure.detail}`,
+      message: captured.failure.grant
+        ? `Capture failed — ${grantDenialMessage(captured.failure.grant)}`
+        : `Capture failed — ${captured.failure.reason}: ${captured.failure.detail}`,
     };
   }
   try {

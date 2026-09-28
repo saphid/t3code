@@ -158,7 +158,7 @@ NodeTest.describe("createProjectHistory", () => {
     NodeAssert.deepEqual(await denied, {
       kind: "unavailable",
       message:
-        "Showing this view's history only — this installation is missing the t3.browser/record-history grant.",
+        "Showing this view's history only — Needs permission t3.browser/record-history. Grant it in Settings → Extensions.",
     });
     history.refresh();
     const missing = log.next();
@@ -175,7 +175,7 @@ NodeTest.describe("projectHistoryErrorState", () => {
   NodeTest.it("falls back to the op's grant when the denial names none", () => {
     NodeAssert.match(
       projectHistoryErrorState("list", new Error("capability denied")).message,
-      /t3\.browser\/read-history grant/,
+      /Needs permission t3\.browser\/read-history\./,
     );
   });
 });

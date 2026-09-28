@@ -18,11 +18,8 @@
  * grouping/count rules identical rather than approximated.
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import {
-  AGENT_SESSIONS_IMPORT,
-  AGENT_SESSIONS_SCAN,
-  WORKFLOW_NAME_PATTERN,
-} from "@t3tools/extension-sdk/catalogue";
+import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
+import { WORKFLOW_NAME_PATTERN } from "@t3tools/extension-sdk/catalogue";
 import type {
   AgentSessionImportReceipt,
   AgentSessionsScanResult,
@@ -1063,15 +1060,13 @@ export function describeSessionScan(
 }
 
 /**
- * A failed scan or import → named text. The broker names a missing grant as
- * `API capability denied: <grant>`; anything else keeps its (bounded) detail.
+ * A failed scan or import → named text. A missing grant names the permission
+ * to grant; anything else keeps its (bounded) detail.
  */
 export function describeSessionsError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  for (const grant of [AGENT_SESSIONS_IMPORT, AGENT_SESSIONS_SCAN]) {
-    if (text.includes(`capability denied: ${grant}`))
-      return `This installation is missing the ${grant} grant.`;
-  }
+  const denial = describeGrantDenial(error);
+  if (denial) return denial.message;
   if (text.includes("AgentSessionScanTimedOut"))
     return "The session scan hit its time limit before finding this session. Scan again to retry.";
   return `Session import is unavailable${text ? ` — ${text.slice(0, 300)}` : ""}.`;
