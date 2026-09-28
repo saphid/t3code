@@ -91,8 +91,9 @@ export interface ApiClient {
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
 }
 /**
- * `ClientHost.resumableStreams` version 1: host-managed resumption for streams
- * whose every subscription opens with a full snapshot (`RESUMABLE_API_STREAMS`).
+ * `ClientHost.resumableStreams`: host-managed resumption for streams whose
+ * every subscription opens with a full snapshot (`RESUMABLE_API_STREAMS`,
+ * which names the version that added each stream).
  * The host follows its own transport, as native subscriptions do: a dropped
  * connection suspends the iterable, and each new transport session opens
  * exactly one fresh subscription for the same request. A resumed subscription
@@ -101,7 +102,8 @@ export interface ApiClient {
  * and cancellation still end the iterable and are never retried.
  */
 export interface ResumableApiStreams {
-  readonly version: 1;
+  /** 2 also resumes `t3.terminal/sessions#list`; check with `resolveResumableStreams(host, stream)`. */
+  readonly version: 1 | 2;
   subscribeApi(
     request: ApiStreamInvocation,
     signal: AbortSignal,
@@ -122,19 +124,33 @@ export interface ResumableStreamOptions {
    */
   readonly onSuspended?: () => void;
 }
-/** `id#stream` pairs a version 1 host resumes; it refuses every other stream. */
-export const RESUMABLE_API_STREAMS: readonly string[] = [
-  "t3.terminal/output-events#subscribe",
-  "t3.terminal/sessions#list",
-];
-/** The host's stream resumption when it offers version 1 or later, else null (keep your own recovery). */
-export function resolveResumableStreams(host: {
-  readonly resumableStreams?: unknown;
-}): ResumableApiStreams | null {
+/**
+ * `id#stream` pairs a host resumes, each with the `resumableStreams` version
+ * that added it; a host refuses every other stream and every newer one.
+ */
+export const RESUMABLE_API_STREAMS: Readonly<Record<string, number>> = {
+  "t3.terminal/output-events#subscribe": 1,
+  "t3.terminal/sessions#list": 2,
+};
+/**
+ * The host's stream resumption when it offers version 1 or later — or, given
+ * an `id#stream`, the version that added that stream — else null (keep your
+ * own recovery).
+ */
+export function resolveResumableStreams(
+  host: { readonly resumableStreams?: unknown },
+  stream?: string,
+): ResumableApiStreams | null {
   const member: unknown = host.resumableStreams;
   if (!member || typeof member !== "object") return null;
+  const required =
+    stream === undefined
+      ? 1
+      : Object.hasOwn(RESUMABLE_API_STREAMS, stream)
+        ? RESUMABLE_API_STREAMS[stream]!
+        : Infinity;
   const { version, subscribeApi } = member as Record<string, unknown>;
-  return typeof version === "number" && version >= 1 && typeof subscribeApi === "function"
+  return typeof version === "number" && version >= required && typeof subscribeApi === "function"
     ? (member as ResumableApiStreams)
     : null;
 }
@@ -341,7 +357,8 @@ export function defineStreamApi<T extends ApiStreamTypes>(
 /**
  * Retain the host iterable so return(), cancellation and backpressure keep their ownership.
  * `resume: "fresh-snapshot"` subscribes through `ClientHost.resumableStreams`; on a host
- * without it the iterable fails with `ApiVersionError`, so check `resolveResumableStreams` first.
+ * without it the iterable fails with `ApiVersionError`, so check
+ * `resolveResumableStreams(host, "id#stream")` first.
  */
 export function bindStreamApi<T extends ApiStreamTypes>(
   api: TypedStreamApi<T>,

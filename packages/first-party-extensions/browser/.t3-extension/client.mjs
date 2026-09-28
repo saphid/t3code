@@ -211,12 +211,17 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
-  function resolveResumableStreams(host) {
+  var RESUMABLE_API_STREAMS = {
+    "t3.terminal/output-events#subscribe": 1,
+    "t3.terminal/sessions#list": 2
+  };
+  function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
     if (!member || typeof member !== "object")
       return null;
+    const required = stream === void 0 ? 1 : Object.hasOwn(RESUMABLE_API_STREAMS, stream) ? RESUMABLE_API_STREAMS[stream] : Infinity;
     const { version: version2, subscribeApi } = member;
-    return typeof version2 === "number" && version2 >= 1 && typeof subscribeApi === "function" ? member : null;
+    return typeof version2 === "number" && version2 >= required && typeof subscribeApi === "function" ? member : null;
   }
   var ApiVersionError = class extends Error {
     name = "ApiVersionError";

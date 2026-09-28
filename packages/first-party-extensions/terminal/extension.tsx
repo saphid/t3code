@@ -296,7 +296,7 @@ function useSessionsStream(
                 "list",
                 {},
                 signal,
-                resolveResumableStreams(host)
+                resolveResumableStreams(host, "t3.terminal/sessions#list")
                   ? {
                       resume: "fresh-snapshot",
                       onSuspended: () => sink.status("connecting", null),
