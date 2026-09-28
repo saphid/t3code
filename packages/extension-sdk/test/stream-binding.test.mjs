@@ -1,6 +1,11 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
-import { bindStreamApi, defineStreamApi } from "../dist/capabilities.js";
+import {
+  ApiVersionError,
+  bindStreamApi,
+  defineStreamApi,
+  resolveResumableStreams,
+} from "../dist/capabilities.js";
 
 const definition = {
   id: "independent.consumer/events",
@@ -119,5 +124,48 @@ NodeTest.test(
       apis: [{ id: legacy.id, methods: [{ name: "readSnapshot", invoke: async () => null }] }],
     });
     NodeAssert.equal(executable.apis[0].id, "t3.terminal/output");
+  },
+);
+
+NodeTest.test(
+  "resume subscribes through the host's resumable streams, version 1 or later",
+  async () => {
+    const context = {
+      resource: { namespace: "independent.consumer", id: "surface", environmentId: "env" },
+      client: "test",
+    };
+    const plain = [];
+    const resumed = [];
+    const iterable = (log) => (request) => {
+      log.push(request);
+      return { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true }) }) };
+    };
+    const host = {
+      subscribeApi: iterable(plain),
+      resumableStreams: { version: 1, subscribeApi: iterable(resumed) },
+    };
+    const api = defineStreamApi(definition);
+    const signal = new AbortController().signal;
+    bindStreamApi(api, host, context).subscribe("changes", {}, signal);
+    bindStreamApi(api, host, context).subscribe("changes", {}, signal, {
+      resume: "fresh-snapshot",
+    });
+    NodeAssert.equal(plain.length, 1);
+    NodeAssert.equal(resumed.length, 1);
+    NodeAssert.equal(resumed[0].name, "changes");
+
+    for (const member of [undefined, {}, { version: 0, subscribeApi() {} }, { version: 1 }])
+      NodeAssert.equal(resolveResumableStreams({ resumableStreams: member }), null);
+    NodeAssert.equal(resolveResumableStreams(host), host.resumableStreams);
+
+    // An older host is refused explicitly, never silently downgraded.
+    const older = bindStreamApi(api, { subscribeApi: iterable(plain) }, context).subscribe(
+      "changes",
+      {},
+      signal,
+      { resume: "fresh-snapshot" },
+    );
+    await NodeAssert.rejects(older[Symbol.asyncIterator]().next(), ApiVersionError);
+    NodeAssert.equal(plain.length, 1);
   },
 );

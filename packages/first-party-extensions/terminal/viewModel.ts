@@ -79,14 +79,14 @@ export const isResumableOutputClose = (
   (reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX);
 
 /**
- * When an ended output stream resubscribes. Ported from the native drawer's
- * durable attach subscription (client-runtime rpc/client.ts
- * subscribeDynamicMapped): one stream per pane that, once ended — a dead
- * process or a lost transport — waits for the next session and subscribes
- * again, never on a loop and never replacing a live stream. Native's "next
- * session" is a new transport session; here it is the session report's
- * non-running → running edge. An edge seen while the old stream still drains
- * is latched until that stream ends; a subscription consumes it.
+ * When an ended output stream resubscribes for a process that started
+ * (Start, restart, Retry): once on the session report's non-running → running
+ * edge, never on a loop and never replacing a live stream. An edge seen while
+ * the old stream still drains is latched until that stream ends; a
+ * subscription consumes it. Transport drops are not this class's concern on
+ * hosts with stream resumption (`ClientHost.resumableStreams`), which follow
+ * transport sessions like the native drawer's attach; on older hosts a drop
+ * ends the stream and this edge is the only way back.
  */
 export class OutputReattach {
   #running: boolean;

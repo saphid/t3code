@@ -1399,6 +1399,8 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
       boundarySequence: 1,
     },
   });
+  /** Script marker: the transport drops here (a host without resumption throws). */
+  const TRANSPORT_DROP = Symbol("transport drop");
   const outputExit = (terminalId, streamEpoch, exitCode) => ({
     streamId: `${streamEpoch}-running`,
     sequence: 2,
@@ -1416,6 +1418,7 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
     scripts,
     invoke = async () => ({}),
     textFallback = false,
+    resumable = false,
   }) {
     const invokes = [];
     let outputSubscriptions = 0;
@@ -1450,6 +1453,7 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
           if (request.id === "t3.terminal/output-events") {
             const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
             for (const next of script.frames) {
+              if (next === TRANSPORT_DROP) throw new Error("socket closed");
               if (typeof next === "function") await next();
               else yield next;
             }
@@ -1460,6 +1464,35 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
           );
         },
       }),
+      // Stands in for the host's session-following transport: a drop
+      // suspends the iterable and the next session plays the next script.
+      ...(resumable
+        ? {
+            resumableStreams: {
+              version: 1,
+              subscribeApi: (request, signal) => ({
+                async *[Symbol.asyncIterator]() {
+                  NodeAssert.equal(request.id, "t3.terminal/output-events");
+                  session: for (;;) {
+                    const script = scripts[outputSubscriptions++] ?? { frames: [], ends: false };
+                    for (const next of script.frames) {
+                      if (next === TRANSPORT_DROP) continue session;
+                      if (typeof next === "function") await next();
+                      else yield next;
+                    }
+                    if (script.ends) return;
+                    break;
+                  }
+                  await new Promise((resolve) =>
+                    signal.aborted
+                      ? resolve()
+                      : signal.addEventListener("abort", resolve, { once: true }),
+                  );
+                },
+              }),
+            },
+          }
+        : {}),
     };
     const session = {
       signal: new AbortController().signal,
@@ -1703,43 +1736,132 @@ NodeTest.describe("exit UX (Terminal 29)", () => {
     },
   ];
 
+  // A resuming host must not change process Start/exit/replacement handling:
+  // the same table runs against both host kinds.
   for (const [index, testCase] of outputCases.entries())
     for (const textFallback of [false, true])
+      for (const resumable of [false, true])
+        NodeTest.test(
+          `output reattach (${textFallback ? "fallback" : "VT"}${resumable ? ", resuming host" : ""}): ${testCase.name}`,
+          async () => {
+            const id = `reattach${index}${textFallback ? "f" : "v"}${resumable ? "r" : ""}`;
+            const state = testCase.setup?.() ?? {};
+            const scripts = testCase.scripts(id, state);
+            const view = await renderSession({
+              terminalId: id,
+              listed: { ...sessionMetadata(id), status: testCase.listed },
+              textFallback,
+              resumable,
+              ...(testCase.invoke ? { invoke: (request) => testCase.invoke(request, state) } : {}),
+              // The fallback first mounts a loading VT pane whose brief
+              // subscription sees the same initial snapshot.
+              scripts: textFallback
+                ? [{ frames: [scripts[0].frames[0]], ends: false }, ...scripts]
+                : scripts,
+            });
+            try {
+              await view.settle();
+              const before = view.outputSubscriptions();
+              await testCase.drive(view, id, state, before, textFallback);
+              if (testCase.output !== undefined)
+                NodeAssert.ok(
+                  paneOutput(view, textFallback).includes(testCase.output),
+                  `renders ${testCase.output}`,
+                );
+              NodeAssert.equal(view.closes().length, testCase.closes ?? 0, "close calls");
+              if (testCase.rows !== undefined) NodeAssert.equal(view.rows(), testCase.rows);
+              NodeAssert.equal(
+                view.outputSubscriptions() - before,
+                testCase.added,
+                "subscriptions added",
+              );
+            } finally {
+              for (const value of Object.values(state)) value?.open?.();
+              await view.unmount();
+            }
+          },
+        );
+
+  /**
+   * A transport drop while the session metadata stays running. Start first
+   * consumes the running edge, so no status edge fires afterwards and only
+   * the host's session-following resumption can recover output. The resumed
+   * stream restarts at sequence 1 with a snapshot of the same process
+   * (unchanged epoch); a chunk group torn by the drop is discarded.
+   */
+  const partialChunk = (terminalId, streamEpoch) => ({
+    streamId: `${streamEpoch}-running`,
+    sequence: 2,
+    value: {
+      terminalId,
+      streamEpoch,
+      kind: "output",
+      sequence: 2,
+      chunkIndex: 0,
+      chunkCount: 2,
+      data: "$ torn",
+    },
+  });
+  for (const torn of [false, true])
+    for (const textFallback of [false, true])
       NodeTest.test(
-        `output reattach (${textFallback ? "fallback" : "VT"}): ${testCase.name}`,
+        `host resumption (${textFallback ? "fallback" : "VT"}): transport drop while running recovers output${torn ? " past a torn chunk group" : ""}`,
         async () => {
-          const id = `reattach${index}${textFallback ? "f" : "v"}`;
-          const state = testCase.setup?.() ?? {};
-          const scripts = testCase.scripts(id, state);
+          const id = `resume${torn ? "t" : ""}${textFallback ? "f" : "v"}`;
+          const drop = gate();
+          const failed = { frames: [outputSnapshot(id, "epoch-1", "error", "")], ends: true };
           const view = await renderSession({
             terminalId: id,
-            listed: { ...sessionMetadata(id), status: testCase.listed },
+            listed: { ...sessionMetadata(id), status: "error" },
             textFallback,
-            ...(testCase.invoke ? { invoke: (request) => testCase.invoke(request, state) } : {}),
-            // The fallback first mounts a loading VT pane whose brief
-            // subscription sees the same initial snapshot.
-            scripts: textFallback
-              ? [{ frames: [scripts[0].frames[0]], ends: false }, ...scripts]
-              : scripts,
+            resumable: true,
+            invoke: startSucceeds,
+            scripts: [
+              // The fallback first mounts a loading VT pane.
+              ...(textFallback ? [failed] : []),
+              failed,
+              {
+                frames: [
+                  outputSnapshot(id, "epoch-2", "running", "$ before drop"),
+                  ...(torn ? [partialChunk(id, "epoch-2")] : []),
+                  drop.wait,
+                  TRANSPORT_DROP,
+                ],
+                ends: true,
+              },
+              {
+                frames: [outputSnapshot(id, "epoch-2", "running", "$ before drop\r\n$ recovered")],
+                ends: false,
+              },
+            ],
           });
           try {
-            await view.settle();
+            await clickStart(view, id);
             const before = view.outputSubscriptions();
-            await testCase.drive(view, id, state, before, textFallback);
-            if (testCase.output !== undefined)
-              NodeAssert.ok(
-                paneOutput(view, textFallback).includes(testCase.output),
-                `renders ${testCase.output}`,
-              );
-            NodeAssert.equal(view.closes().length, testCase.closes ?? 0, "close calls");
-            if (testCase.rows !== undefined) NodeAssert.equal(view.rows(), testCase.rows);
-            NodeAssert.equal(
-              view.outputSubscriptions() - before,
-              testCase.added,
-              "subscriptions added",
+            NodeAssert.ok(paneOutput(view, textFallback).includes("$ before drop"), "live first");
+            drop.open();
+            await view.settle();
+            await view.settle();
+            NodeAssert.equal(view.outputSubscriptions() - before, 1, "one resumed subscription");
+            NodeAssert.ok(
+              paneOutput(view, textFallback).includes("$ recovered"),
+              "output recovers without a metadata edge",
             );
+            if (textFallback) NodeAssert.ok(!paneOutput(view, true).includes("$ torn"));
+            const statuses = view.renderer.root
+              .findAll(
+                (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+              )
+              .map((node) => node.children.join(""));
+            NodeAssert.ok(
+              statuses.every(
+                (status) => !/closed|discontinuous|incomplete|unavailable/i.test(status),
+              ),
+              `no error status: ${JSON.stringify(statuses)}`,
+            );
+            NodeAssert.equal(view.closes().length, 0, "close calls");
           } finally {
-            for (const value of Object.values(state)) value?.open?.();
+            drop.open();
             await view.unmount();
           }
         },

@@ -13,7 +13,11 @@ import {
   type TerminalSessionsListEvent,
 } from "@t3tools/extension-sdk/catalogue";
 import { defineExtension, requireApi } from "@t3tools/extension-sdk/authoring";
-import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
+import {
+  bindApi,
+  bindStreamApi,
+  resolveResumableStreams,
+} from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
@@ -735,11 +739,7 @@ function TerminalPane(props: {
         void pumpTerminalOutput({
           subscribe: (subscribeSignal) => {
             reattach.subscribed();
-            const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-              "subscribe",
-              { terminalId },
-              subscribeSignal,
-            );
+            const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
             return (async function* () {
               for await (const frame of source) {
                 const value = frame.value as TerminalOutputEventsValue;
@@ -830,8 +830,8 @@ function TerminalPane(props: {
     };
   }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
 
-  // A session that starts running again (Start, restart, reconnect) has output
-  // an ended stream will never carry: reattach (OutputReattach).
+  // A session that starts running again (Start, restart) has output an ended
+  // stream will never carry: reattach (OutputReattach).
   useEffect(() => {
     runningChangedRef.current(running);
   }, [running]);
@@ -1062,6 +1062,27 @@ function TerminalPane(props: {
 /* ------------------------------------------------------------------ */
 
 /**
+ * A pane's output stream. A host with stream resumption follows its transport
+ * sessions like the native drawer's attach: a dropped connection suspends the
+ * stream and the next session resumes it with a fresh snapshot at sequence 1.
+ * On older hosts a transport drop ends the stream and output returns on the
+ * next running edge (OutputReattach).
+ */
+function subscribeOutput(
+  host: ClientHost,
+  context: ViewSession["context"],
+  terminalId: string,
+  signal: AbortSignal,
+) {
+  return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+    "subscribe",
+    { terminalId },
+    signal,
+    resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : undefined,
+  );
+}
+
+/**
  * Live output via the public output-events stream; chunk groups reassemble in
  * the view model. Exits are decided as in the VT pane: an exit resubscribes
  * and the fresh snapshot goes to the panel. An ended stream resubscribes when
@@ -1111,13 +1132,15 @@ function useTerminalOutput(
         let resurrect = false;
         try {
           reattach.subscribed();
-          const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-            "subscribe",
-            { terminalId },
-            signal,
-          );
+          const stream = subscribeOutput(host, session.context, terminalId, signal);
           for await (const frame of stream) {
             if (signal.aborted) return;
+            // A host-resumed subscription restarts at sequence 1 with a fresh
+            // snapshot: rebase on it and drop any chunk group the drop tore.
+            if (frame.sequence === 1 && stateRef.current.sequence > 0) {
+              pendingRef.current = null;
+              stateRef.current = EMPTY_OUTPUT_BUFFER;
+            }
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
             if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);

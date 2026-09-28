@@ -39,7 +39,12 @@ runs producer cleanup. This test is in-memory RPC, not network or installed-pack
 
 Client iterator return aborts first, including a pending next, before awaiting cleanup.
 A plugin stream uses one authenticated connection lifetime; it is not silently resubscribed.
-Reconnection requires rediscovery and a provider-understood cursor or a fresh snapshot.
+Reconnection requires rediscovery and a provider-understood cursor or a fresh snapshot. The one
+exception is opt-in: `ClientHost.resumableStreams` (version 1) resumes streams whose every
+subscription opens with a full snapshot (`RESUMABLE_API_STREAMS`), following transport sessions
+through the same client-runtime machinery as native durable subscriptions. Without an explicit
+snapshot-first contract, a host restart would replay history or invent continuity, so the host
+refuses every other stream.
 
 ## Installed proof example
 

@@ -7,6 +7,7 @@ import {
   createExtensionCatalogueAtoms,
   environmentExtensionsHttp,
   environmentExtensionApiStream,
+  environmentResumableExtensionApiStream,
 } from "@t3tools/client-runtime/state/extensions";
 import {
   ExtensionInvokeInput,
@@ -113,18 +114,16 @@ function run<A, E>(
 }
 /** A pull-driven iterator retains only the RPC's bounded delivery window. */
 async function* authenticatedApiFrames(
-  environmentId: EnvironmentId,
-  payload: ExtensionApiSubscribeInput,
+  stream:
+    | ReturnType<typeof environmentExtensionApiStream>
+    | ReturnType<typeof environmentResumableExtensionApiStream>,
   signal: AbortSignal,
 ) {
   const context = await Effect.runPromise(
     AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
     { signal },
   );
-  const iterable = Stream.toAsyncIterableWith(
-    environmentExtensionApiStream(environmentId, payload),
-    context,
-  );
+  const iterable = Stream.toAsyncIterableWith(stream, context);
   const iterator = iterable[Symbol.asyncIterator]();
   const cancel = () => {
     void iterator.return?.().catch(() => {});
@@ -418,16 +417,32 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       subscribeApi: (installationId, expectedContentHash, request, signal) => {
         const clientConnectionId = currentClientConnectionId(environmentId);
         return authenticatedApiFrames(
-          environmentId,
-          decodeApiSubscribe({
-            installationId,
-            expectedContentHash,
-            request:
-              clientConnectionId === undefined ? request : { ...request, clientConnectionId },
-          }),
+          environmentExtensionApiStream(
+            environmentId,
+            decodeApiSubscribe({
+              installationId,
+              expectedContentHash,
+              request:
+                clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+            }),
+          ),
           signal,
         );
       },
+      // Each transport session re-reads the socket-bound hint for its payload.
+      subscribeResumableApi: (installationId, expectedContentHash, request, signal) =>
+        authenticatedApiFrames(
+          environmentResumableExtensionApiStream(environmentId, () => {
+            const clientConnectionId = currentClientConnectionId(environmentId);
+            return decodeApiSubscribe({
+              installationId,
+              expectedContentHash,
+              request:
+                clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+            });
+          }),
+          signal,
+        ),
       discoverApis: async (installationId, expectedContentHash, context, signal) => {
         const payload = decodeApiDiscover({
           installationId,

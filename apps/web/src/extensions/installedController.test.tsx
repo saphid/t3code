@@ -2,7 +2,7 @@ import * as React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, it, expect, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
-import type { ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
+import { resolveResumableStreams, type ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
 import { resolveCodeView, type ClientHost } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
@@ -48,7 +48,12 @@ const context = {
 };
 function harness(
   environmentId = "env-a",
-  extra: Pick<Parameters<typeof createInstalledExtensionController>[0], "codeView"> = {},
+  extra: Partial<
+    Pick<
+      Parameters<typeof createInstalledExtensionController>[0],
+      "codeView" | "subscribeResumableApi"
+    >
+  > = {},
 ) {
   let catalog: readonly ExtensionInstallation[] = [installation];
   let host!: ClientHost;
@@ -778,5 +783,62 @@ it("rebinds open and newly activated tabs to an updated pack without a reload", 
       activatedLater?.unmount();
       controller.dispose();
     });
+  }
+});
+
+it("offers host stream resumption only where the host has it, and only for resumable streams", async () => {
+  const bare = harness();
+  await bare.controller.refresh();
+  expect(resolveResumableStreams(bare.getHost())).toBeNull();
+  bare.controller.dispose();
+
+  const subscribeResumableApi = vi.fn(
+    (_id: string, _hash: string, _request: unknown, _signal: AbortSignal) => ({
+      async *[Symbol.asyncIterator]() {
+        const frame: ApiStreamFrame = {
+          type: "snapshot",
+          streamId: "s",
+          sequence: 1,
+          value: { kind: "snapshot" },
+        };
+        yield frame;
+      },
+    }),
+  );
+  const h = harness("env-a", { subscribeResumableApi });
+  h.options.list.mockImplementation(async () => ({
+    installations: [installation],
+    supportsApiStreams: true,
+    supportedPackageFormats: [1, 2, 3],
+  }));
+  try {
+    await h.controller.refresh();
+    const resumable = resolveResumableStreams(h.getHost());
+    expect(resumable?.version).toBe(1);
+    const request = {
+      id: "t3.terminal/output-events",
+      versionRange: "^1.0.0",
+      name: "subscribe",
+      input: { terminalId: "term-1" },
+      context,
+    };
+    const frames = resumable!.subscribeApi(request, new AbortController().signal);
+    const first = await frames[Symbol.asyncIterator]().next();
+    expect(first.value?.sequence).toBe(1);
+    expect(subscribeResumableApi).toHaveBeenCalledWith(
+      installation.id,
+      installation.contentHash,
+      request,
+      expect.any(AbortSignal),
+    );
+    expect(h.options.subscribeApi).not.toHaveBeenCalled();
+    expect(() =>
+      resumable!.subscribeApi(
+        { ...request, id: "test.installed/events", name: "changes" },
+        new AbortController().signal,
+      ),
+    ).toThrow("not resumable");
+  } finally {
+    h.controller.dispose();
   }
 });

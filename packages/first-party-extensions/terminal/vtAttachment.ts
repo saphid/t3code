@@ -869,9 +869,14 @@ export async function pumpTerminalOutput(options: {
     attachment.beginStream();
     let resurrect = false;
     let overflowClose = false;
+    let started = false;
     try {
       for await (const frame of options.subscribe(signal)) {
         if (signal.aborted) return;
+        // A host-resumed subscription restarts at sequence 1 with a fresh
+        // snapshot; it re-proves itself exactly like a new subscription.
+        if (frame.sequence === 1 && started) attachment.beginStream();
+        started = true;
         streak = noteOutputFrameForStreak(frame.value, streak, now());
         attachment.applyFrame(frame, frame.value);
         // An exit belongs to one process. Only a fresh snapshot says whether

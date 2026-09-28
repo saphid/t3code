@@ -194,6 +194,13 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+  function resolveResumableStreams(host) {
+    const member = host.resumableStreams;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, subscribeApi } = member;
+    return typeof version === "number" && version >= 1 && typeof subscribeApi === "function" ? member : null;
+  }
   var ApiVersionError = class extends Error {
     name = "ApiVersionError";
     code = "api-version-not-negotiated";
@@ -262,7 +269,18 @@ var __t3Client = (() => {
   function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
       subscribe(name, input, signal, options) {
-        return client.subscribeApi({
+        let subscribeApi = client.subscribeApi.bind(client);
+        if (options?.resume === "fresh-snapshot") {
+          const resumable = resolveResumableStreams(client);
+          if (!resumable) {
+            const error = new ApiVersionError(`${api.definition.id}#${name} asked for host stream resumption, which this host does not offer`);
+            return {
+              [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) })
+            };
+          }
+          subscribeApi = resumable.subscribeApi.bind(resumable);
+        }
+        return subscribeApi({
           id: api.definition.id,
           versionRange,
           name,
@@ -14361,9 +14379,12 @@ var __t3Client = (() => {
       attachment.beginStream();
       let resurrect = false;
       let overflowClose = false;
+      let started = false;
       try {
         for await (const frame of options.subscribe(signal)) {
           if (signal.aborted) return;
+          if (frame.sequence === 1 && started) attachment.beginStream();
+          started = true;
           streak = noteOutputFrameForStreak(frame.value, streak, now());
           attachment.applyFrame(frame, frame.value);
           if (frame.value.kind === "exit") {
@@ -14788,11 +14809,7 @@ var __t3Client = (() => {
           void pumpTerminalOutput({
             subscribe: (subscribeSignal) => {
               reattach.subscribed();
-              const source = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-                "subscribe",
-                { terminalId },
-                subscribeSignal
-              );
+              const source = subscribeOutput(host, session.context, terminalId, subscribeSignal);
               return (async function* () {
                 for await (const frame of source) {
                   const value = frame.value;
@@ -15054,6 +15071,14 @@ var __t3Client = (() => {
       }
     );
   }
+  function subscribeOutput(host, context, terminalId, signal) {
+    return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+      "subscribe",
+      { terminalId },
+      signal,
+      resolveResumableStreams(host) ? { resume: "fresh-snapshot" } : void 0
+    );
+  }
   function useTerminalOutput(host, session, panel, terminalId, visible, running) {
     const [state2, setState] = (0, import_react2.useState)(null);
     const pendingRef = (0, import_react2.useRef)(null);
@@ -15091,13 +15116,13 @@ var __t3Client = (() => {
           let resurrect = false;
           try {
             reattach.subscribed();
-            const stream = bindStreamApi(terminalOutputEventsApi, host, session.context).subscribe(
-              "subscribe",
-              { terminalId },
-              signal
-            );
+            const stream = subscribeOutput(host, session.context, terminalId, signal);
             for await (const frame of stream) {
               if (signal.aborted) return;
+              if (frame.sequence === 1 && stateRef.current.sequence > 0) {
+                pendingRef.current = null;
+                stateRef.current = EMPTY_OUTPUT_BUFFER;
+              }
               const value = frame.value;
               streak = noteOutputFrameForStreak(value, streak, Date.now());
               if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);

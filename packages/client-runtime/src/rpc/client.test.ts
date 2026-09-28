@@ -37,6 +37,7 @@ import {
   request,
   runStream,
   subscribe,
+  subscribeDynamicUntilComplete,
   subscribeDynamicWithSession,
 } from "./client.ts";
 
@@ -493,6 +494,171 @@ describe("environment RPC", () => {
       expect(yield* Ref.get(retryCount)).toBe(0);
     }),
   );
+
+  describe("subscribeDynamicUntilComplete", () => {
+    const transportFailure = () =>
+      new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "socket closed",
+          cause: new Error("socket closed"),
+        }),
+      });
+    const extensionClient = (
+      open: (options: unknown) => Stream.Stream<string, unknown>,
+    ): WsRpcProtocolClient =>
+      ({
+        [WS_METHODS.subscribeExtensionApi]: (_input: unknown, options: unknown) => open(options),
+      }) as unknown as WsRpcProtocolClient;
+    const run = Effect.fn("TestEnvironmentRpc.runUntilComplete")(function* (
+      supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+      inputs: Ref.Ref<number>,
+      received: Ref.Ref<ReadonlyArray<string>>,
+    ) {
+      return yield* subscribeDynamicUntilComplete(
+        WS_METHODS.subscribeExtensionApi,
+        () => Ref.updateAndGet(inputs, (count) => count + 1) as never,
+        { streamBufferSize: 1 },
+      ).pipe(
+        Stream.runForEach((value) =>
+          Ref.update(received, (values) => [...values, value as unknown as string]),
+        ),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+    });
+    const awaitCount = Effect.fn("TestEnvironmentRpc.awaitCount")(function* (
+      ref: Ref.Ref<ReadonlyArray<string>>,
+      count: number,
+    ) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(ref)).length >= count) return;
+        yield* Effect.yieldNow;
+      }
+      return yield* Effect.die(new Error(`Expected ${count} values.`));
+    });
+
+    it.effect("resubscribes on the next session after a transport failure", () =>
+      Effect.gen(function* () {
+        const bufferSizes: unknown[] = [];
+        const { activeSession, retryCount, supervisor } = yield* makeHarness();
+        const inputs = yield* Ref.make(0);
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* run(supervisor, inputs, received);
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(
+            session(
+              extensionClient((options) => {
+                bufferSizes.push(options);
+                return Stream.concat(
+                  Stream.succeed("before drop"),
+                  Stream.fail(transportFailure()),
+                );
+              }),
+            ),
+          ),
+        );
+        yield* awaitCount(received, 1);
+        yield* SubscriptionRef.set(activeSession, Option.none());
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(
+            session(
+              extensionClient((options) => {
+                bufferSizes.push(options);
+                return Stream.concat(Stream.succeed("recovered"), Stream.never);
+              }),
+            ),
+          ),
+        );
+        yield* awaitCount(received, 2);
+
+        expect(yield* Ref.get(received)).toEqual(["before drop", "recovered"]);
+        // One payload per session, so session-bound hints are rebuilt.
+        expect(yield* Ref.get(inputs)).toBe(2);
+        expect(bufferSizes).toEqual([{ streamBufferSize: 1 }, { streamBufferSize: 1 }]);
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* Fiber.interrupt(fiber);
+        expect(yield* Ref.get(retryCount)).toBe(0);
+      }),
+    );
+
+    it.effect("switches to exactly one fresh subscription when the session is replaced", () =>
+      Effect.gen(function* () {
+        const events: string[] = [];
+        const { activeSession, supervisor } = yield* makeHarness();
+        const inputs = yield* Ref.make(0);
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* run(supervisor, inputs, received);
+        const live = (name: string) =>
+          session(
+            extensionClient(() => {
+              events.push(`open ${name}`);
+              return Stream.concat(Stream.succeed(name), Stream.never).pipe(
+                Stream.ensuring(Effect.sync(() => events.push(`close ${name}`))),
+              );
+            }),
+          );
+        yield* SubscriptionRef.set(activeSession, Option.some(live("first")));
+        yield* awaitCount(received, 1);
+        yield* SubscriptionRef.set(activeSession, Option.some(live("second")));
+        yield* awaitCount(received, 2);
+        yield* Fiber.interrupt(fiber);
+
+        expect(yield* Ref.get(received)).toEqual(["first", "second"]);
+        expect(events.slice(0, 3)).toEqual(["open first", "close first", "open second"]);
+      }),
+    );
+
+    it.effect("ends when the source completes instead of waiting for another session", () =>
+      Effect.gen(function* () {
+        let opened = 0;
+        const { activeSession, supervisor } = yield* makeHarness();
+        const inputs = yield* Ref.make(0);
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* run(supervisor, inputs, received);
+        const finite = session(
+          extensionClient(() => {
+            opened += 1;
+            return Stream.succeed("last");
+          }),
+        );
+        yield* SubscriptionRef.set(activeSession, Option.some(finite));
+        const exit = yield* Fiber.await(fiber);
+        yield* SubscriptionRef.set(activeSession, Option.some(finite));
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(yield* Ref.get(received)).toEqual(["last"]);
+        expect(opened).toBe(1);
+      }),
+    );
+
+    it.effect("fails on a domain error without resubscribing", () =>
+      Effect.gen(function* () {
+        const domainError = new Error("stream refused");
+        let opened = 0;
+        const { activeSession, supervisor } = yield* makeHarness();
+        const inputs = yield* Ref.make(0);
+        const received = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fiber = yield* run(supervisor, inputs, received);
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(
+            session(
+              extensionClient(() => {
+                opened += 1;
+                return Stream.fail(domainError);
+              }),
+            ),
+          ),
+        );
+        const exit = yield* Fiber.await(fiber);
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(domainError);
+        expect(opened).toBe(1);
+      }),
+    );
+  });
 
   it.effect("surfaces domain subscription failures without reconnecting", () =>
     Effect.gen(function* () {

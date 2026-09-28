@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "hashes": {
     "t3-extension.json": "39406a152ffc6ea83a96ee1b7804411a5a3bbb61ee07df8f64a7d8140a059203",
-    "client.mjs": "d1f1600f98f6b0789ed48d5ae3c45abba3a80f4c6b52b1befaf2dcc2b6d4cc60",
+    "client.mjs": "7ab215f1f55eeaa6492b2c17b1b582951623019ec4199046e7984bfe6a5c1744",
     "server.mjs": "73b956d9a286f6256000769cec5fb94e59606ffd938fbb29c733f35bd8665051"
   },
   "generator": "t3-extension",

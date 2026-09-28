@@ -194,6 +194,13 @@ var __t3Client = (() => {
   }
 
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
+  function resolveResumableStreams(host) {
+    const member = host.resumableStreams;
+    if (!member || typeof member !== "object")
+      return null;
+    const { version, subscribeApi } = member;
+    return typeof version === "number" && version >= 1 && typeof subscribeApi === "function" ? member : null;
+  }
   var ApiVersionError = class extends Error {
     name = "ApiVersionError";
     code = "api-version-not-negotiated";
@@ -262,7 +269,18 @@ var __t3Client = (() => {
   function bindStreamApi(api, client, context, versionRange = defaultVersionRange(api)) {
     return {
       subscribe(name, input, signal, options) {
-        return client.subscribeApi({
+        let subscribeApi = client.subscribeApi.bind(client);
+        if (options?.resume === "fresh-snapshot") {
+          const resumable = resolveResumableStreams(client);
+          if (!resumable) {
+            const error = new ApiVersionError(`${api.definition.id}#${name} asked for host stream resumption, which this host does not offer`);
+            return {
+              [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) })
+            };
+          }
+          subscribeApi = resumable.subscribeApi.bind(resumable);
+        }
+        return subscribeApi({
           id: api.definition.id,
           versionRange,
           name,
