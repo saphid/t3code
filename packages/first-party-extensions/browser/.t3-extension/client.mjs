@@ -4546,7 +4546,8 @@ var __t3Client = (() => {
       behindBy: { type: "integer", minimum: 0 },
       autoMergeEnabled: { type: "boolean" },
       autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
-      workflowApprovalsRequired: { type: "integer", minimum: 0 }
+      workflowApprovalsRequired: { type: "integer", minimum: 0 },
+      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] }
     }
   };
   var prsCommentSchema = {

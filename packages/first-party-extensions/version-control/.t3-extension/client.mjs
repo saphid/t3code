@@ -4529,7 +4529,8 @@ var __t3Client = (() => {
       behindBy: { type: "integer", minimum: 0 },
       autoMergeEnabled: { type: "boolean" },
       autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
-      workflowApprovalsRequired: { type: "integer", minimum: 0 }
+      workflowApprovalsRequired: { type: "integer", minimum: 0 },
+      preferredMergeMethod: { enum: ["merge", "squash", "rebase"] }
     }
   };
   var prsCommentSchema = {
@@ -10124,6 +10125,13 @@ ${ref.number}`;
   function prsAllowedMergeMethods(detail) {
     return detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
   }
+  function prsResolveMergeMethod(allowed, current, projectDefault, lastSelected) {
+    for (const method of [current, projectDefault, lastSelected]) {
+      const match = allowed.find((candidate) => candidate === method);
+      if (match !== void 0) return match;
+    }
+    return allowed[0] ?? "merge";
+  }
   function prsCanMergeStack(detail, write) {
     return detail.capabilities.stacks === true && detail.capabilities.stackActions === true && detail.capabilities.actions.includes("merge") && detail.viewerPermissions.actions.includes("merge") && prsAllowedMergeMethods(detail).length > 0 && write.operations["prs.runAction"] && write.actions.includes("merge");
   }
@@ -11501,6 +11509,7 @@ ${writeKey}`;
     const writeOps = write.kind === "ready" ? write.operations : null;
     const [drafts, setDrafts] = (0, import_react.useState)({});
     const [writeState, setWriteState] = (0, import_react.useState)(null);
+    const [lastMergeMethod, setLastMergeMethod] = (0, import_react.useState)(null);
     const [openError, setOpenError] = (0, import_react.useState)(null);
     const [stackConfirm, setStackConfirm] = (0, import_react.useState)(null);
     const stackMergeOpener = (0, import_react.useRef)(null);
@@ -11739,10 +11748,17 @@ ${thread.id}`;
     });
     const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
     const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
-    const stackMergeMethod = allowedMergeMethods.includes(
-      draft("method:merge")
-    ) ? draft("method:merge") : allowedMergeMethods[0] ?? "merge";
-    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod) : null;
+    const mergeMethod = prsResolveMergeMethod(
+      allowedMergeMethods,
+      draft("method:merge") || null,
+      detail?.preferredMergeMethod,
+      lastMergeMethod
+    );
+    const pickMergeMethod = (value) => {
+      setDraft("method:merge", value);
+      setLastMergeMethod(value);
+    };
+    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, mergeMethod) : null;
     const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
     const openStackConfirm = (action) => {
       if (selectedKey === null) return;
@@ -12094,8 +12110,8 @@ ${thread.id}`;
                           offer,
                           disabled: writeState?.pending === true,
                           pendingAction: writeState?.pending === true && writeState.key.startsWith("action:") ? writeState.key.slice("action:".length) : null,
-                          method: draft(`method:${offer.action}`) || (offer.methods ?? offer.updateMethods ?? [])[0] || "",
-                          onMethodChange: (value) => setDraft(`method:${offer.action}`, value),
+                          method: offer.methods !== void 0 ? mergeMethod : draft(`method:${offer.action}`) || offer.updateMethods?.[0] || "",
+                          onMethodChange: (value) => offer.methods !== void 0 ? pickMergeMethod(value) : setDraft(`method:${offer.action}`, value),
                           onRun: runPrAction
                         },
                         offer.action
@@ -12165,6 +12181,17 @@ ${thread.id}`;
                                 children: stackMerge.label
                               }
                             )
+                          }
+                        ),
+                        stackMerge !== null && stackMerge.visible && allowedMergeMethods.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "select",
+                          {
+                            "aria-label": "Merge stack method",
+                            value: mergeMethod,
+                            disabled: writeState?.pending === true,
+                            onChange: (event) => pickMergeMethod(event.target.value),
+                            style: { ...control, fontSize: 12, padding: "2px 4px" },
+                            children: allowedMergeMethods.map((method) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: method, children: method }, method))
                           }
                         ),
                         stackRebase !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(

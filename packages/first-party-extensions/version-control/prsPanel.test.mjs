@@ -316,3 +316,52 @@ NodeTest.describe("rebase stack", () => {
     view.unmount();
   });
 });
+
+NodeTest.describe("stack merge uses native's merge-method preference", () => {
+  const preferSquash = () => {
+    const detail = detailOf();
+    return defaultHandlers({
+      "t3.prs/read#detail": () => ({
+        ...detail,
+        capabilities: { ...detail.capabilities, mergeMethods: ["merge", "squash"] },
+        preferredMergeMethod: "squash",
+      }),
+    });
+  };
+  const confirmStackMerge = async (view) => {
+    dispatch(mergeStackButton(view), "onClick");
+    await flush();
+    const dialog = view.renderer.root.find(
+      (node) => typeof node.type === "string" && node.props.role === "dialog",
+    );
+    const description = nodeName(dialog.find((node) => node.type === "p"));
+    dispatch(
+      dialog
+        .findAll((node) => node.type === "button")
+        .find((node) => nodeName(node) === "Merge stack"),
+      "onClick",
+    );
+    await flush();
+    return description;
+  };
+
+  NodeTest.it("defaults to the project's method even when merge is listed first", async () => {
+    const view = mountPanel(preferSquash());
+    await flush();
+    const description = await confirmStackMerge(view);
+    NodeAssert.match(description, /using squash\./);
+    NodeAssert.equal(view.writes()[0]?.input.mergeMethod, "squash");
+    view.unmount();
+  });
+
+  NodeTest.it("offers a method chooser beside Merge stack", async () => {
+    const view = mountPanel(preferSquash());
+    await flush();
+    const chooser = view.find("Merge stack method");
+    NodeAssert.equal(chooser.props.value, "squash");
+    dispatch(chooser, "onChange", { target: { value: "merge" } });
+    await confirmStackMerge(view);
+    NodeAssert.equal(view.writes()[0]?.input.mergeMethod, "merge");
+    view.unmount();
+  });
+});

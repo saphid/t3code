@@ -2,6 +2,7 @@
 import {
   AuthOrchestrationReadScope,
   ExtensionOperationError,
+  ProjectId,
   PullRequestOperationError,
   PullRequestUnavailableError,
   type PullRequestActivity as NativePullRequestActivity,
@@ -42,7 +43,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -338,6 +341,10 @@ interface PrsApiDependencies extends ScopeDependencies {
   readonly prRegistry: Pick<PullRequestProviderRegistry["Service"], "get">;
   readonly projectionSnapshotQuery: Pick<ProjectionSnapshotQuery["Service"], "getProjectShellById">;
   readonly sql: SqlClient.SqlClient;
+  /** The project's merge-method setting, which native offers first; null when unset. */
+  readonly projectMergeMethod?: (
+    projectId: string,
+  ) => Effect.Effect<"merge" | "squash" | "rebase" | null>;
 }
 
 type Scope = Effect.Success<ReturnType<ReturnType<typeof makeExtensionScopeResolver>>>;
@@ -801,8 +808,16 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         decode: refInput,
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
-            Effect.flatMap((ref) => dependencies.pullRequests.detail(ref)),
-            Effect.map(boundDetail),
+            Effect.flatMap((ref) =>
+              Effect.all([
+                dependencies.pullRequests.detail(ref),
+                dependencies.projectMergeMethod?.(ref.projectId) ?? Effect.succeed(null),
+              ]),
+            ),
+            Effect.map(([detail, preferredMergeMethod]) => {
+              const bounded = boundDetail(detail);
+              return preferredMergeMethod === null ? bounded : { ...bounded, preferredMergeMethod };
+            }),
           ),
       }),
       activity: runMethod({
@@ -1202,7 +1217,17 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
 
 export const makePrsApiProvider = Effect.fn("PrsApi.make")(function* () {
   const environment = yield* ServerEnvironment;
+  const serverSettings = yield* ServerSettingsService;
   return createPrsApiProvider({
+    projectMergeMethod: (projectId) =>
+      serverSettings.getSettings.pipe(
+        Effect.map(
+          (settings) =>
+            resolveProjectSettings(settings, ProjectId.make(projectId)).settings
+              .pullRequestMergeMethod ?? null,
+        ),
+        Effect.orElseSucceed(() => null),
+      ),
     environmentId: yield* environment.getEnvironmentId,
     projects: yield* ProjectionProjectRepository,
     threads: yield* ProjectionThreadRepository,

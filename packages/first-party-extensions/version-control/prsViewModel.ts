@@ -1378,6 +1378,24 @@ export function prsAllowedMergeMethods(detail: {
 }
 
 /**
+ * Native's `resolvePullRequestMergeMethod`: the method picked for this change
+ * request, else the project's setting, else the last method picked, each only
+ * if the repository allows it; else the first allowed.
+ */
+export function prsResolveMergeMethod(
+  allowed: readonly PrsWriteMergeMethod[],
+  current: string | null,
+  projectDefault: PrsWriteMergeMethod | undefined,
+  lastSelected: string | null,
+): PrsWriteMergeMethod {
+  for (const method of [current, projectDefault, lastSelected]) {
+    const match = allowed.find((candidate) => candidate === method);
+    if (match !== undefined) return match;
+  }
+  return allowed[0] ?? "merge";
+}
+
+/**
  * Native's `canMerge` for the stack menu: the host does stacks and stack
  * actions, both the host and this viewer may merge, the repository allows a
  * method, and the write probe declares the action.

@@ -621,6 +621,31 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     }),
   );
 
+  it.effect("detail carries the scoped project's merge-method setting", () =>
+    Effect.gen(function* () {
+      const asked: string[] = [];
+      const provider = createPrsApiProvider({
+        ...makeDeps({ detail: () => Effect.succeed(detail) }),
+        projectMergeMethod: (projectId) => {
+          asked.push(projectId);
+          return Effect.succeed("squash");
+        },
+      });
+      const got = (yield* invoke(provider, "detail", REF, makeContext())) as {
+        preferredMergeMethod?: string;
+      };
+      expect(got.preferredMergeMethod).toBe("squash");
+      expect(asked).toEqual([PROJECT_ID]);
+
+      const unset = createPrsApiProvider({
+        ...makeDeps({ detail: () => Effect.succeed(detail) }),
+        projectMergeMethod: () => Effect.succeed(null),
+      });
+      const plain = (yield* invoke(unset, "detail", REF, makeContext())) as object;
+      expect("preferredMergeMethod" in plain).toBe(false);
+    }),
+  );
+
   it.effect("activity truncates a long conversation with honest flags", () =>
     Effect.gen(function* () {
       const many = {

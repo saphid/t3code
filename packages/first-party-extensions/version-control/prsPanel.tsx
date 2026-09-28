@@ -56,6 +56,7 @@ import {
   prsAllowedMergeMethods,
   prsAuthoredByViewer,
   prsCanMergeStack,
+  prsResolveMergeMethod,
   prsCanRebaseStack,
   prsStackRebasePlan,
   prsStackRebaseReceipt,
@@ -1873,6 +1874,8 @@ export function PullRequestsPanel(props: {
    */
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [writeState, setWriteState] = useState<PrsWriteState | null>(null);
+  // Native's last-selected merge method, for change requests with no pick of their own.
+  const [lastMergeMethod, setLastMergeMethod] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   // The handoff in flight (native's `handoff` key: `checkout:<mode>`), and
   // the last one's receipt, bound to the PR it answered.
@@ -2206,11 +2209,17 @@ export function PullRequestsPanel(props: {
   });
   const repositoryUrl = detail === null ? null : prsRepositoryUrl(detail.url);
   const allowedMergeMethods = detail === null ? [] : prsAllowedMergeMethods(detail);
-  const stackMergeMethod = allowedMergeMethods.includes(
-    draft("method:merge") as (typeof allowedMergeMethods)[number],
-  )
-    ? draft("method:merge")
-    : (allowedMergeMethods[0] ?? "merge");
+  // One method for merge, auto-merge and the stack merge, resolved as native does.
+  const mergeMethod = prsResolveMergeMethod(
+    allowedMergeMethods,
+    draft("method:merge") || null,
+    detail?.preferredMergeMethod,
+    lastMergeMethod,
+  );
+  const pickMergeMethod = (value: string) => {
+    setDraft("method:merge", value);
+    setLastMergeMethod(value);
+  };
   // Native requires a fresh stack read: a stack that failed to re-read, or whose
   // re-read is still in flight, offers no merge.
   const stackMerge =
@@ -2221,7 +2230,7 @@ export function PullRequestsPanel(props: {
     sections.stackError === null &&
     write.kind === "ready" &&
     prsCanMergeStack(detail, write)
-      ? prsStackMergePlan(sections.stack, selected.number, stackMergeMethod)
+      ? prsStackMergePlan(sections.stack, selected.number, mergeMethod)
       : null;
   // Native's Rebase stack: the same fresh-stack rule, gated on the viewer's own permission.
   const stackRebase =
@@ -2695,11 +2704,15 @@ export function PullRequestsPanel(props: {
                               : null
                           }
                           method={
-                            draft(`method:${offer.action}`) ||
-                            (offer.methods ?? offer.updateMethods ?? [])[0] ||
-                            ""
+                            offer.methods !== undefined
+                              ? mergeMethod
+                              : draft(`method:${offer.action}`) || offer.updateMethods?.[0] || ""
                           }
-                          onMethodChange={(value) => setDraft(`method:${offer.action}`, value)}
+                          onMethodChange={(value) =>
+                            offer.methods !== undefined
+                              ? pickMergeMethod(value)
+                              : setDraft(`method:${offer.action}`, value)
+                          }
                           onRun={runPrAction}
                         />
                       ))}
@@ -2769,6 +2782,23 @@ export function PullRequestsPanel(props: {
                             </button>
                           </Tooltip>
                         )}
+                        {stackMerge !== null &&
+                          stackMerge.visible &&
+                          allowedMergeMethods.length > 1 && (
+                            <select
+                              aria-label="Merge stack method"
+                              value={mergeMethod}
+                              disabled={writeState?.pending === true}
+                              onChange={(event) => pickMergeMethod(event.target.value)}
+                              style={{ ...control, fontSize: 12, padding: "2px 4px" }}
+                            >
+                              {allowedMergeMethods.map((method) => (
+                                <option key={method} value={method}>
+                                  {method}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         {stackRebase !== null && (
                           <button
                             type="button"

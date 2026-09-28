@@ -3402,6 +3402,8 @@ export type PrsDetail = {
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: "merge" | "squash" | "rebase";
   readonly workflowApprovalsRequired?: number;
+  /** The project's merge-method setting, offered first when the repository allows it. */
+  readonly preferredMergeMethod?: "merge" | "squash" | "rebase";
 };
 export type PrsComment = {
   readonly id: string;
@@ -3953,6 +3955,7 @@ const prsDetailSchema = {
     autoMergeEnabled: { type: "boolean" },
     autoMergeMethod: { enum: ["merge", "squash", "rebase"] },
     workflowApprovalsRequired: { type: "integer", minimum: 0 },
+    preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
   },
 } as const;
 const prsCommentSchema = {

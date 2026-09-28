@@ -29,7 +29,9 @@ The PR browser consumes the `t3.prs/read` grant:
   saw (`runAction` `merge` with `stackNumber`/`expectedStackHeads`), offered
   only when the host does stack actions, host and viewer may merge, the
   repository allows a method, and the stack read is fresh — confirmed in a
-  modal dialog before it runs. Native's Rebase stack rides the same write
+  modal dialog before it runs, with the merge method chosen beside it. Merge
+  methods resolve as native's do: this PR's pick, the project's setting
+  (`preferredMergeMethod` on `prs.detail`), then the last pick. Native's Rebase stack rides the same write
   (`update-branch`, `rebase`) through the top layer with every unmerged head
   pinned, offered when the viewer may rebase the stack. While a stack lookup
   is pending, failed, or finds a stack, the single-PR merge and auto-merge

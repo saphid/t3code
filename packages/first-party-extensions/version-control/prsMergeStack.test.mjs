@@ -148,3 +148,19 @@ NodeTest.describe("merge stack", () => {
     });
   });
 });
+
+NodeTest.describe("merge method preference", () => {
+  NodeTest.it(
+    "resolves the current pick, then the project setting, then the last pick",
+    async () => {
+      const { prsResolveMergeMethod } = await import("./prsViewModel.ts");
+      const resolve = (...args) => prsResolveMergeMethod?.(...args) ?? null;
+      NodeAssert.equal(resolve(["merge", "squash"], null, "squash", "merge"), "squash");
+      NodeAssert.equal(resolve(["merge", "squash"], "merge", "squash", "merge"), "merge");
+      NodeAssert.equal(resolve(["merge", "squash"], null, undefined, "squash"), "squash");
+      // A preference the repository does not allow falls through.
+      NodeAssert.equal(resolve(["merge", "squash"], null, "rebase", null), "merge");
+      NodeAssert.equal(resolve([], null, "squash", null), "merge");
+    },
+  );
+});
