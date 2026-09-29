@@ -46,6 +46,9 @@ vi.mock("../hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => () =>
 vi.mock("../threadRoutes", () => ({ buildThreadRouteParams: () => ({}) }));
 vi.mock("../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("../state/entities", () => ({ readProject: () => undefined, readThreadShell: () => null }));
+vi.mock("../state/presentation", () => ({
+  environmentPresentations: { presentationAtom: () => undefined },
+}));
 vi.mock("../state/environments", () => ({
   useEnvironments: () => ({
     environments: [{ environmentId: "env-a" }, { environmentId: "env-b" }],

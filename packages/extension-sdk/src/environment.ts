@@ -514,6 +514,13 @@ export interface ClientHost {
    * them through `resolvePullRequestPreferences` and keep choices in memory.
    */
   readonly pullRequestPreferences?: ClientPullRequestPreferences;
+  /**
+   * This environment's display label, read from the client's local catalog
+   * with no request, so it works while disconnected (native words that state
+   * "<label> is not connected."). `null` when the client has no label; absent
+   * on older hosts.
+   */
+  environmentLabel?(): string | null;
 }
 export type ClientFactory = (host: ClientHost) => Extension<SurfaceRenderer>;
 

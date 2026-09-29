@@ -196,7 +196,8 @@ var __t3Client = (() => {
   // node_modules/@t3tools/extension-sdk/dist/capabilities.js
   var RESUMABLE_API_STREAMS = {
     "t3.terminal/output-events#subscribe": 1,
-    "t3.terminal/sessions#list": 2
+    "t3.terminal/sessions#list": 2,
+    "t3.workspace/changes#subscribeChanges": 3
   };
   function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
@@ -12734,6 +12735,7 @@ var __t3Client = (() => {
           input: this.#newInputQueue(terminalId),
           exitBanner: null,
           confirm: null,
+          closing: false,
           error: null,
           resizeInFlight: null,
           resizePending: null,
@@ -12848,8 +12850,9 @@ var __t3Client = (() => {
           const serverIds = terminals.map((terminal) => terminal.terminalId);
           this.#ids = reconcileTerminalIds(this.#ids, serverIds);
           for (const terminal of terminals) this.#observeMeta(terminal);
-          for (const id2 of this.#tabs.keys()) {
+          for (const [id2, tab] of this.#tabs) {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
+            else if (!serverIds.includes(id2)) tab.meta = null;
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
           this.#syncGroupsFollowingActive();
@@ -12988,7 +12991,7 @@ var __t3Client = (() => {
       if (this.#disposed || this.#stream !== "live") return;
       for (const terminalId of terminalIds) {
         const tab = this.#tabs.get(terminalId);
-        if (tab && tab.meta === null && !tab.starting && tab.error === null)
+        if (tab && tab.meta === null && !tab.starting && !tab.closing && tab.error === null)
           void this.#attach(terminalId, false);
       }
     }
@@ -12999,7 +13002,7 @@ var __t3Client = (() => {
     async #attach(terminalId, restartIfNotRunning) {
       const launch = this.#launch;
       const tab = this.#tabs.get(terminalId);
-      if (!tab || !launch || tab.starting) return;
+      if (!tab || !launch || tab.starting || tab.closing) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
       this.#liveInput(terminalId, tab).setReady(false);
@@ -13017,6 +13020,7 @@ var __t3Client = (() => {
           ...launch.env !== void 0 ? { env: launch.env } : {}
         });
         tab.starting = false;
+        if (this.#tabs.get(terminalId) !== tab) return;
         this.#liveInput(terminalId, tab).setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
@@ -13111,6 +13115,7 @@ var __t3Client = (() => {
       if (!tab || !action) return;
       tab.confirm = null;
       if (action === "close") {
+        tab.closing = true;
         try {
           await this.#control.close({ terminalId, deleteHistory: true });
         } catch {
@@ -13119,7 +13124,7 @@ var __t3Client = (() => {
           } catch {
           }
         }
-        this.#removeTab(terminalId, "index");
+        if (this.#tabs.get(terminalId) === tab) this.#removeTab(terminalId, "index");
         return;
       }
       const launch = this.#launch;

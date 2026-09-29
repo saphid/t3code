@@ -436,6 +436,87 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
   );
 
   NodeTest.it(
+    "a live pane the restarted server no longer has starts again once, like a restored one",
+    async () => {
+      const control = fakeControl();
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      // The backend died and restarted: the resumed list has no term-1.
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "closed");
+      panel.startMissingSessions(["term-1"]);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.map(([op, input]) => [op, input.terminalId, input.restartIfNotRunning]),
+        [["attach", "term-1", undefined]],
+      );
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a reconnect during a confirmed Close does not start the pane again (fix-offline-polish r2)",
+    async () => {
+      const close = deferred();
+      const attach = deferred();
+      const control = fakeControl({
+        close(input) {
+          control.calls.push(["close", input]);
+          return close.promise;
+        },
+      });
+      control.gate.attach = attach.promise;
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.requestAction("term-1", "close");
+      const closing = panel.confirmAction("term-1");
+      // The list reconnects while Close is on the wire; the server already dropped term-1.
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      // The view auto-starts every shown pane that reads as closed.
+      panel.startMissingSessions(
+        panel.snapshot.tabs.filter((tab) => tab.status === "closed").map((tab) => tab.terminalId),
+      );
+      close.resolve({});
+      await closing;
+      attach.resolve(meta("term-1"));
+      await new Promise(setImmediate);
+      const autoAttaches = control.calls.filter(([op]) => op === "attach").length;
+      NodeAssert.deepEqual(
+        { autoAttaches, finalTabIds: panel.snapshot.terminalIds },
+        { autoAttaches: 0, finalTabIds: [] },
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "an automatic attach that lands after another client closed the pane does not bring it back",
+    async () => {
+      const attach = deferred();
+      const control = fakeControl();
+      control.gate.attach = attach.promise;
+      const panel = new TerminalPanel({
+        control,
+        launch,
+        restored: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+      });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      panel.applySessionsEvent({ kind: "remove", terminalId: "term-1" });
+      attach.resolve(meta("term-1"));
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
     "racing restores never relaunch a session another restore just failed (fix-d9 r2)",
     async () => {
       // One server, two clients. The fake mirrors Manager.openOrAttach: an

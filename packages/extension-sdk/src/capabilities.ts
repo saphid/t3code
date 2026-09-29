@@ -102,8 +102,11 @@ export interface ApiClient {
  * and cancellation still end the iterable and are never retried.
  */
 export interface ResumableApiStreams {
-  /** 2 also resumes `t3.terminal/sessions#list`; check with `resolveResumableStreams(host, stream)`. */
-  readonly version: 1 | 2;
+  /**
+   * 2 also resumes `t3.terminal/sessions#list`, 3 `t3.workspace/changes#subscribeChanges`;
+   * check with `resolveResumableStreams(host, stream)`.
+   */
+  readonly version: 1 | 2 | 3;
   subscribeApi(
     request: ApiStreamInvocation,
     signal: AbortSignal,
@@ -131,6 +134,7 @@ export interface ResumableStreamOptions {
 export const RESUMABLE_API_STREAMS: Readonly<Record<string, number>> = {
   "t3.terminal/output-events#subscribe": 1,
   "t3.terminal/sessions#list": 2,
+  "t3.workspace/changes#subscribeChanges": 3,
 };
 /**
  * The host's stream resumption when it offers version 1 or later — or, given
