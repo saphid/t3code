@@ -201,7 +201,7 @@ NodeTest.describe("createCommandDispatch", () => {
    * `send` returns the pending receipt; awaiting it resumes after dispatch's
    * own settle handler, which was registered first.
    */
-  function dispatchHarness(lastRevision) {
+  function dispatchHarness(lastRevision, epoch = { current: null }) {
     const api = scriptedApi();
     const session = new AbortController();
     const history = createProjectHistory(api, session.signal, () => {});
@@ -209,6 +209,7 @@ NodeTest.describe("createCommandDispatch", () => {
     const dispatch = createCommandDispatch({
       signal: session.signal,
       lastRevision,
+      epoch,
       adopt: (receipt) => effects.push(["adopt", receipt.revision]),
       refuse: (outcome) => effects.push(["refuse", outcome]),
       fail: (error) => effects.push(["fail", error.message]),
@@ -262,6 +263,22 @@ NodeTest.describe("createCommandDispatch", () => {
     await Promise.all([current.promise, stale.promise]);
     NodeAssert.deepEqual(effects, [["refuse", "rejected"]]);
     NodeAssert.equal(records().length, 0);
+  });
+
+  NodeTest.it("orders receipts by revision only within the server epoch", async () => {
+    // The stream last saw revision 40 of epoch-a; the server then restarted.
+    const lastRevision = { current: 40 };
+    const epoch = { current: "epoch-a" };
+    const { send, effects } = dispatchHarness(lastRevision, epoch);
+    const old = send();
+    old.resolve({ revision: 39, outcome: "accepted", serverEpoch: "epoch-a" });
+    await old.promise;
+    // The restarted server's open receipt counts from 1 again and still lands.
+    const reopened = send();
+    reopened.resolve({ revision: 2, outcome: "accepted", serverEpoch: "epoch-b" });
+    await reopened.promise;
+    NodeAssert.deepEqual(effects, [["adopt", 2]]);
+    NodeAssert.equal(lastRevision.current, 2);
   });
 
   NodeTest.it("settles nothing once the view session ends, and reports live failures", async () => {

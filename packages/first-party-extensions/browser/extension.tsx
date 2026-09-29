@@ -10,6 +10,7 @@ import {
   bindStreamApi,
   describeGrantDenial,
   grantDenialMessage,
+  resolveResumableStreams,
 } from "@t3tools/extension-sdk/capabilities";
 import {
   browserFramesApi,
@@ -217,6 +218,12 @@ type PersistedViewState = {
   readonly history?: Json;
 };
 
+/** Native's disconnected wording, "<label> is not connected.", when the host knows the label. */
+function disconnectedNotice(host: ClientHost): string {
+  const label = host.environmentLabel?.();
+  return label ? `${label} is not connected.` : "Environment is not connected.";
+}
+
 function restoreState(value: unknown): value is PersistedViewState | null {
   if (value === null) return true;
   if (typeof value !== "object" || Array.isArray(value)) return false;
@@ -335,15 +342,29 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
 
   // The events stream is authoritative: snapshot validates a restored or
   // adopted session, upserts carry engine/navigation truth, removal and close
-  // reasons end the panel's hold honestly.
+  // reasons end the panel's hold honestly. A host that resumes it follows the
+  // environment's connection like native's session sync: a drop suspends the
+  // stream, and the next connection's snapshot reconciles the hold — ending
+  // it when the server came back on a new epoch.
   useEffect(() => {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
+    const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
+    let connected = false;
+    const onSuspended = () => {
+      if (signal.aborted || !connected) return;
+      setNotice(disconnectedNotice(host));
+    };
     void (async () => {
       try {
         const api = bindStreamApi(browserSessionsApi, host, session.context);
         let pending: BrowserSession[] | null = null;
-        for await (const frame of api.subscribe("events", {}, signal)) {
+        for await (const frame of api.subscribe(
+          "events",
+          {},
+          signal,
+          resumable ? { resume: "fresh-snapshot", onSuspended } : undefined,
+        )) {
           signal.throwIfAborted();
           const value: BrowserSessionStreamValue | undefined = frame.value;
           if (!value) continue;
@@ -356,8 +377,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               pending?.push(...value.sessions);
               break;
             case "snapshot-complete": {
+              // Revisions count per server epoch; a restarted server starts
+              // over, so the old epoch's fence would refuse every receipt.
+              if (tabsEpoch.current !== null && tabsEpoch.current !== value.serverEpoch)
+                lastRevision.current = value.revision;
               tabsEpoch.current = value.serverEpoch;
               setTabs(pending ?? []);
+              if (connected) setNotice(null);
+              connected = true;
               if (current) {
                 const found = pending?.find((item) => item.tabId === current.tabId);
                 if (value.serverEpoch !== current.serverEpoch || !found) {
@@ -366,7 +393,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   setLive(null);
                   setNotice(
                     value.serverEpoch !== current.serverEpoch
-                      ? "Session ended (epoch-changed)"
+                      ? "Session ended — the server restarted. Enter an address to open a new session."
                       : "Session ended (session-closed)",
                   );
                 } else {
@@ -665,6 +692,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const dispatch = createCommandDispatch<BrowserSessionReceipt>({
     signal: session.signal,
     lastRevision,
+    epoch: tabsEpoch,
     refuse: (outcome) => setNotice(`Browser command ${outcome}`),
     fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
     adopt: (receipt) => {

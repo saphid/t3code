@@ -129,25 +129,35 @@ export type ProjectHistory = ReturnType<typeof createProjectHistory>;
  * The view's `dispatch`: runs one engine command and settles its receipt. The
  * events stream may already have applied a newer revision, so the receipt's
  * snapshot is adopted (or its refusal shown) only when it is not older than
- * `lastRevision`. The accepted command's own side effect — recording the
- * visit — belongs to the command, not the snapshot, so it runs exactly once
- * whenever the command was accepted. Nothing settles after `signal` aborts.
+ * `lastRevision`. Revisions only order receipts within `epoch` (the server
+ * epoch `lastRevision` counts in): a restarted server's receipt is never
+ * stale against the old one's. The accepted command's own side effect —
+ * recording the visit — belongs to the command, not the snapshot, so it runs
+ * exactly once whenever the command was accepted. Nothing settles after
+ * `signal` aborts.
  */
 export function createCommandDispatch<
-  Receipt extends { readonly revision: number; readonly outcome: string },
+  Receipt extends {
+    readonly revision: number;
+    readonly outcome: string;
+    readonly serverEpoch: string;
+  },
 >(options: {
   readonly signal: AbortSignal;
   readonly lastRevision: { current: number };
+  readonly epoch: { readonly current: string | null };
   readonly adopt: (receipt: Receipt) => void;
   readonly refuse: (outcome: string) => void;
   readonly fail: (error: unknown) => void;
 }) {
-  const { signal, lastRevision } = options;
+  const { signal, lastRevision, epoch } = options;
   return (run: (signal: AbortSignal) => Promise<Receipt>, onAccepted?: () => void): void => {
     void run(signal).then(
       (receipt) => {
         if (signal.aborted) return;
-        const stale = receipt.revision < lastRevision.current;
+        const stale =
+          (epoch.current === null || receipt.serverEpoch === epoch.current) &&
+          receipt.revision < lastRevision.current;
         if (!stale) lastRevision.current = receipt.revision;
         if (receipt.outcome !== "accepted") {
           if (!stale) options.refuse(receipt.outcome);

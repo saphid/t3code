@@ -940,12 +940,14 @@ it("offers host stream resumption only where the host has it, and only for resum
   try {
     await h.controller.refresh();
     const resumable = resolveResumableStreams(h.getHost());
-    // Version 3 advertises the session list and workspace changes, so packs resume them here.
-    expect(resumable?.version).toBe(3);
+    // Version 4 advertises the session list, workspace changes and browser session events,
+    // so packs resume them here.
+    expect(resumable?.version).toBe(4);
     expect(resolveResumableStreams(h.getHost(), "t3.terminal/sessions#list")).toBe(resumable);
     expect(resolveResumableStreams(h.getHost(), "t3.workspace/changes#subscribeChanges")).toBe(
       resumable,
     );
+    expect(resolveResumableStreams(h.getHost(), "t3.browser/sessions#events")).toBe(resumable);
     const request = {
       id: "t3.terminal/output-events",
       versionRange: "^1.0.0",

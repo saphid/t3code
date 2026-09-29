@@ -103,10 +103,10 @@ export interface ApiClient {
  */
 export interface ResumableApiStreams {
   /**
-   * 2 also resumes `t3.terminal/sessions#list`, 3 `t3.workspace/changes#subscribeChanges`;
-   * check with `resolveResumableStreams(host, stream)`.
+   * 2 also resumes `t3.terminal/sessions#list`, 3 `t3.workspace/changes#subscribeChanges`,
+   * 4 `t3.browser/sessions#events`; check with `resolveResumableStreams(host, stream)`.
    */
-  readonly version: 1 | 2 | 3;
+  readonly version: 1 | 2 | 3 | 4;
   subscribeApi(
     request: ApiStreamInvocation,
     signal: AbortSignal,
@@ -135,6 +135,7 @@ export const RESUMABLE_API_STREAMS: Readonly<Record<string, number>> = {
   "t3.terminal/output-events#subscribe": 1,
   "t3.terminal/sessions#list": 2,
   "t3.workspace/changes#subscribeChanges": 3,
+  "t3.browser/sessions#events": 4,
 };
 /**
  * The host's stream resumption when it offers version 1 or later — or, given
