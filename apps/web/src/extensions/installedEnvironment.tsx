@@ -34,6 +34,7 @@ import { readPreparedConnection, usePreparedConnection } from "../state/session"
 import { readProject } from "../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEnvironments } from "../state/environments";
+import { environmentPresentations } from "../state/presentation";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
 import {
   createInstalledExtensionController,
@@ -484,6 +485,9 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       tooltip: hostTooltip,
       floatingLayer: hostFloatingLayer,
       pullRequestPreferences: hostPullRequestPreferences,
+      environmentLabel: () =>
+        appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.entry.target
+          .label ?? null,
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,

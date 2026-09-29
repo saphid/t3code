@@ -116,19 +116,28 @@ export function useWorkspaceChanges(
  * so a latched save keeps the bump pending until it opens. The first
  * observed seq fires too — it can fold mutations that landed while the
  * view's initial reads were in flight; suppressing it left stale bytes
- * displayed indefinitely.
+ * displayed indefinitely. A seq that arrives with a resumed connection
+ * (`resumed` from useWorkspaceChanges) is absorbed: the reconnect reload
+ * already covers it, and a second refresh would re-request the tree.
  */
 export function useMutationRefresh(input: {
   readonly mutationSeq: number | null;
   readonly enabled: boolean;
   readonly refresh: () => void;
+  readonly resumed?: number;
 }): void {
   const handledRef = useRef<number | null>(null);
-  const { mutationSeq, enabled, refresh } = input;
+  const resumedRef = useRef(input.resumed ?? 0);
+  const { mutationSeq, enabled, refresh, resumed = 0 } = input;
   useEffect(() => {
+    if (resumed !== resumedRef.current) {
+      resumedRef.current = resumed;
+      handledRef.current = mutationSeq;
+      return;
+    }
     if (mutationSeq === null) return;
     if (!shouldHandleMutation({ enabled, mutationSeq, handledSeq: handledRef.current })) return;
     handledRef.current = mutationSeq;
     refresh();
-  }, [enabled, mutationSeq, refresh]);
+  }, [enabled, mutationSeq, refresh, resumed]);
 }

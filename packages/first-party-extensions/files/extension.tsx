@@ -1284,6 +1284,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     mutationSeq: changes.mutationSeq,
     enabled: visible && !savePending,
     refresh,
+    resumed: changes.resumed,
   });
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";

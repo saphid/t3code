@@ -9,8 +9,14 @@ import type { TreeEntry } from "./viewModel.ts";
 
 const emptyEntries: readonly TreeEntry[] = [];
 
-/** The status line while the environment is disconnected, as native words it. */
+/** The disconnected status line on hosts that do not expose the environment's label. */
 export const TREE_DISCONNECTED_STATUS = "Environment is not connected.";
+
+/** Native's disconnected wording, "<label> is not connected.", when the host knows the label. */
+export function treeDisconnectedStatus(host: ClientHost): string {
+  const label = host.environmentLabel?.();
+  return label ? `${label} is not connected.` : TREE_DISCONNECTED_STATUS;
+}
 
 /**
  * Finite `t3.workspace/tree` snapshot consumed to completion, then swapped in.
@@ -87,7 +93,7 @@ export function useWorkspaceTree(
   return {
     entries: snapshot?.entries ?? emptyEntries,
     status: offline
-      ? TREE_DISCONNECTED_STATUS
+      ? treeDisconnectedStatus(host)
       : snapshot?.revision === refresh
         ? snapshot.status
         : "Loading files",
