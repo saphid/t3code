@@ -326,6 +326,7 @@ import {
   terminalIdListsEqual,
   workspaceLaunchFromRevision,
 } from "./viewModel.ts";
+import * as TerminalViewModel from "./viewModel.ts";
 
 const meta = (terminalId, extra = {}) => ({
   terminalId,
@@ -559,6 +560,183 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
       await clients[1].startSession("term-1");
       NodeAssert.equal(launches, 2);
       for (const panel of clients) panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a resize that failed across a backend restart does not keep the shown pane from starting",
+    async () => {
+      const control = fakeControl({
+        resize(input) {
+          control.calls.push(["resize", input]);
+          return Promise.reject(new Error("Environment is not connected"));
+        },
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      // The backend dies; the shown pane's status line changes height, so it
+      // re-fits and the resize fails while no connection is usable.
+      panel.beginListStream();
+      panel.resize("term-1", 80, 21);
+      await new Promise(setImmediate);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.error, "Environment is not connected");
+      // The restarted server lists no term-1: the shown pane starts on its own.
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "attach").map(([, input]) => input.terminalId),
+        ["term-1"],
+      );
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a failed automatic start waits for Start, and the next restart's missing observation retries it once",
+    async () => {
+      let failNext = true;
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          if (!failNext) return Promise.resolve(meta(input.terminalId));
+          failNext = false;
+          return Promise.reject(new Error("Environment is not connected"));
+        },
+      });
+      const attaches = () => control.calls.filter(([op]) => op === "attach").length;
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "closed");
+      // Same observation: the failure waits for Start.
+      panel.startMissingSessions(["term-1"]);
+      panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-2") });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The backend restarts again and still has no term-1: one more start.
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-2")] });
+      panel.startMissingSessions(["term-1"]);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 2);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      NodeAssert.equal(panel.snapshot.tabs[0]?.error, null);
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: Start clears input stopped by writes to a session the server did not have",
+    async () => {
+      const control = fakeControl({
+        write(input) {
+          control.calls.push(["write", input]);
+          return this.server
+            ? Promise.resolve({})
+            : Promise.reject(new Error("Terminal control operation failed."));
+        },
+        server: false,
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      // Typed into the pane while it had no session: the write fails.
+      panel.sendInput("term-1", "echo lost\r");
+      await new Promise(setImmediate);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.inputStopped, true);
+      control.server = true;
+      await panel.startSession("term-1");
+      NodeAssert.equal(panel.snapshot.tabs[0]?.inputStopped, false);
+      panel.sendInput("term-1", "echo ok\r");
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "write").map(([, input]) => input.data),
+        ["echo lost\r", "echo ok\r"],
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36 (a): a pane waiting to start when shown is not announced as closed; a failed start is",
+    async () => {
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          return Promise.reject(new Error("spawn failed"));
+        },
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1"), meta("term-2")] });
+      NodeAssert.equal(TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]), null);
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      // Out of view after the restart: it starts when shown, as native does.
+      NodeAssert.equal(TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]), null);
+      panel.startMissingSessions(["term-2"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(
+        TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]),
+        "closed · spawn failed",
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a missing observation re-arms a failed start but never starts a pane the user closed",
+    async () => {
+      const closeResult = deferred();
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          return Promise.reject(new Error("spawn failed"));
+        },
+        close(input) {
+          control.calls.push(["close", input]);
+          return closeResult.promise;
+        },
+      });
+      const attaches = () => control.calls.filter(([op]) => op === "attach").length;
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The user closes the failed pane; the close is still on the wire when
+      // the backend restarts and reports it missing, which re-arms a start.
+      panel.requestAction("term-1", "close");
+      const closing = panel.confirmAction("term-1");
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      NodeAssert.equal(panel.snapshot.tabs[0]?.startsWhenShown, false);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The close fails: the `exit\n` fallback runs and the pane stays gone.
+      closeResult.reject(new Error("net::ERR_ABORTED"));
+      await closing;
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "close" || op === "write").map(([op]) => op),
+        ["close", "write"],
+      );
+      panel.dispose();
     },
   );
 
@@ -830,6 +1008,255 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
     panel.dispose();
   });
+
+  /**
+   * A server that owns sessions and their history files, shared by several
+   * clients. A session's `updatedAt` names its process incarnation, and its
+   * history records the incarnation that wrote it. An offline client's
+   * requests abort like a dropped network; `exit\n` ends the shell but leaves
+   * the session listed (exited) with its history, as the real server does.
+   */
+  function fakeServer(ids) {
+    const server = { sessions: new Map(), history: new Map(), clients: [], spawned: 0 };
+    const spawn = (terminalId) => {
+      const session = meta(terminalId, { updatedAt: `incarnation-${++server.spawned}` });
+      server.sessions.set(terminalId, session);
+      server.history.set(terminalId, session.updatedAt);
+      return session;
+    };
+    for (const id of ids) spawn(id);
+    const broadcast = (event) => {
+      for (const client of server.clients) client.panel?.applySessionsEvent(event);
+    };
+    server.client = () => {
+      const client = { offline: false, panel: null };
+      const aborted = () => Promise.reject(new Error("net::ERR_ABORTED"));
+      const control = fakeControl({
+        open(input) {
+          control.calls.push(["open", input]);
+          if (client.offline) return aborted();
+          const session = spawn(input.terminalId);
+          broadcast({ kind: "upsert", terminal: session });
+          return Promise.resolve(session);
+        },
+        restart(input) {
+          control.calls.push(["restart", input]);
+          if (client.offline) return aborted();
+          const session = spawn(input.terminalId);
+          broadcast({ kind: "upsert", terminal: session });
+          return Promise.resolve(session);
+        },
+        close(input) {
+          control.calls.push(["close", input]);
+          if (client.offline) return aborted();
+          server.sessions.delete(input.terminalId);
+          if (input.deleteHistory) server.history.delete(input.terminalId);
+          broadcast({ kind: "remove", terminalId: input.terminalId });
+          return Promise.resolve({});
+        },
+        write(input) {
+          control.calls.push(["write", input]);
+          if (client.offline) return aborted();
+          const session = server.sessions.get(input.terminalId);
+          if (input.data === "exit\n" && session) {
+            const exited = { ...session, status: "exited", exitCode: 0 };
+            server.sessions.set(input.terminalId, exited);
+            broadcast({ kind: "upsert", terminal: exited });
+          }
+          return Promise.resolve({});
+        },
+      });
+      client.control = control;
+      client.connect = (panel) => {
+        client.offline = false;
+        client.panel = panel;
+        panel.beginListStream();
+        panel.applySessionsEvent({ kind: "snapshot", terminals: [...server.sessions.values()] });
+      };
+      client.drop = () => {
+        client.offline = true;
+        client.panel?.markStreamDisconnected("offline");
+        client.panel = null;
+      };
+      server.clients.push(client);
+      return client;
+    };
+    return server;
+  }
+  const closesSince = (control, mark) =>
+    control.calls.slice(mark).filter(([kind]) => kind === "close");
+
+  NodeTest.it(
+    "a Close aborted by a network drop stays hidden after reconnect (web-r5 Terminal 11)",
+    async () => {
+      const server = fakeServer(["term-1", "term-6"]);
+      const a = server.client();
+      const panel = new TerminalPanel({ control: a.control, launch });
+      a.connect(panel);
+      const release = deferred();
+      const close = a.control.close;
+      a.control.close = (input) => release.promise.then(() => close(input));
+      panel.requestAction("term-6", "close");
+      const closing = panel.confirmAction("term-6");
+      // The drop aborts the in-flight close; the exit fallback is lost too.
+      a.drop();
+      release.resolve();
+      await closing;
+      a.control.close = close;
+      const mark = a.control.calls.length;
+      a.connect(panel);
+      await new Promise(setImmediate);
+      // Native suppression: the row stays hidden and nothing is re-sent.
+      NodeAssert.deepEqual(
+        {
+          rows: panel.snapshot.terminalIds,
+          serverSessions: [...server.sessions.keys()],
+          resent: closesSince(a.control, mark),
+        },
+        { rows: ["term-1"], serverSessions: ["term-1", "term-6"], resent: [] },
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a Close aborted after the list already reconnected stays hidden on the exit upsert",
+    async () => {
+      const server = fakeServer(["term-1", "term-6"]);
+      const a = server.client();
+      const panel = new TerminalPanel({ control: a.control, launch });
+      a.connect(panel);
+      const abort = deferred();
+      const close = a.control.close;
+      a.control.close = (input) => {
+        a.control.calls.push(["close", input]);
+        return abort.promise;
+      };
+      panel.requestAction("term-6", "close");
+      const closing = panel.confirmAction("term-6");
+      a.drop();
+      a.connect(panel);
+      a.control.close = close;
+      const mark = a.control.calls.length;
+      // The aborted request only settles now; the exit fallback reaches the server.
+      abort.reject(new Error("net::ERR_ABORTED"));
+      await closing;
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        {
+          rows: panel.snapshot.terminalIds,
+          status: server.sessions.get("term-6")?.status,
+          resent: closesSince(a.control, mark),
+        },
+        { rows: ["term-1"], status: "exited", resent: [] },
+      );
+      panel.dispose();
+    },
+  );
+
+  for (const [name, replace] of [
+    [
+      "another client closes and reopens the id",
+      async (b) => {
+        b.panel.requestAction("term-2", "close");
+        await b.panel.confirmAction("term-2");
+        NodeAssert.equal(await b.panel.openTerminal(), "term-2");
+      },
+    ],
+    [
+      "another client restarts the id",
+      async (b) => {
+        b.panel.requestAction("term-2", "restart");
+        await b.panel.confirmAction("term-2");
+      },
+    ],
+  ]) {
+    NodeTest.it(
+      `a failed Close never kills the replacement when ${name} during the outage`,
+      async () => {
+        const server = fakeServer(["term-1", "term-2"]);
+        const a = server.client();
+        const b = server.client();
+        const panelA = new TerminalPanel({ control: a.control, launch });
+        const panelB = new TerminalPanel({ control: b.control, launch });
+        a.connect(panelA);
+        b.connect(panelB);
+        const original = server.sessions.get("term-2").updatedAt;
+        a.drop();
+        panelA.requestAction("term-2", "close");
+        await panelA.confirmAction("term-2");
+        await replace(b);
+        const replacement = server.sessions.get("term-2")?.updatedAt;
+        NodeAssert.notEqual(replacement, undefined);
+        NodeAssert.notEqual(replacement, original);
+        const mark = a.control.calls.length;
+        a.connect(panelA);
+        // The replacement's own later upserts must not trigger a close either.
+        const session = server.sessions.get("term-2");
+        panelA.applySessionsEvent({ kind: "upsert", terminal: { ...session, label: "busy" } });
+        await new Promise(setImmediate);
+        NodeAssert.deepEqual(
+          {
+            sessionIncarnation: server.sessions.get("term-2")?.updatedAt,
+            historyIncarnation: server.history.get("term-2"),
+            closesFromA: closesSince(a.control, mark),
+            rowsB: panelB.snapshot.terminalIds,
+          },
+          {
+            sessionIncarnation: replacement,
+            historyIncarnation: replacement,
+            closesFromA: [],
+            rowsB: ["term-1", "term-2"],
+          },
+        );
+        panelA.dispose();
+        panelB.dispose();
+      },
+    );
+  }
+
+  NodeTest.it(
+    "a shell exit during the Close fallback sends at most one close and stays hidden",
+    async () => {
+      const server = fakeServer(["term-1", "term-2"]);
+      const a = server.client();
+      const panel = new TerminalPanel({ control: a.control, launch });
+      a.connect(panel);
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const pendingCloses = [];
+      a.control.close = (input) => {
+        a.control.calls.push(["close", input]);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const settle = deferred();
+        pendingCloses.push(settle);
+        return settle.promise.finally(() => (inFlight -= 1));
+      };
+      const writeResponse = deferred();
+      const write = a.control.write;
+      a.control.write = (input) => write(input).then(() => writeResponse.promise);
+      panel.requestAction("term-2", "close");
+      const closing = panel.confirmAction("term-2");
+      pendingCloses[0].reject(new Error("net::ERR_ABORTED"));
+      await new Promise(setImmediate);
+      // The shell exits while the fallback's response is still pending: the
+      // pane's output stream reports it, then the metadata upsert follows.
+      NodeAssert.equal(server.sessions.get("term-2")?.status, "exited");
+      panel.noteOutputSnapshot("term-2", "exited");
+      panel.applySessionsEvent({ kind: "upsert", terminal: server.sessions.get("term-2") });
+      await new Promise(setImmediate);
+      writeResponse.resolve({});
+      await closing;
+      for (const settle of pendingCloses.slice(1)) settle.reject(new Error("net::ERR_ABORTED"));
+      await new Promise(setImmediate);
+      // Any later listing still keeps the suppressed id hidden.
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [...server.sessions.values()] });
+      NodeAssert.ok(maxInFlight <= 1, `concurrent closes: ${maxInFlight}`);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+      panel.dispose();
+    },
+  );
 
   NodeTest.it("restart and clear go through confirm; cancel backs out", async () => {
     const control = fakeControl();

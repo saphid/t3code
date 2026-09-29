@@ -12641,6 +12641,17 @@ var __t3Client = (() => {
       return openFailedLine(url, error);
     }
   }
+  function sessionStatusText(tab) {
+    const parts = [];
+    if (tab.exitBanner !== null) parts.push(tab.exitBanner);
+    else if (tab.status !== "running" && !tab.startsWhenShown)
+      parts.push(
+        tab.status === "exited" && tab.exitCode !== null ? `exited (code ${tab.exitCode})` : tab.status
+      );
+    if (tab.error !== null) parts.push(tab.error);
+    if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
+    return parts.length === 0 ? null : parts.join(" \xB7 ");
+  }
   var clampDimension = (value, max) => Number.isSafeInteger(value) && value >= 1 && value <= max ? value : null;
   var TerminalPanel = class {
     #control;
@@ -12701,6 +12712,7 @@ var __t3Client = (() => {
             hasRunningSubprocess: meta?.hasRunningSubprocess ?? false,
             exitCode: meta?.exitCode ?? null,
             starting: tab.starting,
+            startsWhenShown: meta === null && !tab.starting && !tab.closing && !tab.startFailed,
             exitBanner: tab.exitBanner,
             confirmAction: tab.confirm,
             error: tab.error,
@@ -12748,6 +12760,7 @@ var __t3Client = (() => {
           exitBanner: null,
           confirm: null,
           closing: false,
+          startFailed: false,
           error: null,
           resizeInFlight: null,
           resizePending: null,
@@ -12837,7 +12850,7 @@ var __t3Client = (() => {
       const tab = this.#tabs.get(terminalId);
       if (this.#disposed || !tab) return;
       if (status === "exited") {
-        if (tab.starting) return;
+        if (tab.starting || tab.closing) return;
         this.#closing.add(terminalId);
         void this.#control.close({ terminalId, deleteHistory: true }).catch(() => this.#closing.delete(terminalId));
         this.#removeTab(terminalId);
@@ -12864,7 +12877,10 @@ var __t3Client = (() => {
           for (const terminal of terminals) this.#observeMeta(terminal);
           for (const [id2, tab] of this.#tabs) {
             if (!this.#ids.includes(id2)) this.#tabs.delete(id2);
-            else if (!serverIds.includes(id2)) tab.meta = null;
+            else if (!serverIds.includes(id2)) {
+              tab.meta = null;
+              tab.startFailed = false;
+            }
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
           this.#syncGroupsFollowingActive();
@@ -12983,6 +12999,7 @@ var __t3Client = (() => {
         tab.starting = false;
         tab.input.reset();
         tab.input.setReady(true);
+        tab.startFailed = true;
         tab.error = error instanceof Error ? error.message : "Terminal open failed";
         this.#emit();
       }
@@ -12993,8 +13010,8 @@ var __t3Client = (() => {
      * after an app or server restart. Native attaches every pane it shows with
      * its launch cwd, which spawns a fresh shell for a missing session; this
      * does the same once the list is live, so the pane does not sit closed
-     * until Start. A server row (even an exited one) or a failed start is left
-     * for the user, as native leaves it. Like native's automatic attach, this
+     * until Start. A server row (even an exited one) or a start that failed
+     * since the last missing report is left for the user, as native leaves it. Like native's automatic attach, this
      * never asks the server to restart: another client's restore may have
      * already created (and failed or exited) the session since our snapshot,
      * and only Start may relaunch it.
@@ -13003,7 +13020,7 @@ var __t3Client = (() => {
       if (this.#disposed || this.#stream !== "live") return;
       for (const terminalId of terminalIds) {
         const tab = this.#tabs.get(terminalId);
-        if (tab && tab.meta === null && !tab.starting && !tab.closing && tab.error === null)
+        if (tab && tab.meta === null && !tab.starting && !tab.closing && !tab.startFailed)
           void this.#attach(terminalId, false);
       }
     }
@@ -13017,8 +13034,10 @@ var __t3Client = (() => {
       if (!tab || !launch || tab.starting || tab.closing) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
-      this.#liveInput(terminalId, tab).setReady(false);
+      this.#liveInput(terminalId, tab).reset();
+      tab.input.setReady(false);
       tab.exitBanner = null;
+      tab.startFailed = false;
       tab.error = null;
       this.#emit();
       try {
@@ -13039,6 +13058,7 @@ var __t3Client = (() => {
       } catch (error) {
         tab.starting = false;
         this.#liveInput(terminalId, tab).setReady(true);
+        tab.startFailed = true;
         tab.error = error instanceof Error ? error.message : "Terminal attach failed";
         this.#emit();
       }
@@ -13120,7 +13140,12 @@ var __t3Client = (() => {
       tab.confirm = null;
       this.#emit();
     }
-    /** Confirmed destructive action; close falls back to a plain `exit\n` write. */
+    /**
+     * Confirmed destructive action. A failed close falls back to a plain
+     * `exit\n` write and keeps the id hidden for this page, like native
+     * suppression. It is never re-sent: the id is a reusable slot, so a later
+     * listing may be another client's replacement session.
+     */
     async confirmAction(terminalId) {
       const tab = this.#tabs.get(terminalId);
       const action = tab?.confirm;
@@ -13131,6 +13156,7 @@ var __t3Client = (() => {
         try {
           await this.#control.close({ terminalId, deleteHistory: true });
         } catch {
+          this.#closing.add(terminalId);
           try {
             await this.#control.write({ terminalId, data: "exit\n" });
           } catch {
@@ -15910,17 +15936,6 @@ var __t3Client = (() => {
       return () => observer.disconnect();
     }, [panel, terminalId, ref]);
   }
-  function sessionStatusText(tab) {
-    const parts = [];
-    if (tab.exitBanner !== null) parts.push(tab.exitBanner);
-    else if (tab.status !== "running")
-      parts.push(
-        tab.status === "exited" && tab.exitCode !== null ? `exited (code ${tab.exitCode})` : tab.status
-      );
-    if (tab.error !== null) parts.push(tab.error);
-    if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
-    return parts.length === 0 ? null : parts.join(" \xB7 ");
-  }
   var control = {
     padding: "4px 8px",
     border: "1px solid transparent",
@@ -16018,7 +16033,7 @@ var __t3Client = (() => {
       ...snapshot.terminalIds.filter((id2) => !visibleSet.has(id2))
     ];
     const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
-    const missingShownKey = visibleTerminalIds.filter((id2) => tabById.get(id2)?.status === "closed").join("\n");
+    const missingShownKey = visibleTerminalIds.filter((id2) => tabById.get(id2)?.startsWhenShown).join("\n");
     (0, import_react2.useEffect)(() => {
       if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));
     }, [panel, visible, missingShownKey, snapshot.stream]);

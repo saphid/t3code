@@ -69,6 +69,7 @@ import {
   openTerminalUrl,
   plainTerminalText,
   registerPanelCommands,
+  sessionStatusText,
   terminalChordAction,
   suspendedOutputStatus,
   terminalActionLabel,
@@ -79,7 +80,6 @@ import {
   type TerminalCommandActions,
   type TerminalControlOps,
   type TerminalPanelSnapshot,
-  type TerminalTabState,
 } from "./viewModel.ts";
 
 const manifestId = "t3.terminal";
@@ -1263,21 +1263,6 @@ function useFitResize(
 /* View                                                                */
 /* ------------------------------------------------------------------ */
 
-/** A session's state beyond its label, or null when it is simply running. */
-function sessionStatusText(tab: TerminalTabState): string | null {
-  const parts: string[] = [];
-  if (tab.exitBanner !== null) parts.push(tab.exitBanner);
-  else if (tab.status !== "running")
-    parts.push(
-      tab.status === "exited" && tab.exitCode !== null
-        ? `exited (code ${tab.exitCode})`
-        : tab.status,
-    );
-  if (tab.error !== null) parts.push(tab.error);
-  if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
-  return parts.length === 0 ? null : parts.join(" · ");
-}
-
 /*
  * Native control idiom (cert term-8): the native terminal chrome leaves its
  * controls at the host's control size instead of shrinking them — text-sm
@@ -1404,8 +1389,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
   // Like native's drawer attaching the panes it shows: a shown restored pane
   // whose session the server no longer has starts without a Start click.
+  // Keyed on eligibility, not status: a missing observation re-arms a failed
+  // start while the pane stays "closed", and that must schedule the retry.
   const missingShownKey = visibleTerminalIds
-    .filter((id) => tabById.get(id)?.status === "closed")
+    .filter((id) => tabById.get(id)?.startsWhenShown)
     .join("\n");
   useEffect(() => {
     if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));

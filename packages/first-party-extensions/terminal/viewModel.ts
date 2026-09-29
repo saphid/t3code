@@ -689,6 +689,21 @@ export async function openTerminalUrl(
   }
 }
 
+/** A session's state beyond its label, or null when it is simply running. */
+export function sessionStatusText(tab: TerminalTabState): string | null {
+  const parts: string[] = [];
+  if (tab.exitBanner !== null) parts.push(tab.exitBanner);
+  else if (tab.status !== "running" && !tab.startsWhenShown)
+    parts.push(
+      tab.status === "exited" && tab.exitCode !== null
+        ? `exited (code ${tab.exitCode})`
+        : tab.status,
+    );
+  if (tab.error !== null) parts.push(tab.error);
+  if (tab.queuedInputCount > 0) parts.push(`queued ${tab.queuedInputCount}`);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 /** Host calls the panel makes through t3.terminal/control. */
 export interface TerminalControlOps {
   open(input: TerminalControlOpenInput): Promise<TerminalSessionMetadata>;
@@ -718,6 +733,12 @@ export interface TerminalTabState {
   readonly exitCode: number | null;
   /** open/attach in flight; typed input queues behind it. */
   readonly starting: boolean;
+  /**
+   * No server session, and none has failed to start since the server last
+   * reported it missing: the pane starts on its own when shown (native
+   * attaches what it shows), so it is not announced as closed.
+   */
+  readonly startsWhenShown: boolean;
   /** Exit observed while tracked; the banner renders until removal lands. */
   readonly exitBanner: string | null;
   readonly confirmAction: TerminalConfirmAction | null;
@@ -750,6 +771,12 @@ interface TabInternal {
   confirm: TerminalConfirmAction | null;
   /** A confirmed Close is on the wire: nothing may start this pane again. */
   closing: boolean;
+  /**
+   * A start failed since the server last reported this session missing:
+   * only Start, or the next list snapshot that finds it missing, starts it
+   * again. Other failures (a resize, dropped input) never block a start.
+   */
+  startFailed: boolean;
   error: string | null;
   resizeInFlight: { cols: number; rows: number } | null;
   resizePending: { cols: number; rows: number } | null;
@@ -849,6 +876,7 @@ export class TerminalPanel {
           hasRunningSubprocess: meta?.hasRunningSubprocess ?? false,
           exitCode: meta?.exitCode ?? null,
           starting: tab.starting,
+          startsWhenShown: meta === null && !tab.starting && !tab.closing && !tab.startFailed,
           exitBanner: tab.exitBanner,
           confirmAction: tab.confirm,
           error: tab.error,
@@ -901,6 +929,7 @@ export class TerminalPanel {
         exitBanner: null,
         confirm: null,
         closing: false,
+        startFailed: false,
         error: null,
         resizeInFlight: null,
         resizePending: null,
@@ -1013,7 +1042,9 @@ export class TerminalPanel {
     const tab = this.#tabs.get(terminalId);
     if (this.#disposed || !tab) return;
     if (status === "exited") {
-      if (tab.starting) return;
+      // A user close owns this id: its request (or `exit\n` fallback) is
+      // pending, and a failed cleanup must not lift its suppression.
+      if (tab.starting || tab.closing) return;
       this.#closing.add(terminalId);
       void this.#control
         .close({ terminalId, deleteHistory: true })
@@ -1047,8 +1078,13 @@ export class TerminalPanel {
         for (const [id, tab] of this.#tabs) {
           if (!this.#ids.includes(id)) this.#tabs.delete(id);
           // A kept tab the server has no session for (a restarted backend)
-          // reads as closed, so a shown pane starts again like a restored one.
-          else if (!serverIds.includes(id)) tab.meta = null;
+          // reads as closed, so a shown pane starts again like a restored
+          // one — once per snapshot that finds it missing, even if an
+          // earlier start failed.
+          else if (!serverIds.includes(id)) {
+            tab.meta = null;
+            tab.startFailed = false;
+          }
         }
         this.#active = resolveActiveTerminalId(this.#ids, this.#active);
         // Native reconcileThreadTerminalSessionIds: the visible group
@@ -1188,6 +1224,7 @@ export class TerminalPanel {
       tab.starting = false;
       tab.input.reset();
       tab.input.setReady(true);
+      tab.startFailed = true;
       tab.error = error instanceof Error ? error.message : "Terminal open failed";
       this.#emit();
     }
@@ -1199,8 +1236,8 @@ export class TerminalPanel {
    * after an app or server restart. Native attaches every pane it shows with
    * its launch cwd, which spawns a fresh shell for a missing session; this
    * does the same once the list is live, so the pane does not sit closed
-   * until Start. A server row (even an exited one) or a failed start is left
-   * for the user, as native leaves it. Like native's automatic attach, this
+   * until Start. A server row (even an exited one) or a start that failed
+   * since the last missing report is left for the user, as native leaves it. Like native's automatic attach, this
    * never asks the server to restart: another client's restore may have
    * already created (and failed or exited) the session since our snapshot,
    * and only Start may relaunch it.
@@ -1209,7 +1246,7 @@ export class TerminalPanel {
     if (this.#disposed || this.#stream !== "live") return;
     for (const terminalId of terminalIds) {
       const tab = this.#tabs.get(terminalId);
-      if (tab && tab.meta === null && !tab.starting && !tab.closing && tab.error === null)
+      if (tab && tab.meta === null && !tab.starting && !tab.closing && !tab.startFailed)
         void this.#attach(terminalId, false);
     }
   }
@@ -1225,8 +1262,12 @@ export class TerminalPanel {
     if (!tab || !launch || tab.starting || tab.closing) return;
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
-    this.#liveInput(terminalId, tab).setReady(false);
+    // No process to attach to: input queued or stopped against the missing
+    // or ended one is stale for the process this starts.
+    this.#liveInput(terminalId, tab).reset();
+    tab.input.setReady(false);
     tab.exitBanner = null;
+    tab.startFailed = false;
     tab.error = null;
     this.#emit();
     try {
@@ -1248,6 +1289,7 @@ export class TerminalPanel {
     } catch (error) {
       tab.starting = false;
       this.#liveInput(terminalId, tab).setReady(true);
+      tab.startFailed = true;
       tab.error = error instanceof Error ? error.message : "Terminal attach failed";
       this.#emit();
     }
@@ -1338,7 +1380,12 @@ export class TerminalPanel {
     this.#emit();
   }
 
-  /** Confirmed destructive action; close falls back to a plain `exit\n` write. */
+  /**
+   * Confirmed destructive action. A failed close falls back to a plain
+   * `exit\n` write and keeps the id hidden for this page, like native
+   * suppression. It is never re-sent: the id is a reusable slot, so a later
+   * listing may be another client's replacement session.
+   */
   async confirmAction(terminalId: string): Promise<void> {
     const tab = this.#tabs.get(terminalId);
     const action = tab?.confirm;
@@ -1351,6 +1398,7 @@ export class TerminalPanel {
       try {
         await this.#control.close({ terminalId, deleteHistory: true });
       } catch {
+        this.#closing.add(terminalId);
         try {
           await this.#control.write({ terminalId, data: "exit\n" });
         } catch {
