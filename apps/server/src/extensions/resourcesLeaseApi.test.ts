@@ -184,7 +184,7 @@ const projectScopedContext = (): ViewContext => ({
 
 /** The grants the broker suggests for a package requiring only t3.resources/lease. */
 const LEASE_SUGGESTED = new Set([
-  ...RESOURCES_LEASE_API.methods.flatMap((method) => method.requiredGrants),
+  ...(RESOURCES_LEASE_API.methods ?? []).flatMap((method) => method.requiredGrants),
   ...(RESOURCES_LEASE_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
   ...(API_CALL_TIME_GRANTS[RESOURCES_LEASE_API.id] ?? []),
 ]);

@@ -46,7 +46,7 @@ const context: ViewContext = {
 /** The grants the broker suggests for a package requiring only t3.ui/keybindings. */
 const KEYBINDINGS_SUGGESTED = [
   ...new Set([
-    ...UI_KEYBINDINGS_API.methods.flatMap((method) => method.requiredGrants),
+    ...(UI_KEYBINDINGS_API.methods ?? []).flatMap((method) => method.requiredGrants),
     ...(UI_KEYBINDINGS_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
     ...(API_CALL_TIME_GRANTS[UI_KEYBINDINGS_API.id] ?? []),
   ]),

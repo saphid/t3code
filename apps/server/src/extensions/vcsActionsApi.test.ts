@@ -49,7 +49,7 @@ import { createVcsActionsApiProvider } from "./vcsActionsApi.ts";
 /** The grants the broker suggests for a package requiring only t3.vcs/actions. */
 const VCS_ACTIONS_SUGGESTED = [
   ...new Set([
-    ...VCS_ACTIONS_API.methods.flatMap((method) => method.requiredGrants),
+    ...(VCS_ACTIONS_API.methods ?? []).flatMap((method) => method.requiredGrants),
     ...(VCS_ACTIONS_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
     ...(API_CALL_TIME_GRANTS[VCS_ACTIONS_API.id] ?? []),
   ]),
