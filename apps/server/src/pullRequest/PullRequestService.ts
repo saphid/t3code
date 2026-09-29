@@ -11,7 +11,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
@@ -84,6 +83,7 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
+import { makeSharedCacheGet } from "../utils/sharedCacheGet.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -627,16 +627,7 @@ export const make = Effect.gen(function* () {
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
-  const serviceScope = yield* Effect.scope;
-  // Concurrent callers share one lookup, and the cache interrupts it when its last awaiter
-  // leaves. A caller arriving while that interruption unwinds joins the dying lookup and fails
-  // with a bare interrupt. Awaiting from a fiber owned by the service scope keeps a cancelled
-  // caller from ever interrupting the shared lookup, while shutdown still interrupts it; the
-  // caller itself still stops waiting immediately.
-  const getShared = <Key, A, E>(cache: Cache.Cache<Key, A, E>, key: Key) =>
-    Effect.forkIn(Cache.get(cache, key), serviceScope, { startImmediately: true }).pipe(
-      Effect.flatMap(Fiber.join),
-    );
+  const getShared = yield* makeSharedCacheGet;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,

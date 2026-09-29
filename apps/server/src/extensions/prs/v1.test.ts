@@ -15,8 +15,11 @@ import type { PrsDiffStreamEvent } from "@t3tools/extension-sdk/catalogue";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { it, expect } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -24,6 +27,7 @@ import * as Persistence from "effect/unstable/persistence/Persistence";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -38,6 +42,8 @@ import {
 import * as PullRequestReadCache from "../../pullRequest/PullRequestReadCache.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../../sourceControl/SourceControlRateLimit.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -1536,6 +1542,144 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       expect(ownAgain.number).toBe(43);
       expect(calls).toHaveLength(2);
       expect(calls[1]!.cwd).toBe(WORKSPACE_ROOT);
+    }),
+  );
+
+  it.effect("a cancelled getCapabilities never fails a concurrent one for a non-repo project", () =>
+    Effect.gen(function* () {
+      // The real resolver over a workspace that is not a repository: `git rev-parse` fails, so
+      // nothing is cached and every call is a live, shared lookup. The first one blocks, and
+      // like a real `git` its interruption only completes once the process is gone (release).
+      const release = yield* Deferred.make<void>();
+      const unwinding = yield* Deferred.make<void>();
+      let revParses = 0;
+      const notARepository = {
+        stdout: "",
+        stderr: "fatal: not a git repository",
+        code: ChildProcessSpawner.ExitCode(128),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+      const resolver = yield* Layer.build(
+        Layer.effect(
+          RepositoryIdentityResolver.RepositoryIdentityResolver,
+          RepositoryIdentityResolver.make(),
+        ).pipe(
+          Layer.provide(
+            Layer.succeed(ProcessRunner.ProcessRunner, {
+              run: (input) => {
+                if (!input.args.includes("rev-parse")) return Effect.die("unexpected git call");
+                revParses++;
+                if (revParses > 1) return Effect.succeed(notARepository);
+                return Deferred.await(release).pipe(
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(unwinding, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                    ),
+                  ),
+                  Effect.as(notARepository),
+                );
+              },
+            }),
+          ),
+        ),
+      ).pipe(
+        Effect.map((context) =>
+          Context.get(context, RepositoryIdentityResolver.RepositoryIdentityResolver),
+        ),
+      );
+      // As the real projection query does: the stored row, with its identity resolved live.
+      const shell = resolver
+        .resolve(WORKSPACE_ROOT)
+        .pipe(Effect.map((identity) => projectShell(identity)));
+      const service = yield* Layer.build(
+        Layer.mergeAll(
+          Layer.succeed(PullRequestProviderRegistry, fromProviders([githubProviderApi()])),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+            resolveHandle: () => Effect.die("Unexpected provider refinement"),
+          }),
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getProjectShells: () => shell.pipe(Effect.map((project) => [project])),
+            getProjectShellById: () => shell.pipe(Effect.map(Option.some)),
+          }),
+          SourceControlRateLimit.layer,
+          PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+          Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
+            Layer.provide(Persistence.layerKvs),
+            Layer.provide(KeyValueStore.layerMemory),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ).pipe(
+        Effect.flatMap((context) => PullRequestService.make.pipe(Effect.provideContext(context))),
+      );
+      const provider = createPrsApiProvider({
+        ...makeDeps({}),
+        projectionSnapshotQuery: { getProjectShellById: () => shell.pipe(Effect.map(Option.some)) },
+        pullRequests: service,
+      });
+      const context = makeContext();
+      // The pack's StrictMode double mount: invoking runs synchronously up to the first wait,
+      // so each caller is inside the shared lookup by the time `invoke` returns.
+      const call = (controller: AbortController) =>
+        Promise.resolve(
+          provider.invoke("getCapabilities", {}, context, controller.signal, meta(provider)),
+        );
+
+      const cancelled = new AbortController();
+      const first = call(cancelled).then(
+        () => "completed",
+        () => "rejected",
+      );
+      cancelled.abort();
+      // The first caller has left: either it is unwinding the shared lookup, or it never owned
+      // the lookup and has already returned.
+      yield* Effect.raceFirst(
+        Deferred.await(unwinding),
+        Effect.promise(() => first),
+      );
+      const second = call(new AbortController());
+      yield* Deferred.succeed(release, undefined);
+
+      const capabilities = (yield* Effect.tryPromise({
+        try: () => second,
+        catch: (cause) => new InvokeRejection({ cause }),
+      })) as { hosted: boolean; reason: string | null };
+      expect(capabilities.hosted).toBe(false);
+      expect(capabilities.reason).toBe("provider-unsupported");
+      expect(yield* Effect.promise(() => first)).toBe("rejected");
+    }),
+  );
+
+  it.effect("a read another caller's cancellation interrupted is read again, not failed", () =>
+    Effect.gen(function* () {
+      // Joining a shared lookup that another caller cancelled hands this caller that lookup's
+      // interrupt, although this caller was never cancelled.
+      let reads = 0;
+      const provider = createPrsApiProvider(
+        makeDeps({
+          list: () => {
+            reads++;
+            return reads === 1
+              ? Effect.forkDetach(Effect.never).pipe(
+                  Effect.tap(Fiber.interrupt),
+                  Effect.flatMap(Fiber.join),
+                )
+              : Effect.succeed(listResult);
+          },
+        }),
+      );
+      const capabilities = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
+        hosted: boolean;
+        providers: readonly unknown[];
+      };
+      expect(capabilities.hosted).toBe(true);
+      expect(capabilities.providers).toEqual(listResult.providers);
+      expect(reads).toBe(2);
     }),
   );
 

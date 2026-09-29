@@ -3,11 +3,11 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
+import { makeSharedCacheGet } from "../utils/sharedCacheGet.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
@@ -112,7 +112,7 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
-  const serviceScope = yield* Effect.scope;
+  const getShared = yield* makeSharedCacheGet;
   const detectionCache = yield* Cache.makeWith<string, VcsDriverHandle | null, VcsError>(
     (key) => detectResolvedKind(parseDetectionCacheKey(key)),
     {
@@ -127,18 +127,7 @@ export const make = Effect.gen(function* () {
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);
-      // Concurrent callers share one lookup, and the cache interrupts it when its
-      // last awaiter leaves. A caller arriving while that interruption unwinds
-      // joins the dying lookup and fails with a bare interrupt. Awaiting from a
-      // fiber owned by the service scope keeps a cancelled caller from ever
-      // interrupting the shared lookup, while shutdown still interrupts it; the
-      // caller itself still stops waiting immediately.
-      const lookup = yield* Effect.forkIn(
-        Cache.get(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind })),
-        serviceScope,
-        { startImmediately: true },
-      );
-      return yield* Fiber.join(lookup);
+      return yield* getShared(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind }));
     },
   );
 
