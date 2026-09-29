@@ -326,6 +326,7 @@ import {
   terminalIdListsEqual,
   workspaceLaunchFromRevision,
 } from "./viewModel.ts";
+import * as TerminalViewModel from "./viewModel.ts";
 
 const meta = (terminalId, extra = {}) => ({
   terminalId,
@@ -559,6 +560,183 @@ NodeTest.describe("terminal panel — reconciliation + tabs", () => {
       await clients[1].startSession("term-1");
       NodeAssert.equal(launches, 2);
       for (const panel of clients) panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a resize that failed across a backend restart does not keep the shown pane from starting",
+    async () => {
+      const control = fakeControl({
+        resize(input) {
+          control.calls.push(["resize", input]);
+          return Promise.reject(new Error("Environment is not connected"));
+        },
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      // The backend dies; the shown pane's status line changes height, so it
+      // re-fits and the resize fails while no connection is usable.
+      panel.beginListStream();
+      panel.resize("term-1", 80, 21);
+      await new Promise(setImmediate);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.error, "Environment is not connected");
+      // The restarted server lists no term-1: the shown pane starts on its own.
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "attach").map(([, input]) => input.terminalId),
+        ["term-1"],
+      );
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a failed automatic start waits for Start, and the next restart's missing observation retries it once",
+    async () => {
+      let failNext = true;
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          if (!failNext) return Promise.resolve(meta(input.terminalId));
+          failNext = false;
+          return Promise.reject(new Error("Environment is not connected"));
+        },
+      });
+      const attaches = () => control.calls.filter(([op]) => op === "attach").length;
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "closed");
+      // Same observation: the failure waits for Start.
+      panel.startMissingSessions(["term-1"]);
+      panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-2") });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The backend restarts again and still has no term-1: one more start.
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-2")] });
+      panel.startMissingSessions(["term-1"]);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 2);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.status, "running");
+      NodeAssert.equal(panel.snapshot.tabs[0]?.error, null);
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: Start clears input stopped by writes to a session the server did not have",
+    async () => {
+      const control = fakeControl({
+        write(input) {
+          control.calls.push(["write", input]);
+          return this.server
+            ? Promise.resolve({})
+            : Promise.reject(new Error("Terminal control operation failed."));
+        },
+        server: false,
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      // Typed into the pane while it had no session: the write fails.
+      panel.sendInput("term-1", "echo lost\r");
+      await new Promise(setImmediate);
+      NodeAssert.equal(panel.snapshot.tabs[0]?.inputStopped, true);
+      control.server = true;
+      await panel.startSession("term-1");
+      NodeAssert.equal(panel.snapshot.tabs[0]?.inputStopped, false);
+      panel.sendInput("term-1", "echo ok\r");
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "write").map(([, input]) => input.data),
+        ["echo lost\r", "echo ok\r"],
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36 (a): a pane waiting to start when shown is not announced as closed; a failed start is",
+    async () => {
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          return Promise.reject(new Error("spawn failed"));
+        },
+      });
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1"), meta("term-2")] });
+      NodeAssert.equal(TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]), null);
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      // Out of view after the restart: it starts when shown, as native does.
+      NodeAssert.equal(TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]), null);
+      panel.startMissingSessions(["term-2"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(
+        TerminalViewModel.sessionStatusText(panel.snapshot.tabs[1]),
+        "closed · spawn failed",
+      );
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "t36: a missing observation re-arms a failed start but never starts a pane the user closed",
+    async () => {
+      const closeResult = deferred();
+      const control = fakeControl({
+        attach(input) {
+          control.calls.push(["attach", input]);
+          return Promise.reject(new Error("spawn failed"));
+        },
+        close(input) {
+          control.calls.push(["close", input]);
+          return closeResult.promise;
+        },
+      });
+      const attaches = () => control.calls.filter(([op]) => op === "attach").length;
+      const panel = new TerminalPanel({ control, launch });
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The user closes the failed pane; the close is still on the wire when
+      // the backend restarts and reports it missing, which re-arms a start.
+      panel.requestAction("term-1", "close");
+      const closing = panel.confirmAction("term-1");
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      NodeAssert.equal(panel.snapshot.tabs[0]?.startsWhenShown, false);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      // The close fails: the `exit\n` fallback runs and the pane stays gone.
+      closeResult.reject(new Error("net::ERR_ABORTED"));
+      await closing;
+      panel.applySessionsEvent({ kind: "snapshot", terminals: [] });
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(attaches(), 1);
+      NodeAssert.deepEqual(panel.snapshot.terminalIds, []);
+      NodeAssert.deepEqual(
+        control.calls.filter(([op]) => op === "close" || op === "write").map(([op]) => op),
+        ["close", "write"],
+      );
+      panel.dispose();
     },
   );
 
