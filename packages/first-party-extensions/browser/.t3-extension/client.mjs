@@ -214,7 +214,8 @@ var __t3Client = (() => {
   var RESUMABLE_API_STREAMS = {
     "t3.terminal/output-events#subscribe": 1,
     "t3.terminal/sessions#list": 2,
-    "t3.workspace/changes#subscribeChanges": 3
+    "t3.workspace/changes#subscribeChanges": 3,
+    "t3.browser/sessions#events": 4
   };
   function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
@@ -16125,12 +16126,12 @@ ${ind(d)}}`;
     };
   }
   function createCommandDispatch(options) {
-    const { signal, lastRevision } = options;
+    const { signal, lastRevision, epoch } = options;
     return (run2, onAccepted) => {
       void run2(signal).then(
         (receipt2) => {
           if (signal.aborted) return;
-          const stale = receipt2.revision < lastRevision.current;
+          const stale = (epoch.current === null || receipt2.serverEpoch === epoch.current) && receipt2.revision < lastRevision.current;
           if (!stale) lastRevision.current = receipt2.revision;
           if (receipt2.outcome !== "accepted") {
             if (!stale) options.refuse(receipt2.outcome);
@@ -18107,6 +18108,10 @@ ${ind(d)}}`;
       });
     });
   }
+  function disconnectedNotice(host) {
+    const label = host.environmentLabel?.();
+    return label ? `${label} is not connected.` : "Environment is not connected.";
+  }
   function restoreState(value) {
     if (value === null) return true;
     if (typeof value !== "object" || Array.isArray(value)) return false;
@@ -18186,11 +18191,22 @@ ${ind(d)}}`;
     (0, import_react8.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
+      const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
+      let connected = false;
+      const onSuspended = () => {
+        if (signal.aborted || !connected) return;
+        setNotice(disconnectedNotice(host));
+      };
       void (async () => {
         try {
           const api = bindStreamApi(browserSessionsApi, host, session.context);
           let pending = null;
-          for await (const frame of api.subscribe("events", {}, signal)) {
+          for await (const frame of api.subscribe(
+            "events",
+            {},
+            signal,
+            resumable ? { resume: "fresh-snapshot", onSuspended } : void 0
+          )) {
             signal.throwIfAborted();
             const value = frame.value;
             if (!value) continue;
@@ -18203,8 +18219,12 @@ ${ind(d)}}`;
                 pending?.push(...value.sessions);
                 break;
               case "snapshot-complete": {
+                if (tabsEpoch.current !== null && tabsEpoch.current !== value.serverEpoch)
+                  lastRevision.current = value.revision;
                 tabsEpoch.current = value.serverEpoch;
                 setTabs(pending ?? []);
+                if (connected) setNotice(null);
+                connected = true;
                 if (current) {
                   const found = pending?.find((item) => item.tabId === current.tabId);
                   if (value.serverEpoch !== current.serverEpoch || !found) {
@@ -18212,7 +18232,7 @@ ${ind(d)}}`;
                     setHeld(null);
                     setLive(null);
                     setNotice(
-                      value.serverEpoch !== current.serverEpoch ? "Session ended (epoch-changed)" : "Session ended (session-closed)"
+                      value.serverEpoch !== current.serverEpoch ? "Session ended \u2014 the server restarted. Enter an address to open a new session." : "Session ended (session-closed)"
                     );
                   } else {
                     setLive(found);
@@ -18431,6 +18451,7 @@ ${ind(d)}}`;
     const dispatch = createCommandDispatch({
       signal: session.signal,
       lastRevision,
+      epoch: tabsEpoch,
       refuse: (outcome) => setNotice(`Browser command ${outcome}`),
       fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
       adopt: (receipt2) => {

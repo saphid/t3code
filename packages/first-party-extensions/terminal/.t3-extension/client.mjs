@@ -197,7 +197,8 @@ var __t3Client = (() => {
   var RESUMABLE_API_STREAMS = {
     "t3.terminal/output-events#subscribe": 1,
     "t3.terminal/sessions#list": 2,
-    "t3.workspace/changes#subscribeChanges": 3
+    "t3.workspace/changes#subscribeChanges": 3,
+    "t3.browser/sessions#events": 4
   };
   function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
