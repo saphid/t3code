@@ -12657,6 +12657,12 @@ var __t3Client = (() => {
      * list frames still describing them are stale and must not re-add a tab.
      */
     #closing = /* @__PURE__ */ new Set();
+    /**
+     * User closes the server never confirmed (e.g. a network drop aborted the
+     * request). Like native, the id stays hidden; unlike a lost request, the
+     * close is sent again the next time the server lists the session.
+     */
+    #unconfirmedCloses = /* @__PURE__ */ new Set();
     #stream = "connecting";
     #panelError = null;
     #disposed = false;
@@ -12853,8 +12859,10 @@ var __t3Client = (() => {
         case "snapshot": {
           this.#stream = "live";
           for (const id2 of this.#closing)
-            if (!event.terminals.some((terminal) => terminal.terminalId === id2))
+            if (!event.terminals.some((terminal) => terminal.terminalId === id2)) {
               this.#closing.delete(id2);
+              this.#unconfirmedCloses.delete(id2);
+            }
           const terminals = event.terminals.filter(
             (terminal) => !this.#closing.has(terminal.terminalId)
           );
@@ -12867,15 +12875,20 @@ var __t3Client = (() => {
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
           this.#syncGroupsFollowingActive();
+          for (const id2 of this.#closing) this.#resendClose(id2);
           break;
         }
         case "upsert":
-          if (this.#closing.has(event.terminal.terminalId)) return;
+          if (this.#closing.has(event.terminal.terminalId)) {
+            this.#resendClose(event.terminal.terminalId);
+            return;
+          }
           this.#observeMeta(event.terminal);
           this.#syncGroups();
           break;
         case "remove":
           this.#closing.delete(event.terminalId);
+          this.#unconfirmedCloses.delete(event.terminalId);
           this.#removeTab(event.terminalId);
           return;
         case "closed":
@@ -12897,6 +12910,11 @@ var __t3Client = (() => {
       if (this.#stream === "connecting") return;
       this.#stream = "connecting";
       this.#emit();
+    }
+    /** Re-sends an unconfirmed user close once per server listing of the id. */
+    #resendClose(terminalId) {
+      if (!this.#unconfirmedCloses.delete(terminalId)) return;
+      void this.#control.close({ terminalId, deleteHistory: true }).catch(() => this.#unconfirmedCloses.add(terminalId));
     }
     markStreamDisconnected(message) {
       this.#stream = "closed";
@@ -13119,7 +13137,10 @@ var __t3Client = (() => {
       tab.confirm = null;
       this.#emit();
     }
-    /** Confirmed destructive action; close falls back to a plain `exit\n` write. */
+    /**
+     * Confirmed destructive action. A failed close falls back to a plain
+     * `exit\n` write (native) and is re-sent when the server next lists the id.
+     */
     async confirmAction(terminalId) {
       const tab = this.#tabs.get(terminalId);
       const action = tab?.confirm;
@@ -13130,6 +13151,8 @@ var __t3Client = (() => {
         try {
           await this.#control.close({ terminalId, deleteHistory: true });
         } catch {
+          this.#closing.add(terminalId);
+          this.#unconfirmedCloses.add(terminalId);
           try {
             await this.#control.write({ terminalId, data: "exit\n" });
           } catch {

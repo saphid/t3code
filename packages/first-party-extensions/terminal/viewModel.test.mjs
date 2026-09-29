@@ -831,6 +831,118 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     panel.dispose();
   });
 
+  /**
+   * A server that owns sessions and their history files. `offline` aborts
+   * requests like a dropped network; `exit\n` ends the shell but leaves the
+   * session listed (exited) with its history, as the real server does.
+   */
+  function fakeServer(ids) {
+    const server = { offline: false, sessions: new Map(), history: new Set(ids), panel: null };
+    for (const id of ids) server.sessions.set(id, meta(id));
+    const list = () => [...server.sessions.values()];
+    server.control = fakeControl({
+      close(input) {
+        server.control.calls.push(["close", input]);
+        if (server.offline) return Promise.reject(new Error("net::ERR_ABORTED"));
+        server.sessions.delete(input.terminalId);
+        if (input.deleteHistory) server.history.delete(input.terminalId);
+        server.panel?.applySessionsEvent({ kind: "remove", terminalId: input.terminalId });
+        return Promise.resolve({});
+      },
+      write(input) {
+        server.control.calls.push(["write", input]);
+        if (server.offline) return Promise.reject(new Error("net::ERR_ABORTED"));
+        if (input.data === "exit\n" && server.sessions.has(input.terminalId)) {
+          const exited = meta(input.terminalId, { status: "exited", exitCode: 0 });
+          server.sessions.set(input.terminalId, exited);
+          server.panel?.applySessionsEvent({ kind: "upsert", terminal: exited });
+        }
+        return Promise.resolve({});
+      },
+    });
+    server.connect = (panel) => {
+      server.panel = panel;
+      panel.beginListStream();
+      panel.applySessionsEvent({ kind: "snapshot", terminals: list() });
+    };
+    server.drop = (panel) => {
+      server.offline = true;
+      server.panel = null;
+      panel.markStreamDisconnected("offline");
+    };
+    return server;
+  }
+
+  NodeTest.it(
+    "a Close aborted by a network drop is delivered after reconnect (web-r5 Terminal 11)",
+    async () => {
+      const server = fakeServer(["term-1", "term-6"]);
+      const panel = new TerminalPanel({ control: server.control, launch });
+      server.connect(panel);
+      const release = deferred();
+      const close = server.control.close;
+      server.control.close = (input) => release.promise.then(() => close(input));
+      panel.requestAction("term-6", "close");
+      const closing = panel.confirmAction("term-6");
+      // The drop aborts the in-flight close; the exit fallback is lost too.
+      server.drop(panel);
+      release.resolve();
+      await closing;
+      server.control.close = close;
+      server.offline = false;
+      server.connect(panel);
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        {
+          rows: panel.snapshot.terminalIds,
+          serverSessions: [...server.sessions.keys()],
+          history: [...server.history],
+        },
+        { rows: ["term-1"], serverSessions: ["term-1"], history: ["term-1"] },
+      );
+      // A reload lists only what the server kept.
+      const reloaded = new TerminalPanel({ control: server.control, launch });
+      server.connect(reloaded);
+      NodeAssert.deepEqual(reloaded.snapshot.terminalIds, ["term-1"]);
+      reloaded.dispose();
+      panel.dispose();
+    },
+  );
+
+  NodeTest.it(
+    "a Close aborted after the list already reconnected is delivered on the exit upsert",
+    async () => {
+      const server = fakeServer(["term-1", "term-6"]);
+      const panel = new TerminalPanel({ control: server.control, launch });
+      server.connect(panel);
+      const abort = deferred();
+      const close = server.control.close;
+      server.control.close = (input) => {
+        server.control.calls.push(["close", input]);
+        return abort.promise;
+      };
+      panel.requestAction("term-6", "close");
+      const closing = panel.confirmAction("term-6");
+      server.drop(panel);
+      server.offline = false;
+      server.connect(panel);
+      server.control.close = close;
+      // The aborted request only settles now; the exit fallback reaches the server.
+      abort.reject(new Error("net::ERR_ABORTED"));
+      await closing;
+      await new Promise(setImmediate);
+      NodeAssert.deepEqual(
+        {
+          rows: panel.snapshot.terminalIds,
+          serverSessions: [...server.sessions.keys()],
+          history: [...server.history],
+        },
+        { rows: ["term-1"], serverSessions: ["term-1"], history: ["term-1"] },
+      );
+      panel.dispose();
+    },
+  );
+
   NodeTest.it("restart and clear go through confirm; cancel backs out", async () => {
     const control = fakeControl();
     const panel = new TerminalPanel({ control, launch });

@@ -5,7 +5,7 @@
   "version": "0.3.0",
   "hashes": {
     "t3-extension.json": "2066917ef3fee3104d405aebc9b4e7444a4a0572e127cab51de455261f07d4a4",
-    "client.mjs": "b5998d783cc46d60fd9ed30c62be1703c779b936c44bde1aad4d936bae8fc35c",
+    "client.mjs": "d5bf674f44eb8d9e32da51e1e3a4fc1863b653f87e901580d3b5dd91c53d6d4a",
     "assets/ghostty-vt.wasm": "51b016a6aa3c29ead71c7c8acf8c01d43b064bae19957a9c9f9e2bf469267629",
     "assets/ghostty-write-pty.wasm": "75cb147e98ede3f85f3cd6236a30f6d12565b0b237e1d8db941f5f3e8ad3d903",
     "assets/SymbolsNerdFontMono-Regular.woff2": "a8e2fc5ae3c2525812151b95da80c5beab0befa84aca84fc33aaed94317502df",
