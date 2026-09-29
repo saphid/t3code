@@ -784,12 +784,6 @@ export class TerminalPanel {
    * list frames still describing them are stale and must not re-add a tab.
    */
   readonly #closing = new Set<string>();
-  /**
-   * User closes the server never confirmed (e.g. a network drop aborted the
-   * request). Like native, the id stays hidden; unlike a lost request, the
-   * close is sent again the next time the server lists the session.
-   */
-  readonly #unconfirmedCloses = new Set<string>();
   #stream: "connecting" | "live" | "closed" = "connecting";
   #panelError: string | null = null;
   #disposed = false;
@@ -1019,7 +1013,9 @@ export class TerminalPanel {
     const tab = this.#tabs.get(terminalId);
     if (this.#disposed || !tab) return;
     if (status === "exited") {
-      if (tab.starting) return;
+      // A user close owns this id: its request (or `exit\n` fallback) is
+      // pending, and a failed cleanup must not lift its suppression.
+      if (tab.starting || tab.closing) return;
       this.#closing.add(terminalId);
       void this.#control
         .close({ terminalId, deleteHistory: true })
@@ -1042,10 +1038,8 @@ export class TerminalPanel {
         // server id as a tracked tab, which would turn a disjoint server list
         // into a strict subset and let stale restored ids survive (#17).
         for (const id of this.#closing)
-          if (!event.terminals.some((terminal) => terminal.terminalId === id)) {
+          if (!event.terminals.some((terminal) => terminal.terminalId === id))
             this.#closing.delete(id);
-            this.#unconfirmedCloses.delete(id);
-          }
         const terminals = event.terminals.filter(
           (terminal) => !this.#closing.has(terminal.terminalId),
         );
@@ -1062,15 +1056,10 @@ export class TerminalPanel {
         // Native reconcileThreadTerminalSessionIds: the visible group
         // follows the reconciled active terminal, not the stored group.
         this.#syncGroupsFollowingActive();
-        // Still listed: a user close that never reached the server goes again.
-        for (const id of this.#closing) this.#resendClose(id);
         break;
       }
       case "upsert":
-        if (this.#closing.has(event.terminal.terminalId)) {
-          this.#resendClose(event.terminal.terminalId);
-          return;
-        }
+        if (this.#closing.has(event.terminal.terminalId)) return;
         this.#observeMeta(event.terminal);
         // An upsert for an unknown id appended it to the list — keep the
         // group partition covering every session (new ids earn singletons).
@@ -1078,7 +1067,6 @@ export class TerminalPanel {
         break;
       case "remove":
         this.#closing.delete(event.terminalId);
-        this.#unconfirmedCloses.delete(event.terminalId);
         this.#removeTab(event.terminalId);
         return;
       case "closed":
@@ -1101,14 +1089,6 @@ export class TerminalPanel {
     if (this.#stream === "connecting") return;
     this.#stream = "connecting";
     this.#emit();
-  }
-
-  /** Re-sends an unconfirmed user close once per server listing of the id. */
-  #resendClose(terminalId: string) {
-    if (!this.#unconfirmedCloses.delete(terminalId)) return;
-    void this.#control
-      .close({ terminalId, deleteHistory: true })
-      .catch(() => this.#unconfirmedCloses.add(terminalId));
   }
 
   markStreamDisconnected(message: string | null) {
@@ -1362,7 +1342,9 @@ export class TerminalPanel {
 
   /**
    * Confirmed destructive action. A failed close falls back to a plain
-   * `exit\n` write (native) and is re-sent when the server next lists the id.
+   * `exit\n` write and keeps the id hidden for this page, like native
+   * suppression. It is never re-sent: the id is a reusable slot, so a later
+   * listing may be another client's replacement session.
    */
   async confirmAction(terminalId: string): Promise<void> {
     const tab = this.#tabs.get(terminalId);
@@ -1377,7 +1359,6 @@ export class TerminalPanel {
         await this.#control.close({ terminalId, deleteHistory: true });
       } catch {
         this.#closing.add(terminalId);
-        this.#unconfirmedCloses.add(terminalId);
         try {
           await this.#control.write({ terminalId, data: "exit\n" });
         } catch {
