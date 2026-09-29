@@ -755,13 +755,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         ? current
         : null;
     // A page reopened after its session died keeps that session's profile.
-    const reopen = reopenRequest(current ? live : null, url);
-    const open = (signal: AbortSignal) =>
-      reopen.api === "profiles"
-        ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
-            throw new Error(profileFailureMessage("open", error));
-          })
-        : api.invoke("open", { url }, signal);
+    const reopen = usable ? null : reopenRequest(current ? live : null, url);
     dispatch(
       (signal) =>
         usable
@@ -777,13 +771,18 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 signal,
               )
               .catch((error: unknown) => {
-                // The server restarted before this view heard: the held
-                // session is gone, so like native the address opens fresh.
+                // The server restarted before this view heard. Like native, a
+                // failed navigation is not retried: the address stays in the
+                // bar, and once the restart is synced Enter opens it fresh.
                 if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
-                  return open(signal);
+                  throw new Error("The browser restarted. Press Enter to open this address again.");
                 throw error;
               })
-          : open(signal),
+          : reopen?.api === "profiles"
+            ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
+                throw new Error(profileFailureMessage("open", error));
+              })
+            : api.invoke("open", { url }, signal),
       onAccepted,
     );
   };

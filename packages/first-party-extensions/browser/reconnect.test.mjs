@@ -133,6 +133,10 @@ function restartingBackend() {
   const acquires = [];
   const presents = [];
   const navigates = [];
+  const opens = [];
+  // The host's synced epoch trails the server's until `syncSurface()`.
+  let hostEpoch = server.epoch;
+  let navigateGate = null;
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
 
@@ -196,6 +200,7 @@ function restartingBackend() {
       if (request.id !== "t3.browser/sessions") throw new Error("API unavailable");
       if (!up) throw socketClosed();
       if (request.method === "open") {
+        opens.push(request.input.url);
         server.revision += 1;
         const session = browserSession("tab-b", request.input.url, "Page B");
         server.sessions.push(session);
@@ -211,7 +216,12 @@ function restartingBackend() {
           session,
         };
       }
-      if (request.method === "navigate") navigates.push(request.input.serverEpoch);
+      if (request.method === "navigate") {
+        navigates.push(request.input.serverEpoch);
+        const gate = navigateGate;
+        navigateGate = null;
+        if (gate) await gate;
+      }
       if (request.method === "navigate" && request.input.serverEpoch !== server.epoch)
         throw new Error("BrowserStaleServerEpoch: the request epoch does not match");
       throw new Error("API unavailable");
@@ -239,12 +249,14 @@ function restartingBackend() {
       presentation: { supported: true },
       acquire(request) {
         acquires.push({ tabId: request.session.tabId, serverEpoch: request.session.serverEpoch });
-        if (request.session.serverEpoch !== server.epoch)
+        // Like the real bridge, any mismatch with the synced epoch is denied,
+        // including a newer epoch the host has not caught up to.
+        if (request.session.serverEpoch !== hostEpoch)
           return {
             ok: false,
             denial: {
               reason: "epoch-changed",
-              detail: "the synced server epoch has moved past this session's epoch",
+              detail: "the session's epoch does not match the synced server epoch",
             },
           };
         const listeners = new Set();
@@ -276,7 +288,7 @@ function restartingBackend() {
         };
         // The host's synced sessions: a new epoch ends every older lease.
         const watch = () => {
-          if (server.epoch !== request.session.serverEpoch) end("epoch-changed");
+          if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
         };
         surfaceWatchers.add(watch);
         return { ok: true, lease };
@@ -295,9 +307,17 @@ function restartingBackend() {
       for (const resolve of pending) resolve();
     },
     syncSurface() {
+      hostEpoch = server.epoch;
       for (const watch of surfaceWatchers) watch();
     },
     navigates: () => navigates,
+    opens: () => opens,
+    /** Holds the next navigate's response; returns the release. */
+    holdNavigate() {
+      let release;
+      navigateGate = new Promise((resolve) => (release = resolve));
+      return release;
+    },
     /** Holds the next snapshot before its `snapshot-complete`; returns the release. */
     holdSnapshot() {
       let release;
@@ -319,7 +339,7 @@ function restartingBackend() {
       server.revision = 1;
       server.sessions = [];
       up = true;
-      if (syncSurface) for (const watch of surfaceWatchers) watch();
+      if (syncSurface) this.syncSurface();
       const pending = restarts;
       restarts = new Set();
       for (const resolve of pending) resolve();
@@ -385,12 +405,14 @@ async function withView(backend, run) {
     renderer.root.findAll(
       (node) => node.type === "div" && node.props["aria-label"] === "Browser surface",
     ).length > 0;
+  const addressInput = () =>
+    renderer.root.find((node) => node.type === "input" && node.props["aria-label"] === "Address");
+  /** Types `url` into the address bar and presses Enter; no `url` focuses the bar and presses Enter on what it shows. */
   const enter = async (url) => {
-    const address = renderer.root.find(
-      (node) => node.type === "input" && node.props["aria-label"] === "Address",
-    );
+    const address = addressInput();
     await act(async () => {
-      address.props.onChange({ target: { value: url } });
+      if (url === undefined) address.props.onFocus({ currentTarget: { select() {} } });
+      else address.props.onChange({ target: { value: url } });
     });
     await act(async () => {
       address.props.onKeyDown({
@@ -408,7 +430,13 @@ async function withView(backend, run) {
       serverEpoch: "epoch-a",
       visible: true,
     });
-    await run({ status, hasSurface, enter, text: () => textOf(renderer.toJSON()) });
+    await run({
+      status,
+      hasSurface,
+      enter,
+      address: () => addressInput().props.value,
+      text: () => textOf(renderer.toJSON()),
+    });
   } finally {
     await act(async () => {
       view.controller.abort();
@@ -498,10 +526,10 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "an address entered as the server returns opens a fresh session instead of being lost",
+  "an address entered as the server returns stays in the bar and opens once the restart is synced",
   async () => {
     const backend = restartingBackend();
-    await withView(backend, async ({ status, enter, text }) => {
+    await withView(backend, async ({ status, enter, address, text }) => {
       backend.drop();
       await settle();
       const release = backend.holdSnapshot();
@@ -512,13 +540,53 @@ NodeTest.test(
       await enter("https://b.test/");
       await settle();
       NodeAssert.deepEqual(backend.navigates(), ["epoch-a"], "sent to the held session first");
-      presentingB(backend, status);
+      // No session is opened for an epoch the host has not synced: its
+      // surface would be denied for good.
+      NodeAssert.deepEqual(backend.opens(), []);
+      NodeAssert.match(text(), /Press Enter to open this address again/);
       NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch/);
       backend.syncSurface();
       release();
       await settle();
+      // The dead hold dropped; the bar shows the address that was entered.
+      NodeAssert.equal(address(), "https://b.test/");
+      // The user's next Enter opens the address fresh and presents it.
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
       presentingB(backend, status);
-      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|Session ended|epoch-changed/);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|Session ended|epoch-changed|again/);
+    });
+  },
+);
+
+NodeTest.test(
+  "a delayed stale-navigation rejection opens nothing and keeps the newer address",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, address }) => {
+      backend.drop();
+      await settle();
+      const release = backend.holdSnapshot();
+      backend.restart({ syncSurface: false });
+      await settle();
+      const releaseOlder = backend.holdNavigate();
+      await enter("https://older.test/");
+      await settle();
+      await enter("https://newer.test/");
+      await settle();
+      releaseOlder();
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-a", "epoch-a"]);
+      NodeAssert.deepEqual(backend.opens(), [], "a stale rejection opens no session");
+      backend.syncSurface();
+      release();
+      await settle();
+      NodeAssert.equal(address(), "https://newer.test/");
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), ["https://newer.test/"]);
+      presentingB(backend, status);
     });
   },
 );
