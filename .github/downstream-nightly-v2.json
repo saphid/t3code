@@ -80,12 +80,6 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "b0ad145784ff8886bcab7902845753a2c6c7f7af",
-      "name": "test(server): await ACP prompt settlement before soft-steer interrupts"
-    },
-    {
-      "type": "commit",
-      "repository": "saphid/t3code",
       "sha": "bff0fe603922c76e6f82a602c91550bbff71f5a9",
       "name": "test(web): keep React completion outside simulated application timers"
     },
