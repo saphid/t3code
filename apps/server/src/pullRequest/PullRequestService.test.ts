@@ -4,6 +4,7 @@ import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -3227,6 +3228,57 @@ it.effect("answers a repeated listing from cache, and concurrent readers share o
     // A different filter is a different answer, not a cache hit.
     yield* service.list({ state: "all" });
     assert.strictEqual(hostCalls, 2);
+  }),
+);
+
+it.effect("keeps a shared listing alive when the caller that started it is interrupted", () =>
+  // Version Control's capability probe lists through this cache. React's
+  // effect replay aborts the first probe while its host read is running; the
+  // replayed probe arrives while that read unwinds and must get the listing,
+  // not the interrupt.
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const readInterrupted = yield* Deferred.make<void>();
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            // A real CLI takes time to die, so its interruption only
+            // completes once `release` fires.
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.onInterrupt(() =>
+                Deferred.succeed(readInterrupted, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                ),
+              ),
+              Effect.as({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            ),
+        }),
+      ],
+    });
+
+    const first = yield* Effect.forkChild(service.list({ state: "open", limit: 1 }));
+    yield* Deferred.await(started);
+    const interrupting = yield* Effect.forkChild(Fiber.interrupt(first));
+    // Either the read is being torn down, or the first caller left without
+    // touching it; both are the moment the second caller arrives.
+    yield* Effect.raceFirst(Deferred.await(readInterrupted), Fiber.await(first));
+    const second = yield* Effect.forkChild(service.list({ state: "open", limit: 1 }), {
+      startImmediately: true,
+    });
+    yield* Deferred.succeed(release, undefined);
+
+    const secondExit = yield* Fiber.await(second);
+    yield* Fiber.join(interrupting);
+    assert.isTrue(Exit.isSuccess(secondExit), String(secondExit));
+    assert.strictEqual(Exit.isSuccess(secondExit) ? secondExit.value.entries.length : null, 1);
   }),
 );
 
