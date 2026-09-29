@@ -759,16 +759,25 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     dispatch(
       (signal) =>
         usable
-          ? api.invoke(
-              "navigate",
-              {
-                tabId: usable.tabId,
-                serverEpoch: usable.serverEpoch,
-                url,
-                expectedEngineGeneration: usable.engineGeneration,
-              },
-              signal,
-            )
+          ? api
+              .invoke(
+                "navigate",
+                {
+                  tabId: usable.tabId,
+                  serverEpoch: usable.serverEpoch,
+                  url,
+                  expectedEngineGeneration: usable.engineGeneration,
+                },
+                signal,
+              )
+              .catch((error: unknown) => {
+                // The server restarted before this view heard. Like native, a
+                // failed navigation is not retried: the address stays in the
+                // bar, and once the restart is synced Enter opens it fresh.
+                if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
+                  throw new Error("The browser restarted. Press Enter to open this address again.");
+                throw error;
+              })
           : reopen?.api === "profiles"
             ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
                 throw new Error(profileFailureMessage("open", error));
@@ -1027,7 +1036,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
     leaseState?.kind === "ended"
-      ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+      ? // A restarted server ends the lease before the resumed snapshot
+        // drops the hold; native drops it silently.
+        leaseState.reason === "epoch-changed"
+        ? null
+        : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
       : remoteEligible
         ? remoteNotice
         : surfaceDenial

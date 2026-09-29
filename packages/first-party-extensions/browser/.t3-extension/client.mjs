@@ -18516,7 +18516,11 @@ ${ind(d)}}`;
             expectedEngineGeneration: usable.engineGeneration
           },
           signal
-        ) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
+        ).catch((error) => {
+          if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
+            throw new Error("The browser restarted. Press Enter to open this address again.");
+          throw error;
+        }) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
           throw new Error(profileFailureMessage("open", error));
         }) : api.invoke("open", { url }, signal),
         onAccepted
@@ -18705,7 +18709,11 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = leaseState?.kind === "ended" ? (
+      // A restarted server ends the lease before the resumed snapshot
+      // drops the hold; native drops it silently.
+      leaseState.reason === "epoch-changed" ? null : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+    ) : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {

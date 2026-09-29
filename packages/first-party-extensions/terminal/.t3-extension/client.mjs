@@ -12427,6 +12427,12 @@ var __t3Client = (() => {
   function suspendedOutputStatus(state2) {
     return state2.status === "live" ? { ...state2, status: "connecting", statusText: "Reconnecting\u2026" } : state2;
   }
+  function isPaneReattaching(tab, stream) {
+    return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true;
+  }
+  function paneStatusText(state2, reattaching) {
+    return reattaching && state2.status === "error" && state2.ended ? "Connecting\u2026" : state2.statusText;
+  }
   var EMPTY_OUTPUT_BUFFER = {
     contents: "",
     retainedBytes: 0,
@@ -15446,6 +15452,7 @@ var __t3Client = (() => {
       shown,
       visible,
       running,
+      reattaching,
       assets,
       themeVars,
       appearanceVars,
@@ -15745,7 +15752,7 @@ var __t3Client = (() => {
               children: [
                 terminalId,
                 ": ",
-                state2.statusText
+                paneStatusText(state2, reattaching)
               ]
             }
           ),
@@ -16480,6 +16487,7 @@ var __t3Client = (() => {
                                     shown,
                                     visible,
                                     running: tabById.get(terminalId)?.status === "running",
+                                    reattaching: isPaneReattaching(tabById.get(terminalId), snapshot.stream),
                                     assets,
                                     themeVars,
                                     appearanceVars,
@@ -16510,8 +16518,9 @@ var __t3Client = (() => {
                                 style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
                                 children: [
                                   activeId,
-                                  ": ",
-                                  activeTab.exitBanner ?? output?.statusText ?? "Connecting\u2026",
+                                  ":",
+                                  " ",
+                                  activeTab.exitBanner ?? (output ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream)) : "Connecting\u2026"),
                                   activeTab.error ? ` \u2014 ${activeTab.error}` : ""
                                 ]
                               }
