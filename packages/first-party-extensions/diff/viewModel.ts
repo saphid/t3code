@@ -546,10 +546,13 @@ export function fileStatLabel(row: DiffFileRow): string {
   return `+${row.additions} −${row.deletions}`;
 }
 
-/** Source switcher label: title + delivered hash prefix + truncation marker. */
-export function describeSource(source: VcsDiffPreviewSource): string {
-  const hash = source.diffHash.slice(0, 12);
-  return `${source.title} · ${hash}${source.truncated ? " · truncated" : ""}`;
+/**
+ * Source switcher label: native DiffPanel's scope names. The server's source
+ * title says "Dirty worktree" even for a clean tree, and the hash means
+ * nothing to a reader; truncation has its own note under the header.
+ */
+export function describeSource(source: Pick<VcsDiffPreviewSource, "kind">): string {
+  return source.kind === WORKING_TREE_KIND ? "Working tree" : "Branch changes";
 }
 
 /* ---------------- comment section identity ---------------- */

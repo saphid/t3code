@@ -10348,8 +10348,7 @@ ${prefix}`;
     return `+${row.additions} \u2212${row.deletions}`;
   }
   function describeSource(source) {
-    const hash = source.diffHash.slice(0, 12);
-    return `${source.title} \xB7 ${hash}${source.truncated ? " \xB7 truncated" : ""}`;
+    return source.kind === WORKING_TREE_KIND ? "Working tree" : "Branch changes";
   }
   function commentSectionFor(mode, turnSelection, source) {
     if (mode === "turns") {

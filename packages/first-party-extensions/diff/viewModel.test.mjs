@@ -701,9 +701,16 @@ NodeTest.test("labels: displayPath, fileStatLabel, changeTypeLabel, describeSour
   NodeAssert.equal(fileStatLabel(byPath.get("renamed.txt")), "");
   NodeAssert.equal(changeTypeLabel("new"), "added");
   NodeAssert.equal(changeTypeLabel("rename-changed"), "renamed, modified");
+  // Native DiffPanel's scope labels, whatever the server titles the source
+  // and whether or not the tree is dirty: a clean worktree is not "Dirty".
+  const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  NodeAssert.equal(describeSource(source({ diff: "", diffHash: EMPTY_SHA256 })), "Working tree");
+  NodeAssert.equal(describeSource(source({ truncated: true })), "Working tree");
   NodeAssert.equal(
-    describeSource(source({ truncated: true })),
-    `Dirty worktree · ${"a".repeat(12)} · truncated`,
+    describeSource(
+      source({ id: "branch-range", kind: "branch-range", title: "Against base branch" }),
+    ),
+    "Branch changes",
   );
 });
 
