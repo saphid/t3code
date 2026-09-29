@@ -39,6 +39,7 @@ import type {
   HostApiProvider,
 } from "@t3tools/extension-runtime";
 import * as NodeCrypto from "node:crypto";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -556,9 +557,17 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         catch: () => failure(args.operation, "Invalid pull request request input."),
       });
       const scope = yield* resolve(context);
-      const result = yield* args
-        .run(safe, scope)
-        .pipe(Effect.mapError(operationError(args.operation)));
+      const result = yield* args.run(safe, scope).pipe(
+        // Only interrupts while this caller is still waiting means a shared lookup it joined was
+        // cancelled by another caller. Every method here is a read, so read once more, which
+        // starts or joins a live lookup, rather than failing a caller that cancelled nothing.
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause) && !signal.aborted
+            ? args.run(safe, scope)
+            : Effect.failCause(cause),
+        ),
+        Effect.mapError(operationError(args.operation)),
+      );
       // The wire image cannot carry `undefined` members — the broker's
       // copyJson rejects them before stringify — so optional fields that
       // arrived explicitly undefined are stripped here first, then copyJson

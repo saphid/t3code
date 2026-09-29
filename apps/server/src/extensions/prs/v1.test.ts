@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1651,6 +1652,34 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       expect(capabilities.hosted).toBe(false);
       expect(capabilities.reason).toBe("provider-unsupported");
       expect(yield* Effect.promise(() => first)).toBe("rejected");
+    }),
+  );
+
+  it.effect("a read another caller's cancellation interrupted is read again, not failed", () =>
+    Effect.gen(function* () {
+      // Joining a shared lookup that another caller cancelled hands this caller that lookup's
+      // interrupt, although this caller was never cancelled.
+      let reads = 0;
+      const provider = createPrsApiProvider(
+        makeDeps({
+          list: () => {
+            reads++;
+            return reads === 1
+              ? Effect.forkDetach(Effect.never).pipe(
+                  Effect.tap(Fiber.interrupt),
+                  Effect.flatMap(Fiber.join),
+                )
+              : Effect.succeed(listResult);
+          },
+        }),
+      );
+      const capabilities = (yield* invoke(provider, "getCapabilities", {}, makeContext())) as {
+        hosted: boolean;
+        providers: readonly unknown[];
+      };
+      expect(capabilities.hosted).toBe(true);
+      expect(capabilities.providers).toEqual(listResult.providers);
+      expect(reads).toBe(2);
     }),
   );
 
