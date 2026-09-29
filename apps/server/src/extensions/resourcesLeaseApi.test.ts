@@ -6,7 +6,12 @@ import {
   ThreadId,
   extensionWorkspaceRevision,
 } from "@t3tools/contracts";
-import { BROWSER_SESSIONS, WORKSPACE_RESOURCES } from "@t3tools/extension-sdk/catalogue";
+import {
+  API_CALL_TIME_GRANTS,
+  BROWSER_SESSIONS,
+  RESOURCES_LEASE_API,
+  WORKSPACE_RESOURCES,
+} from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import { it, expect, describe } from "@effect/vitest";
@@ -176,6 +181,13 @@ const projectScopedContext = (): ViewContext => ({
     projectId: "project",
   },
 });
+
+/** The grants the broker suggests for a package requiring only t3.resources/lease. */
+const LEASE_SUGGESTED = new Set([
+  ...(RESOURCES_LEASE_API.methods ?? []).flatMap((method) => method.requiredGrants),
+  ...(RESOURCES_LEASE_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
+  ...(API_CALL_TIME_GRANTS[RESOURCES_LEASE_API.id] ?? []),
+]);
 
 const workspaceFileInput = {
   resource: { _tag: "workspace-file", threadId: "thread", path: "preview.svg" },
@@ -937,6 +949,55 @@ describe("t3.resources/lease adapter", () => {
         )) as { released: boolean };
         expect(again).toEqual({ released: false });
       }).pipe(Effect.provide(LeasesLive)),
+  );
+
+  it.effect("a lease-only consumer granted its suggested set mints every kind and releases", () =>
+    Effect.gen(function* () {
+      const leases = yield* BrowserFrameLeases;
+      const provider = createResourcesLeaseApiProvider(
+        makeDeps({
+          projects: {
+            getById: () =>
+              Effect.succeed(
+                Option.some({
+                  projectId: ProjectId.make("project"),
+                  workspaceRoot: WORKSPACE,
+                  faviconPath: "public/favicon.svg",
+                  deletedAt: null,
+                }),
+              ),
+          },
+          issueBrowserSurface: () =>
+            Effect.succeed({
+              relativeUrl: fakeUrl("browser-surface", "browser-surface", { slotId: "slot-1" }),
+              expiresAt: 4_102_444_800_000,
+              slotId: "slot-1",
+            }),
+          issueUrl: (input) =>
+            Effect.succeed({ relativeUrl: fakeUrl(input.resource._tag), expiresAt: 999 }),
+          leases,
+          authorizeGrant: async (_callerId, grant) => LEASE_SUGGESTED.has(grant),
+        }),
+      );
+      const mint = (input: Parameters<HostApiProvider["invoke"]>[1]) =>
+        invoke(provider, "createPresentationUrl", input, makeContext()) as Effect.Effect<
+          { url: string; kind: string },
+          InvokeRejection
+        >;
+      expect((yield* mint(workspaceFileInput)).url).toContain("/api/assets/");
+      expect((yield* mint({ resource: { _tag: "project-favicon", cwd: WORKSPACE } })).kind).toBe(
+        "project-favicon",
+      );
+      const surface = yield* mint(releaseInput);
+      expect(surface.kind).toBe("browser-surface");
+      const released = yield* invoke(
+        provider,
+        "releasePresentation",
+        { presentationUrl: surface.url },
+        makeContext(),
+      );
+      expect(released).toEqual({ released: true });
+    }).pipe(Effect.provide(LeasesLive)),
   );
 
   it.effect("releasePresentation refuses a caller that does not hold the claim", () =>

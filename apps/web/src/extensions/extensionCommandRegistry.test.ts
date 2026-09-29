@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { API_CALL_TIME_GRANTS, UI_KEYBINDINGS_API } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import {
@@ -41,6 +42,15 @@ const context: ViewContext = {
     threadId: "thread-a",
   },
 };
+
+/** The grants the broker suggests for a package requiring only t3.ui/keybindings. */
+const KEYBINDINGS_SUGGESTED = [
+  ...new Set([
+    ...(UI_KEYBINDINGS_API.methods ?? []).flatMap((method) => method.requiredGrants),
+    ...(UI_KEYBINDINGS_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
+    ...(API_CALL_TIME_GRANTS[UI_KEYBINDINGS_API.id] ?? []),
+  ]),
+];
 
 const envDeps = (epoch = 1): ExtensionCommandEnvironmentDeps => ({
   installationGeneration: (id: string) => (id === INSTALL ? epoch : null),
@@ -174,7 +184,7 @@ describe("registerCommands", () => {
     expect(withoutGlobal.results[0]?.reason).toContain("keybindings.global");
 
     const withGlobal = register([command({ id: "run2", scope: "global" })], {
-      capabilities: ["t3.ui/keybindings", "t3.ui/keybindings.global"],
+      capabilities: KEYBINDINGS_SUGGESTED,
     });
     expect(withGlobal.results[0]?.status).toBe("registered");
   });
@@ -208,6 +218,17 @@ describe("registerCommands", () => {
       installationScoped: true,
     });
     expect(legal.results[0]?.status).toBe("registered");
+  });
+
+  it("registers a global activation command holding a keybindings-only consumer's suggested grants", () => {
+    configureExtensionCommandEnvironment(ENV, envDeps());
+    const activation = { surfaceId: SURFACE, placement: "side-panel" as const };
+    const registered = register([command({ id: "open", scope: "global", activation })], {
+      capabilities: KEYBINDINGS_SUGGESTED,
+      installationScoped: true,
+    });
+    expect(registered.results[0]?.reason).toBeUndefined();
+    expect(registered.results[0]?.status).toBe("registered");
   });
 
   it("replays the same registration set idempotently", () => {

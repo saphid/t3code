@@ -5,6 +5,9 @@ import type { InstalledPackage } from "./installedController";
 import {
   AGENT_SESSIONS_IMPORT,
   AGENT_SESSIONS_SCAN,
+  BROWSER_CAPTURE,
+  BROWSER_SURFACE,
+  UI_KEYBINDINGS_GLOBAL,
   filePresentationApi,
 } from "@t3tools/extension-sdk/catalogue";
 import {
@@ -421,6 +424,41 @@ it("grants exactly the missing required permissions and never removes a held one
     fixture.installations = [installed({ capabilities: [], projectIds })];
     await act(async () => root.update(<InstalledExtensionsSettings />));
     expect(JSON.stringify(root.toJSON())).not.toContain("new permission");
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
+});
+
+it("lists missing host-checked grants with what they allow and lets them be granted", async () => {
+  fixture.manage = true;
+  fixture.update.mockClear();
+  const projectIds = ["project-a" as InstalledPackage["grants"]["projectIds"][number]];
+  const hostChecked = [BROWSER_SURFACE, BROWSER_CAPTURE, UI_KEYBINDINGS_GLOBAL];
+  fixture.installations = [installed({ capabilities: [], projectIds }, hostChecked)];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    const text = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(text).join("");
+    expect(text(root.root)).toContain("This version can use 3 permissions it does not have:");
+    expect(text(root.root)).toContain(`${BROWSER_SURFACE} — Host service ${BROWSER_SURFACE}`);
+    expect(text(root.root)).toContain(`${BROWSER_CAPTURE} — Host service ${BROWSER_CAPTURE}`);
+    expect(text(root.root)).toContain(
+      `${UI_KEYBINDINGS_GLOBAL} — Checked by t3.ui/keybindings when it is called`,
+    );
+    // Each can also be chosen by hand, not only while held.
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+    for (const grant of hostChecked)
+      expect(checkboxIn(root, `Allow ${grant} in selected projects`)).toBeDefined();
+    await act(async () => buttonIn(root, "Grant 3 new permissions").props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      action: "addGrants",
+      grants: { capabilities: hostChecked, projectIds: [] },
+    });
   } finally {
     fixture.installations = [];
     await act(async () => root?.unmount());
