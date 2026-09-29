@@ -3,6 +3,7 @@ import * as NodeTest from "node:test";
 
 import {
   createCommandDispatch,
+  createRevisionFence,
   createProjectHistory,
   displayedHistory,
   projectHistoryErrorState,
@@ -195,21 +196,23 @@ NodeTest.describe("displayedHistory", () => {
 });
 
 NodeTest.describe("createCommandDispatch", () => {
+  const fenceAt = (revision) => ({ ...createRevisionFence(), epoch: "epoch-a", revision });
+
   /**
    * The view's `dispatch`, recording through a real `createProjectHistory`
    * the way `submit` wires `go(url, () => projectHistory.record(url))`.
    * `send` returns the pending receipt; awaiting it resumes after dispatch's
-   * own settle handler, which was registered first.
+   * own settle handler, which was registered first. Receipts default to the
+   * fence's epoch.
    */
-  function dispatchHarness(lastRevision, epoch = { current: null }) {
+  function dispatchHarness(fence) {
     const api = scriptedApi();
     const session = new AbortController();
     const history = createProjectHistory(api, session.signal, () => {});
     const effects = [];
     const dispatch = createCommandDispatch({
       signal: session.signal,
-      lastRevision,
-      epoch,
+      fence,
       adopt: (receipt) => effects.push(["adopt", receipt.revision]),
       refuse: (outcome) => effects.push(["refuse", outcome]),
       fail: (error) => effects.push(["fail", error.message]),
@@ -217,7 +220,10 @@ NodeTest.describe("createCommandDispatch", () => {
     const send = (url) => {
       const receipt = deferred();
       dispatch(() => receipt.promise, url ? () => history.record(url) : undefined);
-      return receipt;
+      return {
+        ...receipt,
+        resolve: (value) => receipt.resolve({ serverEpoch: "epoch-a", ...value }),
+      };
     };
     const records = () => api.calls.filter((call) => call.method === "record");
     return { send, effects, records, session };
@@ -226,15 +232,15 @@ NodeTest.describe("createCommandDispatch", () => {
   NodeTest.it(
     "records an accepted visit once when the stream already applied a newer page",
     async () => {
-      const lastRevision = { current: 4 };
-      const { send, effects, records } = dispatchHarness(lastRevision);
+      const fence = fenceAt(4);
+      const { send, effects, records } = dispatchHarness(fence);
       const navigate = send("https://typed.test/");
       // The events stream's upsert at revision 6 lands before the navigate receipt at 5.
-      lastRevision.current = Math.max(lastRevision.current, 6);
+      fence.revision = 6;
       navigate.resolve({ revision: 5, outcome: "accepted" });
       await navigate.promise;
       NodeAssert.deepEqual(effects, []);
-      NodeAssert.equal(lastRevision.current, 6);
+      NodeAssert.equal(fence.revision, 6);
       NodeAssert.deepEqual(
         records().map((call) => call.input),
         [{ url: "https://typed.test/" }],
@@ -243,19 +249,19 @@ NodeTest.describe("createCommandDispatch", () => {
   );
 
   NodeTest.it("adopts a current receipt and records once", async () => {
-    const lastRevision = { current: 4 };
-    const { send, effects, records } = dispatchHarness(lastRevision);
+    const fence = fenceAt(4);
+    const { send, effects, records } = dispatchHarness(fence);
     const navigate = send("https://typed.test/");
     navigate.resolve({ revision: 5, outcome: "accepted" });
     await navigate.promise;
     NodeAssert.deepEqual(effects, [["adopt", 5]]);
-    NodeAssert.equal(lastRevision.current, 5);
+    NodeAssert.equal(fence.revision, 5);
     NodeAssert.equal(records().length, 1);
   });
 
   NodeTest.it("never records a refused command, and a stale refusal stays silent", async () => {
-    const lastRevision = { current: 4 };
-    const { send, effects, records } = dispatchHarness(lastRevision);
+    const fence = fenceAt(4);
+    const { send, effects, records } = dispatchHarness(fence);
     const current = send("https://typed.test/");
     const stale = send("https://typed.test/");
     current.resolve({ revision: 5, outcome: "rejected" });
@@ -267,9 +273,8 @@ NodeTest.describe("createCommandDispatch", () => {
 
   NodeTest.it("orders receipts by revision only within the server epoch", async () => {
     // The stream last saw revision 40 of epoch-a; the server then restarted.
-    const lastRevision = { current: 40 };
-    const epoch = { current: "epoch-a" };
-    const { send, effects } = dispatchHarness(lastRevision, epoch);
+    const fence = fenceAt(40);
+    const { send, effects } = dispatchHarness(fence);
     const old = send();
     old.resolve({ revision: 39, outcome: "accepted", serverEpoch: "epoch-a" });
     await old.promise;
@@ -278,12 +283,44 @@ NodeTest.describe("createCommandDispatch", () => {
     reopened.resolve({ revision: 2, outcome: "accepted", serverEpoch: "epoch-b" });
     await reopened.promise;
     NodeAssert.deepEqual(effects, [["adopt", 2]]);
-    NodeAssert.equal(lastRevision.current, 2);
+    NodeAssert.equal(fence.revision, 2);
+  });
+
+  NodeTest.it("keeps the (epoch, revision) fence monotonic after a restart", async () => {
+    // The stream still holds epoch-a at 40; two receipts from the restarted
+    // server land out of order before its snapshot does.
+    const fence = fenceAt(40);
+    const { send, effects } = dispatchHarness(fence);
+    const newer = send();
+    const older = send();
+    newer.resolve({ revision: 3, outcome: "accepted", serverEpoch: "epoch-b" });
+    await newer.promise;
+    older.resolve({ revision: 2, outcome: "accepted", serverEpoch: "epoch-b" });
+    await older.promise;
+    // A late result from the retired server never lands either.
+    const retired = send();
+    retired.resolve({ revision: 41, outcome: "accepted", serverEpoch: "epoch-a" });
+    await retired.promise;
+    NodeAssert.deepEqual(effects, [["adopt", 3]]);
+    NodeAssert.deepEqual([fence.epoch, fence.revision], ["epoch-b", 3]);
+  });
+
+  NodeTest.it("keeps an older refusal from the restarted server silent", async () => {
+    const fence = fenceAt(40);
+    const { send, effects } = dispatchHarness(fence);
+    const newer = send();
+    const older = send();
+    newer.resolve({ revision: 3, outcome: "accepted", serverEpoch: "epoch-b" });
+    await newer.promise;
+    older.resolve({ revision: 2, outcome: "rejected", serverEpoch: "epoch-b" });
+    await older.promise;
+    NodeAssert.deepEqual(effects, [["adopt", 3]]);
+    NodeAssert.equal(fence.revision, 3);
   });
 
   NodeTest.it("settles nothing once the view session ends, and reports live failures", async () => {
-    const lastRevision = { current: 4 };
-    const { send, effects, records, session } = dispatchHarness(lastRevision);
+    const fence = fenceAt(4);
+    const { send, effects, records, session } = dispatchHarness(fence);
     const failed = send("https://typed.test/");
     failed.reject(new Error("offline"));
     await failed.promise.catch(() => {});
@@ -292,7 +329,7 @@ NodeTest.describe("createCommandDispatch", () => {
     late.resolve({ revision: 5, outcome: "accepted" });
     await late.promise;
     NodeAssert.deepEqual(effects, [["fail", "offline"]]);
-    NodeAssert.equal(lastRevision.current, 4);
+    NodeAssert.equal(fence.revision, 4);
     NodeAssert.equal(records().length, 0);
   });
 });

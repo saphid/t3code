@@ -58,9 +58,12 @@ import {
 } from "./historyStore.js";
 import { LocalServersSection, NoPreview, RecentlyUsedHeading, useLocalServers } from "./landing.js";
 import {
+  advanceRevision,
   createCommandDispatch,
   createProjectHistory,
+  createRevisionFence,
   displayedHistory,
+  isStaleRevision,
   titleUpdate,
   type ProjectHistoryState,
 } from "./projectHistory.js";
@@ -291,14 +294,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [visible, setVisible] = useState(session.visible);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
-  const lastRevision = useRef(-1);
+  // Every stream frame and command receipt applies only through this fence.
+  const [fence] = useState(createRevisionFence);
   /**
    * Newest revision applied to the held tab's `live` session, reset when the
    * view adopts a tab. The stream is ordered, so upserts never go backwards
    * among themselves; only a receipt that overtook its own upsert leaves an
    * older upsert still to arrive, which must not roll `live` back.
-   * `lastRevision` cannot fence that: revisions are stream-wide, so another
-   * tab's receipt would swallow this tab's updates.
+   * `fence` cannot fence that: revisions are stream-wide, so another tab's
+   * receipt would swallow this tab's updates.
    */
   const heldRevision = useRef(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -377,28 +381,35 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               pending?.push(...value.sessions);
               break;
             case "snapshot-complete": {
-              // Revisions count per server epoch; a restarted server starts
-              // over, so the old epoch's fence would refuse every receipt.
-              if (tabsEpoch.current !== null && tabsEpoch.current !== value.serverEpoch)
-                lastRevision.current = value.revision;
+              // A receipt from the restarted server already moved past this epoch.
+              if (fence.retired.has(value.serverEpoch)) {
+                pending = null;
+                break;
+              }
+              advanceRevision(fence, value.serverEpoch, value.revision);
               tabsEpoch.current = value.serverEpoch;
               setTabs(pending ?? []);
               if (connected) setNotice(null);
               connected = true;
-              if (current) {
+              // A snapshot captured before the receipt that adopted the held
+              // tab says nothing about it; the deltas queued behind it do.
+              if (
+                current &&
+                !(
+                  value.serverEpoch === current.serverEpoch && value.revision < heldRevision.current
+                )
+              ) {
                 const found = pending?.find((item) => item.tabId === current.tabId);
                 if (value.serverEpoch !== current.serverEpoch || !found) {
                   heldRef.current = null;
                   setHeld(null);
                   setLive(null);
-                  setNotice(
-                    value.serverEpoch !== current.serverEpoch
-                      ? "Session ended — the server restarted. Enter an address to open a new session."
-                      : "Session ended (session-closed)",
-                  );
+                  // Like native's re-list, a restarted server's missing tab
+                  // just drops back to the empty Browser.
+                  if (value.serverEpoch === current.serverEpoch)
+                    setNotice("Session ended (session-closed)");
                 } else {
                   setLive(found);
-                  lastRevision.current = value.revision;
                   heldRevision.current = value.revision;
                 }
               }
@@ -421,7 +432,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               ) {
                 heldRevision.current = value.revision;
                 setLive(value.session);
-                lastRevision.current = Math.max(lastRevision.current, value.revision);
+                if (tabsEpoch.current) advanceRevision(fence, tabsEpoch.current, value.revision);
                 setHeld((previous) =>
                   previous
                     ? { ...previous, engineGeneration: value.session.engine.generation }
@@ -586,9 +597,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         // re-adopts it.
         if (session.signal.aborted) return false;
         // Superseded but accepted: the server applied it, so it still lands.
-        if (receipt.revision < lastRevision.current) return receipt.outcome === "accepted";
+        if (isStaleRevision(fence, receipt.serverEpoch, receipt.revision))
+          return receipt.outcome === "accepted";
         if (heldRef.current?.tabId !== receipt.session.tabId) return false;
-        lastRevision.current = receipt.revision;
+        advanceRevision(fence, receipt.serverEpoch, receipt.revision);
         heldRevision.current = Math.max(heldRevision.current, receipt.revision);
         if (receipt.outcome !== "accepted") {
           setNotice(`Browser command ${receipt.outcome}`);
@@ -691,8 +703,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
 
   const dispatch = createCommandDispatch<BrowserSessionReceipt>({
     signal: session.signal,
-    lastRevision,
-    epoch: tabsEpoch,
+    fence,
     refuse: (outcome) => setNotice(`Browser command ${outcome}`),
     fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
     adopt: (receipt) => {
@@ -895,8 +906,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       const { receipt } = outcome;
       const current = heldRef.current;
       if (!current || receipt.session.tabId !== current.tabId) return;
-      if (receipt.revision < lastRevision.current) return;
-      lastRevision.current = receipt.revision;
+      if (!advanceRevision(fence, receipt.serverEpoch, receipt.revision)) return;
       heldRevision.current = Math.max(heldRevision.current, receipt.revision);
       const next = { ...current, engineGeneration: receipt.session.engine.generation };
       heldRef.current = next;

@@ -125,6 +125,10 @@ function restartingBackend() {
   let up = true;
   let drops = new Set();
   let restarts = new Set();
+  // Live subscribers' queued deltas, and the gate a test may hold before the
+  // next snapshot completes (the server queues deltas behind the snapshot).
+  const subscribers = new Set();
+  let snapshotGate = null;
   const surfaceWatchers = new Set();
   const acquires = [];
   const presents = [];
@@ -155,12 +159,27 @@ function restartingBackend() {
             });
           }
           if (signal.aborted) return;
-          for (const value of snapshotFrames())
-            yield { streamId: "events", type: "data", sequence: ++sequence, value };
-          await new Promise((resolve) => {
-            drops.add(resolve);
-            onAbort(signal, resolve);
-          });
+          const subscriber = { queue: [], wake: null };
+          subscribers.add(subscriber);
+          const [start, chunk, complete] = snapshotFrames();
+          yield { streamId: "events", type: "data", sequence: ++sequence, value: start };
+          yield { streamId: "events", type: "data", sequence: ++sequence, value: chunk };
+          if (snapshotGate) await snapshotGate;
+          yield { streamId: "events", type: "data", sequence: ++sequence, value: complete };
+          for (;;) {
+            if (!up || signal.aborted) break;
+            const value = subscriber.queue.shift();
+            if (value) {
+              yield { streamId: "events", type: "data", sequence: ++sequence, value };
+              continue;
+            }
+            await new Promise((resolve) => {
+              subscriber.wake = resolve;
+              drops.add(resolve);
+              onAbort(signal, resolve);
+            });
+          }
+          subscribers.delete(subscriber);
           if (signal.aborted) return;
           if (!resumable) throw socketClosed();
           onSuspended?.();
@@ -179,6 +198,10 @@ function restartingBackend() {
         server.revision += 1;
         const session = browserSession("tab-b", request.input.url, "Page B");
         server.sessions.push(session);
+        for (const subscriber of subscribers) {
+          subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
+          subscriber.wake?.();
+        }
         return {
           commandId: `open-${server.revision}`,
           outcome: "accepted",
@@ -269,6 +292,17 @@ function restartingBackend() {
       drops = new Set();
       for (const resolve of pending) resolve();
     },
+    /** Holds the next snapshot before its `snapshot-complete`; returns the release. */
+    holdSnapshot() {
+      let release;
+      snapshotGate = new Promise((resolve) => {
+        release = () => {
+          snapshotGate = null;
+          resolve();
+        };
+      });
+      return release;
+    },
     restart() {
       server.epoch = "epoch-b";
       server.revision = 1;
@@ -320,74 +354,111 @@ async function settle() {
   });
 }
 
+/** Mounts the real view on `backend`; `run` drives it, and the view unmounts after. */
+async function withView(backend, run) {
+  const view = viewSession();
+  let renderer;
+  await act(async () => {
+    renderer = create(
+      React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
+      { createNodeMock: nodeMock },
+    );
+  });
+  const status = () =>
+    textOf(
+      renderer.root.find(
+        (node) => node.type === "div" && node.props["aria-label"] === "Browser status",
+      ),
+    );
+  const hasSurface = () =>
+    renderer.root.findAll(
+      (node) => node.type === "div" && node.props["aria-label"] === "Browser surface",
+    ).length > 0;
+  const enter = async (url) => {
+    const address = renderer.root.find(
+      (node) => node.type === "input" && node.props["aria-label"] === "Address",
+    );
+    await act(async () => {
+      address.props.onChange({ target: { value: url } });
+    });
+    await act(async () => {
+      address.props.onKeyDown({
+        key: "Enter",
+        preventDefault() {},
+        currentTarget: { blur() {} },
+      });
+    });
+  };
+  try {
+    await settle();
+    NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
+    NodeAssert.deepEqual(backend.presents.at(-1), {
+      tabId: "tab-a",
+      serverEpoch: "epoch-a",
+      visible: true,
+    });
+    await run({ status, hasSurface, enter, text: () => textOf(renderer.toJSON()) });
+  } finally {
+    await act(async () => {
+      view.controller.abort();
+      renderer.unmount();
+    });
+  }
+}
+
+const presentingB = (backend, status) => {
+  NodeAssert.deepEqual(backend.acquires.at(-1), { tabId: "tab-b", serverEpoch: "epoch-b" });
+  NodeAssert.deepEqual(backend.presents.at(-1), {
+    tabId: "tab-b",
+    serverEpoch: "epoch-b",
+    visible: true,
+  });
+  NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+};
+
 NodeTest.test(
   "after a backend restart the next address opens a fresh session and presents it",
   async () => {
     const backend = restartingBackend();
-    const view = viewSession();
-    let renderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
-        {
-          createNodeMock: nodeMock,
-        },
-      );
-    });
-    const status = () =>
-      textOf(
-        renderer.root.find(
-          (node) => node.type === "div" && node.props["aria-label"] === "Browser status",
-        ),
-      );
-    try {
-      await settle();
-      NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
-      NodeAssert.deepEqual(backend.presents.at(-1), {
-        tabId: "tab-a",
-        serverEpoch: "epoch-a",
-        visible: true,
-      });
-
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
       backend.drop();
       await settle();
       NodeAssert.equal(status(), "Environment is not connected.");
       backend.restart();
       await settle();
-      NodeAssert.equal(
-        status(),
-        "Session ended — the server restarted. Enter an address to open a new session.",
-      );
+      // Like native's re-list: the old hold drops silently, back to the
+      // ordinary empty Browser.
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.match(status(), /^Requested https:\/\/a\.test\/ /);
 
-      const address = renderer.root.find(
-        (node) => node.type === "input" && node.props["aria-label"] === "Address",
-      );
-      await act(async () => {
-        address.props.onChange({ target: { value: "https://b.test/" } });
-      });
-      await act(async () => {
-        address.props.onKeyDown({
-          key: "Enter",
-          preventDefault() {},
-          currentTarget: { blur() {} },
-        });
-      });
+      await enter("https://b.test/");
       await settle();
+      presentingB(backend, status);
+      NodeAssert.doesNotMatch(text(), /SocketCloseError|1006|epoch-changed|restarted/);
+    });
+  },
+);
 
-      NodeAssert.deepEqual(backend.acquires.at(-1), { tabId: "tab-b", serverEpoch: "epoch-b" });
-      NodeAssert.deepEqual(backend.presents.at(-1), {
-        tabId: "tab-b",
-        serverEpoch: "epoch-b",
-        visible: true,
-      });
-      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
-      const text = textOf(renderer.toJSON());
-      NodeAssert.doesNotMatch(text, /SocketCloseError|1006|epoch-changed/);
-    } finally {
-      await act(async () => {
-        view.controller.abort();
-        renderer.unmount();
-      });
-    }
+NodeTest.test(
+  "an open that lands before the resumed snapshot completes survives that snapshot",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, text }) => {
+      backend.drop();
+      await settle();
+      const release = backend.holdSnapshot();
+      backend.restart();
+      await settle();
+      // The restarted server captured its empty snapshot at revision 1; the
+      // user's open lands at revision 2 before that snapshot completes.
+      await enter("https://b.test/");
+      await settle();
+      presentingB(backend, status);
+      release();
+      await settle();
+      presentingB(backend, status);
+      NodeAssert.match(text(), /Page B/);
+      NodeAssert.doesNotMatch(text(), /Session ended/);
+    });
   },
 );
