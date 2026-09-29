@@ -748,6 +748,8 @@ interface TabInternal {
   input: TerminalInputQueue;
   exitBanner: string | null;
   confirm: TerminalConfirmAction | null;
+  /** A confirmed Close is on the wire: nothing may start this pane again. */
+  closing: boolean;
   error: string | null;
   resizeInFlight: { cols: number; rows: number } | null;
   resizePending: { cols: number; rows: number } | null;
@@ -898,6 +900,7 @@ export class TerminalPanel {
         input: this.#newInputQueue(terminalId),
         exitBanner: null,
         confirm: null,
+        closing: false,
         error: null,
         resizeInFlight: null,
         resizePending: null,
@@ -1206,7 +1209,7 @@ export class TerminalPanel {
     if (this.#disposed || this.#stream !== "live") return;
     for (const terminalId of terminalIds) {
       const tab = this.#tabs.get(terminalId);
-      if (tab && tab.meta === null && !tab.starting && tab.error === null)
+      if (tab && tab.meta === null && !tab.starting && !tab.closing && tab.error === null)
         void this.#attach(terminalId, false);
     }
   }
@@ -1219,7 +1222,7 @@ export class TerminalPanel {
   async #attach(terminalId: string, restartIfNotRunning: boolean): Promise<void> {
     const launch = this.#launch;
     const tab = this.#tabs.get(terminalId);
-    if (!tab || !launch || tab.starting) return;
+    if (!tab || !launch || tab.starting || tab.closing) return;
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
     this.#liveInput(terminalId, tab).setReady(false);
@@ -1237,6 +1240,8 @@ export class TerminalPanel {
         ...(launch.env !== undefined ? { env: launch.env } : {}),
       });
       tab.starting = false;
+      // The pane was closed or replaced meanwhile: its metadata must not revive the id.
+      if (this.#tabs.get(terminalId) !== tab) return;
       this.#liveInput(terminalId, tab).setReady(true);
       this.#observeMeta(meta);
       await this.#drain(terminalId);
@@ -1340,6 +1345,9 @@ export class TerminalPanel {
     if (!tab || !action) return;
     tab.confirm = null;
     if (action === "close") {
+      // Recorded on the tab, not in #closing: a list snapshot or remove can
+      // clear that set while this request is still pending.
+      tab.closing = true;
       try {
         await this.#control.close({ terminalId, deleteHistory: true });
       } catch {
@@ -1349,7 +1357,7 @@ export class TerminalPanel {
           // The session may already be gone; the tab still leaves.
         }
       }
-      this.#removeTab(terminalId, "index");
+      if (this.#tabs.get(terminalId) === tab) this.#removeTab(terminalId, "index");
       return;
     }
     const launch = this.#launch;
