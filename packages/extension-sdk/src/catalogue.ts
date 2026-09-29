@@ -10125,12 +10125,18 @@ export const TERMINAL_CONTROL_API = terminalControlApi.definition;
  * and streams' own `requiredGrants` cannot express, keyed by the API id a
  * package lists in `requires`: the host-local browser capabilities that only
  * work on a session this API's caller holds, the op-level global-shortcut
- * grant, and a PR phase whose grant follows the input. A host deriving an
- * installation's suggested grants adds these, so a package granted exactly
- * that set can use what it declared.
+ * grant and the panels grant a command's activation needs, the mint grant
+ * per leased resource kind, and a PR phase whose grant follows the input. A
+ * host deriving an installation's suggested grants adds these, so a package
+ * granted exactly that set can use what it declared.
  */
 export const API_CALL_TIME_GRANTS: Readonly<Record<string, readonly string[]>> = {
   [BROWSER_SESSIONS]: [BROWSER_SURFACE, BROWSER_CAPTURE],
-  [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL],
+  [RESOURCES_LEASE]: [
+    ...new Set(
+      Object.values(RESOURCE_LEASE_KIND_GRANTS).filter((grant): grant is string => grant !== null),
+    ),
+  ],
+  [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL, UI_PANELS],
   [VCS_ACTIONS]: [PRS_WRITE],
 };

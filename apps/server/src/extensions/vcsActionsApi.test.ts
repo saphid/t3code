@@ -26,7 +26,13 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PRS_WRITE, VCS_HANDOFF, VCS_MUTATE } from "@t3tools/extension-sdk/catalogue";
+import {
+  API_CALL_TIME_GRANTS,
+  PRS_WRITE,
+  VCS_ACTIONS_API,
+  VCS_HANDOFF,
+  VCS_MUTATE,
+} from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import {
@@ -39,6 +45,15 @@ import type { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import type { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import type { VcsDriverHandle, VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import { createVcsActionsApiProvider } from "./vcsActionsApi.ts";
+
+/** The grants the broker suggests for a package requiring only t3.vcs/actions. */
+const VCS_ACTIONS_SUGGESTED = [
+  ...new Set([
+    ...VCS_ACTIONS_API.methods.flatMap((method) => method.requiredGrants),
+    ...(VCS_ACTIONS_API.streams ?? []).flatMap((stream) => stream.requiredGrants),
+    ...(API_CALL_TIME_GRANTS[VCS_ACTIONS_API.id] ?? []),
+  ]),
+];
 
 const isOperationError = Schema.is(ExtensionOperationError);
 const READ_AND_OPERATE = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
@@ -579,7 +594,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
   it.effect("runs a stacked action, streams ordered progress, and refreshes status", () =>
     Effect.gen(function* () {
       const t = makeProvider({
-        grants: [PRS_WRITE],
+        grants: VCS_ACTIONS_SUGGESTED,
         runStackedAction: (input, options) =>
           Effect.gen(function* () {
             const reporter = options!.progressReporter!;
@@ -674,7 +689,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
 
   it.effect("links a created pull request to the resolved thread", () =>
     Effect.gen(function* () {
-      const t = makeProvider({ grants: [PRS_WRITE] });
+      const t = makeProvider({ grants: VCS_ACTIONS_SUGGESTED });
       const started = (yield* invoke(t.provider, "run", { action: "commit_push_pr" })) as {
         actionId: string;
       };
@@ -744,7 +759,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     Effect.gen(function* () {
       // The broker aborts a unary invocation's `assertAuthority` once the
       // call settles; the composite outlives the call, so it must not reuse it.
-      const t = makeProvider({ grants: [PRS_WRITE] });
+      const t = makeProvider({ grants: VCS_ACTIONS_SUGGESTED });
       let settled = false;
       const metadata = {
         ...meta(t.provider),
@@ -807,7 +822,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
         const workStarted = Deferred.makeUnsafe<void>();
         const release = Deferred.makeUnsafe<void>();
         const t = makeProvider({
-          grants: [PRS_WRITE],
+          grants: VCS_ACTIONS_SUGGESTED,
           runStackedAction: (input, options) =>
             Effect.gen(function* () {
               yield* options!.progressReporter!.publish({
@@ -850,7 +865,10 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
         Effect.gen(function* () {
           const held = heldWorkflow();
           const live = liveAuthority();
-          const t = makeProvider({ grants: [PRS_WRITE], runStackedAction: held.runStackedAction });
+          const t = makeProvider({
+            grants: VCS_ACTIONS_SUGGESTED,
+            runStackedAction: held.runStackedAction,
+          });
           const started = yield* startRun(t.provider, action, live);
           yield* Deferred.await(held.workStarted);
           revoke(live);
@@ -872,7 +890,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
     it.effect(`never starts the composite when ${label} before the detached work runs`, () =>
       Effect.gen(function* () {
         const live = liveAuthority();
-        const t = makeProvider({ grants: [PRS_WRITE] });
+        const t = makeProvider({ grants: VCS_ACTIONS_SUGGESTED });
         // Revoked between the broker's admission and the detached fiber's first check.
         let checks = 0;
         const started = yield* startRun(t.provider, "commit_push", live, () => {
@@ -891,7 +909,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
 
   it.effect("skips the status refresh when authority is revoked after the PR link", () =>
     Effect.gen(function* () {
-      const t = makeProvider({ grants: [PRS_WRITE] });
+      const t = makeProvider({ grants: VCS_ACTIONS_SUGGESTED });
       const live = liveAuthority();
       // The session ends the moment the link lands.
       const started = yield* startRun(t.provider, "commit_push_pr", live, () => {
@@ -1072,7 +1090,7 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       expect(deniedError.detail).toContain("VcsActionGrantDeniedError");
       expect(denied.published).toHaveLength(0);
 
-      const t = makeProvider({ grants: [PRS_WRITE] });
+      const t = makeProvider({ grants: VCS_ACTIONS_SUGGESTED });
       const unknown = yield* invokeError(t.provider, "publishRepository", {
         provider: "unknown",
         repository: "acme/web",

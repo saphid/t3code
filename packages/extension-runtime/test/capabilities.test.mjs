@@ -8,13 +8,17 @@ import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import { createExtensionRuntime } from "../dist/index.js";
 import {
-  BROWSER_CAPTURE,
+  API_CALL_TIME_GRANTS,
+  BROWSER_CAPTURE_REQUIRED_GRANTS,
   BROWSER_SESSIONS_API,
-  BROWSER_SURFACE,
+  BROWSER_SURFACE_REQUIRED_GRANTS,
   FILE_PRESENTATION_API,
   PRS_WRITE,
+  RESOURCE_LEASE_KIND_GRANTS,
+  RESOURCES_LEASE_API,
   UI_KEYBINDINGS_API,
   UI_KEYBINDINGS_GLOBAL,
+  UI_PANELS,
   VCS_ACTIONS_API,
 } from "@t3tools/extension-sdk/catalogue";
 
@@ -944,35 +948,53 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
-  "required grants include the host grants a declared API's callers are checked for",
-  async (t) => {
-    const hosted = [BROWSER_SESSIONS_API, UI_KEYBINDINGS_API, VCS_ACTIONS_API];
-    const f = await fixture(t, {
-      apiProviders: hosted.map((api) => ({
-        providerId: "host:" + api.id,
-        definition: api,
-        invoke: () => null,
-      })),
-    });
-    const consumer = await f.install(
-      metadata("test.browser", {
-        provides: [],
-        requires: hosted.map((api) => ({ id: api.id, versionRange: "^" + api.version })),
-        dependencies: [],
-      }),
-      "export default {tools:[],apis:[]};",
-      { capabilities: [], projectIds: [] },
-    );
-    const required = f.runtime.requiredGrants(consumer.id);
-    for (const grant of [BROWSER_SURFACE, BROWSER_CAPTURE, UI_KEYBINDINGS_GLOBAL, PRS_WRITE])
-      NodeAssert.ok(required.includes(grant), grant + " is missing from " + required.join(", "));
-    // Granted exactly its required set, the installation holds the host-checked grants too.
-    await f.runtime.addGrants(consumer.id, { capabilities: required, projectIds: [] });
-    const held = f.runtime.list().find((item) => item.id === consumer.id).grants.capabilities;
-    NodeAssert.ok(held.includes(BROWSER_SURFACE) && held.includes(BROWSER_CAPTURE));
+// One required API per row, with the grants its host adapters check for that
+// API's callers beyond its methods' own `requiredGrants`.
+const hostCheckedGrants = [
+  {
+    api: BROWSER_SESSIONS_API,
+    checked: [...BROWSER_SURFACE_REQUIRED_GRANTS, ...BROWSER_CAPTURE_REQUIRED_GRANTS],
   },
-);
+  {
+    api: RESOURCES_LEASE_API,
+    checked: Object.values(RESOURCE_LEASE_KIND_GRANTS).filter((grant) => grant !== null),
+  },
+  { api: UI_KEYBINDINGS_API, checked: [UI_KEYBINDINGS_GLOBAL, UI_PANELS] },
+  { api: VCS_ACTIONS_API, checked: [PRS_WRITE] },
+];
+for (const { api, checked } of hostCheckedGrants)
+  NodeTest.test(
+    "required grants of a package requiring only " + api.id + " cover its host checks",
+    async (t) => {
+      const f = await fixture(t, {
+        apiProviders: [{ providerId: "host:" + api.id, definition: api, invoke: () => null }],
+      });
+      const consumer = await f.install(
+        metadata("test.consumer", {
+          provides: [],
+          requires: [{ id: api.id, versionRange: "^" + api.version }],
+          dependencies: [],
+        }),
+        "export default {tools:[],apis:[]};",
+        { capabilities: [], projectIds: [] },
+      );
+      const required = f.runtime.requiredGrants(consumer.id);
+      for (const grant of checked)
+        NodeAssert.ok(required.includes(grant), grant + " is missing from " + required.join(", "));
+      // Host adapter tests hold this same set as a single-API consumer's suggestion.
+      const own = [...(api.methods ?? []), ...(api.streams ?? [])].flatMap(
+        (operation) => operation.requiredGrants,
+      );
+      NodeAssert.deepEqual(
+        required,
+        [...new Set([...own, ...API_CALL_TIME_GRANTS[api.id]])].sort(),
+      );
+      // Granted exactly its required set, the installation holds the host-checked grants too.
+      await f.runtime.addGrants(consumer.id, { capabilities: required, projectIds: [] });
+      const held = f.runtime.list().find((item) => item.id === consumer.id).grants.capabilities;
+      for (const grant of checked) NodeAssert.ok(held.includes(grant), grant + " is not held");
+    },
+  );
 
 NodeTest.test(
   "adding grants unions with the current stored grants, keeping another client's changes",
