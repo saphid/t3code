@@ -18505,7 +18505,10 @@ ${ind(d)}}`;
       const api = bindApi(browserSessionsApi, host, session.context);
       const current = heldRef.current;
       const usable = current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live) ? current : null;
-      const reopen = usable ? null : reopenRequest(current ? live : null, url);
+      const reopen = reopenRequest(current ? live : null, url);
+      const open = (signal) => reopen.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
+        throw new Error(profileFailureMessage("open", error));
+      }) : api.invoke("open", { url }, signal);
       dispatch(
         (signal) => usable ? api.invoke(
           "navigate",
@@ -18516,9 +18519,11 @@ ${ind(d)}}`;
             expectedEngineGeneration: usable.engineGeneration
           },
           signal
-        ) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
-          throw new Error(profileFailureMessage("open", error));
-        }) : api.invoke("open", { url }, signal),
+        ).catch((error) => {
+          if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
+            return open(signal);
+          throw error;
+        }) : open(signal),
         onAccepted
       );
     };
@@ -18705,7 +18710,11 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = leaseState?.kind === "ended" ? (
+      // A restarted server ends the lease before the resumed snapshot
+      // drops the hold; native drops it silently.
+      leaseState.reason === "epoch-changed" ? null : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+    ) : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {
