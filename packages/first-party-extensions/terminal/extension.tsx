@@ -1389,8 +1389,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
   // Like native's drawer attaching the panes it shows: a shown restored pane
   // whose session the server no longer has starts without a Start click.
+  // Keyed on eligibility, not status: a missing observation re-arms a failed
+  // start while the pane stays "closed", and that must schedule the retry.
   const missingShownKey = visibleTerminalIds
-    .filter((id) => tabById.get(id)?.status === "closed")
+    .filter((id) => tabById.get(id)?.startsWhenShown)
     .join("\n");
   useEffect(() => {
     if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));

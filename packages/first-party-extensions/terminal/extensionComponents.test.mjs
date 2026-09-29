@@ -2348,3 +2348,96 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.describe(
+  "a restart's missing observation retries a failed automatic start (Terminal 36)",
+  () => {
+    // A failed start leaves the shown pane closed; the next missing snapshot
+    // re-arms it without changing its status or the list's stream, so the view
+    // must still schedule the one retry. A version 1 host never reports the
+    // gap; a later host reports it in the same React update as the snapshot.
+    for (const suspends of [false, true]) {
+      const name = `the view starts the pane again ${suspends ? "with" : "without"} onSuspended`;
+      NodeTest.test(name, async () => {
+        const drain = () => new Promise((resolve) => setImmediate(resolve));
+        const hang = (signal) =>
+          new Promise((resolve) =>
+            signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+          );
+        let restarted;
+        const restart = new Promise((resolve) => (restarted = resolve));
+        let attachFails = true;
+        const attaches = [];
+        const host = {
+          React,
+          readAsset: () => new Promise(() => {}),
+          invokeApi: async (request) => {
+            if (request.id !== "t3.terminal/control") return { tokens: {}, cssVars: {} };
+            if (request.method !== "attach") return {};
+            attaches.push(request.input);
+            if (attachFails) throw new Error("Environment is not connected");
+            return sessionMetadata(request.input.terminalId);
+          },
+          subscribeApi: (_request, signal) => ({
+            async *[Symbol.asyncIterator]() {
+              await hang(signal);
+            },
+          }),
+          resumableStreams: {
+            version: 2,
+            subscribeApi: (request, signal, options) => ({
+              async *[Symbol.asyncIterator]() {
+                if (request.id === "t3.terminal/sessions" && request.name === "list") {
+                  yield { value: { kind: "snapshot", terminals: [] } };
+                  await restart;
+                  if (suspends) options?.onSuspended?.();
+                  yield { value: { kind: "snapshot", terminals: [] } };
+                }
+                await hang(signal);
+              },
+            }),
+          },
+        };
+        const session = {
+          signal: new AbortController().signal,
+          context: {
+            resource: { threadId: "t", environmentId: "e" },
+            workspaceRevision: JSON.stringify(["/ws/root", null]),
+          },
+          visible: true,
+          save() {},
+          onVisibility: () => () => {},
+          bindCommands: () => () => {},
+          restoreState: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+        };
+        let renderer;
+        await act(async () => {
+          renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+            createNodeMock: nodeMock,
+          });
+        });
+        const settle = () =>
+          act(async () => {
+            for (let index = 0; index < 8; index++) await drain();
+          });
+        try {
+          await settle();
+          NodeAssert.equal(attaches.length, 1);
+          NodeAssert.equal(attaches[0].restartIfNotRunning, undefined);
+          attachFails = false;
+          await act(async () => {
+            restarted();
+            for (let index = 0; index < 8; index++) await drain();
+          });
+          await settle();
+          NodeAssert.equal(attaches.length, 2);
+          NodeAssert.equal(attaches[1].restartIfNotRunning, undefined);
+          await settle();
+          NodeAssert.equal(attaches.length, 2, "one retry per missing observation");
+        } finally {
+          await act(async () => renderer.unmount());
+        }
+      });
+    }
+  },
+);

@@ -16032,7 +16032,7 @@ var __t3Client = (() => {
       ...snapshot.terminalIds.filter((id2) => !visibleSet.has(id2))
     ];
     const tabById = new Map(snapshot.tabs.map((tab) => [tab.terminalId, tab]));
-    const missingShownKey = visibleTerminalIds.filter((id2) => tabById.get(id2)?.status === "closed").join("\n");
+    const missingShownKey = visibleTerminalIds.filter((id2) => tabById.get(id2)?.startsWhenShown).join("\n");
     (0, import_react2.useEffect)(() => {
       if (visible && missingShownKey !== "") panel.startMissingSessions(missingShownKey.split("\n"));
     }, [panel, visible, missingShownKey, snapshot.stream]);
