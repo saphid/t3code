@@ -12735,6 +12735,7 @@ var __t3Client = (() => {
           input: this.#newInputQueue(terminalId),
           exitBanner: null,
           confirm: null,
+          closing: false,
           error: null,
           resizeInFlight: null,
           resizePending: null,
@@ -12990,7 +12991,7 @@ var __t3Client = (() => {
       if (this.#disposed || this.#stream !== "live") return;
       for (const terminalId of terminalIds) {
         const tab = this.#tabs.get(terminalId);
-        if (tab && tab.meta === null && !tab.starting && tab.error === null)
+        if (tab && tab.meta === null && !tab.starting && !tab.closing && tab.error === null)
           void this.#attach(terminalId, false);
       }
     }
@@ -13001,7 +13002,7 @@ var __t3Client = (() => {
     async #attach(terminalId, restartIfNotRunning) {
       const launch = this.#launch;
       const tab = this.#tabs.get(terminalId);
-      if (!tab || !launch || tab.starting) return;
+      if (!tab || !launch || tab.starting || tab.closing) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
       this.#liveInput(terminalId, tab).setReady(false);
@@ -13019,6 +13020,7 @@ var __t3Client = (() => {
           ...launch.env !== void 0 ? { env: launch.env } : {}
         });
         tab.starting = false;
+        if (this.#tabs.get(terminalId) !== tab) return;
         this.#liveInput(terminalId, tab).setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
@@ -13113,6 +13115,7 @@ var __t3Client = (() => {
       if (!tab || !action) return;
       tab.confirm = null;
       if (action === "close") {
+        tab.closing = true;
         try {
           await this.#control.close({ terminalId, deleteHistory: true });
         } catch {
@@ -13121,7 +13124,7 @@ var __t3Client = (() => {
           } catch {
           }
         }
-        this.#removeTab(terminalId, "index");
+        if (this.#tabs.get(terminalId) === tab) this.#removeTab(terminalId, "index");
         return;
       }
       const launch = this.#launch;
