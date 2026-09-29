@@ -99,6 +99,7 @@ test("resolves a fallback PR with a redacted head repo and exact main baseline",
             number: 5350,
             state: "open",
             head: { sha: "head-sha", ref: "feature-branch", repo: null },
+            base: { repo: { url: "https://api.github.com/repos/pingdotgg/t3code" } },
           },
         ];
       }
@@ -177,6 +178,7 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
             ref: "feature-branch",
             repo: { full_name: "pingdotgg/t3code" },
           },
+          base: { repo: { url: "https://api.github.com/repos/pingdotgg/t3code" } },
         }));
       },
       rest: {
@@ -201,6 +203,65 @@ test("does not guess when a fallback commit belongs to multiple PRs", async () =
           head_repository: { full_name: "pingdotgg/t3code" },
           conclusion: "success",
           pull_requests: [],
+        },
+      },
+    },
+    core: {
+      info: () => {},
+      setOutput: (key, value) => {
+        outputs[key] = value;
+      },
+    },
+  });
+
+  assert.equal(outputs.publish, "false");
+  assert.equal(fetchedPull, false);
+});
+
+test("ignores listed PRs that belong to another repository", async () => {
+  const outputs = {};
+  const listPullRequestsAssociatedWithCommit = () => {};
+  let fetchedPull = false;
+  await resolve({
+    github: {
+      paginate: async (method) => {
+        assert.equal(method, listPullRequestsAssociatedWithCommit);
+        return [
+          {
+            number: 12875,
+            state: "open",
+            head: { sha: "head-sha", ref: "feature-branch" },
+            base: { repo: { url: "https://api.github.com/repos/pingdotgg/t3code" } },
+          },
+        ];
+      },
+      rest: {
+        actions: {},
+        pulls: {
+          get: async () => {
+            fetchedPull = true;
+          },
+        },
+        repos: { listPullRequestsAssociatedWithCommit },
+      },
+    },
+    context: {
+      repo: { owner: "fork-owner", repo: "t3code" },
+      payload: {
+        workflow_run: {
+          id: 2,
+          event: "pull_request",
+          workflow_id: 3,
+          head_sha: "head-sha",
+          head_branch: "feature-branch",
+          head_repository: { full_name: "fork-owner/t3code" },
+          conclusion: "success",
+          pull_requests: [
+            {
+              number: 12875,
+              base: { repo: { url: "https://api.github.com/repos/pingdotgg/t3code" } },
+            },
+          ],
         },
       },
     },
