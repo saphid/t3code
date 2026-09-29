@@ -126,34 +126,66 @@ export function createProjectHistory(
 export type ProjectHistory = ReturnType<typeof createProjectHistory>;
 
 /**
+ * The receipt fence. Revisions count per server epoch, so the fence is the
+ * pair: an epoch it has not seen is a restarted server and never stale, and
+ * accepting it moves both halves; within an epoch revisions only go forward;
+ * an epoch the fence has moved past stays stale for good.
+ */
+export type RevisionFence = {
+  epoch: string | null;
+  revision: number;
+  readonly retired: Set<string>;
+};
+
+export function createRevisionFence(): RevisionFence {
+  return { epoch: null, revision: -1, retired: new Set() };
+}
+
+export function isStaleRevision(fence: RevisionFence, epoch: string, revision: number): boolean {
+  return fence.retired.has(epoch) || (epoch === fence.epoch && revision < fence.revision);
+}
+
+/** Moves the fence to `(epoch, revision)` unless that is stale; returns whether it moved. */
+export function advanceRevision(fence: RevisionFence, epoch: string, revision: number): boolean {
+  if (isStaleRevision(fence, epoch, revision)) return false;
+  if (fence.epoch !== null && fence.epoch !== epoch) fence.retired.add(fence.epoch);
+  fence.epoch = epoch;
+  fence.revision = revision;
+  return true;
+}
+
+/**
  * The view's `dispatch`: runs one engine command and settles its receipt. The
  * events stream may already have applied a newer revision, so the receipt's
- * snapshot is adopted (or its refusal shown) only when it is not older than
- * `lastRevision`. The accepted command's own side effect — recording the
- * visit — belongs to the command, not the snapshot, so it runs exactly once
- * whenever the command was accepted. Nothing settles after `signal` aborts.
+ * snapshot is adopted (or its refusal shown) only when `fence` admits it.
+ * The accepted command's own side effect — recording the visit — belongs to
+ * the command, not the snapshot, so it runs exactly once whenever the command
+ * was accepted. Nothing settles after `signal` aborts.
  */
 export function createCommandDispatch<
-  Receipt extends { readonly revision: number; readonly outcome: string },
+  Receipt extends {
+    readonly revision: number;
+    readonly outcome: string;
+    readonly serverEpoch: string;
+  },
 >(options: {
   readonly signal: AbortSignal;
-  readonly lastRevision: { current: number };
+  readonly fence: RevisionFence;
   readonly adopt: (receipt: Receipt) => void;
   readonly refuse: (outcome: string) => void;
   readonly fail: (error: unknown) => void;
 }) {
-  const { signal, lastRevision } = options;
+  const { signal, fence } = options;
   return (run: (signal: AbortSignal) => Promise<Receipt>, onAccepted?: () => void): void => {
     void run(signal).then(
       (receipt) => {
         if (signal.aborted) return;
-        const stale = receipt.revision < lastRevision.current;
-        if (!stale) lastRevision.current = receipt.revision;
+        const current = advanceRevision(fence, receipt.serverEpoch, receipt.revision);
         if (receipt.outcome !== "accepted") {
-          if (!stale) options.refuse(receipt.outcome);
+          if (current) options.refuse(receipt.outcome);
           return;
         }
-        if (!stale) options.adopt(receipt);
+        if (current) options.adopt(receipt);
         onAccepted?.();
       },
       (error) => {

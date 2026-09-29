@@ -175,7 +175,7 @@ export function createInstalledExtensionController(options: {
     signal: AbortSignal,
   ) => AsyncIterable<ApiStreamFrame>;
   /**
-   * Backs `ClientHost.resumableStreams` version 3: the same request, but the
+   * Backs `ClientHost.resumableStreams` version 4: the same request, but the
    * iterable follows transport sessions (see `ResumableApiStreams`), calling
    * `onSuspended` each time it starts waiting for one.
    */
@@ -589,7 +589,7 @@ export function createInstalledExtensionController(options: {
               ...(subscribeResumableApi
                 ? {
                     resumableStreams: {
-                      version: 3,
+                      version: 4,
                       subscribeApi(request, callerSignal, streamOptions) {
                         if (!Object.hasOwn(RESUMABLE_API_STREAMS, `${request.id}#${request.name}`))
                           throw new Error(`${request.id}#${request.name} is not resumable`);

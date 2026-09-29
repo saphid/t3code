@@ -192,6 +192,12 @@ NodeTest.test(
       resolveResumableStreams(v3, "t3.workspace/changes#subscribeChanges"),
       v3.resumableStreams,
     );
+    const v4 = { resumableStreams: { version: 4, subscribeApi() {} } };
+    NodeAssert.equal(resolveResumableStreams(v3, "t3.browser/sessions#events"), null);
+    NodeAssert.equal(
+      resolveResumableStreams(v4, "t3.browser/sessions#events"),
+      v4.resumableStreams,
+    );
     for (const stream of ["independent.consumer#changes", "toString"])
       NodeAssert.equal(resolveResumableStreams(v2, stream), null);
 

@@ -214,7 +214,8 @@ var __t3Client = (() => {
   var RESUMABLE_API_STREAMS = {
     "t3.terminal/output-events#subscribe": 1,
     "t3.terminal/sessions#list": 2,
-    "t3.workspace/changes#subscribeChanges": 3
+    "t3.workspace/changes#subscribeChanges": 3,
+    "t3.browser/sessions#events": 4
   };
   function resolveResumableStreams(host, stream) {
     const member = host.resumableStreams;
@@ -16124,19 +16125,31 @@ ${ind(d)}}`;
       remove: (url) => run2("remove", (abort) => api.invoke("remove", { url }, abort))
     };
   }
+  function createRevisionFence() {
+    return { epoch: null, revision: -1, retired: /* @__PURE__ */ new Set() };
+  }
+  function isStaleRevision(fence, epoch, revision2) {
+    return fence.retired.has(epoch) || epoch === fence.epoch && revision2 < fence.revision;
+  }
+  function advanceRevision(fence, epoch, revision2) {
+    if (isStaleRevision(fence, epoch, revision2)) return false;
+    if (fence.epoch !== null && fence.epoch !== epoch) fence.retired.add(fence.epoch);
+    fence.epoch = epoch;
+    fence.revision = revision2;
+    return true;
+  }
   function createCommandDispatch(options) {
-    const { signal, lastRevision } = options;
+    const { signal, fence } = options;
     return (run2, onAccepted) => {
       void run2(signal).then(
         (receipt2) => {
           if (signal.aborted) return;
-          const stale = receipt2.revision < lastRevision.current;
-          if (!stale) lastRevision.current = receipt2.revision;
+          const current = advanceRevision(fence, receipt2.serverEpoch, receipt2.revision);
           if (receipt2.outcome !== "accepted") {
-            if (!stale) options.refuse(receipt2.outcome);
+            if (current) options.refuse(receipt2.outcome);
             return;
           }
-          if (!stale) options.adopt(receipt2);
+          if (current) options.adopt(receipt2);
           onAccepted?.();
         },
         (error) => {
@@ -18107,6 +18120,10 @@ ${ind(d)}}`;
       });
     });
   }
+  function disconnectedNotice(host) {
+    const label = host.environmentLabel?.();
+    return label ? `${label} is not connected.` : "Environment is not connected.";
+  }
   function restoreState(value) {
     if (value === null) return true;
     if (typeof value !== "object" || Array.isArray(value)) return false;
@@ -18148,7 +18165,7 @@ ${ind(d)}}`;
     const [visible, setVisible] = (0, import_react8.useState)(session.visible);
     const heldRef = (0, import_react8.useRef)(held);
     const historyRef = (0, import_react8.useRef)(history);
-    const lastRevision = (0, import_react8.useRef)(-1);
+    const [fence] = (0, import_react8.useState)(createRevisionFence);
     const heldRevision = (0, import_react8.useRef)(-1);
     const addressRef = (0, import_react8.useRef)(null);
     const [contentElement, setContentElement] = (0, import_react8.useState)(null);
@@ -18186,11 +18203,22 @@ ${ind(d)}}`;
     (0, import_react8.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
+      const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
+      let connected = false;
+      const onSuspended = () => {
+        if (signal.aborted || !connected) return;
+        setNotice(disconnectedNotice(host));
+      };
       void (async () => {
         try {
           const api = bindStreamApi(browserSessionsApi, host, session.context);
           let pending = null;
-          for await (const frame of api.subscribe("events", {}, signal)) {
+          for await (const frame of api.subscribe(
+            "events",
+            {},
+            signal,
+            resumable ? { resume: "fresh-snapshot", onSuspended } : void 0
+          )) {
             signal.throwIfAborted();
             const value = frame.value;
             if (!value) continue;
@@ -18203,20 +18231,25 @@ ${ind(d)}}`;
                 pending?.push(...value.sessions);
                 break;
               case "snapshot-complete": {
+                if (fence.retired.has(value.serverEpoch)) {
+                  pending = null;
+                  break;
+                }
+                advanceRevision(fence, value.serverEpoch, value.revision);
                 tabsEpoch.current = value.serverEpoch;
                 setTabs(pending ?? []);
-                if (current) {
+                if (connected) setNotice(null);
+                connected = true;
+                if (current && !(value.serverEpoch === current.serverEpoch && value.revision < heldRevision.current)) {
                   const found = pending?.find((item) => item.tabId === current.tabId);
                   if (value.serverEpoch !== current.serverEpoch || !found) {
                     heldRef.current = null;
                     setHeld(null);
                     setLive(null);
-                    setNotice(
-                      value.serverEpoch !== current.serverEpoch ? "Session ended (epoch-changed)" : "Session ended (session-closed)"
-                    );
+                    if (value.serverEpoch === current.serverEpoch)
+                      setNotice("Session ended (session-closed)");
                   } else {
                     setLive(found);
-                    lastRevision.current = value.revision;
                     heldRevision.current = value.revision;
                   }
                 }
@@ -18233,7 +18266,7 @@ ${ind(d)}}`;
                 if (current && value.session.tabId === current.tabId && value.revision >= heldRevision.current) {
                   heldRevision.current = value.revision;
                   setLive(value.session);
-                  lastRevision.current = Math.max(lastRevision.current, value.revision);
+                  if (tabsEpoch.current) advanceRevision(fence, tabsEpoch.current, value.revision);
                   setHeld(
                     (previous) => previous ? { ...previous, engineGeneration: value.session.engine.generation } : previous
                   );
@@ -18352,9 +18385,10 @@ ${ind(d)}}`;
         (receipt2) => {
           setViewportPending(false);
           if (session.signal.aborted) return false;
-          if (receipt2.revision < lastRevision.current) return receipt2.outcome === "accepted";
+          if (isStaleRevision(fence, receipt2.serverEpoch, receipt2.revision))
+            return receipt2.outcome === "accepted";
           if (heldRef.current?.tabId !== receipt2.session.tabId) return false;
-          lastRevision.current = receipt2.revision;
+          advanceRevision(fence, receipt2.serverEpoch, receipt2.revision);
           heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
           if (receipt2.outcome !== "accepted") {
             setNotice(`Browser command ${receipt2.outcome}`);
@@ -18430,7 +18464,7 @@ ${ind(d)}}`;
     };
     const dispatch = createCommandDispatch({
       signal: session.signal,
-      lastRevision,
+      fence,
       refuse: (outcome) => setNotice(`Browser command ${outcome}`),
       fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
       adopt: (receipt2) => {
@@ -18580,8 +18614,7 @@ ${ind(d)}}`;
         const { receipt: receipt2 } = outcome;
         const current = heldRef.current;
         if (!current || receipt2.session.tabId !== current.tabId) return;
-        if (receipt2.revision < lastRevision.current) return;
-        lastRevision.current = receipt2.revision;
+        if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
         heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
         const next = { ...current, engineGeneration: receipt2.session.engine.generation };
         heldRef.current = next;
