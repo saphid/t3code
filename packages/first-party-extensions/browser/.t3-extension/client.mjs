@@ -18505,10 +18505,7 @@ ${ind(d)}}`;
       const api = bindApi(browserSessionsApi, host, session.context);
       const current = heldRef.current;
       const usable = current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live) ? current : null;
-      const reopen = reopenRequest(current ? live : null, url);
-      const open = (signal) => reopen.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
-        throw new Error(profileFailureMessage("open", error));
-      }) : api.invoke("open", { url }, signal);
+      const reopen = usable ? null : reopenRequest(current ? live : null, url);
       dispatch(
         (signal) => usable ? api.invoke(
           "navigate",
@@ -18521,9 +18518,11 @@ ${ind(d)}}`;
           signal
         ).catch((error) => {
           if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
-            return open(signal);
+            throw new Error("The browser restarted. Press Enter to open this address again.");
           throw error;
-        }) : open(signal),
+        }) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
+          throw new Error(profileFailureMessage("open", error));
+        }) : api.invoke("open", { url }, signal),
         onAccepted
       );
     };
