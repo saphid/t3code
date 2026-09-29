@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { makeSharedCacheGet } from "../utils/sharedCacheGet.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
@@ -140,6 +141,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const getShared = yield* makeSharedCacheGet;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
 
   const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
@@ -183,10 +185,10 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd, options) {
     if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    const cacheKey = yield* getShared(repositoryRootCache, cwd);
     if (cacheKey === null) return null;
     if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    return yield* getShared(repositoryIdentityCache, cacheKey);
   });
 
   return RepositoryIdentityResolver.of({ resolve });
