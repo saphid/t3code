@@ -8505,7 +8505,10 @@ var __t3Client = (() => {
   var TERMINAL_CONTROL_API = terminalControlApi.definition;
   var API_CALL_TIME_GRANTS = {
     [BROWSER_SESSIONS]: [BROWSER_SURFACE, BROWSER_CAPTURE],
-    [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL],
+    [RESOURCES_LEASE]: [
+      ...new Set(Object.values(RESOURCE_LEASE_KIND_GRANTS).filter((grant) => grant !== null))
+    ],
+    [UI_KEYBINDINGS]: [UI_KEYBINDINGS_GLOBAL, UI_PANELS],
     [VCS_ACTIONS]: [PRS_WRITE]
   };
 
