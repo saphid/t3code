@@ -331,6 +331,30 @@ export function suspendedOutputStatus<
     : state;
 }
 
+/**
+ * A pane is re-attaching while the session list has not re-proven itself or
+ * its start is pending or in flight: an ended stream's error then belongs to
+ * the session it replaces (a restarted backend's "Unknown terminal thread").
+ */
+export function isPaneReattaching(
+  tab: Pick<TerminalTabState, "starting" | "startsWhenShown"> | undefined,
+  stream: TerminalPanelSnapshot["stream"],
+): boolean {
+  return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true;
+}
+
+/** A re-attaching pane reads as connecting, as native does, until its start fails. */
+export function paneStatusText(
+  state: {
+    readonly status: OutputBuffer["status"];
+    readonly statusText: string;
+    readonly ended: boolean;
+  },
+  reattaching: boolean,
+): string {
+  return reattaching && state.status === "error" && state.ended ? "Connecting…" : state.statusText;
+}
+
 export const EMPTY_OUTPUT_BUFFER: OutputBuffer = {
   contents: "",
   retainedBytes: 0,

@@ -755,25 +755,35 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         ? current
         : null;
     // A page reopened after its session died keeps that session's profile.
-    const reopen = usable ? null : reopenRequest(current ? live : null, url);
+    const reopen = reopenRequest(current ? live : null, url);
+    const open = (signal: AbortSignal) =>
+      reopen.api === "profiles"
+        ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
+            throw new Error(profileFailureMessage("open", error));
+          })
+        : api.invoke("open", { url }, signal);
     dispatch(
       (signal) =>
         usable
-          ? api.invoke(
-              "navigate",
-              {
-                tabId: usable.tabId,
-                serverEpoch: usable.serverEpoch,
-                url,
-                expectedEngineGeneration: usable.engineGeneration,
-              },
-              signal,
-            )
-          : reopen?.api === "profiles"
-            ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
-                throw new Error(profileFailureMessage("open", error));
+          ? api
+              .invoke(
+                "navigate",
+                {
+                  tabId: usable.tabId,
+                  serverEpoch: usable.serverEpoch,
+                  url,
+                  expectedEngineGeneration: usable.engineGeneration,
+                },
+                signal,
+              )
+              .catch((error: unknown) => {
+                // The server restarted before this view heard: the held
+                // session is gone, so like native the address opens fresh.
+                if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
+                  return open(signal);
+                throw error;
               })
-            : api.invoke("open", { url }, signal),
+          : open(signal),
       onAccepted,
     );
   };
@@ -1027,7 +1037,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
     leaseState?.kind === "ended"
-      ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+      ? // A restarted server ends the lease before the resumed snapshot
+        // drops the hold; native drops it silently.
+        leaseState.reason === "epoch-changed"
+        ? null
+        : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
       : remoteEligible
         ? remoteNotice
         : surfaceDenial

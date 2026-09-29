@@ -132,6 +132,7 @@ function restartingBackend() {
   const surfaceWatchers = new Set();
   const acquires = [];
   const presents = [];
+  const navigates = [];
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
 
@@ -210,6 +211,7 @@ function restartingBackend() {
           session,
         };
       }
+      if (request.method === "navigate") navigates.push(request.input.serverEpoch);
       if (request.method === "navigate" && request.input.serverEpoch !== server.epoch)
         throw new Error("BrowserStaleServerEpoch: the request epoch does not match");
       throw new Error("API unavailable");
@@ -292,6 +294,10 @@ function restartingBackend() {
       drops = new Set();
       for (const resolve of pending) resolve();
     },
+    syncSurface() {
+      for (const watch of surfaceWatchers) watch();
+    },
+    navigates: () => navigates,
     /** Holds the next snapshot before its `snapshot-complete`; returns the release. */
     holdSnapshot() {
       let release;
@@ -303,12 +309,17 @@ function restartingBackend() {
       });
       return release;
     },
-    restart() {
+    /**
+     * `syncSurface: false` leaves the host's synced epoch behind (its lease
+     * stays active) until `syncSurface()`, as when an address is entered
+     * right as the server comes back.
+     */
+    restart({ syncSurface = true } = {}) {
       server.epoch = "epoch-b";
       server.revision = 1;
       server.sessions = [];
       up = true;
-      for (const watch of surfaceWatchers) watch();
+      if (syncSurface) for (const watch of surfaceWatchers) watch();
       const pending = restarts;
       restarts = new Set();
       for (const resolve of pending) resolve();
@@ -459,6 +470,55 @@ NodeTest.test(
       presentingB(backend, status);
       NodeAssert.match(text(), /Page B/);
       NodeAssert.doesNotMatch(text(), /Session ended/);
+    });
+  },
+);
+
+NodeTest.test(
+  "the restart's ended surface drops silently while the resumed snapshot is pending",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, text }) => {
+      backend.drop();
+      await settle();
+      const release = backend.holdSnapshot();
+      backend.restart();
+      await settle();
+      // The host ended the lease on the new epoch; the hold drops only when
+      // the snapshot completes. Native drops it silently, so nothing flashes.
+      NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed/);
+      release();
+      await settle();
+      NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed/);
+      await enter("https://b.test/");
+      await settle();
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "an address entered as the server returns opens a fresh session instead of being lost",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, text }) => {
+      backend.drop();
+      await settle();
+      const release = backend.holdSnapshot();
+      // Neither the host's synced epoch nor the resumed snapshot has caught
+      // up: the view still holds tab-a on the dead epoch with an active lease.
+      backend.restart({ syncSurface: false });
+      await settle();
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-a"], "sent to the held session first");
+      presentingB(backend, status);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch/);
+      backend.syncSurface();
+      release();
+      await settle();
+      presentingB(backend, status);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|Session ended|epoch-changed/);
     });
   },
 );

@@ -71,6 +71,8 @@ import {
   registerPanelCommands,
   sessionStatusText,
   terminalChordAction,
+  isPaneReattaching,
+  paneStatusText,
   suspendedOutputStatus,
   terminalActionLabel,
   watchTerminalAppearanceVars,
@@ -628,6 +630,8 @@ function TerminalPane(props: {
   readonly visible: boolean;
   /** The session reports a running process; its rising edge reattaches an ended stream. */
   readonly running: boolean;
+  /** Its start is pending or in flight (isPaneReattaching): an ended stream's error is stale. */
+  readonly reattaching: boolean;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
@@ -643,6 +647,7 @@ function TerminalPane(props: {
     shown,
     visible,
     running,
+    reattaching,
     assets,
     themeVars,
     appearanceVars,
@@ -1032,7 +1037,7 @@ function TerminalPane(props: {
         aria-label="Output status"
         style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
       >
-        {terminalId}: {state.statusText}
+        {terminalId}: {paneStatusText(state, reattaching)}
       </output>
       {state.degraded && (
         <output
@@ -1895,6 +1900,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                       shown={shown}
                       visible={visible}
                       running={tabById.get(terminalId)?.status === "running"}
+                      reattaching={isPaneReattaching(tabById.get(terminalId), snapshot.stream)}
                       assets={assets}
                       themeVars={themeVars}
                       appearanceVars={appearanceVars}
@@ -1919,7 +1925,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                 aria-label="Output status"
                 style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
               >
-                {activeId}: {activeTab.exitBanner ?? output?.statusText ?? "Connecting…"}
+                {activeId}:{" "}
+                {activeTab.exitBanner ??
+                  (output
+                    ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream))
+                    : "Connecting…")}
                 {activeTab.error ? ` — ${activeTab.error}` : ""}
               </output>
               <pre

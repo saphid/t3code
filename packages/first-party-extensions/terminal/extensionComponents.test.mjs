@@ -2441,3 +2441,121 @@ NodeTest.describe(
     }
   },
 );
+
+NodeTest.describe("a re-attaching pane hides the dead session's attach error (flash)", () => {
+  // After a backend restart the resumed output stream can reject with the
+  // server's "Unknown terminal thread" before the automatic start lands.
+  // Native shows its connecting state there; only a failed start is an error.
+  const UNKNOWN = "Unknown terminal thread: t, terminal: term-1";
+  for (const textFallback of [false, true])
+    for (const startFails of [false, true])
+      NodeTest.test(
+        `${textFallback ? "text fallback" : "surface"}: the start ${startFails ? "fails" : "lands"}`,
+        async () => {
+          const drain = () => new Promise((resolve) => setImmediate(resolve));
+          let finishAttach;
+          const attach = new Promise((resolve) => (finishAttach = resolve));
+          // The server knows the terminal only once a start has landed.
+          let started = false;
+          let rejected = 0;
+          const hang = (signal) =>
+            new Promise((resolve) =>
+              signal.aborted
+                ? resolve()
+                : signal.addEventListener("abort", resolve, { once: true }),
+            );
+          const host = {
+            ...(textFallback
+              ? {}
+              : {
+                  readAsset: async (path) => ({
+                    bytes: new Uint8Array([1, 2, 3]),
+                    mediaType: path.endsWith(".woff2")
+                      ? "font/woff2"
+                      : path.endsWith(".txt")
+                        ? "text/plain"
+                        : "application/wasm",
+                    sha256: "0".repeat(64),
+                  }),
+                }),
+            invokeApi: async (request) => {
+              if (request.id === "t3.ui/theme") return { tokens: {}, cssVars: {} };
+              if (request.id !== "t3.terminal/control" || request.method !== "attach") return {};
+              await attach;
+              if (startFails) throw new Error("spawn failed");
+              started = true;
+              return sessionMetadata(request.input.terminalId);
+            },
+            subscribeApi: (request, signal) => ({
+              async *[Symbol.asyncIterator]() {
+                // The restarted server lists no session for this thread.
+                if (request.id === "t3.terminal/sessions")
+                  yield { value: { kind: "snapshot", terminals: [] } };
+                if (request.id === "t3.terminal/output-events" && !started) {
+                  rejected += 1;
+                  throw new Error(UNKNOWN);
+                }
+                if (request.id === "t3.terminal/output-events")
+                  yield {
+                    streamId: "s2",
+                    sequence: 1,
+                    value: {
+                      terminalId: "term-1",
+                      streamEpoch: "epoch-2",
+                      kind: "snapshot",
+                      status: "running",
+                      contents: "$ ",
+                      retainedByteLength: 2,
+                      truncated: false,
+                      clearGeneration: 0,
+                      contentsUnitStart: 0,
+                      boundarySequence: 1,
+                    },
+                  };
+                await hang(signal);
+              },
+            }),
+          };
+          const session = {
+            signal: new AbortController().signal,
+            context: {
+              resource: { threadId: "t", environmentId: "e" },
+              workspaceRevision: JSON.stringify(["/ws/root", null]),
+            },
+            visible: true,
+            save() {},
+            onVisibility: () => () => {},
+            bindCommands: () => () => {},
+            restoreState: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+          };
+          let renderer;
+          await act(async () => {
+            renderer = create(React.createElement(bundle.TerminalView, { host, session }), {
+              createNodeMock: nodeMock,
+            });
+          });
+          const settle = () =>
+            act(async () => {
+              for (let index = 0; index < 20; index++) await drain();
+            });
+          const statusText = () =>
+            renderer.root
+              .findAll(
+                (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+              )
+              .map((node) => node.children.join(""))
+              .join("\n");
+          try {
+            await settle();
+            NodeAssert.ok(rejected >= 1, "the resumed stream was rejected");
+            NodeAssert.equal(statusText(), "term-1: Connecting…", "no raw error while starting");
+            finishAttach();
+            await settle();
+            if (startFails) NodeAssert.match(statusText(), /Unknown terminal thread/);
+            else NodeAssert.equal(statusText(), "term-1: Watching live output.");
+          } finally {
+            await act(async () => renderer.unmount());
+          }
+        },
+      );
+});
