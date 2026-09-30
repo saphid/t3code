@@ -1,7 +1,9 @@
 import {
   EnvironmentId,
+  ProjectId,
   ThreadId,
-  type EditorId,
+  buildRemoteOpenUrl,
+  EditorId,
   type ScopedProjectRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -132,8 +134,24 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { openInPreferredEditor, PreferredEditorUnavailableError } from "../editorPreferences";
+import {
+  openInPreferredEditor,
+  persistPreferredEditor,
+  resolvePreferredEditor,
+  PreferredEditorUnavailableError,
+} from "../editorPreferences";
+import {
+  getRemoteCapableEditors,
+  markRemoteOpenHintSeen,
+  openRemoteEditorUrl,
+  remoteOpenStateFor,
+  type RemoteOpenState,
+} from "../remoteOpen";
+import { environmentPresentations } from "../state/presentation";
 import { resolvePathLinkTarget } from "../terminal-links";
+import { splitFilePathPosition } from "@t3tools/client-runtime/markdown-links";
+import { resolveEditorChoices } from "../editorLabels";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -1597,11 +1615,16 @@ export function createExternalClientProvider(
 }
 
 // ---------------------------------------------------------------------------
-// Editor — native path links: the saved editor, launched in this environment.
+// Editor — native local launches or client-local SSH editor deep links.
 
 /** The environment seams `t3.client/editor` launches through; tests fake them. */
 export interface EditorLauncher {
   availableEditors(environmentId: EnvironmentId): readonly EditorId[];
+  remoteState(environmentId: EnvironmentId): RemoteOpenState;
+  remoteEditors(): Promise<readonly EditorId[]>;
+  isPrimaryEnvironment?(environmentId: EnvironmentId): boolean;
+  environmentLabel?(environmentId: EnvironmentId): string;
+  openRemoteUrl(url: string): Promise<boolean>;
   openInEditor(value: {
     environmentId: EnvironmentId;
     input: { cwd: string; editor: EditorId };
@@ -1611,34 +1634,180 @@ export interface EditorLauncher {
 const environmentEditorLauncher: EditorLauncher = {
   availableEditors: (environmentId) =>
     appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.availableEditors ?? [],
+  remoteState: (environmentId) => {
+    const presentation = appAtomRegistry.get(
+      environmentPresentations.presentationAtom(environmentId),
+    );
+    return remoteOpenStateFor(presentation ?? null);
+  },
+  isPrimaryEnvironment: (environmentId) =>
+    appAtomRegistry.get(primaryEnvironmentIdAtom) === environmentId,
+  environmentLabel: (environmentId) =>
+    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.entry.target
+      .label ?? "this machine",
+  remoteEditors: getRemoteCapableEditors,
+  openRemoteUrl: openRemoteEditorUrl,
   openInEditor: (value) =>
     runAtomCommand(appAtomRegistry, shellEnvironment.openInEditor, value, {
       reportFailure: false,
     }),
 };
 
+const isEditorId = Schema.is(EditorId);
+
 export function createEditorClientProvider(
   deps: ClientProviderDeps,
   launcher: EditorLauncher = environmentEditorLauncher,
 ): ClientLocalProvider {
+  let preparedRemoteEditors: readonly EditorId[] | null = null;
   return {
     async invoke(call) {
-      authorizeCaller(deps, call.caller, call.context, [UI_EDITOR_OPEN]);
+      const installation = authorizeCaller(
+        deps,
+        call.caller,
+        call.context,
+        call.method === "getCapabilities" ? [] : [UI_EDITOR_OPEN],
+      );
+      if (call.method === "getCapabilities") {
+        const remote = launcher.remoteState(deps.environmentId);
+        const visible =
+          (launcher.isPrimaryEnvironment?.(deps.environmentId) ?? true) ||
+          remote.mode !== "local-exec";
+        const available =
+          remote.mode === "local-exec"
+            ? launcher.availableEditors(deps.environmentId)
+            : (preparedRemoteEditors = await launcher.remoteEditors());
+        const allowed = installation.grants.capabilities.includes(UI_EDITOR_OPEN);
+        return {
+          adapter: "host.ui.editor",
+          operations: {
+            openPath:
+              allowed && visible && remote.mode !== "remote-unavailable" && available.length > 0,
+          },
+          clients: [],
+          editor: {
+            visible: allowed && visible,
+            editors: resolveEditorChoices(
+              typeof navigator === "undefined" ? "" : navigator.platform,
+              available,
+            ),
+            preferredEditor: resolvePreferredEditor(available),
+            remoteHint:
+              remote.mode === "remote-links" &&
+              getLocalStorageItem("t3code:remote-open-hint-seen", Schema.Boolean) !== true
+                ? `Opens over SSH. Needs your key on ${launcher.environmentLabel?.(deps.environmentId) ?? "this machine"}.`
+                : null,
+          },
+        };
+      }
       if (call.method !== "openPath")
         throw new ClientProviderOpError(
           "client-provider-unavailable",
           `Unknown editor op ${call.method}`,
         );
       const input = readInputObject(call.input);
+      if (input.workspace === true && input.cwd !== undefined)
+        throw new ClientProviderOpError(
+          "provider-rejected",
+          "Workspace opens cannot also supply cwd.",
+        );
+      let cwd: string;
+      if (input.workspace === true) {
+        const projectId = call.context.resource.projectId;
+        const threadId = call.context.resource.threadId;
+        const thread = threadId
+          ? readThreadShell(scopeThreadRef(deps.environmentId, ThreadId.make(threadId)))
+          : null;
+        if (
+          !projectId ||
+          !installation.grants.projectIds.some((id) => id === projectId) ||
+          (threadId && thread?.projectId !== projectId)
+        )
+          throw new ClientProviderOpError(
+            "client-target-denied",
+            "Workspace is outside the caller's project scope.",
+          );
+        const project = readProject(scopeProjectRef(deps.environmentId, ProjectId.make(projectId)));
+        const root = thread?.worktreePath ?? project?.workspaceRoot;
+        if (!root)
+          return {
+            status: "refused",
+            reason: "open-failed",
+            message: "The workspace checkout is unavailable.",
+          };
+        cwd = root;
+      } else {
+        cwd = readInputString(input, "cwd")!;
+      }
       // The native terminal's resolution: `~/` and relative links join the
       // cwd, and a `:line:column` suffix rides through to the editor.
-      const targetPath = resolvePathLinkTarget(
-        readInputString(input, "path")!,
-        readInputString(input, "cwd")!,
-      );
+      const targetPath = resolvePathLinkTarget(readInputString(input, "path")!, cwd);
+      const remote =
+        input.workspace === true
+          ? launcher.remoteState(deps.environmentId)
+          : { mode: "local-exec" as const };
+      if (
+        input.workspace === true &&
+        remote.mode === "local-exec" &&
+        launcher.isPrimaryEnvironment?.(deps.environmentId) === false
+      )
+        return {
+          status: "refused",
+          reason: "open-failed",
+          message: "This environment does not offer an editor picker.",
+        };
+      const available =
+        remote.mode === "local-exec"
+          ? launcher.availableEditors(deps.environmentId)
+          : (preparedRemoteEditors ?? (preparedRemoteEditors = await launcher.remoteEditors()));
+      const requestedEditor = input.editor;
+      if (
+        requestedEditor !== undefined &&
+        (!isEditorId(requestedEditor) || !available.includes(requestedEditor))
+      )
+        throw new ClientProviderOpError("provider-rejected", "The selected editor is unavailable.");
+      const chosenEditor = requestedEditor as EditorId | undefined;
+      if (remote.mode === "remote-unavailable")
+        return {
+          status: "refused",
+          reason: "open-failed",
+          message: "This remote environment has no SSH host for opening an editor.",
+        };
+      if (remote.mode === "remote-links") {
+        const editor = chosenEditor ?? resolvePreferredEditor(available);
+        if (!editor)
+          return {
+            status: "refused",
+            reason: "no-editor",
+            message: "No remote-capable editor is available on this client.",
+          };
+        const url = buildRemoteOpenUrl({
+          editor,
+          host: remote.host.host,
+          absolutePath: splitFilePathPosition(targetPath).path,
+        });
+        try {
+          if (url !== undefined && (await launcher.openRemoteUrl(url))) {
+            persistPreferredEditor(editor);
+            if (input.hintShown === true) markRemoteOpenHintSeen();
+            return { status: "opened", path: targetPath, editor, url };
+          }
+        } catch {
+          return {
+            status: "refused",
+            reason: "open-failed",
+            message: "Remote editor URL was refused.",
+          };
+        }
+        return {
+          status: "refused",
+          reason: "open-failed",
+          message: "Remote editor URL was refused.",
+        };
+      }
       const result = await openInPreferredEditor(
         deps.environmentId,
-        launcher.availableEditors(deps.environmentId),
+        chosenEditor ? [chosenEditor] : available,
         targetPath,
         launcher.openInEditor,
       );

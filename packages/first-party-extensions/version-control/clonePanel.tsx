@@ -120,7 +120,12 @@ export function CloneRepositoryPanel({
     prepared?.source === source && prepared.input === repositoryInput ? prepared : null;
 
   useEffect(() => {
-    if (!visible || source === "url" || listings[source]) return;
+    if (
+      !visible ||
+      source === "url" ||
+      (listingCache.providers === discovery.providers && listingCache.values[source])
+    )
+      return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(sourceControlDiscoveryApi, host, session.context)

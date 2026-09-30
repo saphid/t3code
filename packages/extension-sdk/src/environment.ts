@@ -18,6 +18,8 @@ import {
   type BrowserFramesHost,
   type BrowserSurfaceHost,
   type UiKeybindingsHost,
+  type UiEditorOpenInput,
+  type UiEditorOpenReceipt,
 } from "./catalogue.js";
 import type * as React from "react";
 import {
@@ -215,16 +217,25 @@ export interface CodeViewFileProps {
   readonly className?: string;
 }
 
+export interface CodeViewEditorProps extends CodeViewFileProps {
+  readonly documentId: string;
+  readonly onChange: (contents: string) => void;
+  readonly onSelectionChange?: (
+    range: { readonly startLine: number; readonly endLine: number } | null,
+  ) => void;
+}
+
 /**
- * `ClientHost.codeView` version 1. A rendering primitive over data the
- * plugin already holds, not a capability: no grant, no broker, no
- * catalogue entry. The host owns tokenization, its worker pool, theme sync
- * and virtualization; the plugin composes the components into its JSX.
+ * `ClientHost.codeView` renders data the plugin already holds. File and Diff
+ * are read-only; the optional Editor member buffers through onChange. Rendering
+ * has no write authority, grant, broker or catalogue entry. The caller owns
+ * persistence through its existing CAS API; the host owns the rendering stack.
  */
 export interface ClientCodeView {
   readonly version: 1;
   readonly Diff: React.ComponentType<CodeViewDiffProps>;
   readonly File: React.ComponentType<CodeViewFileProps>;
+  readonly Editor?: React.ComponentType<CodeViewEditorProps>;
 }
 
 /**
@@ -238,6 +249,13 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
   return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File)
     ? (member as ClientCodeView)
     : null;
+}
+
+export function resolveCodeEditor(
+  host: Pick<ClientHost, "codeView">,
+): React.ComponentType<CodeViewEditorProps> | null {
+  const codeView = resolveCodeView(host);
+  return codeView !== null && isComponent(codeView.Editor) ? codeView.Editor! : null;
 }
 
 /** One host-rendered tooltip around a single trigger element. */
@@ -443,6 +461,11 @@ export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
+  openEditorPath?(
+    input: UiEditorOpenInput,
+    context: ViewContext,
+    signal: AbortSignal,
+  ): Promise<UiEditorOpenReceipt>;
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
   readAsset?(

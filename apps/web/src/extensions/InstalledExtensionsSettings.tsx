@@ -10,6 +10,7 @@ import {
   API_CALL_TIME_GRANTS,
   GENERIC_API_CATALOGUE,
   HOST_CAPABILITY_GRANTS,
+  HOST_CAPABILITY_GRANT_DESCRIPTIONS,
 } from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
@@ -55,10 +56,7 @@ const GRANT_CHOICES = [
 
 /** What a grant allows: the catalogue API calls that check it, or null when this client cannot tell. */
 function grantUses(grant: string): string | null {
-  if (grant === "t3.projects/create")
-    return "Create project directories and clone repositories using provider credentials or SSH keys, including local-network remotes";
-  if (grant === "t3.source-control/read")
-    return "Read provider accounts and account-wide repository names, including private repositories";
+  if (HOST_CAPABILITY_GRANT_DESCRIPTIONS[grant]) return HOST_CAPABILITY_GRANT_DESCRIPTIONS[grant];
   if (HOST_CAPABILITY_GRANTS.includes(grant)) return "Host service " + grant;
   const uses = GENERIC_API_CATALOGUE.flatMap((api) => {
     const names = operationsOf(api)

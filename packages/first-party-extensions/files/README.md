@@ -13,7 +13,19 @@ line opens the source at that line. It exposes an "Open in panel" file
 action: `t3.ui/navigation` `openFile` (1.1.0, grant `t3.ui/navigation.open`)
 opens the file in this view's thread where the host's own file links land,
 presented by whichever provider the host selected for `t3.file/presentation`.
-Reopening the file already shown there only focuses it. For `.html`, `.htm`
+Reopening the file already shown there only focuses it. "Open in editor" uses
+`t3.ui/editor@^1.1.0` (`t3.ui/editor.open` grant), resolving the path against
+the view's scoped checkout. Local environments launch the saved editor;
+remote and tunnel environments use the native SSH editor deep link, the
+client's remote-capable editors, and the same saved preference. Choose another
+editor from the picker; its remote menu includes the native SSH-key hint.
+The control follows the native preview's environment visibility and stays
+absent while checking support or on an older client. Capability answers are
+cached briefly across remounts. The host's click-local opener preserves browser
+activation; refusals appear inline. A missing SSH target never falls back to
+launching an editor on the remote server. Remote URLs omit line and column
+suffixes, like native; explicit-cwd SDK calls still execute in the environment.
+For `.html`, `.htm`
 and `.pdf` files, "Open file in preview browser" sends `openFile` with
 `openIn: "browser"` (1.2.0), which opens the file in the thread's preview
 browser, as native does. As there, the action shows only on a client with a
@@ -70,8 +82,13 @@ Files the editor cannot open (past the edit bound, binary-adjacent,
 non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that
 view is the host's native source preview — highlighted on the shared worker
 pool and virtualized — with the same word-wrap setting and line reveals.
-Hosts without the member keep a plain `<pre>`. The editable editor stays a
-textarea.
+Hosts without the member keep a plain `<pre>`. Editable files use the same
+Pierre editor as the native panel through the optional `ClientHost.codeView.Editor`
+member, with no discovery or capability request. Hosts without that member stay
+read-only. Edits autosave through the revisioned save coordinator after 500 ms,
+using the unary CAS path
+up to 24,000 bytes and the chunked resource CAS path up to 8 MiB. Dirty state,
+conflict recovery and write grants stay with the Files session.
 
 The surface declares no `capabilities` — that field gates mounting on host
 services, and these adoptions ride on `requires` + install grants instead.

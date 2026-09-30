@@ -2,6 +2,7 @@ import type {
   ClientCodeView,
   CodeViewDiffProps,
   CodeViewFileProps,
+  CodeViewEditorProps,
 } from "@t3tools/extension-sdk/environment";
 import { lazy, Suspense } from "react";
 
@@ -10,6 +11,9 @@ import { lazy, Suspense } from "react";
 const loadRenderers = () => import("./HostCodeViewRenderers");
 const LazyDiff = lazy(() => loadRenderers().then((module) => ({ default: module.HostCodeDiff })));
 const LazyFile = lazy(() => loadRenderers().then((module) => ({ default: module.HostCodeFile })));
+const LazyEditor = lazy(() =>
+  loadRenderers().then((module) => ({ default: module.HostCodeEditor })),
+);
 
 function CodeViewLoading() {
   return (
@@ -38,5 +42,13 @@ function File(props: CodeViewFileProps) {
   );
 }
 
+function Editor(props: CodeViewEditorProps) {
+  return (
+    <Suspense fallback={<CodeViewLoading />}>
+      <LazyEditor {...props} />
+    </Suspense>
+  );
+}
+
 /** The web and desktop `ClientHost.codeView`, shared by every installed client. */
-export const hostCodeView: ClientCodeView = { version: 1, Diff, File };
+export const hostCodeView: ClientCodeView = { version: 1, Diff, File, Editor };

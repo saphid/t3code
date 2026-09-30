@@ -247,12 +247,17 @@ export const make = Effect.gen(function* () {
       repository: providerKind === "forgejo" ? `https://${host}/${repositoryPath}` : repositoryPath,
       ...(providerKind === "github" || providerKind === "gitlab" ? { host } : {}),
     });
-    for (const remote of [urls.url, urls.sshUrl]) {
+    for (const [protocol, remote] of [
+      ["https", urls.url],
+      ["ssh", urls.sshUrl],
+    ] as const) {
       const remoteHost = repositoryRemoteHost(remote);
       if (
         !isSafeRepositoryRemote(remote) ||
         (remoteHost !== host &&
           !(
+            protocol === "ssh" &&
+            (remote.startsWith("ssh://") || !remote.includes("://")) &&
             providerKind === "azure-devops" &&
             host === "dev.azure.com" &&
             remoteHost === "ssh.dev.azure.com"
@@ -344,7 +349,13 @@ export const make = Effect.gen(function* () {
       destinationPath: preparedDestination.destinationPath,
       remoteUrl: redactRemoteUrl(remoteUrl),
       cloneUrl: remoteUrl,
-      repository,
+      repository: repository
+        ? {
+            ...repository,
+            url: redactRemoteUrl(repository.url),
+            sshUrl: redactRemoteUrl(repository.sshUrl),
+          }
+        : null,
     } satisfies SourceControlPreparedClone;
   });
 

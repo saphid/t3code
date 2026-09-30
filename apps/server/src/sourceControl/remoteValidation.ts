@@ -5,6 +5,8 @@ import type {
 import * as Option from "effect/Option";
 
 export function isSafeRepositoryRemote(remote: string, allowHttp = false): boolean {
+  // URL parsing strips controls; reject them before git can interpret a different remote.
+  // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f\\]/.test(remote)) return false;
   if (/^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*:[^\s]+$/.test(remote)) return true;
   if (!remote.includes("://")) return false;

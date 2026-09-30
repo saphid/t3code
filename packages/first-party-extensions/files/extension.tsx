@@ -8,6 +8,7 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiEditorApi,
   uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
@@ -61,8 +62,9 @@ import {
   usePostedComments,
 } from "./commentSession.js";
 import { useAddToChat } from "./composerBridge.js";
+import { useExternalEditor } from "./editorBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
-import { ReadOnlyFileBody } from "./codeView.js";
+import { EditableFileBody, ReadOnlyFileBody } from "./codeView.js";
 import {
   FILE_SAVE_DEBOUNCE_MS,
   FileEditCoordinator,
@@ -1196,6 +1198,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
+  const externalEditor = useExternalEditor(host, session);
   const wordWrap = preferences.wordWrap;
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
@@ -1238,7 +1241,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     return path !== null && line !== null ? { path, line, id: 1 } : null;
   });
   const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   // HTML renders by default; a pending line reveal shows the source it
@@ -1454,7 +1456,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (session.save(state)) savedViewStateRef.current = serialized;
   }, [session, selected, folders, renderMarkdown, renderHtml, explorerOpen, revealLine]);
 
-  // Row 14: review comments on file lines. The textarea's character selection
+  // Row 14: review comments on file lines. The host editor's line selection
   // expands to full lines; submit lands a real composer draft review comment
   // through the grant-gated `t3.messages/enrichment.attachAnnotation` seam.
   // The draft form captures its range + excerpt pinned to the live buffer
@@ -1884,26 +1886,25 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         };
 
   // Centered line reveal. Waits for the selected file's content
-  // surface — the editable textarea or the bounded read-only <pre> — then
+  // fallback surface — the bounded read-only <pre> — then
   // scrolls the target line into the viewport center and marks the request
-  // handled. The read-only pre's text node gives exact rendered geometry via
-  // a Range rect; the textarea falls back to line-height estimation and gets
-  // the caret on the line. A request that can't run yet (read in flight,
+  // handled. Its text node gives exact rendered geometry via a Range rect;
+  // host code views handle their own reveal. A request that can't run yet (read in flight,
   // rendered-markdown view) stays pending until the surface appears or a
   // plain selection replaces it.
   useEffect(() => {
     const reveal = revealRequest;
     if (reveal === null || reveal === handledRevealRef.current) return;
     if (reveal.path !== selected || selectedKind !== "text" || markdownBlocks !== null) return;
-    const editable = editorSurface?.open.editable === true;
-    const text = editable ? editorSurface.contents : currentRead?.contents;
-    const element = editable ? editorRef.current : readOnlyRef.current;
+    const text =
+      editorSurface?.open.editable === true ? editorSurface.contents : currentRead?.contents;
+    const element = readOnlyRef.current;
     if (text === undefined || element === null) return;
     const style = getComputedStyle(element);
     const paddingTop = Number.parseFloat(style.paddingTop) || 0;
     const lineHeight = Number.parseFloat(style.lineHeight) || 16;
     let renderedLine: { top: number; height: number } | undefined;
-    if (!editable) {
+    {
       const node = element.firstChild;
       if (node !== null && node.nodeType === Node.TEXT_NODE) {
         const offset = Math.min(lineStartOffset(text, reveal.line), node.textContent?.length ?? 0);
@@ -1924,11 +1925,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       estimatedLine: { top: (reveal.line - 1) * lineHeight, height: lineHeight },
       ...(renderedLine !== undefined ? { renderedLine } : {}),
     });
-    if (editable && element instanceof HTMLTextAreaElement) {
-      const offset = lineStartOffset(text, reveal.line);
-      element.focus({ preventScroll: true });
-      element.setSelectionRange(offset, offset);
-    }
     handledRevealRef.current = reveal;
   }, [revealRequest, selected, selectedKind, markdownBlocks, editorSurface, currentRead]);
 
@@ -2303,6 +2299,46 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
+          {externalEditor.visible && (
+            <>
+              <button
+                type="button"
+                disabled={
+                  externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                }
+                onClick={() => externalEditor.openInEditor(selected)}
+              >
+                Open in{" "}
+                {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
+                  ?.label ?? "editor"}
+              </button>
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) externalEditor.markHintShown();
+                }}
+              >
+                <summary>Choose editor</summary>
+                {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
+                {externalEditor.editors.map((editor) => (
+                  <button
+                    key={editor.id}
+                    type="button"
+                    disabled={
+                      externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                    }
+                    onClick={() => externalEditor.openInEditor(selected, editor.id)}
+                  >
+                    {editor.label}
+                  </button>
+                ))}
+              </details>
+            </>
+          )}
+          {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (
+            <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
+              {externalEditor.state.message}
+            </span>
+          )}
           {browserPreview && opensInPreviewBrowser(selected) && (
             <button type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
@@ -2484,36 +2520,34 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   )}
                 </div>
               ) : null}
-              <textarea
-                ref={editorRef}
-                aria-label="File editor"
-                value={editorSurface.contents}
-                onChange={(event) => editor.change(event.target.value)}
-                onSelect={(event) => {
-                  if (selected !== null)
+              <EditableFileBody
+                host={host}
+                documentId={`${session.context.resource.environmentId}:${session.context.resource.projectId}:${selected}`}
+                path={selected}
+                contents={editorSurface.contents}
+                wordWrap={wordWrap.value}
+                reveal={
+                  revealRequest?.path === selected
+                    ? { line: revealRequest.line, requestId: revealRequest.id }
+                    : null
+                }
+                onChange={editor.change}
+                onSelectionChange={(range) => {
+                  if (range === null) clearEditorSelection();
+                  else
                     setEditorSelection({
                       path: selected,
-                      start: event.currentTarget.selectionStart,
-                      end: event.currentTarget.selectionEnd,
+                      ...range,
                     });
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") event.currentTarget.blur();
-                }}
-                spellCheck={false}
-                wrap={wordWrap.value === false ? "off" : "soft"}
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  resize: "none",
-                  border: "none",
-                  outline: "none",
-                  padding: 12,
-                  color: "inherit",
-                  background: "transparent",
-                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-                  fontSize: 12,
-                }}
+                renderFallback={() => (
+                  <pre
+                    ref={readOnlyRef}
+                    style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 0, padding: 12 }}
+                  >
+                    {editorSurface.contents}
+                  </pre>
+                )}
               />
             </>
           )}
@@ -2709,7 +2743,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.9.0",
+  version: "0.11.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
   requires: [
@@ -2725,6 +2759,7 @@ export default defineExtension({
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(uiNavigationApi),
+    requireApi(uiEditorApi, "^1.1.0"),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

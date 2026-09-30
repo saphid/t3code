@@ -1083,6 +1083,9 @@ importers:
       '@t3tools/extension-sdk':
         specifier: workspace:*
         version: link:../../extension-sdk
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
     devDependencies:
       '@types/node':
         specifier: 24.12.4
@@ -1173,6 +1176,9 @@ importers:
       '@t3tools/extension-sdk':
         specifier: workspace:*
         version: link:../../extension-sdk
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
     devDependencies:
       '@types/node':
         specifier: 24.12.4

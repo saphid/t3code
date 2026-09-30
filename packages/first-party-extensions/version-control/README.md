@@ -138,7 +138,7 @@ Clone repository opens a Git URL or ready-provider flow. Provider discovery
 and lookup use `t3.source-control/discovery@1.0.0` with `t3.source-control/read`;
 Discovery runs once per mounted session; Rescan providers refreshes readiness
 without polling or clearing the last result. Unready providers show setup hints.
-The repository picker caches each source for the mounted session and
+The repository picker caches each source until Rescan providers or remount and
 shows at most 20 recent repositories and marks partial lists; another
 repository can be entered directly. Azure DevOps uses the CLI's configured project.
 
@@ -154,7 +154,7 @@ Provider repository identifiers use the provider’s owner/name path; GitLab
 subgroups and Azure’s configured-project repository names are supported.
 Progress subscriptions and pending discovery/list reads stop when the panel is
 hidden or closed; completed discovery and listings remain cached until rescan
-or remount respectively.
+or remount.
 
 Remotes render from `t3.vcs/repository` `listRemotes` (a read-granted
 call) — name, URL, and primary marker, with per-remote Fetch.

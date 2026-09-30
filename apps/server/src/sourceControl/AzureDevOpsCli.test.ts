@@ -199,7 +199,7 @@ describe("AzureDevOpsCli.layer", () => {
             JSON.stringify({
               name: "repo",
               webUrl: "https://dev.azure.com/acme/project/_git/repo",
-              remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+              remoteUrl: "https://acme@dev.azure.com/acme/project/_git/repo",
               sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
               project: {
                 name: "project",

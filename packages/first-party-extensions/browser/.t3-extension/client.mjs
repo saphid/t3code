@@ -599,10 +599,11 @@ var __t3Client = (() => {
       }
     ]
   });
+  var WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
   function defineOrchestrationStatusApi(diffEventSchema) {
     return defineStreamApi({
       id: ORCHESTRATION_STATUS,
-      version: "1.0.0",
+      version: "1.1.0",
       methods: [
         {
           name: "getCapabilities",
@@ -614,16 +615,32 @@ var __t3Client = (() => {
             streamEpoch: id,
             revision: num
           })
-        },
-        {
-          name: "getWorkflowScript",
-          effect: "read",
-          requiredGrants: [ORCHESTRATION_READ],
-          inputSchema: obj({ workflowId: id }),
-          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool })
         }
       ],
       streams: [
+        {
+          name: "readWorkflowScript",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          eventSchema: {
+            oneOf: [
+              obj({
+                kind: { const: "manifest" },
+                chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
+                truncated: bool
+              }),
+              obj({
+                kind: { const: "chunk" },
+                chunkIndex: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS - 1 },
+                data: { type: "string", maxLength: 8192 }
+              }),
+              obj({
+                kind: { const: "complete" },
+                sha256: { type: "string", pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }
+              })
+            ]
+          }
+        },
         {
           name: "subscribeAgents",
           requiredGrants: [ORCHESTRATION_READ],
@@ -643,7 +660,7 @@ var __t3Client = (() => {
           eventSchema: diffEventSchema
         }
       ]
-    });
+    }, { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "readWorkflowScript" }] });
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
   var logSource = { enum: ["output"] };
@@ -2372,16 +2389,92 @@ var __t3Client = (() => {
     path: { type: "string", minLength: 1, maxLength: 4096 },
     cwd: { type: "string", minLength: 1, maxLength: 4096 }
   };
+  var uiEditorOpenReceiptV11Schema = {
+    oneOf: [
+      {
+        ...uiEditorOpenReceiptSchema.oneOf[0],
+        properties: {
+          ...uiEditorOpenReceiptSchema.oneOf[0].properties,
+          url: { type: "string", minLength: 1, maxLength: 16384 }
+        }
+      },
+      uiEditorOpenReceiptSchema.oneOf[1]
+    ]
+  };
+  var editorWorkspaceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      ...editorPathInput,
+      workspace: { const: true },
+      editor: { type: "string", minLength: 1, maxLength: 64 },
+      hintShown: { const: true }
+    },
+    oneOf: [
+      { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
+      { required: ["workspace"], properties: { workspace: { const: true } } }
+    ]
+  };
+  var editorOptionsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["visible", "editors", "preferredEditor", "remoteHint"],
+    properties: {
+      visible: { type: "boolean" },
+      editors: {
+        type: "array",
+        maxItems: 32,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "label"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            label: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      },
+      preferredEditor: { type: ["string", "null"], maxLength: 64 },
+      remoteHint: { type: ["string", "null"], maxLength: 1024 }
+    }
+  };
+  var editorCapabilitiesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string" },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openPath"],
+        properties: { openPath: { type: "boolean" } }
+      },
+      clients: { type: "array", maxItems: 0 },
+      editor: editorOptionsSchema
+    }
+  };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "openPath",
         effect: "write",
         requiredGrants: [],
-        inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
-        outputSchema: uiEditorOpenReceiptSchema
+        inputSchema: {
+          ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
+          oneOf: editorWorkspaceInputSchema.oneOf
+        },
+        outputSchema: uiEditorOpenReceiptV11Schema
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}, []),
+        outputSchema: editorCapabilitiesSchema
       }
     ]
   });
@@ -5087,12 +5180,53 @@ var __t3Client = (() => {
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1_1 = {
     ...prsDetailSchemaV1,
     properties: {
       ...prsDetailSchemaV1.properties,
       preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
       observedAt: prsObservedAtField
+    }
+  };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1_1,
+    properties: {
+      ...prsDetailSchemaV1_1.properties,
+      capabilities: {
+        ...prsCapabilitiesSchema,
+        properties: {
+          ...prsCapabilitiesSchema.properties,
+          viewedFiles: { enum: ["host", "environment"] }
+        }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5664,14 +5798,61 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
-      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
+  var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
   var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
@@ -6244,7 +6425,7 @@ var __t3Client = (() => {
       body: prsWriteBodySchema
     }
   };
-  var prsWriteApi = defineApi({
+  var prsWriteApiV1 = defineApi({
     id: PRS_WRITE,
     version: "1.0.0",
     methods: [
@@ -6456,6 +6637,60 @@ var __t3Client = (() => {
         outputSchema: prsEmptyOutputSchema
       }
     ]
+  });
+  var prsWriteApi = defineApi({
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsWriteCapabilitiesResultSchema,
+          properties: {
+            ...prsWriteCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsWriteOperationsSupportSchema,
+              properties: {
+                ...prsWriteOperationsSupportSchema.properties,
+                "prs.setFilesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
+                  viewed: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
@@ -7306,7 +7541,26 @@ var __t3Client = (() => {
   var BROWSER_SURFACE_Z_INDEX = 30;
   var BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
+  var BROWSER_RECORDING = "t3.browser/recording";
+  var BROWSER_RECORDING_MIN_VERSION = "1.2.0";
+  var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    "t3.projects/create": "Create project directories and clone repositories using provider credentials or SSH keys, including local-network remotes",
+    "t3.source-control/read": "Read provider accounts and account-wide repository names, including private repositories",
+    [BROWSER_RECORDING]: "Record the browser panel as video",
+    [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
+  };
+  var BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE];
+  var BROWSER_RECORDING_REQUIRED_GRANTS = [
+    ...BROWSER_CAPTURE_REQUIRED_GRANTS,
+    BROWSER_RECORDING
+  ];
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+  function resolveBrowserRecording(capture) {
+    const version2 = capture && parseVersion(capture.version);
+    const minimum = parseVersion(BROWSER_RECORDING_MIN_VERSION);
+    return capture && version2 && minimum && version2[0] === minimum[0] && compareVersions(version2, minimum) >= 0 && capture.startRecording && capture.stopRecording && capture.subscribeRecording && capture.recordingSupport ? capture : null;
+  }
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -8459,7 +8713,7 @@ var __t3Client = (() => {
   });
   var UI_EDITOR = "t3.ui/editor";
   var UI_EDITOR_OPEN = "t3.ui/editor.open";
-  var uiEditorApi = defineApi({
+  var uiEditorApiV1 = defineApi({
     id: UI_EDITOR,
     version: "1.0.0",
     methods: [
@@ -8485,6 +8739,36 @@ var __t3Client = (() => {
         },
         outputSchema: uiEditorOpenReceiptSchema
       }
+    ]
+  });
+  var uiEditorApi = defineApi({
+    ...uiEditorApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      {
+        ...uiEditorApiV1.definition.methods[0],
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema
+          }
+        }
+      },
+      {
+        ...uiEditorApiV1.definition.methods[1],
+        inputSchema: editorWorkspaceInputSchema,
+        outputSchema: uiEditorOpenReceiptV11Schema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openPath", input: "workspace" },
+      { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" }
     ]
   });
   var UI_NAVIGATION = "t3.ui/navigation";
@@ -8652,8 +8936,10 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1_1.definition,
     prsReadApiV1.definition,
     prsWriteApi.definition,
+    prsWriteApiV1.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
     messagesEnrichmentApiV1_1.definition,
@@ -8667,6 +8953,7 @@ var __t3Client = (() => {
     uiExternalApi.definition,
     uiExternalApiV1.definition,
     uiEditorApi.definition,
+    uiEditorApiV1.definition,
     uiNavigationApi.definition,
     uiNavigationApiV1_1.definition,
     uiNavigationApiV1.definition,
@@ -9020,18 +9307,18 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState8 } = host.React;
-    const [element, setElement] = useState8(null);
-    const [result2, setResult] = useState8(null);
-    const [shown, setShown] = useState8(false);
-    const [, setLeaseVersion] = useState8(0);
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef5, useState: useState9 } = host.React;
+    const [element, setElement] = useState9(null);
+    const [result2, setResult] = useState9(null);
+    const [shown, setShown] = useState9(false);
+    const [, setLeaseVersion] = useState9(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
-    const presentationRef = useRef4({
+    const presentationRef = useRef5({
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
       zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
     });
-    const updateRef = useRef4(null);
+    const updateRef = useRef5(null);
     const ref = useCallback2((node) => setElement(node), []);
     useLayoutEffect(() => {
       presentationRef.current = {
@@ -9174,20 +9461,20 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef4, useState: useState8 } = host.React;
-    const [element, setElement] = useState8(null);
-    const [status, setStatus] = useState8({ kind: "idle" });
-    const [view, setView] = useState8({
+    const { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef5, useState: useState9 } = host.React;
+    const [element, setElement] = useState9(null);
+    const [status, setStatus] = useState9({ kind: "idle" });
+    const [view, setView] = useState9({
       status: "connecting",
       inputConnected: false,
       droppedFrames: 0,
       rejectedInput: 0
     });
-    const sessionRef = useRef4(options.session);
+    const sessionRef = useRef5(options.session);
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect7(() => {
+    useEffect8(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -9362,7 +9649,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react8 = __toESM(require_react(), 1);
+  var import_react9 = __toESM(require_react(), 1);
 
   // addressInput.tsx
   var import_react = __toESM(require_react(), 1);
@@ -9604,26 +9891,29 @@ var __t3Client = (() => {
         };
     }
   }
-  function copyFailureBody(reason) {
+  function copyFailureBody(reason, kind) {
     switch (reason) {
       case "artifact-not-found":
-        return "This screenshot is no longer available to copy.";
+        return kind === "recording" ? "This recording is no longer available to copy." : "This screenshot is no longer available to copy.";
       case "desktop-required":
-        return "Saved screenshots live in the T3 Code desktop app.";
+        return kind === "recording" ? "Saved recordings live in the T3 Code desktop app." : "Saved screenshots live in the T3 Code desktop app.";
       case "grant-denied":
       case "scope-invalid":
       case "host-unavailable":
-        return "This panel can no longer reach the saved screenshot.";
+        return kind === "recording" ? "This panel can no longer reach the saved recording." : "This panel can no longer reach the saved screenshot.";
       case "action-failed":
-        return "The saved screenshot could not be copied.";
+        return kind === "recording" ? "The saved recording could not be copied." : "The saved screenshot could not be copied.";
     }
   }
-  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal) {
+  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal, kind = "screenshot") {
     if (actionId === "reveal") {
       await capture.revealArtifact?.(request);
       return;
     }
-    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" } : null;
+    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? {
+      run: capture.copyArtifactPath,
+      failTitle: kind === "recording" ? "Unable to copy recording path" : "Unable to copy screenshot path"
+    } : null;
     if (!copy?.run) return;
     const result2 = await copy.run(request);
     if (signal.aborted) return;
@@ -9632,19 +9922,19 @@ var __t3Client = (() => {
       result2.ok ? {
         notificationId,
         severity: "success",
-        title: "Screenshot saved",
+        title: kind === "recording" ? "Recording saved" : "Screenshot saved",
         body: "",
         flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS }
       } : {
         notificationId,
         severity: "error",
         title: copy.failTitle,
-        body: copyFailureBody(result2.failure.reason)
+        body: copyFailureBody(result2.failure.reason, kind)
       },
       signal
     );
   }
-  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal) {
+  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal, kind = "screenshot") {
     while (!signal.aborted) {
       let outcome;
       try {
@@ -9659,7 +9949,8 @@ var __t3Client = (() => {
         request,
         notificationId,
         outcome.actionId,
-        signal
+        signal,
+        kind
       ).catch(() => {
       });
     }
@@ -9789,8 +10080,198 @@ var __t3Client = (() => {
     return { blockReason, state: state2, picking, capture };
   }
 
+  // recording.ts
+  var import_react3 = __toESM(require_react(), 1);
+  function recordingUnavailableReason(host, held, page) {
+    const capture = resolveBrowserRecording(host.browserCapture);
+    if (!capture) return "This host cannot record browser sessions.";
+    if (!capture.recordingSupport.supported)
+      return capture.recordingSupport.reason === "grant-denied" ? grantDenialMessage(capture.recordingSupport.grant) : "Record from the T3 Code desktop app.";
+    if (!held) return "Open a page before recording.";
+    if (page !== "shown") return "The page must be shown here before recording.";
+    return null;
+  }
+  function recordingToastActions(capture) {
+    const support = capture.recordingArtifactActions ?? capture.artifactActions;
+    if (!support) return [];
+    const actions = [];
+    if (support.reveal.supported && capture.revealArtifact)
+      actions.push({ id: "reveal", label: support.revealLabel, variant: "primary", keepOpen: true });
+    if (support.copyPath.supported && capture.copyArtifactPath)
+      actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+    return actions;
+  }
+  async function runBrowserRecording(host, session, held, stopping) {
+    const capture = resolveBrowserRecording(host.browserCapture);
+    if (!capture) return "This host cannot record browser sessions.";
+    let toast;
+    let artifactRef = null;
+    try {
+      const request = { context: session.context, session: held, signal: session.signal };
+      const result2 = stopping ? await capture.stopRecording(request) : await capture.startRecording(request);
+      if (session.signal.aborted) return null;
+      if (!result2.ok) {
+        if (result2.failure.reason === "cancelled") return null;
+        toast = {
+          severity: "error",
+          title: stopping ? "Unable to stop recording" : "Unable to start recording",
+          body: result2.failure.grant ? grantDenialMessage(result2.failure.grant) : result2.failure.detail,
+          durationMs: CAPTURE_TOAST_DURATION_MS
+        };
+      } else {
+        if (!("artifact" in result2) || !result2.artifact) return null;
+        artifactRef = result2.artifact.artifactRef;
+        toast = {
+          severity: "success",
+          title: "Recording saved",
+          durationMs: CAPTURE_TOAST_DURATION_MS,
+          ...result2.artifact.saved ? { actions: recordingToastActions(capture) } : {}
+        };
+      }
+    } catch {
+      if (session.signal.aborted) return null;
+      toast = {
+        severity: "error",
+        title: stopping ? "Unable to stop recording" : "Unable to start recording",
+        body: "The desktop recording operation failed.",
+        durationMs: CAPTURE_TOAST_DURATION_MS
+      };
+    }
+    const signal = AbortSignal.any([session.signal, AbortSignal.timeout(NOTIFY_ACK_TIMEOUT_MS)]);
+    const { actions, ...plain } = toast;
+    const input = {
+      ...plain,
+      threadId: session.context.resource.threadId,
+      anchor: "thread"
+    };
+    let notifications = bindApi(uiNotificationsApi, host, session.context);
+    try {
+      let withActions = false;
+      if (actions?.length) {
+        try {
+          const selected = (await host.discoverApis(session.context, signal)).find(
+            (api) => api.id === uiNotificationsApi.definition.id && api.selected
+          );
+          withActions = selected !== void 0 && satisfiesSemverRange(selected.version, "^1.1.0");
+        } catch {
+        }
+      }
+      if (withActions) notifications = bindApi(uiNotificationsApi, host, session.context, "^1.1.0");
+      const notify = (offeredActions) => notifications.invoke(
+        "notify",
+        { ...input, ...offeredActions ? { actions: offeredActions } : {} },
+        signal
+      );
+      const { notificationId } = await (withActions ? notify(actions).catch(() => {
+        if (signal.aborted) throw new Error("Notification delivery ended.");
+        withActions = false;
+        return notify();
+      }) : notify());
+      if (withActions && artifactRef)
+        void serveCaptureToastActions(
+          notifications,
+          capture,
+          { context: session.context, artifactRef },
+          notificationId,
+          session.signal,
+          "recording"
+        );
+      return null;
+    } catch {
+      return signal.aborted ? null : toast.body ?? toast.title;
+    }
+  }
+  function useBrowserRecording(host, session, held, page, onStatus) {
+    const [state2, setState] = (0, import_react3.useState)(null);
+    const current = (0, import_react3.useRef)(null);
+    const operation = (0, import_react3.useRef)(null);
+    const capture = resolveBrowserRecording(host.browserCapture);
+    const tabId = held?.tabId;
+    const serverEpoch = held?.serverEpoch;
+    const context2 = session.context;
+    const phase = state2?.context === context2 && state2.tabId === tabId && state2.serverEpoch === serverEpoch ? state2.phase : "idle";
+    (0, import_react3.useEffect)(() => {
+      operation.current = null;
+      const controller = new AbortController();
+      current.current = controller;
+      if (!capture || !tabId || !serverEpoch) return () => controller.abort();
+      const signal = AbortSignal.any([session.signal, controller.signal]);
+      const unsubscribe = capture.subscribeRecording(
+        { context: context2, session: { tabId, serverEpoch }, signal },
+        (state3) => {
+          if (!signal.aborted && state3.ok)
+            setState({ context: context2, tabId, serverEpoch, phase: state3.phase });
+        }
+      );
+      return () => {
+        controller.abort();
+        unsubscribe();
+      };
+    }, [capture, tabId, serverEpoch, context2, session.signal]);
+    const blockReason = recordingUnavailableReason(host, held, page);
+    const toggle = async () => {
+      const stopping = phase !== "idle";
+      if (!held || !capture || operation.current === "stop" || !stopping && operation.current)
+        return;
+      if (!stopping && blockReason) {
+        onStatus?.(blockReason);
+        return;
+      }
+      const controller = current.current;
+      if (!controller || controller.signal.aborted) return;
+      const action = stopping ? "stop" : "start";
+      operation.current = action;
+      onStatus?.(null);
+      const message = await runBrowserRecording(
+        host,
+        { context: session.context, signal: AbortSignal.any([session.signal, controller.signal]) },
+        held,
+        stopping
+      );
+      if (current.current !== controller || controller.signal.aborted) return;
+      if (operation.current === action) operation.current = null;
+      if (message) onStatus?.(message);
+    };
+    return { phase, blockReason, available: capture?.recordingSupport.supported === true, toggle };
+  }
+
   // annotateButton.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  function BrowserCaptureButtons(props) {
+    const { host, session, held, page, onStatus, style } = props;
+    const capture = useBrowserCapture(host, session, held, page, onStatus);
+    const recording = useBrowserRecording(host, session, held, page, onStatus);
+    const capturing = capture.state.kind === "capturing" ? capture.state.target : null;
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+        ScreenshotButton,
+        {
+          host,
+          blockReason: capture.blockReason,
+          capturing,
+          pageFailed: page === "failed",
+          recording: recording.phase !== "idle",
+          recordingAvailable: recording.available,
+          onCapture: (record2) => {
+            if (record2 || recording.phase !== "idle") void recording.toggle();
+            else capture.capture("page");
+          },
+          style
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+        AnnotateButton,
+        {
+          host,
+          blockReason: capture.blockReason,
+          capturing,
+          pageFailed: page === "failed",
+          onPick: () => capture.capture("element"),
+          style
+        }
+      )
+    ] });
+  }
   function AnnotateButton(props) {
     const { host, blockReason, onPick, style } = props;
     const annotate2 = annotationControl(props);
@@ -9809,19 +10290,57 @@ var __t3Client = (() => {
     ) });
   }
   function ScreenshotButton(props) {
-    const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-      "button",
+    const {
+      host,
+      blockReason,
+      capturing,
+      pageFailed,
+      onCapture,
+      style,
+      recording = false,
+      recordingAvailable = false
+    } = props;
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      Tooltip,
       {
-        type: "button",
-        "aria-label": "Capture screenshot",
-        "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
-        disabled: blockReason !== null || capturing !== null,
-        onClick: onCapture,
-        style,
-        children: "\u25A3"
+        host,
+        label: recording ? "Stop recording" : recordingAvailable ? "Screenshot \xB7 Shift-click to record" : "Screenshot",
+        children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+          "button",
+          {
+            type: "button",
+            "aria-label": recording ? "Stop recording" : "Capture screenshot",
+            "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
+            disabled: !recording && blockReason !== null || capturing !== null,
+            onClick: (event) => onCapture(event.shiftKey),
+            style: {
+              ...style,
+              position: "relative",
+              ...recording ? { color: "var(--destructive, #dc2626)", background: "var(--secondary, #f1f1f1)" } : {}
+            },
+            children: [
+              "\u25A3",
+              recording && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                "span",
+                {
+                  "aria-hidden": true,
+                  className: "animate-status-pulse",
+                  style: {
+                    position: "absolute",
+                    right: 2,
+                    top: 2,
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: "var(--destructive, #dc2626)"
+                  }
+                }
+              )
+            ]
+          }
+        )
       }
-    ) });
+    );
   }
 
   // node_modules/effect/dist/Pipeable.js
@@ -15600,7 +16119,7 @@ ${ind(d)}}`;
   }
 
   // favicon.tsx
-  var import_react3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
 
   // faviconReads.ts
   var SETTLED_REFS_MAX = 4096;
@@ -15969,7 +16488,7 @@ ${ind(d)}}`;
     if (rendered === cache.resolved) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
   }
   function useFaviconCache() {
-    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react4.useSyncExternalStore)(subscribe, () => version);
     return cache;
   }
   function subscribe(listener) {
@@ -15979,8 +16498,8 @@ ${ind(d)}}`;
     };
   }
   function useFaviconResolution(url, ref) {
-    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react4.useEffect)(() => {
       commit(expireStaleFaviconFailure(cache, url, Date.now()));
     }, [url]);
     return resolveFavicon(cache, url, ref);
@@ -16128,7 +16647,7 @@ ${ind(d)}}`;
   }
 
   // landing.tsx
-  var import_react4 = __toESM(require_react(), 1);
+  var import_react5 = __toESM(require_react(), 1);
 
   // localServers.ts
   var LOCAL_SERVERS_HINT = "Select a live local server to open it in this browser tab.";
@@ -16224,13 +16743,13 @@ ${ind(d)}}`;
   var muted2 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var headingStyle = { margin: 0, fontSize: 12, fontWeight: 500, color: muted2 };
   function useLocalServers(host, session, active) {
-    const [state2, setState] = (0, import_react4.useState)(LOADING);
-    const [run2, setRun] = (0, import_react4.useState)({ host, session, active });
+    const [state2, setState] = (0, import_react5.useState)(LOADING);
+    const [run2, setRun] = (0, import_react5.useState)({ host, session, active });
     if (run2.host !== host || run2.session !== session || run2.active !== active) {
       setRun({ host, session, active });
       setState(LOADING);
     }
-    (0, import_react4.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       if (!active) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -16372,8 +16891,10 @@ ${ind(d)}}`;
   }
 
   // pageControls.ts
-  function pageControlsBlock(session) {
+  function pageControlsBlock(session, engineClaimPending = false) {
     if (session === null) return "Waiting for the browser session to report its state.";
+    if (awaitingEngineClaim(session, engineClaimPending))
+      return "Waiting for the browser engine to attach.";
     const { engine } = session;
     switch (engine.state) {
       case "ready":
@@ -16390,9 +16911,12 @@ ${ind(d)}}`;
   function isRecoveryExhausted(session) {
     return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
   }
-  function engineStatusLabel(session) {
+  function awaitingEngineClaim(session, engineClaimPending) {
+    return engineClaimPending && session.engine.state === "unavailable" && session.engine.generation === null && session.engine.reason === "desktop-required";
+  }
+  function engineStatusLabel(session, engineClaimPending = false) {
     const { engine, navigation } = session;
-    const engineText = engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
+    const engineText = awaitingEngineClaim(session, engineClaimPending) ? "engine pending" : engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
     const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
     return `${engineText}, navigation ${navigation.kind}${failure}`;
   }
@@ -16459,8 +16983,8 @@ ${ind(d)}}`;
         return `${label}: the browser engine did not answer (unknown). The page state will catch up from the session.`;
     }
   }
-  async function runPageCommand(api, target, session, verb, signal) {
-    const block = pageControlsBlock(session);
+  async function runPageCommand(api, target, session, verb, signal, engineClaimPending = false) {
+    const block = pageControlsBlock(session, engineClaimPending);
     if (block !== null) return { kind: "blocked", message: block };
     if (verb.method === "zoom" && !isLadderFactor(verb.zoomFactor))
       return {
@@ -16512,7 +17036,7 @@ ${ind(d)}}`;
   var floatingOverPage = { [BROWSER_SURFACE_OVERLAY_ATTRIBUTE]: "" };
 
   // pageMenu.tsx
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
   var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
   var muted3 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -16533,9 +17057,9 @@ ${ind(d)}}`;
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
     const { zoomFactor, zIndex, style, visible } = props;
-    const [shown, setShown] = (0, import_react5.useState)(null);
-    const last = (0, import_react5.useRef)(zoomFactor);
-    (0, import_react5.useEffect)(() => {
+    const [shown, setShown] = (0, import_react6.useState)(null);
+    const last = (0, import_react6.useRef)(zoomFactor);
+    (0, import_react6.useEffect)(() => {
       if (zoomFactor === null || last.current === zoomFactor) {
         last.current = zoomFactor;
         return;
@@ -16574,12 +17098,12 @@ ${ind(d)}}`;
   }
   function PageMenu(props) {
     const { host, session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
-    const [open, setOpen] = (0, import_react5.useState)(false);
+    const [open, setOpen] = (0, import_react6.useState)(false);
     if (open && !visible) setOpen(false);
-    const [trigger, setTrigger] = (0, import_react5.useState)(null);
-    const root = (0, import_react5.useRef)(null);
-    const menu = (0, import_react5.useRef)(null);
-    (0, import_react5.useEffect)(() => {
+    const [trigger, setTrigger] = (0, import_react6.useState)(null);
+    const root = (0, import_react6.useRef)(null);
+    const menu = (0, import_react6.useRef)(null);
+    (0, import_react6.useEffect)(() => {
       if (!open) return;
       const onPointer = (event) => {
         const target = event.target;
@@ -16806,7 +17330,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
 
   // profiles.ts
   var DEFAULT_PROFILE_ID = "default";
@@ -16978,7 +17502,7 @@ ${ind(d)}}`;
       })();
     }
   });
-  var useProfileList = (profiles) => (0, import_react6.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
+  var useProfileList = (profiles) => (0, import_react7.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
   var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var control2 = {
@@ -17000,7 +17524,7 @@ ${ind(d)}}`;
     const { host, session, profiles, visible } = props;
     const profileId = sessionProfileId(session);
     const { list } = useProfileList(profiles);
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (visible) profiles.refresh();
     }, [profiles, profileId, visible]);
     const name = profileBadgeName(list, profileId);
@@ -17030,8 +17554,8 @@ ${ind(d)}}`;
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
-    const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
-    (0, import_react6.useEffect)(() => profiles.refresh(), [profiles]);
+    const [importer, setImporter] = (0, import_react7.useState)({ kind: "closed" });
+    (0, import_react7.useEffect)(() => profiles.refresh(), [profiles]);
     const name = profileLabel(list, profileId);
     const choose = (action) => {
       onChosen();
@@ -17185,7 +17709,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_react7 = __toESM(require_react(), 1);
+  var import_react8 = __toESM(require_react(), 1);
 
   // viewport.ts
   var PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
@@ -17634,10 +18158,10 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useElementSize(element) {
-    const [size, setSize] = (0, import_react7.useState)(
+    const [size, setSize] = (0, import_react8.useState)(
       null
     );
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
@@ -17674,7 +18198,7 @@ ${ind(d)}}`;
     );
   }
   function useAspectLocks(tabs, held) {
-    const [locks, setLocks] = (0, import_react7.useState)(() => /* @__PURE__ */ new Map());
+    const [locks, setLocks] = (0, import_react8.useState)(() => /* @__PURE__ */ new Map());
     const live = (tabId) => held?.tabId === tabId || tabs.some((tab) => tab.tabId === tabId);
     return {
       isLocked: (tab) => tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
@@ -17689,7 +18213,7 @@ ${ind(d)}}`;
   function BrowserViewportToolbar(props) {
     const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
     const aspectRatio = lockedAspectRatio(setting, aspectLocked);
-    const [edit, setEdit] = (0, import_react7.useState)(null);
+    const [edit, setEdit] = (0, import_react8.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
     const presentedSize = customSize ?? {
@@ -17953,12 +18477,12 @@ ${ind(d)}}`;
   }
   function useViewportRails(options) {
     const { setting, target, slot, zoomFactor, aspectRatio, commit: commit2 } = options;
-    const [preview, setPreview] = (0, import_react7.useState)(null);
-    const [gestures] = (0, import_react7.useState)(() => createRailGestures(setPreview));
-    (0, import_react7.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
+    const [preview, setPreview] = (0, import_react8.useState)(null);
+    const [gestures] = (0, import_react8.useState)(() => createRailGestures(setPreview));
+    (0, import_react8.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
     const committedKey = setting === null ? null : viewportSettingKey(setting);
-    (0, import_react7.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
-    (0, import_react7.useEffect)(() => () => gestures.dispose(), [gestures]);
+    (0, import_react8.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
+    (0, import_react8.useEffect)(() => () => gestures.dispose(), [gestures]);
     const displayed = setting === null ? null : preview === null ? setting : { _tag: "freeform", width: preview.width, height: preview.height };
     const onPointerDown = (direction, event) => {
       if (displayed === null || setting === null || target === null) return;
@@ -18294,8 +18818,8 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react8.useState)(null);
-    (0, import_react8.useEffect)(() => {
+    const [vars, setVars] = (0, import_react9.useState)(null);
+    (0, import_react9.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       watchThemeVars(
@@ -18344,59 +18868,59 @@ ${ind(d)}}`;
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
-    const [state2, setState] = (0, import_react8.useState)(
+    const [state2, setState] = (0, import_react9.useState)(
       () => restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState
     );
-    const [fileSource, setFileSource] = (0, import_react8.useState)(
+    const [fileSource, setFileSource] = (0, import_react9.useState)(
       restored?.url ? null : restored?.relativePath ?? null
     );
-    const fileSourceRef = (0, import_react8.useRef)(fileSource);
-    const fileLeaseUrl = (0, import_react8.useRef)(null);
-    const fileRun = (0, import_react8.useRef)(null);
-    const [address, setAddress] = (0, import_react8.useState)(restored?.url ?? restored?.relativePath ?? "");
-    const [history, setHistory] = (0, import_react8.useState)(
+    const fileSourceRef = (0, import_react9.useRef)(fileSource);
+    const fileLeaseUrl = (0, import_react9.useRef)(null);
+    const fileRun = (0, import_react9.useRef)(null);
+    const [address, setAddress] = (0, import_react9.useState)(restored?.url ?? restored?.relativePath ?? "");
+    const [history, setHistory] = (0, import_react9.useState)(
       () => sanitizeHistoryEntries(restored?.history)
     );
-    const [held, setHeld] = (0, import_react8.useState)(
+    const [held, setHeld] = (0, import_react9.useState)(
       () => restored?.tabId && restored?.serverEpoch ? {
         tabId: restored.tabId,
         serverEpoch: restored.serverEpoch,
         engineGeneration: null
       } : null
     );
-    const [live, setLive] = (0, import_react8.useState)(null);
-    const [tabs, setTabs] = (0, import_react8.useState)([]);
-    const tabsEpoch = (0, import_react8.useRef)(null);
-    const [notice, setNotice] = (0, import_react8.useState)(null);
-    const [visible, setVisible] = (0, import_react8.useState)(session.visible);
-    const [surfaceAttempt, setSurfaceAttempt] = (0, import_react8.useState)(0);
-    const surfaceUnavailableRef = (0, import_react8.useRef)(false);
-    const heldRef = (0, import_react8.useRef)(held);
-    const historyRef = (0, import_react8.useRef)(history);
-    const dropHeldSession = (0, import_react8.useCallback)(() => {
+    const [live, setLive] = (0, import_react9.useState)(null);
+    const [tabs, setTabs] = (0, import_react9.useState)([]);
+    const tabsEpoch = (0, import_react9.useRef)(null);
+    const [notice, setNotice] = (0, import_react9.useState)(null);
+    const [visible, setVisible] = (0, import_react9.useState)(session.visible);
+    const [surfaceAttempt, setSurfaceAttempt] = (0, import_react9.useState)(0);
+    const surfaceUnavailableRef = (0, import_react9.useRef)(false);
+    const heldRef = (0, import_react9.useRef)(held);
+    const historyRef = (0, import_react9.useRef)(history);
+    const dropHeldSession = (0, import_react9.useCallback)(() => {
       heldRef.current = null;
       setHeld(null);
       setLive(null);
       setNotice(null);
     }, [setHeld, setLive, setNotice]);
-    const [fence] = (0, import_react8.useState)(createRevisionFence);
-    const heldRevision = (0, import_react8.useRef)(-1);
-    const addressRef = (0, import_react8.useRef)(null);
-    const [contentElement, setContentElement] = (0, import_react8.useState)(null);
+    const [fence] = (0, import_react9.useState)(createRevisionFence);
+    const heldRevision = (0, import_react9.useRef)(-1);
+    const addressRef = (0, import_react9.useRef)(null);
+    const [contentElement, setContentElement] = (0, import_react9.useState)(null);
     const contentSize = useElementSize(contentElement);
-    const [viewportPending, setViewportPending] = (0, import_react8.useState)(false);
-    const viewportCommitter = (0, import_react8.useRef)(null);
+    const [viewportPending, setViewportPending] = (0, import_react9.useState)(false);
+    const viewportCommitter = (0, import_react9.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
-    const profilesApi = (0, import_react8.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
-    const profiles = (0, import_react8.useMemo)(
+    const profilesApi = (0, import_react9.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
+    const profiles = (0, import_react9.useMemo)(
       () => createProfileListStore(profilesApi, session.signal),
       [profilesApi, session.signal]
     );
     const localServers = useLocalServers(host, session, visible && held === null);
-    const [projectHistoryState, setProjectHistoryState] = (0, import_react8.useState)({
+    const [projectHistoryState, setProjectHistoryState] = (0, import_react9.useState)({
       kind: "loading"
     });
-    const projectHistory = (0, import_react8.useMemo)(
+    const projectHistory = (0, import_react9.useMemo)(
       () => createProjectHistory(
         bindApi(browserHistoryApi, host, session.context),
         session.signal,
@@ -18404,17 +18928,17 @@ ${ind(d)}}`;
       ),
       [host, session]
     );
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (visible) projectHistory.refresh();
     }, [projectHistory, visible]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       historyRef.current = history;
     }, [history]);
-    (0, import_react8.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react9.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
@@ -18513,7 +19037,7 @@ ${ind(d)}}`;
       return () => controller.abort();
     }, [host, session]);
     const faviconCache = useFaviconCache();
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       resolveSessionFavicons(
         bindApi(browserSessionsApi, host, session.context),
         tabs,
@@ -18521,8 +19045,8 @@ ${ind(d)}}`;
       );
     }, [host, session, tabs]);
     const resolvedFaviconRefs = faviconCache.resolved;
-    (0, import_react8.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
+    (0, import_react9.useEffect)(() => {
       if (typeof session.setTabIndicators !== "function") return;
       const indicators = panelTabIndicators(faviconCache, live, tabs);
       try {
@@ -18543,16 +19067,16 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       surfaceUnavailableRef.current = surfaceDenial?.reason === "host-unavailable";
     }, [surfaceDenial?.reason]);
     const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null) || surfaceDenial?.reason === "epoch-changed";
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (epochChangedPresentation) dropHeldSession();
     }, [epochChangedPresentation, dropHeldSession]);
     const layers = floatingLayers(overlayZIndex);
-    const Popover = (0, import_react8.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
-    const floating = (0, import_react8.useMemo)(
+    const Popover = (0, import_react9.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
+    const floating = (0, import_react9.useMemo)(
       () => ({
         Popover,
         style: {
@@ -18570,7 +19094,7 @@ ${ind(d)}}`;
       session: held,
       enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended"
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
       viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
         const current = heldRef.current;
@@ -18754,7 +19278,7 @@ ${ind(d)}}`;
         })
       );
     };
-    const adopt = (0, import_react8.useCallback)(
+    const adopt = (0, import_react9.useCallback)(
       (tab) => {
         const serverEpoch = tabsEpoch.current;
         if (!serverEpoch) return;
@@ -18812,44 +19336,51 @@ ${ind(d)}}`;
         }
       );
     };
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
-    const pendingZoom = (0, import_react8.useRef)(null);
-    (0, import_react8.useEffect)(() => {
+    const leaseState = surfaceLease?.state;
+    const engineClaimPending = host.browserSurface?.presentation.supported === true && surfaceDenial === null && (leaseState === void 0 ? host.browserSurface.engineClaimPending === true : leaseState.kind === "active" && leaseState.presentation.supported && leaseState.engineClaimPending === true);
+    const pendingZoom = (0, import_react9.useRef)(null);
+    (0, import_react9.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
     }, [live?.zoomFactor]);
     const runPage = (verb, tab) => {
       const epoch = tabsEpoch.current;
       const target = tab ? epoch ? { tabId: tab.tabId, serverEpoch: epoch, engineGeneration: tab.engine.generation } : null : heldRef.current;
       if (!target) return;
+      const targetPage = tab ?? live;
+      const claimPending = (!tab || tab.tabId === held?.tabId) && engineClaimPending;
       if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
       const api = bindApi(browserSessionsApi, host, session.context);
-      void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
-        if (session.signal.aborted) return;
-        if (outcome.kind !== "accepted") {
-          if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-          setNotice(outcome.message);
-          return;
+      void runPageCommand(api, target, targetPage, verb, session.signal, claimPending).then(
+        (outcome) => {
+          if (session.signal.aborted) return;
+          if (outcome.kind !== "accepted") {
+            if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+            if (outcome.kind !== "blocked" || targetPage === null || !awaitingEngineClaim(targetPage, claimPending))
+              setNotice(outcome.message);
+            return;
+          }
+          setNotice(null);
+          const { receipt: receipt2 } = outcome;
+          const current = heldRef.current;
+          if (!current || receipt2.session.tabId !== current.tabId) return;
+          if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
+          heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
+          const next = { ...current, engineGeneration: receipt2.session.engine.generation };
+          heldRef.current = next;
+          setHeld(next);
+          setLive(receipt2.session);
         }
-        setNotice(null);
-        const { receipt: receipt2 } = outcome;
-        const current = heldRef.current;
-        if (!current || receipt2.session.tabId !== current.tabId) return;
-        if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
-        heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
-        const next = { ...current, engineGeneration: receipt2.session.engine.generation };
-        heldRef.current = next;
-        setHeld(next);
-        setLive(receipt2.session);
-      });
+      );
     };
     const zoomStep = (direction) => runPage({
       method: "zoom",
       zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction)
     });
-    const pageBlock = held ? pageControlsBlock(live) : null;
+    const pageBlock = held ? pageControlsBlock(live, engineClaimPending) : null;
     const command = (method) => {
       if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
       if (!held) return;
@@ -18859,7 +19390,7 @@ ${ind(d)}}`;
         return;
       }
       if (pageBlock !== null) {
-        setNotice(pageBlock);
+        if (live === null || !awaitingEngineClaim(live, engineClaimPending)) setNotice(pageBlock);
         return;
       }
       if (method === "back") commit2(goBack(state2));
@@ -18867,9 +19398,9 @@ ${ind(d)}}`;
       else commit2(reload(state2));
       runPage({ method });
     };
-    const runViewCommand = (0, import_react8.useRef)(() => {
+    const runViewCommand = (0, import_react9.useRef)(() => {
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
@@ -18883,7 +19414,7 @@ ${ind(d)}}`;
         }
       };
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -18903,8 +19434,8 @@ ${ind(d)}}`;
     const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
     const titledUrl = titled?.url ?? null;
     const titledTitle = titled?.title ?? null;
-    const lastTitled = (0, import_react8.useRef)(null);
-    (0, import_react8.useEffect)(() => {
+    const lastTitled = (0, import_react9.useRef)(null);
+    (0, import_react9.useEffect)(() => {
       if (titledUrl === null || titledTitle === null) return;
       if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
       const key = `${titledUrl}
@@ -18923,10 +19454,8 @@ ${titledTitle}`;
       recentCount: showRecents ? recents.length : 0,
       localServers
     });
-    const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-    const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
     const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
@@ -19013,24 +19542,13 @@ ${titledTitle}`;
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  ScreenshotButton,
+                  BrowserCaptureButtons,
                   {
                     host,
-                    blockReason: capture.blockReason,
-                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
-                    pageFailed: capturePage === "failed",
-                    onCapture: () => capture.capture("page"),
-                    style: buttonStyle
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  AnnotateButton,
-                  {
-                    host,
-                    blockReason: capture.blockReason,
-                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
-                    pageFailed: capturePage === "failed",
-                    onPick: () => capture.capture("element"),
+                    session,
+                    held,
+                    page: capturePage,
+                    onStatus: setNotice,
                     style: buttonStyle
                   }
                 ),
@@ -19158,7 +19676,7 @@ ${titledTitle}`;
                           type: "button",
                           "aria-label": tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`,
                           "aria-pressed": tab.audioMuted === true,
-                          disabled: pageControlsBlock(tab) !== null,
+                          disabled: pageControlsBlock(tab, tab.tabId === held?.tabId && engineClaimPending) !== null,
                           onClick: () => runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab),
                           style: { ...buttonStyle, border: "none", padding: "0 2px" },
                           children: tab.audioMuted ? "\u{1F507}" : "\u{1F50A}"
@@ -19177,7 +19695,7 @@ ${titledTitle}`;
               role: "status",
               "aria-label": "Browser status",
               style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
-              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live, engineClaimPending)}` : describeStatus(state2))
             }
           ),
           held ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
