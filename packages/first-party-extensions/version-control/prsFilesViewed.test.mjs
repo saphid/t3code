@@ -141,6 +141,40 @@ const send = async (context) => {
   await flush();
 };
 
+for (const [path, written] of [
+  ["café-日本語.txt", '"caf\\303\\251-\\346\\227\\245\\346\\234\\254\\350\\252\\236.txt"'],
+  ["cafe\u0301-日本語.txt", "cafe\u0301-日本語.txt"],
+  ["with spaces.txt", "with spaces.txt"],
+  ['quote"and\\backslash.txt', '"quote\\"and\\\\backslash.txt"'],
+  ["b/nested.txt", "b/nested.txt"],
+]) {
+  NodeTest.test(`viewed writes and readback use the real path: ${path}`, async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const side = (prefix) =>
+      written.startsWith('"') ? `"${prefix}/${written.slice(1)}` : `${prefix}/${written}`;
+    const view = mountViewed({
+      patchText: `diff --git ${side("a")} ${side("b")}\n--- ${side("a")}\n+++ ${side("b")}\n@@ -1 +1 @@\n-old\n+new\n`,
+      write: () => ({}),
+    });
+    try {
+      await flush();
+      NodeAssert.equal(view.has(`Collapse ${path}`), true);
+      await setViewed(view, true);
+      view.setSnapshot({ filesViewed: { files: [{ path, state: "viewed" }], truncated: false } });
+      await send(context);
+      NodeAssert.deepEqual(view.writes()[0].input.files, [{ path, viewed: true }]);
+      NodeAssert.equal(checkbox(view).props.checked, true);
+      await setViewed(view, false);
+      view.setSnapshot({ filesViewed: { files: [{ path, state: "unviewed" }], truncated: false } });
+      await send(context);
+      NodeAssert.deepEqual(view.writes()[1].input.files, [{ path, viewed: false }]);
+      NodeAssert.equal(checkbox(view).props.checked, false);
+    } finally {
+      view.unmount();
+    }
+  });
+}
+
 NodeTest.test(
   "file ticks toggle immediately, fold the file, and roll back failed writes",
   async (context) => {
@@ -514,6 +548,30 @@ NodeTest.test(
       await flush();
       NodeAssert.equal(checkbox(view).props.checked, true);
       NodeAssert.equal(reads, 2);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.test(
+  "a refused viewed batch reconciles files that the host did persist",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const view = mountViewed({
+      write: () => {
+        view.setSnapshot({
+          filesViewed: { files: [{ path: "a.ts", state: "viewed" }], truncated: false },
+        });
+        return Promise.reject(new Error("Host did not confirm the whole batch"));
+      },
+    });
+    try {
+      await flush();
+      await setViewed(view, true);
+      await send(context);
+      NodeAssert.match(view.text(), /Could not update viewed files/);
+      NodeAssert.equal(checkbox(view).props.checked, true);
     } finally {
       view.unmount();
     }

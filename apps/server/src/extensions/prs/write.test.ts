@@ -258,6 +258,10 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
         const files = [
           { path: "src/a.ts", viewed: true },
           { path: "src/b.ts", viewed: false },
+          { path: "café-日本語.txt", viewed: true },
+          { path: "with spaces.txt", viewed: true },
+          { path: 'quote"and\\backslash.txt', viewed: true },
+          { path: "b/nested.txt", viewed: false },
         ];
         expect(yield* invoke(provider, "setFilesViewed", { ...REF, files })).toEqual({});
         expect(deps.calls.find((call) => call.method === "setFilesViewed")?.input).toEqual({

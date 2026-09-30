@@ -153,6 +153,7 @@ export function usePrsFilesViewed(
           if (owned.size === 0) return;
           changeOverlay((current) => prsRevertViewedOverlay(current, owned));
           latestFailure.current();
+          void readViewed();
         },
       );
   };

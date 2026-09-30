@@ -12619,6 +12619,7 @@ ${writeKey}`;
           if (owned.size === 0) return;
           changeOverlay((current2) => prsRevertViewedOverlay(current2, owned));
           latestFailure.current();
+          void readViewed();
         }
       );
     };
