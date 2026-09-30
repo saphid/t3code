@@ -4056,6 +4056,7 @@ export type PrsFilesViewedResult = {
   readonly files: readonly { readonly path: string; readonly state: PrsFileViewedState }[];
   readonly truncated: boolean;
   readonly nextCursor: string | null;
+  readonly snapshot?: string;
 };
 const prsFilesViewedSchema = {
   type: "object",
@@ -4076,6 +4077,7 @@ const prsFilesViewedSchema = {
       },
     },
     truncated: { type: "boolean" },
+    snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
     nextCursor: {
       type: ["string", "null"],
       minLength: 1,

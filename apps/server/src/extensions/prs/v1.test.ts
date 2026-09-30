@@ -11,7 +11,11 @@ import {
   type PullRequestListResult as NativePullRequestListResult,
   type PullRequestRef as NativePullRequestRef,
 } from "@t3tools/contracts";
-import { PRS_READ_API, type PrsDiffStreamEvent } from "@t3tools/extension-sdk/catalogue";
+import {
+  PRS_READ_API,
+  type PrsDiffStreamEvent,
+  type PrsFilesViewedResult,
+} from "@t3tools/extension-sdk/catalogue";
 import { Ajv } from "ajv";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
@@ -522,7 +526,7 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
         expect(result).not.toHaveProperty("filesViewedError");
         expect(calls).toHaveLength(store === "host" ? 0 : store === "environment" ? 1 : 2);
         if (store !== undefined) {
-          expect(yield* invoke(provider, "filesViewed", REF, makeContext())).toEqual({
+          expect(yield* invoke(provider, "filesViewed", REF, makeContext())).toMatchObject({
             ...filesViewed,
             nextCursor: null,
           });
@@ -637,6 +641,58 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       expect(delivered).toEqual(filesViewed.files);
       expect(filesViewed.files).toHaveLength(500);
       expect(filesViewed.truncated).toBe(false);
+    }),
+  );
+
+  it.effect("identifies the whole viewed snapshot across pages and native cache turnover", () =>
+    Effect.gen(function* () {
+      const files = Array.from({ length: 20 }, (_, index) => ({
+        path: `${index}/${"x".repeat(4090)}`,
+        state: "viewed" as const,
+      }));
+      let result: { files: { path: string; state: "viewed" | "dismissed" }[]; truncated: boolean } =
+        {
+          files,
+          truncated: false,
+        };
+      const provider = createPrsApiProvider(
+        makeDeps({ filesViewed: () => Effect.succeed(result) }),
+      );
+      const first = (yield* invoke(
+        provider,
+        "filesViewed",
+        REF,
+        makeContext(),
+      )) as PrsFilesViewedResult;
+      expect(first.snapshot).toMatch(/^[a-f0-9]{64}$/);
+      expect(first.nextCursor).not.toBeNull();
+      const next = (yield* invoke(
+        provider,
+        "filesViewed",
+        { ...REF, cursor: first.nextCursor },
+        makeContext(),
+      )) as PrsFilesViewedResult;
+      expect(next.snapshot).toBe(first.snapshot);
+      for (const changed of [
+        { files: files.slice(1), truncated: false },
+        { files: files.toReversed(), truncated: false },
+        {
+          files: files.map((file, index) =>
+            index === 19 ? { ...file, state: "dismissed" as const } : file,
+          ),
+          truncated: false,
+        },
+        { files, truncated: true },
+      ]) {
+        result = changed;
+        const page = (yield* invoke(
+          provider,
+          "filesViewed",
+          { ...REF, cursor: first.nextCursor },
+          makeContext(),
+        )) as PrsFilesViewedResult;
+        expect(page.snapshot).not.toBe(first.snapshot);
+      }
     }),
   );
 

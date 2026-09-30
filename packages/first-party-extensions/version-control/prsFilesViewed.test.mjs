@@ -45,6 +45,7 @@ function mountViewed({
   detailRead,
   patchText = patch,
   notifications = false,
+  notify = () => ({ notificationId: "viewed-failure" }),
 } = {}) {
   let snapshot = { filesViewed: { files, truncated } };
   const patchHash = NodeCrypto.createHash("sha256").update(patchText).digest("hex");
@@ -90,7 +91,7 @@ function mountViewed({
             operations: { notify: true, update: true },
             clients: ["web"],
           }),
-          "t3.ui/notifications#notify": () => ({ notificationId: "viewed-failure" }),
+          "t3.ui/notifications#notify": notify,
         }
       : {}),
   };
@@ -348,6 +349,112 @@ NodeTest.test("Refresh invalidates viewed cache and reads every dedicated page",
     view.unmount();
   }
 });
+
+for (const nextCursor of ["1", "0"]) {
+  NodeTest.test(`viewed paging stops at a non-advancing cursor ${nextCursor}`, async () => {
+    let reads = 0;
+    const view = mountViewed({
+      read: () => ({
+        files: [{ path: "a.ts", state: "viewed" }],
+        truncated: false,
+        nextCursor: ++reads === 1 ? "1" : reads === 2 ? nextCursor : null,
+      }),
+    });
+    try {
+      await flush();
+      NodeAssert.equal(reads, 2);
+      NodeAssert.equal(checkbox(view).props.checked, false);
+      NodeAssert.match(view.text(), /Your ticks could not be read/);
+    } finally {
+      view.unmount();
+    }
+  });
+}
+
+NodeTest.test(
+  "viewed paging restarts once when the list changes, including on the last page",
+  async () => {
+    const pages = [
+      { files: [{ path: "a.ts", state: "viewed" }], snapshot: "a".repeat(64), nextCursor: "1" },
+      {
+        files: [{ path: "other.ts", state: "viewed" }],
+        snapshot: "b".repeat(64),
+        nextCursor: null,
+      },
+      { files: [{ path: "other.ts", state: "viewed" }], snapshot: "b".repeat(64), nextCursor: "1" },
+      { files: [{ path: "a.ts", state: "dismissed" }], snapshot: "b".repeat(64), nextCursor: null },
+    ];
+    const inputs = [];
+    const view = mountViewed({
+      read: (input) => {
+        inputs.push(input);
+        return { ...pages[inputs.length - 1], truncated: false };
+      },
+    });
+    try {
+      await flush();
+      NodeAssert.deepEqual(
+        inputs.map((input) => input.cursor ?? null),
+        [null, "1", null, "1"],
+      );
+      NodeAssert.equal(checkbox(view).props.checked, false);
+      NodeAssert.equal(checkbox(view).props["aria-label"], "Changed");
+      NodeAssert.doesNotMatch(view.text(), /Your ticks could not be read/);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.test(
+  "viewed paging discloses a second turnover without retrying indefinitely",
+  async () => {
+    let reads = 0;
+    const view = mountViewed({
+      read: () => {
+        reads += 1;
+        return {
+          files: [{ path: "a.ts", state: "viewed" }],
+          truncated: false,
+          snapshot: String(reads).repeat(64),
+          nextCursor: reads % 2 === 1 ? "1" : null,
+        };
+      },
+    });
+    try {
+      await flush();
+      NodeAssert.equal(reads, 4);
+      NodeAssert.equal(checkbox(view).props.checked, false);
+      NodeAssert.match(view.text(), /Your ticks could not be read/);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+for (const notifications of [false, true]) {
+  NodeTest.test(
+    `failed viewed writes remain disclosed when toasts ${notifications ? "die" : "are unavailable"}`,
+    async (context) => {
+      context.mock.timers.enable({ apis: ["setTimeout"] });
+      const view = mountViewed({
+        notifications,
+        write: () => Promise.reject(new Error("private host detail")),
+        notify: () => Promise.reject(new Error("private notification detail")),
+      });
+      try {
+        await flush();
+        await setViewed(view, true);
+        await send(context);
+        NodeAssert.equal(checkbox(view).props.checked, false);
+        NodeAssert.match(view.text(), /Could not update viewed files/);
+        NodeAssert.doesNotMatch(view.text(), /private .* detail/);
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+}
 
 NodeTest.test(
   "a pre-write read landing last cannot replace fresher viewed state",

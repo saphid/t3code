@@ -608,14 +608,34 @@ NodeTest.test("fileRows names elided regions as gap rows", () => {
   NodeAssert.equal(rows[0].count, 40);
 });
 
-NodeTest.test("paths and labels: prefixes stripped, renames shown, change types named", () => {
-  NodeAssert.equal(resolveDiffPath("a/src/x.ts"), "src/x.ts");
-  NodeAssert.equal(resolveDiffPath("src/x.ts"), "src/x.ts");
-  NodeAssert.equal(changeTypeLabel("rename-changed"), "renamed, modified");
-  NodeAssert.equal(changeTypeLabel("new"), "added");
-  const rename = { prevPath: "old.ts", path: "new.ts" };
-  NodeAssert.equal(displayPath(rename), "old.ts → new.ts");
-  NodeAssert.equal(displayPath({ prevPath: null, path: "new.ts" }), "new.ts");
+NodeTest.test(
+  "paths and labels: real prefixes preserved, renames shown, change types named",
+  () => {
+    NodeAssert.equal(resolveDiffPath("a/src/x.ts"), "a/src/x.ts");
+    NodeAssert.equal(resolveDiffPath('"b/caf\\303\\251.ts"'), "b/café.ts");
+    NodeAssert.equal(resolveDiffPath("src/x.ts"), "src/x.ts");
+    NodeAssert.equal(changeTypeLabel("rename-changed"), "renamed, modified");
+    NodeAssert.equal(changeTypeLabel("new"), "added");
+    const rename = { prevPath: "old.ts", path: "new.ts" };
+    NodeAssert.equal(displayPath(rename), "old.ts → new.ts");
+    NodeAssert.equal(displayPath({ prevPath: null, path: "new.ts" }), "new.ts");
+  },
+);
+
+NodeTest.test("PR diff rows keep root and a and b directory paths distinct", () => {
+  const paths = ["foo.ts", "b/foo.ts", "a/foo.ts"];
+  const patch = paths
+    .map(
+      (path) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    )
+    .join("");
+  const rendered = renderableFromPatch(patch);
+  NodeAssert.deepEqual(
+    rendered.files.map((row) => row.path),
+    paths,
+  );
+  NodeAssert.equal(new Set(rendered.files.map((row) => row.key)).size, paths.length);
 });
 
 /* ---------------- writes (t3.prs/write) ---------------- */

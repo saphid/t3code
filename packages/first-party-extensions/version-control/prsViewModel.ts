@@ -876,20 +876,71 @@ export function prsOmittedFilesLabel(stats: readonly PrsOmittedFileStat[]): stri
 
 /* ---------------- patch → renderable ---------------- */
 
-/** Strip the renderer prefix git applies (`a/` `b/`). */
 export function resolveDiffPath(raw: string): string {
-  if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
-  return raw;
+  const body = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+  if (!body.includes("\\")) return body;
+  const bytes: number[] = [];
+  let literal = "";
+  const flush = () => {
+    if (literal.length === 0) return;
+    bytes.push(...utf8.encode(literal));
+    literal = "";
+  };
+  let at = 0;
+  while (at < body.length) {
+    const character = body.charAt(at);
+    if (character !== "\\") {
+      literal += character;
+      at += 1;
+      continue;
+    }
+    const escaped = body.charAt(at + 1);
+    if (escaped === "") {
+      flush();
+      bytes.push(0x5c);
+      break;
+    }
+    const named = CHARACTER_BY_ESCAPE[escaped];
+    if (named !== undefined) {
+      flush();
+      bytes.push(named);
+      at += 2;
+      continue;
+    }
+    const octal = body.slice(at + 1, at + 4);
+    if (/^[0-7]{3}$/.test(octal)) {
+      flush();
+      bytes.push(Number.parseInt(octal, 8));
+      at += 4;
+      continue;
+    }
+    literal += escaped;
+    at += 2;
+  }
+  flush();
+  return fromUtf8.decode(new Uint8Array(bytes));
 }
 
+const CHARACTER_BY_ESCAPE: Record<string, number> = {
+  '"': 0x22,
+  "\\": 0x5c,
+  a: 0x07,
+  b: 0x08,
+  f: 0x0c,
+  n: 0x0a,
+  r: 0x0d,
+  t: 0x09,
+  v: 0x0b,
+};
+const utf8 = new TextEncoder();
+const fromUtf8 = new TextDecoder();
 const DIFF_GIT_BOUNDARY = /^diff --git /gm;
 const BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
 const GIT_BINARY_MARKER = /^GIT binary patch$/m;
-const BINARY_B_PATH = /^Binary files .+ and b\/(.+) differ$/m;
-const HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" "b\/(.*)"$/;
-const HEADER_B_PATH = /^diff --git a\/.* b\/(.*)$/;
+const BINARY_B_PATH = /^Binary files .+ and ("b\/.*"|b\/.+) differ$/m;
+const HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" ("b\/.*")$/;
+const HEADER_B_PATH = /^diff --git a\/.* (b\/.*)$/;
 
-/** Paths the delivered patch marks binary — the literal marker, never inferred. */
 export function binaryPathsFromPatch(diff: string): ReadonlySet<string> {
   const paths = new Set<string>();
   const boundaries = [...diff.matchAll(DIFF_GIT_BOUNDARY)].map((match) => match.index);
@@ -899,12 +950,12 @@ export function binaryPathsFromPatch(diff: string): ReadonlySet<string> {
     const section = diff.slice(start, end);
     if (BINARY_FILES_MARKER.test(section)) {
       const path = BINARY_B_PATH.exec(section)?.[1];
-      if (path !== undefined) paths.add(path);
+      if (path !== undefined) paths.add(resolveDiffPath(path).slice(2));
     } else if (GIT_BINARY_MARKER.test(section)) {
       const header = section.split("\n", 1)[0] ?? "";
       const path =
         HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-      if (path !== null) paths.add(path);
+      if (path !== null) paths.add(resolveDiffPath(path).slice(2));
     }
   }
   return paths;

@@ -4894,6 +4894,7 @@ var __t3Client = (() => {
         }
       },
       truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
       nextCursor: {
         type: ["string", "null"],
         minLength: 1,
@@ -10193,9 +10194,7 @@ ${prefix}`;
 
   // viewModel.ts
   function resolveDiffPath(raw) {
-    const path3 = unquoteGitPatchPath(raw);
-    if (path3.startsWith("a/") || path3.startsWith("b/")) return path3.slice(2);
-    return path3;
+    return unquoteGitPatchPath(raw);
   }
   var CHARACTER_BY_ESCAPE = {
     '"': 34,
@@ -10269,11 +10268,11 @@ ${prefix}`;
       const section = diff.slice(start, end);
       if (BINARY_FILES_MARKER.test(section)) {
         const path3 = BINARY_B_PATH.exec(section)?.[1];
-        if (path3 !== void 0) paths.add(resolveDiffPath(path3));
+        if (path3 !== void 0) paths.add(resolveDiffPath(path3).slice(2));
       } else if (GIT_BINARY_MARKER.test(section)) {
         const header = section.split("\n", 1)[0] ?? "";
         const path3 = HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-        if (path3 !== null) paths.add(resolveDiffPath(path3));
+        if (path3 !== null) paths.add(resolveDiffPath(path3).slice(2));
       }
     }
     return paths;

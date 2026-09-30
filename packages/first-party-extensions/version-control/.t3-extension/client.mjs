@@ -4886,6 +4886,7 @@ var __t3Client = (() => {
         }
       },
       truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
       nextCursor: {
         type: ["string", "null"],
         minLength: 1,
@@ -10876,15 +10877,68 @@ ${ref.number}`;
     return `${files} file${files === 1 ? "" : "s"} omitted from the delivered diff (+${additions} \u2212${deletions})`;
   }
   function resolveDiffPath(raw) {
-    if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
-    return raw;
+    const body = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+    if (!body.includes("\\")) return body;
+    const bytes = [];
+    let literal = "";
+    const flush = () => {
+      if (literal.length === 0) return;
+      bytes.push(...utf8.encode(literal));
+      literal = "";
+    };
+    let at = 0;
+    while (at < body.length) {
+      const character = body.charAt(at);
+      if (character !== "\\") {
+        literal += character;
+        at += 1;
+        continue;
+      }
+      const escaped = body.charAt(at + 1);
+      if (escaped === "") {
+        flush();
+        bytes.push(92);
+        break;
+      }
+      const named = CHARACTER_BY_ESCAPE[escaped];
+      if (named !== void 0) {
+        flush();
+        bytes.push(named);
+        at += 2;
+        continue;
+      }
+      const octal = body.slice(at + 1, at + 4);
+      if (/^[0-7]{3}$/.test(octal)) {
+        flush();
+        bytes.push(Number.parseInt(octal, 8));
+        at += 4;
+        continue;
+      }
+      literal += escaped;
+      at += 2;
+    }
+    flush();
+    return fromUtf8.decode(new Uint8Array(bytes));
   }
+  var CHARACTER_BY_ESCAPE = {
+    '"': 34,
+    "\\": 92,
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11
+  };
+  var utf8 = new TextEncoder();
+  var fromUtf8 = new TextDecoder();
   var DIFF_GIT_BOUNDARY = /^diff --git /gm;
   var BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
   var GIT_BINARY_MARKER = /^GIT binary patch$/m;
-  var BINARY_B_PATH = /^Binary files .+ and b\/(.+) differ$/m;
-  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" "b\/(.*)"$/;
-  var HEADER_B_PATH = /^diff --git a\/.* b\/(.*)$/;
+  var BINARY_B_PATH = /^Binary files .+ and ("b\/.*"|b\/.+) differ$/m;
+  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" ("b\/.*")$/;
+  var HEADER_B_PATH = /^diff --git a\/.* (b\/.*)$/;
   function binaryPathsFromPatch(diff) {
     const paths = /* @__PURE__ */ new Set();
     const boundaries = [...diff.matchAll(DIFF_GIT_BOUNDARY)].map((match) => match.index);
@@ -10894,11 +10948,11 @@ ${ref.number}`;
       const section = diff.slice(start, end);
       if (BINARY_FILES_MARKER.test(section)) {
         const path3 = BINARY_B_PATH.exec(section)?.[1];
-        if (path3 !== void 0) paths.add(path3);
+        if (path3 !== void 0) paths.add(resolveDiffPath(path3).slice(2));
       } else if (GIT_BINARY_MARKER.test(section)) {
         const header = section.split("\n", 1)[0] ?? "";
         const path3 = HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-        if (path3 !== null) paths.add(path3);
+        if (path3 !== null) paths.add(resolveDiffPath(path3).slice(2));
       }
     }
     return paths;
@@ -11373,18 +11427,33 @@ ${writeKey}`;
       const files = [];
       let cursor = null;
       let truncated = false;
+      let snapshot;
+      let restarted = false;
       try {
-        do {
+        while (true) {
           const page = await api.invoke(
             "filesViewed",
             { ...reference, ...cursor === null ? {} : { cursor } },
             session.signal
           );
           if (current.disposed || session.signal.aborted || current.read !== request) return;
+          if (cursor !== null && page.snapshot !== snapshot) {
+            if (restarted) throw new Error("Viewed files changed while paging.");
+            restarted = true;
+            files.length = 0;
+            truncated = false;
+            cursor = null;
+            snapshot = void 0;
+            continue;
+          }
+          if (page.nextCursor !== null && Number(page.nextCursor) <= Number(cursor ?? "0"))
+            throw new Error("Viewed files cursor did not advance.");
+          snapshot = page.snapshot;
           files.push(...page.files);
           truncated ||= page.truncated;
           cursor = page.nextCursor;
-        } while (cursor !== null);
+          if (cursor === null) break;
+        }
         const result = { files, truncated, nextCursor: null };
         const pending = /* @__PURE__ */ new Set([...current.queued.keys(), ...current.sentBy.keys()]);
         const answered = /* @__PURE__ */ new Set();
@@ -13158,6 +13227,7 @@ ${writeKey}`;
     const [stackReceipt, setStackReceipt] = (0, import_react3.useState)(null);
     const [handoff, setHandoff] = (0, import_react3.useState)(null);
     const [handoffReceipt, setHandoffReceipt] = (0, import_react3.useState)(null);
+    const [viewedFailureKey, setViewedFailureKey] = (0, import_react3.useState)(null);
     const openOnHost = (url) => {
       setOpenError(null);
       void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
@@ -13197,6 +13267,7 @@ ${writeKey}`;
       revision2
     );
     const runInvalidate = () => {
+      setViewedFailureKey(null);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
@@ -14158,15 +14229,17 @@ ${thread.id}`) === activity,
                       viewedReadSupported: ops?.["prs.filesViewed"] === true,
                       revision: revision2,
                       onViewedFailure: () => {
-                        toasts.report(
+                        const disclose = () => setViewedFailureKey(selectedKey);
+                        if (!toasts.report(
                           { severity: "error", title: "Could not update viewed files" },
-                          () => {
-                          }
-                        );
+                          disclose
+                        ))
+                          disclose();
                       }
                     },
                     `${session.context.resource.environmentId ?? ""}:${session.context.resource.projectId ?? ""}:${selected === null ? "" : prsRefKey(selected)}`
-                  )
+                  ),
+                  selectedKey !== null && viewedFailureKey === selectedKey && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: "Could not update viewed files" })
                 ] }),
                 prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })

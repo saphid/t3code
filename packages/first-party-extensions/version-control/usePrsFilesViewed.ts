@@ -69,18 +69,33 @@ export function usePrsFilesViewed(
     const files: PrsFilesViewedResult["files"][number][] = [];
     let cursor: string | null = null;
     let truncated = false;
+    let snapshot: string | undefined;
+    let restarted = false;
     try {
-      do {
+      while (true) {
         const page: PrsFilesViewedResult = await api.invoke(
           "filesViewed",
           { ...reference, ...(cursor === null ? {} : { cursor }) },
           session.signal,
         );
         if (current.disposed || session.signal.aborted || current.read !== request) return;
+        if (cursor !== null && page.snapshot !== snapshot) {
+          if (restarted) throw new Error("Viewed files changed while paging.");
+          restarted = true;
+          files.length = 0;
+          truncated = false;
+          cursor = null;
+          snapshot = undefined;
+          continue;
+        }
+        if (page.nextCursor !== null && Number(page.nextCursor) <= Number(cursor ?? "0"))
+          throw new Error("Viewed files cursor did not advance.");
+        snapshot = page.snapshot;
         files.push(...page.files);
         truncated ||= page.truncated;
         cursor = page.nextCursor;
-      } while (cursor !== null);
+        if (cursor === null) break;
+      }
       const result = { files, truncated, nextCursor: null };
       const pending = new Set([...current.queued.keys(), ...current.sentBy.keys()]);
       const answered = new Set<string>();

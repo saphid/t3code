@@ -50,10 +50,10 @@ import {
 } from "./viewModel.ts";
 
 NodeTest.test("git-quoted paths resolve to native file names for every diff consumer", () => {
-  NodeAssert.equal(resolveDiffPath('"b/src/caf\\303\\251.ts"'), "src/café.ts");
-  NodeAssert.equal(resolveDiffPath("b/src/caf\\303\\251.ts"), "src/café.ts");
-  NodeAssert.equal(resolveDiffPath('"a/line\\t\\\"name\\\\.ts"'), 'line\t"name\\.ts');
-  NodeAssert.equal(resolveDiffPath("b/src/plain.ts"), "src/plain.ts");
+  NodeAssert.equal(resolveDiffPath('"b/src/caf\\303\\251.ts"'), "b/src/café.ts");
+  NodeAssert.equal(resolveDiffPath("b/src/caf\\303\\251.ts"), "b/src/café.ts");
+  NodeAssert.equal(resolveDiffPath('"a/line\\t\\\"name\\\\.ts"'), 'a/line\t"name\\.ts');
+  NodeAssert.equal(resolveDiffPath("b/src/plain.ts"), "b/src/plain.ts");
   NodeAssert.equal(resolveDiffPath("/dev/null"), "/dev/null");
   const quoted =
     'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"\n--- "a/src/caf\\303\\251.ts"\n+++ "b/src/caf\\303\\251.ts"\n@@ -1 +1 @@\n-old\n+new\n';
@@ -66,6 +66,38 @@ NodeTest.test("git-quoted paths resolve to native file names for every diff cons
   NodeAssert.deepEqual([...binaryPathsFromPatch(binary)], ["src/café.bin"]);
   const gitBinary = binary.replace(/Binary files[^\n]+/, "GIT binary patch");
   NodeAssert.deepEqual([...binaryPathsFromPatch(gitBinary)], ["src/café.bin"]);
+});
+
+NodeTest.test("git side prefixes do not collapse real a and b directories or rename keys", () => {
+  const patch =
+    ["b/foo.ts", "foo.ts", "a/foo.ts"]
+      .map(
+        (path) =>
+          `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+      )
+      .join("") +
+    "diff --git a/b/old.ts b/a/new.ts\nsimilarity index 100%\nrename from b/old.ts\nrename to a/new.ts\n";
+  const rendered = renderableFromPatch(patch);
+  NodeAssert.equal(rendered.kind, "files");
+  NodeAssert.deepEqual(
+    rendered.files.map((row) => row.path),
+    ["b/foo.ts", "foo.ts", "a/foo.ts", "a/new.ts"],
+  );
+  NodeAssert.equal(new Set(rendered.files.map((row) => row.key)).size, 4);
+  NodeAssert.equal(rendered.files[3].prevPath, "b/old.ts");
+});
+
+NodeTest.test("binary markers strip only their literal side prefix", () => {
+  for (const marker of ["Binary files", "GIT binary patch"]) {
+    const patch = ["b/foo.bin", "foo.bin", "a/foo.bin"]
+      .map(
+        (path) =>
+          `diff --git a/${path} b/${path}\n${marker === "Binary files" ? `Binary files a/${path} and b/${path} differ` : marker}\n`,
+      )
+      .join("");
+    NodeAssert.deepEqual([...binaryPathsFromPatch(patch)], ["b/foo.bin", "foo.bin", "a/foo.bin"]);
+    NodeAssert.ok(renderableFromPatch(patch).files.every((row) => row.binary));
+  }
 });
 
 // A real git-shaped working-tree patch: tracked change with two hunks

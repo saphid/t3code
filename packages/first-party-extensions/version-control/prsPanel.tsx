@@ -2458,6 +2458,7 @@ export function PullRequestsPanel(props: {
     readonly refKey: string;
     readonly receipt: PrsReceipt;
   } | null>(null);
+  const [viewedFailureKey, setViewedFailureKey] = useState<string | null>(null);
 
   /** Hands a host URL to the reader's own client (`t3.ui/external`); a refusal is said by name. */
   const openOnHost = (url: string) => {
@@ -2506,6 +2507,7 @@ export function PullRequestsPanel(props: {
   );
 
   const runInvalidate = () => {
+    setViewedFailureKey(null);
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(prsReadApi, host, session.context);
@@ -3805,12 +3807,21 @@ export function PullRequestsPanel(props: {
                     viewedReadSupported={ops?.["prs.filesViewed"] === true}
                     revision={revision}
                     onViewedFailure={() => {
-                      toasts.report(
-                        { severity: "error", title: "Could not update viewed files" },
-                        () => {},
-                      );
+                      const disclose = () => setViewedFailureKey(selectedKey);
+                      if (
+                        !toasts.report(
+                          { severity: "error", title: "Could not update viewed files" },
+                          disclose,
+                        )
+                      )
+                        disclose();
                     }}
                   />
+                  {selectedKey !== null && viewedFailureKey === selectedKey && (
+                    <p role="alert" style={noteStyle}>
+                      Could not update viewed files
+                    </p>
+                  )}
                 </section>
 
                 {prsWriteUnavailableNote(write) !== null && (

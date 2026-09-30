@@ -59,6 +59,23 @@ NodeTest.test("a provider still registering the published 1.0.0 descriptor is ac
   NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", PRS_READ_API));
 });
 
+NodeTest.test(
+  "viewed pages can identify the complete snapshot without changing index cursors",
+  () => {
+    NodeAssert.deepEqual(methods.filesViewed.outputSchema.properties.snapshot, {
+      type: "string",
+      minLength: 64,
+      maxLength: 64,
+      pattern: "^[a-f0-9]{64}$",
+    });
+    NodeAssert.equal(methods.filesViewed.outputSchema.required.includes("snapshot"), false);
+    NodeAssert.equal(
+      methods.filesViewed.inputSchema.properties.cursor.pattern,
+      "^[1-9][0-9]{0,2}$",
+    );
+  },
+);
+
 NodeTest.test("viewed state has its own negotiated read, leaving detail unchanged", () => {
   const detail = methods.detail.outputSchema;
   NodeAssert.ok("viewedFiles" in detail.properties.capabilities.properties);

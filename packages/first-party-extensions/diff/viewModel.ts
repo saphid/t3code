@@ -38,11 +38,9 @@ import type {
 
 /* ---------------- paths ---------------- */
 
-/** Strip the renderer prefix git applies (`a/` `b/`); mirrors native resolveFileDiffPath. */
+/** Unquote parser paths without stripping real directories; mirrors native fileDiffPath. */
 export function resolveDiffPath(raw: string): string {
-  const path = unquoteGitPatchPath(raw);
-  if (path.startsWith("a/") || path.startsWith("b/")) return path.slice(2);
-  return path;
+  return unquoteGitPatchPath(raw);
 }
 
 const CHARACTER_BY_ESCAPE: Record<string, number> = {
@@ -131,12 +129,12 @@ export function binaryPathsFromPatch(diff: string): ReadonlySet<string> {
     const section = diff.slice(start, end);
     if (BINARY_FILES_MARKER.test(section)) {
       const path = BINARY_B_PATH.exec(section)?.[1];
-      if (path !== undefined) paths.add(resolveDiffPath(path));
+      if (path !== undefined) paths.add(resolveDiffPath(path).slice(2));
     } else if (GIT_BINARY_MARKER.test(section)) {
       const header = section.split("\n", 1)[0] ?? "";
       const path =
         HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-      if (path !== null) paths.add(resolveDiffPath(path));
+      if (path !== null) paths.add(resolveDiffPath(path).slice(2));
     }
   }
   return paths;

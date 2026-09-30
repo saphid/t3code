@@ -4791,6 +4791,7 @@ var __t3Client = (() => {
         }
       },
       truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
       nextCursor: {
         type: ["string", "null"],
         minLength: 1,

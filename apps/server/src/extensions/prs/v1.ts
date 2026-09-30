@@ -239,6 +239,7 @@ const providerFailure =
       : new PullRequestOperationError({ operation, detail: error.detail, cause: error });
 
 const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const byteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const capBody = (body: string, bound = MAX_COMMENT_BODY_CHARS) =>
   body.length <= bound ? { body, cut: false } : { body: body.slice(0, bound), cut: true };
@@ -861,10 +862,12 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         run: Effect.fn("PrsApi.filesViewed")(function* (safe, scope) {
           const ref = yield* bindRef(scope, safe);
           const result = yield* dependencies.pullRequests.filesViewed(ref);
-          const allFiles = result.files.slice(0, 500);
+          const allFiles = result.files.slice(0, 500).map(({ path, state }) => ({ path, state }));
+          const truncated = result.truncated || result.files.length > allFiles.length;
+          const snapshot = sha256(encodeJson({ files: allFiles, truncated }));
           const start = safe.cursor === undefined ? 0 : Number(safe.cursor);
           const files: PrsFilesViewedResult["files"][number][] = [];
-          let bytes = 128;
+          let bytes = 256;
           for (const file of allFiles.slice(start)) {
             const projected = { path: file.path, state: file.state };
             const size = byteLength(projected) + 1;
@@ -875,8 +878,9 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
           const end = start + files.length;
           return {
             files,
-            truncated: result.truncated || result.files.length > allFiles.length,
+            truncated,
             nextCursor: end < allFiles.length ? String(end) : null,
+            snapshot,
           } satisfies PrsFilesViewedResult;
         }),
       }),
