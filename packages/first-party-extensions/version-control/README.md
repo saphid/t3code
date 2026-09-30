@@ -47,8 +47,11 @@ The PR browser consumes the `t3.prs/read` grant:
   pinned, offered when the viewer may rebase the stack. While a stack lookup
   is pending, failed, or finds a stack, the single-PR merge and auto-merge
   are held back as native does;
-- `prs.reviewerCandidates`/`prs.labelCandidates`/`prs.listStats` remain
-  unwired — nothing in the panel needs them yet;
+- labels and review requests can be added or removed from their metadata rows.
+  The pickers read repository candidates only when opened and search the returned
+  list locally. Provider support, account permissions and read/write grants gate
+  editing; refused writes restore the previous selection;
+- `prs.listStats` remains unwired — nothing in the panel needs it yet;
 - the head branch chip copies its branch, as native's does, including on
   remote clients served over plain HTTP;
 - open-on-host links for the repository, the PR number, each branch (a ↗

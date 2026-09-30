@@ -244,6 +244,7 @@ export function mount(render, handlers, members = {}) {
   const calls = [];
   const refreshListeners = new Set();
   const focus = { current: null };
+  const scrolls = [];
   globalThis.document = {
     get activeElement() {
       return focus.current;
@@ -306,6 +307,9 @@ export function mount(render, handlers, members = {}) {
           focus() {
             focus.current = mock;
           },
+          scrollIntoView(options) {
+            scrolls.push({ name: mock.name, options });
+          },
           contains: () => false,
         };
         return mock;
@@ -320,6 +324,7 @@ export function mount(render, handlers, members = {}) {
     calls,
     renderer,
     focused: () => focus.current?.name ?? null,
+    scrolls: () => scrolls,
     byName,
     find(name) {
       const found = byName(name);
