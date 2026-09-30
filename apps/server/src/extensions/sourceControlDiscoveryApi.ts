@@ -17,6 +17,7 @@ import { SourceControlProviderRegistry } from "../sourceControl/SourceControlPro
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { listSourceControlRepositories } from "../sourceControl/RepositoryListing.ts";
 import { assertCloneAuthority } from "./projectsCloneApi.ts";
+import { isSafeRepositoryIdentifier } from "../sourceControl/remoteValidation.ts";
 
 const providerKind = Schema.Literals(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"]);
 const listInput = Schema.Struct({ provider: providerKind });
@@ -27,10 +28,13 @@ const lookupInput = Schema.Struct({
 const decodeDiscover = Schema.decodeUnknownSync(Schema.Struct({}), { onExcessProperty: "error" });
 const decodeList = Schema.decodeUnknownSync(listInput, { onExcessProperty: "error" });
 const decodeLookup = Schema.decodeUnknownSync(lookupInput, { onExcessProperty: "error" });
-const fail = () =>
+const fail = (method?: string) =>
   new ExtensionOperationError({
     operation: "source-control.discovery",
-    detail: "Source control discovery is unavailable. Open Settings -> Source Control and rescan.",
+    detail:
+      method === "lookupRepository"
+        ? "Repository lookup failed. Check the repository name and provider access."
+        : "Source control discovery is unavailable. Open Settings -> Source Control and rescan.",
   });
 
 export function projectSourceControlDiscovery(
@@ -82,7 +86,7 @@ export function createSourceControlDiscoveryApiProvider(dependencies: {
       signal.throwIfAborted();
       await assertAuthority();
       const run = <A, E>(effect: Effect.Effect<A, E>) =>
-        Effect.runPromise(effect.pipe(Effect.mapError(() => fail())), { signal });
+        Effect.runPromise(effect.pipe(Effect.mapError(() => fail(method))), { signal });
       if (method === "discover") {
         try {
           decodeDiscover(input);
@@ -96,7 +100,7 @@ export function createSourceControlDiscoveryApiProvider(dependencies: {
       try {
         request = method === "lookupRepository" ? decodeLookup(input) : decodeList(input);
       } catch {
-        throw fail();
+        throw fail(method);
       }
       await assertAuthority();
       if (method === "listRepositories")
@@ -104,6 +108,7 @@ export function createSourceControlDiscoveryApiProvider(dependencies: {
           dependencies.listRepositories({ provider: request.provider, cwd: dependencies.cwd }),
         );
       if (!("repository" in request) || typeof request.repository !== "string") throw fail();
+      if (!isSafeRepositoryIdentifier(request.provider, request.repository)) throw fail(method);
       return run(
         dependencies.repositories.lookupRepository({
           provider: request.provider,

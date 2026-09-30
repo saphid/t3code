@@ -55,6 +55,10 @@ const GRANT_CHOICES = [
 
 /** What a grant allows: the catalogue API calls that check it, or null when this client cannot tell. */
 function grantUses(grant: string): string | null {
+  if (grant === "t3.projects/create")
+    return "Create project directories and clone repositories using provider credentials or SSH keys, including local-network remotes";
+  if (grant === "t3.source-control/read")
+    return "Read provider accounts and account-wide repository names, including private repositories";
   if (HOST_CAPABILITY_GRANTS.includes(grant)) return "Host service " + grant;
   const uses = GENERIC_API_CATALOGUE.flatMap((api) => {
     const names = operationsOf(api)
@@ -129,7 +133,9 @@ function PermissionChoices(props: {
             checked={value.capabilities.includes(grant)}
             onCheckedChange={(checked) => setGrant(grant, checked === true)}
           />
-          Allow {grant} in selected projects
+          {grant === "t3.projects/create" || grant === "t3.source-control/read"
+            ? grantUses(grant)
+            : `Allow ${grant} in selected projects`}
         </label>
       ))}
     </>

@@ -54,7 +54,10 @@ function commandHosts(args: ReadonlyArray<string>): Array<string | null> {
     const parts = repository.split("/");
     return parts.length === 3 ? parts[0]!.toLowerCase() : null;
   };
-  if (args[0] === "repo" && args[1] === "view") hosts.push(repositoryHost(args[2]));
+  if (args[0] === "repo" && args[1] === "view") {
+    const separator = args.indexOf("--");
+    hosts.push(repositoryHost(separator < 0 ? args[2] : args[separator + 1]));
+  }
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
     if (arg === "--hostname") hosts.push(args[++index]?.toLowerCase() ?? null);
@@ -599,10 +602,11 @@ export const make = Effect.gen(function* () {
         args: [
           "repo",
           "view",
-          // Without a host gh looks the repository up on github.com (or GH_HOST).
-          input.host === undefined ? input.repository : `${input.host}/${input.repository}`,
           "--json",
           "nameWithOwner,url,sshUrl",
+          "--",
+          // Without a host gh looks the repository up on github.com (or GH_HOST).
+          input.host === undefined ? input.repository : `${input.host}/${input.repository}`,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

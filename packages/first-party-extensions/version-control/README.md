@@ -136,17 +136,25 @@ Mutations need the `t3.vcs/mutate` grant at install time:
 
 Clone repository opens a Git URL or ready-provider flow. Provider discovery
 and lookup use `t3.source-control/discovery@1.0.0` with `t3.source-control/read`;
-Rescan providers refreshes readiness without polling. The repository picker
+Discovery runs once per mounted session; Rescan providers refreshes readiness
+without polling or clearing the last result. Unready providers show setup hints.
+The repository picker caches each source for the mounted session and
 shows at most 20 recent repositories and marks partial lists; another
 repository can be entered directly. Azure DevOps uses the CLI's configured project.
 
 `t3.projects/clone@1.0.0` requires the separate `t3.projects/create` grant,
 not `t3.vcs/mutate`. The environment assigns the project identity and clones
-into `<stateDir>/projects/<directory-name>`. Confirm the name and protocol,
+into the environment’s Add Project base directory, or the host home directory
+when none is configured, using the same native destination rule. Confirm the name and protocol,
 then start the clone; native project creation, progress, cancellation and
 retry remain owned by the host. Progress is installation-scoped and bounded
 to 16 entries / 48 KiB. Failed and cancelled clones offer Retry clone.
-Subscriptions and repository-list reads stop when the panel is hidden or closed.
+Directory names must be single segments and cannot end in `.git`.
+Provider repository identifiers use the provider’s owner/name path; GitLab
+subgroups and Azure’s configured-project repository names are supported.
+Progress subscriptions and pending discovery/list reads stop when the panel is
+hidden or closed; completed discovery and listings remain cached until rescan
+or remount respectively.
 
 Remotes render from `t3.vcs/repository` `listRemotes` (a read-granted
 call) — name, URL, and primary marker, with per-remote Fetch.

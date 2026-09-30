@@ -1,8 +1,8 @@
 import * as NodeTest from "node:test";
 import * as NodeAssert from "node:assert/strict";
-import { React, act, flush, loadPrsPanel, mount } from "./prsPanelHarness.mjs";
+import { React, act, deferred, flush, loadPrsPanel, mount } from "./prsPanelHarness.mjs";
 
-const { CloneRepositoryPanel } = await loadPrsPanel("clonePanel.tsx");
+const { CloneRepositoryPanel, useSourceControlDiscovery } = await loadPrsPanel("clonePanel.tsx");
 const repository = {
   provider: "github",
   nameWithOwner: "alex/repo",
@@ -37,6 +37,107 @@ const change = (panel, name, value) =>
   act(() => panel.find(name).props.onChange({ target: { value } }));
 const button = (panel, name) => panel.byName(name).find((node) => node.type === "button");
 const click = (panel, name) => act(() => button(panel, name).props.onClick());
+
+function DiscoveryHarness({ host, session, visible }) {
+  const data = useSourceControlDiscovery(host, session, visible);
+  return React.createElement(
+    "div",
+    {},
+    React.createElement("button", { "aria-label": "Rescan", onClick: data.refresh }, "Rescan"),
+    React.createElement("span", {}, data.providers.map((provider) => provider.label).join(",")),
+    React.createElement("span", {}, data.error),
+  );
+}
+
+NodeTest.test("discovery scans once per mounted session, not visibility flips", async () => {
+  const renderDiscovery = (visible) => (host, session) =>
+    React.createElement(DiscoveryHarness, { host, session, visible });
+  const panel = mount(renderDiscovery(false), {
+    "t3.source-control/discovery#discover": () => discovery,
+  });
+  try {
+    await flush();
+    NodeAssert.equal(panel.calls.length, 0);
+    panel.update(renderDiscovery(true));
+    await flush();
+    panel.update(renderDiscovery(false));
+    panel.update(renderDiscovery(true));
+    await flush();
+    NodeAssert.equal(panel.calls.length, 1);
+  } finally {
+    panel.unmount();
+  }
+});
+
+NodeTest.test(
+  "rescan retains ready providers while refreshing and after a failed refresh",
+  async () => {
+    const pending = deferred();
+    let scans = 0;
+    const panel = mount(
+      (host, session) => React.createElement(DiscoveryHarness, { host, session, visible: true }),
+      {
+        "t3.source-control/discovery#discover": () => (++scans === 1 ? discovery : pending.promise),
+      },
+    );
+    try {
+      await flush();
+      click(panel, "Rescan");
+      await flush();
+      NodeAssert.match(panel.text(), /GitHub/);
+      await act(async () => pending.reject(new Error("Rescan unavailable")));
+      await flush();
+      NodeAssert.match(panel.text(), /GitHub/);
+      NodeAssert.match(panel.text(), /Rescan unavailable/);
+    } finally {
+      panel.unmount();
+    }
+  },
+);
+
+NodeTest.test("repository lists stay cached across source and visibility changes", async () => {
+  const panel = mount(render, {
+    "t3.source-control/discovery#listRepositories": () => ({
+      repositories: [repository],
+      truncated: false,
+    }),
+  });
+  try {
+    change(panel, "Clone source", "github");
+    await flush();
+    panel.update((host, session) =>
+      React.createElement(CloneRepositoryPanel, { host, session, discovery, visible: false }),
+    );
+    panel.update(render);
+    await flush();
+    change(panel, "Clone source", "url");
+    change(panel, "Clone source", "github");
+    await flush();
+    NodeAssert.deepEqual(
+      panel.calls.map((call) => call.method),
+      ["listRepositories"],
+    );
+    NodeAssert.match(panel.text(), /alex\/repo/);
+  } finally {
+    panel.unmount();
+  }
+});
+
+NodeTest.test("unready providers remain visible with setup guidance", async () => {
+  const panel = mount(render);
+  try {
+    NodeAssert.match(panel.text(), /Install GitLab CLI/);
+    NodeAssert.equal(
+      panel
+        .find("Clone source")
+        .findAllByType("option")
+        .find((option) => option.props.value === "gitlab")?.props.disabled,
+      true,
+    );
+  } finally {
+    panel.unmount();
+  }
+});
 
 NodeTest.test(
   "Git URL confirmation creates one new project using the clone API, never a VCS mutation",
@@ -97,6 +198,7 @@ NodeTest.test(
         panel
           .find("Clone source")
           .findAllByType("option")
+          .filter((option) => !option.props.disabled)
           .map((option) => option.props.value),
         ["url", "github"],
       );

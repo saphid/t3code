@@ -4,6 +4,7 @@ import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeOS from "node:os";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -162,7 +163,7 @@ it("starts the native tracked clone with host-minted project identity and manage
   expect(calls[0]).toMatchObject({ title: "Repo", destinationPath: "/managed/projects/repo" });
 });
 
-it.each(["../escape", "/absolute", "..", "a/b", "a\\b", "repo."])(
+it.each(["../escape", "/absolute", "..", "a/b", "a\\b", "repo.", "repo.git", "repo.GIT"])(
   "refuses destination %s before native effects",
   async (destinationName) => {
     const { provider, calls } = fixture();
@@ -183,6 +184,12 @@ it.each([
   "file:///private/repo",
   "ext::git clone x",
   "-u",
+  "-cfoo.x@h:y.z=1",
+  "-uX@h:y",
+  "ssh://-oProxyCommand=x/y",
+  "git@-host:repo.git",
+  "ssh://-user@host/repo.git",
+  "ssh://%2Duser@host/repo.git",
   "https://user:secret@github.com/repo",
   "https://github.com/repo?token=secret",
 ])("refuses unsafe clone transport", async (remoteUrl) => {
@@ -198,6 +205,103 @@ it.each([
   ).rejects.toThrow();
   expect(calls).toEqual([]);
 });
+
+it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
+  "refuses option-shaped or malformed %s repository identifiers before cloning",
+  async (source) => {
+    for (const repository of [
+      "--web",
+      "-owner/repo",
+      "owner/repo\n--web",
+      "owner/repo;--web",
+      "owner/../repo",
+    ]) {
+      const { provider, calls } = fixture();
+      await expect(
+        provider.invoke(
+          "start",
+          {
+            title: "Repo",
+            destinationName: "repo",
+            provider: source,
+            repository,
+          },
+          context,
+          signal,
+          metadata(provider),
+        ),
+      ).rejects.toThrow();
+      expect(calls).toEqual([]);
+    }
+  },
+);
+
+it.each([
+  ["github", "alex/.github"],
+  ["github", "alex/-repo"],
+  ["github", "https://github.com/alex/.github"],
+  ["gitlab", "group/subgroup/repo"],
+  ["forgejo", "alex/.config"],
+  ["azure-devops", "My Repo"],
+  ["azure-devops", "Gröup/Project/My Repo"],
+  ["bitbucket", "team/repo"],
+] as const)("preserves valid %s repository identifier %s", async (source, repository) => {
+  const { provider, calls } = fixture();
+  await provider.invoke(
+    "start",
+    { title: "Repo", destinationName: "repo", provider: source, repository },
+    context,
+    signal,
+    metadata(provider),
+  );
+  expect(calls).toEqual([expect.objectContaining({ provider: source, repository })]);
+});
+
+it("explains invalid clone URLs and destination names without echoing the input", async () => {
+  const { provider } = fixture();
+  await expect(
+    provider.invoke(
+      "start",
+      { title: "Repo", destinationName: "repo", remoteUrl: "https://user:secret@host/repo" },
+      context,
+      signal,
+      metadata(provider),
+    ),
+  ).rejects.toThrow(/HTTPS or SSH clone URL without credentials/);
+  await expect(
+    provider.invoke(
+      "start",
+      { title: "Repo", destinationName: "repo.git", remoteUrl: "https://host/repo" },
+      context,
+      signal,
+      metadata(provider),
+    ),
+  ).rejects.toThrow(/directory name without a .git suffix/);
+});
+
+it.effect("resolves the native configured clone root and home fallback", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    for (const [base, expected] of [
+      ["", NodeOS.homedir()],
+      ["   ", NodeOS.homedir()],
+      ["~/Development", path.join(NodeOS.homedir(), "Development")],
+      ["  /configured/code  ", "/configured/code"],
+    ]) {
+      const destination = yield* managedCloneDestination(base!, "repo").pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            makeDirectory: () => Effect.void,
+            realPath: (directory) => Effect.succeed(directory),
+            exists: () => Effect.succeed(false),
+          }),
+        ),
+      );
+      expect(destination).toBe(path.join(expected!, "repo"));
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it("does not let another installation cancel a clone", async () => {
   const { provider } = fixture();

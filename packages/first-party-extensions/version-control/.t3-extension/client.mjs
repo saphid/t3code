@@ -13998,20 +13998,23 @@ ${thread.id}`) === activity,
     const [data, setData] = (0, import_react3.useState)({ providers: [] });
     const [error, setError] = (0, import_react3.useState)(null);
     const [revision2, setRevision] = (0, import_react3.useState)(0);
+    const scanned = (0, import_react3.useRef)(null);
     (0, import_react3.useEffect)(() => {
-      if (!visible) return;
+      if (!visible || scanned.current?.host === host && scanned.current.session === session && scanned.current.revision === revision2)
+        return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(sourceControlDiscoveryApi, host, session.context).invoke("discover", {}, signal).then(
         (result) => {
           if (!signal.aborted) {
+            scanned.current = { host, session, revision: revision2 };
             setData(result);
             setError(null);
           }
         },
         (cause) => {
           if (!signal.aborted) {
-            setData({ providers: [] });
+            scanned.current = { host, session, revision: revision2 };
             setError(
               cause instanceof Error ? cause.message : "Source control discovery unavailable"
             );
@@ -14024,7 +14027,6 @@ ${thread.id}`) === activity,
       ...data,
       error,
       refresh: () => {
-        setData({ providers: [] });
         setRevision((value) => value + 1);
       }
     };
@@ -14043,7 +14045,8 @@ ${thread.id}`) === activity,
     const [title, setTitle] = (0, import_react3.useState)("");
     const [destinationName, setDestinationName] = (0, import_react3.useState)("");
     const [protocol, setProtocol] = (0, import_react3.useState)("auto");
-    const [listing, setListing] = (0, import_react3.useState)(null);
+    const [listings, setListings] = (0, import_react3.useState)({});
+    const listing = source === "url" ? null : listings[source];
     const [error, setError] = (0, import_react3.useState)(null);
     const [pending, setPending] = (0, import_react3.useState)(false);
     const [receipt2, setReceipt] = (0, import_react3.useState)(null);
@@ -14058,12 +14061,12 @@ ${thread.id}`) === activity,
     }, []);
     const preparedRepository = prepared?.source === source && prepared.input === repositoryInput ? prepared : null;
     (0, import_react3.useEffect)(() => {
-      if (!visible || source === "url") return;
+      if (!visible || source === "url" || listings[source]) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       void bindApi(sourceControlDiscoveryApi, host, session.context).invoke("listRepositories", { provider: source }, signal).then(
         (result) => {
-          if (!signal.aborted) setListing({ source, ...result });
+          if (!signal.aborted) setListings((current) => ({ ...current, [source]: result }));
         },
         (cause) => {
           if (!signal.aborted)
@@ -14071,7 +14074,7 @@ ${thread.id}`) === activity,
         }
       );
       return () => controller.abort();
-    }, [host, session, source, visible]);
+    }, [host, session, source, visible, listings]);
     (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
@@ -14181,12 +14184,15 @@ ${thread.id}`) === activity,
                 style: control3,
                 children: [
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "url", children: "Git URL" }),
-                  ready.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: provider.kind, children: provider.label }, provider.kind))
+                  discovery.providers.filter((provider) => provider.kind !== "unknown").map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("option", { value: provider.kind, disabled: !provider.ready, children: [
+                    provider.label,
+                    provider.ready ? "" : ` \u2014 ${provider.hint ?? "Unavailable"}`
+                  ] }, provider.kind))
                 ]
               }
             )
           ] }),
-          source !== "url" && listing?.source === source && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { children: [
+          source !== "url" && listing && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { children: [
             "Your repositories",
             " ",
             /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(

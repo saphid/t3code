@@ -8977,7 +8977,6 @@ var __t3Client = (() => {
   }
   var OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
   var OCCLUSION_POLL_MS = 400;
-  var ACQUIRE_RETRY_DELAYS_MS = [500, 1e3, 2e3, 4e3, 8e3];
   function clippedSlotRect(element) {
     const bounds = element.getBoundingClientRect();
     let x1 = bounds.x;
@@ -9049,12 +9048,12 @@ var __t3Client = (() => {
         return;
       const surface = host.browserSurface;
       const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
-      if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+      if (!surface || surface.id !== BROWSER_SURFACE || major !== 2) {
         setResult({
           ok: false,
           denial: {
             reason: "host-unavailable",
-            detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`
+            detail: `This host does not implement ${BROWSER_SURFACE}@2.x.`
           }
         });
         return;
@@ -9062,8 +9061,7 @@ var __t3Client = (() => {
       const surfaceSession = options.session;
       let detach = () => {
       };
-      let retry = null;
-      let attempts = 0;
+      const acquisition = new AbortController();
       let disposed = false;
       const attach = (held) => {
         let poll = null;
@@ -9139,31 +9137,32 @@ var __t3Client = (() => {
           setShown(false);
         };
       };
-      const tryAcquire = () => {
-        if (disposed)
-          return;
-        const acquired = surface.acquire({
-          context: session.context,
-          session: surfaceSession,
-          signal: session.signal
-        });
-        if (!acquired.ok) {
-          setResult(acquired);
-          if (acquired.denial.reason === "host-unavailable" && attempts < ACQUIRE_RETRY_DELAYS_MS.length) {
-            retry = setTimeout(tryAcquire, ACQUIRE_RETRY_DELAYS_MS[attempts]);
-            attempts += 1;
-          }
+      const accept = (acquired2) => {
+        if (disposed) {
+          if (acquired2.ok)
+            acquired2.lease.release();
           return;
         }
-        setResult(acquired);
-        attach(acquired.lease);
+        setResult(acquired2);
+        if (acquired2.ok)
+          attach(acquired2.lease);
       };
-      tryAcquire();
+      const acquired = surface.acquire({
+        context: session.context,
+        session: surfaceSession,
+        signal: AbortSignal.any([session.signal, acquisition.signal])
+      });
+      if ("then" in acquired)
+        acquired.then(accept, () => accept({
+          ok: false,
+          denial: { reason: "host-unavailable", detail: "The browser host is not connected." }
+        }));
+      else
+        accept(acquired);
       return () => {
         disposed = true;
-        if (retry !== null)
-          clearTimeout(retry);
         detach();
+        acquisition.abort();
       };
     }, [element, targetKey, host, session]);
     return {

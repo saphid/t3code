@@ -9,6 +9,10 @@ import {
 import { projectsCloneApi } from "@t3tools/extension-sdk/catalogue";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import {
+  getAddProjectInitialQuery,
+  getCloneDirectoryName,
+} from "@t3tools/client-runtime/operations/projects";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
@@ -17,18 +21,23 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { normalizeDispatchCommand } from "../orchestration/Normalizer.ts";
 import { ProjectCloneTracker, type ProjectCloneHooks } from "../project/ProjectCloneTracker.ts";
 import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { expandHomePathWith } from "../pathExpansion.ts";
+import {
+  isSafeRepositoryIdentifier,
+  isSafeRepositoryRemote,
+} from "../sourceControl/remoteValidation.ts";
 
-const fail = () =>
+const fail = (detail = "Project clone request is invalid or unavailable.") =>
   new ExtensionOperationError({
     operation: "projects.clone",
-    detail: "Project clone request is invalid or unavailable.",
+    detail,
   });
 const startInput = Schema.Struct({
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
@@ -73,43 +82,35 @@ export function assertCloneAuthority(
   return metadata.assertAuthority;
 }
 
-function safeRemote(remote: string) {
-  if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/.test(remote)) return;
-  try {
-    const url = new URL(remote);
-    if (
-      ["https:", "ssh:"].includes(url.protocol) &&
-      url.hostname &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      (url.protocol === "ssh:" || !url.username)
-    )
-      return;
-  } catch {}
-  throw fail();
-}
-
-export const managedCloneDestination = Effect.fn("ProjectsClone.destination")(function* (
-  root: string,
-  name: string,
-) {
-  yield* Effect.try({
-    try: () => decode(startInput, { title: "Clone", destinationName: name }),
-    catch: fail,
-  });
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fileSystem.makeDirectory(root, { recursive: true });
-  const canonicalRoot = yield* fileSystem.realPath(root);
-  const destination = path.join(canonicalRoot, name);
-  const link = yield* Effect.exit(fileSystem.readLink(destination));
-  if (Exit.isSuccess(link)) return yield* fail();
-  if (yield* fileSystem.exists(destination)) {
-    if ((yield* fileSystem.realPath(destination)) !== destination) return yield* fail();
-  }
-  return destination;
-}, Effect.mapError(fail));
+export const managedCloneDestination = Effect.fn("ProjectsClone.destination")(
+  function* (baseDirectory: string | null | undefined, name: string) {
+    yield* Effect.try({
+      try: () => decode(startInput, { title: "Clone", destinationName: name }),
+      catch: () => fail(),
+    });
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (name !== getCloneDirectoryName(name) || /\.git$/i.test(name))
+      return yield* fail("Choose a directory name without a .git suffix.");
+    const root = path.resolve(expandHomePathWith(getAddProjectInitialQuery(baseDirectory), path));
+    yield* fileSystem.makeDirectory(root, { recursive: true });
+    const canonicalRoot = yield* fileSystem.realPath(root);
+    const destination = path.join(canonicalRoot, name);
+    const link = yield* Effect.exit(fileSystem.readLink(destination));
+    if (Exit.isSuccess(link)) return yield* fail("Clone destination must not be a symbolic link.");
+    if (yield* fileSystem.exists(destination)) {
+      if ((yield* fileSystem.realPath(destination)) !== destination) return yield* fail();
+    }
+    return destination;
+  },
+  Effect.mapError((cause) =>
+    Schema.is(ExtensionOperationError)(cause)
+      ? cause
+      : fail(
+          "Clone destination is unavailable. Check the Add Project base directory and its permissions.",
+        ),
+  ),
+);
 
 export function createProjectsCloneApiProvider(dependencies: {
   readonly environmentId: string;
@@ -139,7 +140,21 @@ export function createProjectsCloneApiProvider(dependencies: {
             : request.provider === undefined || request.repository === undefined)
         )
           throw fail();
-        if (request.remoteUrl !== undefined) safeRemote(request.remoteUrl);
+        if (
+          request.destinationName !== getCloneDirectoryName(request.destinationName) ||
+          /\.git$/i.test(request.destinationName)
+        )
+          throw fail("Choose a directory name without a .git suffix.");
+        if (request.remoteUrl !== undefined && !isSafeRepositoryRemote(request.remoteUrl))
+          throw fail(
+            "Use an HTTPS or SSH clone URL without credentials, query parameters or fragments.",
+          );
+        if (
+          request.provider !== undefined &&
+          request.repository !== undefined &&
+          !isSafeRepositoryIdentifier(request.provider, request.repository)
+        )
+          throw fail("Use a valid provider repository path, such as owner/name.");
         const destinationPath = await Effect.runPromise(
           dependencies.destinationPath(request.destinationName),
           { signal },
@@ -242,13 +257,13 @@ export function createProjectsCloneApiProvider(dependencies: {
 }
 
 export const makeProjectsCloneApiProvider = Effect.fn("ProjectsCloneApi.make")(function* () {
-  const config = yield* ServerConfig;
   const environment = yield* ServerEnvironment;
   const engine = yield* OrchestrationEngineService;
   const identity = yield* RepositoryIdentityResolver;
   const git = yield* VcsStatusBroadcaster;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const settings = yield* ServerSettingsService;
   const normalizerContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof normalizeDispatchCommand>>>();
   const hooks: ProjectCloneHooks = {
@@ -288,7 +303,8 @@ export const makeProjectsCloneApiProvider = Effect.fn("ProjectsCloneApi.make")(f
   return createProjectsCloneApiProvider({
     environmentId: yield* environment.getEnvironmentId,
     destinationPath: (name) =>
-      managedCloneDestination(path.join(config.stateDir, "projects"), name).pipe(
+      settings.getSettings.pipe(
+        Effect.flatMap((current) => managedCloneDestination(current.addProjectBaseDirectory, name)),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       ),

@@ -11,6 +11,62 @@ import {
   projectSourceControlDiscovery,
 } from "./sourceControlDiscoveryApi.ts";
 
+it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
+  "rejects unsafe %s repository lookups before provider effects",
+  async (source) => {
+    const calls: unknown[] = [];
+    const api = createSourceControlDiscoveryApiProvider({
+      environmentId: "env",
+      cwd: "/host",
+      discovery: { discover: Effect.succeed([]) },
+      repositories: {
+        lookupRepository: (input) => {
+          calls.push(input);
+          return Effect.die("Unexpected repository lookup");
+        },
+      },
+      listRepositories: () => Effect.succeed({ repositories: [], truncated: false }),
+    });
+    const context = {
+      resource: { namespace: "test", id: "view", environmentId: "env" },
+      client: "test",
+    };
+    const metadata = {
+      callId: "call",
+      rootCallerId: "caller",
+      callerId: "caller",
+      providerId: api.providerId,
+      providerGeneration: 1,
+      callerGenerations: [],
+      principal: {
+        kind: "environment-session" as const,
+        id: "session",
+        environmentId: "env",
+        scopes: [AuthOrchestrationReadScope],
+      },
+      assertAuthority: async () => {},
+    };
+    for (const repository of [
+      "--web",
+      "-owner/repo",
+      "owner/repo\n--web",
+      "owner/repo;--web",
+      "owner/../repo",
+    ]) {
+      await expect(
+        api.invoke(
+          "lookupRepository",
+          { provider: source, repository },
+          context,
+          new AbortController().signal,
+          metadata,
+        ),
+      ).rejects.toThrow(/Repository lookup/);
+    }
+    expect(calls).toEqual([]);
+  },
+);
+
 const provider = (
   kind: SourceControlProviderDiscoveryItem["kind"],
   status: SourceControlProviderDiscoveryItem["status"] = "available",

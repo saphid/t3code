@@ -7,6 +7,7 @@ import {
   type ProjectClones,
   type SourceControlDiscovery,
   type SourceControlKind,
+  type RepositoryList,
 } from "@t3tools/extension-sdk/catalogue";
 import { bindApi, bindStreamApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
@@ -30,8 +31,15 @@ export function useSourceControlDiscovery(
   const [data, setData] = useState<SourceControlDiscovery>({ providers: [] });
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const scanned = useRef<{ host: ClientHost; session: ViewSession; revision: number } | null>(null);
   useEffect(() => {
-    if (!visible) return;
+    if (
+      !visible ||
+      (scanned.current?.host === host &&
+        scanned.current.session === session &&
+        scanned.current.revision === revision)
+    )
+      return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(sourceControlDiscoveryApi, host, session.context)
@@ -39,13 +47,14 @@ export function useSourceControlDiscovery(
       .then(
         (result) => {
           if (!signal.aborted) {
+            scanned.current = { host, session, revision };
             setData(result);
             setError(null);
           }
         },
         (cause) => {
           if (!signal.aborted) {
-            setData({ providers: [] });
+            scanned.current = { host, session, revision };
             setError(
               cause instanceof Error ? cause.message : "Source control discovery unavailable",
             );
@@ -58,7 +67,6 @@ export function useSourceControlDiscovery(
     ...data,
     error,
     refresh: () => {
-      setData({ providers: [] });
       setRevision((value) => value + 1);
     },
   };
@@ -90,11 +98,8 @@ export function CloneRepositoryPanel({
   const [title, setTitle] = useState("");
   const [destinationName, setDestinationName] = useState("");
   const [protocol, setProtocol] = useState<CloneProtocol>("auto");
-  const [listing, setListing] = useState<{
-    source: typeof source;
-    repositories: readonly CloneRepository[];
-    truncated: boolean;
-  } | null>(null);
+  const [listings, setListings] = useState<Partial<Record<SourceControlKind, RepositoryList>>>({});
+  const listing = source === "url" ? null : listings[source];
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [receipt, setReceipt] = useState<CloneReceipt | null>(null);
@@ -111,14 +116,14 @@ export function CloneRepositoryPanel({
     prepared?.source === source && prepared.input === repositoryInput ? prepared : null;
 
   useEffect(() => {
-    if (!visible || source === "url") return;
+    if (!visible || source === "url" || listings[source]) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     void bindApi(sourceControlDiscoveryApi, host, session.context)
       .invoke("listRepositories", { provider: source }, signal)
       .then(
         (result) => {
-          if (!signal.aborted) setListing({ source, ...result });
+          if (!signal.aborted) setListings((current) => ({ ...current, [source]: result }));
         },
         (cause) => {
           if (!signal.aborted)
@@ -126,7 +131,7 @@ export function CloneRepositoryPanel({
         },
       );
     return () => controller.abort();
-  }, [host, session, source, visible]);
+  }, [host, session, source, visible, listings]);
 
   useEffect(() => {
     if (!visible) return;
@@ -248,14 +253,17 @@ export function CloneRepositoryPanel({
           style={control}
         >
           <option value="url">Git URL</option>
-          {ready.map((provider) => (
-            <option key={provider.kind} value={provider.kind}>
-              {provider.label}
-            </option>
-          ))}
+          {discovery.providers
+            .filter((provider) => provider.kind !== "unknown")
+            .map((provider) => (
+              <option key={provider.kind} value={provider.kind} disabled={!provider.ready}>
+                {provider.label}
+                {provider.ready ? "" : ` — ${provider.hint ?? "Unavailable"}`}
+              </option>
+            ))}
         </select>
       </label>
-      {source !== "url" && listing?.source === source && (
+      {source !== "url" && listing && (
         <label>
           Your repositories{" "}
           <select

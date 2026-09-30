@@ -47,6 +47,19 @@ const records = {
   },
 };
 
+it.each([
+  "-cfoo.x@h:y.z=1",
+  "-uX@h:y",
+  "ssh://-oProxyCommand=x/y",
+  "git@-host:repo.git",
+  "ssh://-user@host/repo.git",
+  "ssh://%2Duser@host/repo.git",
+])("rejects unsafe listed remote %s", (sshUrl) => {
+  expect(() =>
+    parseRepositoryListing("github", JSON.stringify([{ ...repository, ssh_url: sshUrl }])),
+  ).toThrow();
+});
+
 it.each(["github", "forgejo", "gitlab", "azure-devops", "bitbucket"] as const)(
   "projects %s's native response without private response metadata",
   (provider) => {
@@ -141,7 +154,7 @@ it.effect(
         "api user/repos?affiliation=owner,collaborator,organization_member&sort=updated&per_page=21",
         "api projects?membership=true&order_by=last_activity_at&per_page=21",
         "user/repos?sort=updated&limit=21",
-        "repos list --output json",
+        "repos list --query [:21] --output json",
         "/repositories?role=member&sort=-updated_on&pagelen=21",
       ]);
     }).pipe(Effect.provide(clients));

@@ -10,6 +10,7 @@ import { GitLabCli } from "./GitLabCli.ts";
 import { ForgejoCli } from "./ForgejoCli.ts";
 import { AzureDevOpsCli } from "./AzureDevOpsCli.ts";
 import { BitbucketApi } from "./BitbucketApi.ts";
+import { isSafeRepositoryRemote } from "./remoteValidation.ts";
 
 const text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 const forgeRepository = Schema.Struct({ full_name: text, html_url: text, ssh_url: text });
@@ -100,16 +101,7 @@ export function parseRepositoryListing(provider: SourceControlKind, raw: string)
   let bytes = 0;
   for (const repository of repositories) {
     for (const remote of [repository.url, repository.sshUrl]) {
-      if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/.test(remote)) continue;
-      const url = new URL(remote);
-      if (
-        !["https:", "http:", "ssh:"].includes(url.protocol) ||
-        url.password ||
-        url.search ||
-        url.hash ||
-        (url.protocol !== "ssh:" && url.username)
-      )
-        throw fail(provider);
+      if (!isSafeRepositoryRemote(remote, true)) throw fail(provider);
     }
     const size = new TextEncoder().encode(JSON.stringify(repository)).byteLength;
     if (bounded.length === 20 || bytes + size > 48 * 1024) break;
@@ -151,7 +143,7 @@ export const listSourceControlRepositories = Effect.fn("SourceControl.listReposi
       case "azure-devops":
         raw = (yield* (yield* AzureDevOpsCli).execute({
           ...options,
-          args: ["repos", "list", "--output", "json"],
+          args: ["repos", "list", "--query", "[:21]", "--output", "json"],
         })).stdout;
         break;
       case "bitbucket": {
