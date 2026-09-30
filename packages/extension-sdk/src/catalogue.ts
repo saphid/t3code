@@ -35,6 +35,8 @@ import {
   uiExternalLinkInputProperties,
   uiExternalLinkReceiptSchema,
   uiEditorOpenReceiptSchema,
+  uiEditorOpenReceiptV11Schema,
+  editorWorkspaceInputSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
   uiNavigationFileInputPropertiesV1_1,
@@ -9622,7 +9624,12 @@ export const UI_EDITOR_OPEN = "t3.ui/editor.open";
 export type UiEditorRefusalReason = "no-editor" | "open-failed";
 
 export type UiEditorOpenReceipt =
-  | { readonly status: "opened"; readonly path: string; readonly editor: string }
+  | {
+      readonly status: "opened";
+      readonly path: string;
+      readonly editor: string;
+      readonly url?: string;
+    }
   | {
       readonly status: "refused";
       readonly reason: UiEditorRefusalReason;
@@ -9635,9 +9642,14 @@ export type UiEditorOpenReceipt =
  * relative to `cwd`, with an optional `:line` or `:line:column` suffix the
  * editor honors. The caller's own client resolves the path and its saved
  * editor, then launches it in the caller's environment. A refusal is a typed
- * receipt; a missing `t3.ui/editor.open` grant fails the invoke.
+ * receipt; a missing `t3.ui/editor.open` grant fails the invoke. This is the
+ * frozen published 1.0.0 definition. Version 1.1.0 adds `workspace: true`
+ * to resolve the path against the scoped thread checkout (or project root)
+ * without a caller-supplied cwd, and the optional `url` receipt for native
+ * SSH routing. Remote environments use client-local remote-capable editors,
+ * never an editor process on the remote server.
  */
-export const uiEditorApi = defineApi<{
+export const uiEditorApiV1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   openPath: { input: { path: string; cwd: string }; output: UiEditorOpenReceipt };
 }>({
@@ -9668,6 +9680,37 @@ export const uiEditorApi = defineApi<{
     },
   ],
 });
+
+export const uiEditorApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  openPath: {
+    input: { path: string } & (
+      | { cwd: string; workspace?: true }
+      | { workspace: true; cwd?: string }
+    );
+    output: UiEditorOpenReceipt;
+  };
+}>(
+  {
+    ...uiEditorApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      uiEditorApiV1.definition.methods![0]!,
+      {
+        ...uiEditorApiV1.definition.methods![1]!,
+        inputSchema: editorWorkspaceInputSchema,
+        outputSchema: uiEditorOpenReceiptV11Schema,
+      },
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openPath", input: "workspace" },
+      { version: "1.1.0", method: "openPath", output: "url" },
+    ],
+  },
+);
 
 export const UI_NAVIGATION = "t3.ui/navigation";
 export const UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
@@ -10083,6 +10126,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiExternalApi.definition,
   uiExternalApiV1.definition,
   uiEditorApi.definition,
+  uiEditorApiV1.definition,
   uiNavigationApi.definition,
   uiNavigationApiV1_1.definition,
   uiNavigationApiV1.definition,

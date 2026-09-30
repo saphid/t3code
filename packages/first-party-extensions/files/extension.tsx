@@ -8,6 +8,7 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiEditorApi,
   uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
@@ -61,6 +62,7 @@ import {
   usePostedComments,
 } from "./commentSession.js";
 import { useAddToChat } from "./composerBridge.js";
+import { useExternalEditor } from "./editorBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import { ReadOnlyFileBody } from "./codeView.js";
 import {
@@ -1196,6 +1198,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
+  const externalEditor = useExternalEditor(host, session);
   const wordWrap = preferences.wordWrap;
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
@@ -2303,6 +2306,25 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
+          <button
+            type="button"
+            disabled={
+              externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+            }
+            onClick={() => externalEditor.openInEditor(selected)}
+          >
+            Open in editor
+          </button>
+          {externalEditor.blockReason !== null && (
+            <span style={{ color: muted, fontSize: 11 }}>
+              Open in editor unavailable — {externalEditor.blockReason}
+            </span>
+          )}
+          {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (
+            <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
+              {externalEditor.state.message}
+            </span>
+          )}
           {browserPreview && opensInPreviewBrowser(selected) && (
             <button type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
@@ -2709,7 +2731,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.9.0",
+  version: "0.10.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
   requires: [
@@ -2725,6 +2747,7 @@ export default defineExtension({
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(uiNavigationApi),
+    requireApi(uiEditorApi, "^1.1.0"),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

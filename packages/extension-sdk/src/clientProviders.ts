@@ -1089,20 +1089,49 @@ const editorPathInput = {
   cwd: { type: "string", minLength: 1, maxLength: 4096 },
 } as const;
 
+export const uiEditorOpenReceiptV11Schema = {
+  oneOf: [
+    {
+      ...uiEditorOpenReceiptSchema.oneOf[0],
+      properties: {
+        ...uiEditorOpenReceiptSchema.oneOf[0].properties,
+        url: { type: "string", minLength: 1, maxLength: 16384 },
+      },
+    },
+    uiEditorOpenReceiptSchema.oneOf[1],
+  ],
+} as const;
+
+export const editorWorkspaceInputSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path"],
+  properties: { ...editorPathInput, workspace: { const: true } },
+  anyOf: [
+    { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
+    { required: ["workspace"], properties: { workspace: { const: true } } },
+  ],
+} as const;
+
 /** Backs `t3.ui/editor`: the client owns the preferred editor and opens through its environment. */
 export const CLIENT_EDITOR_API = validateApiDefinition({
   id: "t3.client/editor",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
     {
       name: "openPath",
       effect: "write",
       requiredGrants: [],
-      inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
-      outputSchema: uiEditorOpenReceiptSchema,
+      inputSchema: {
+        ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
+        anyOf: editorWorkspaceInputSchema.anyOf,
+      },
+      outputSchema: uiEditorOpenReceiptV11Schema,
     },
   ],
 });
+
+export const CLIENT_EDITOR_V11_RANGE = "^1.1.0";
 
 /**
  * The `t3.browser/history` result, shared by the public and private areas:

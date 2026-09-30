@@ -13,7 +13,13 @@ line opens the source at that line. It exposes an "Open in panel" file
 action: `t3.ui/navigation` `openFile` (1.1.0, grant `t3.ui/navigation.open`)
 opens the file in this view's thread where the host's own file links land,
 presented by whichever provider the host selected for `t3.file/presentation`.
-Reopening the file already shown there only focuses it. For `.html`, `.htm`
+Reopening the file already shown there only focuses it. "Open in editor" uses
+`t3.ui/editor@^1.1.0` (`t3.ui/editor.open` grant), resolving the path against
+the view's scoped checkout. Local environments launch the saved editor;
+remote and tunnel environments use the native SSH editor deep link, the
+client's remote-capable editors, and the same saved preference. The host's
+capability probe gates the action and refusals appear inline; no SSH target
+never falls back to launching an editor on the remote server. For `.html`, `.htm`
 and `.pdf` files, "Open file in preview browser" sends `openFile` with
 `openIn: "browser"` (1.2.0), which opens the file in the thread's preview
 browser, as native does. As there, the action shows only on a client with a

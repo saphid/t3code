@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useEnvironmentPresentation } from "~/state/presentation";
 
 export interface RemoteOpenHost {
@@ -129,6 +129,32 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
+let probingEditors: Promise<ReadonlyArray<EditorId>> | null = null;
+
+export function getRemoteCapableEditors(): Promise<ReadonlyArray<EditorId>> {
+  if (cachedProbedEditors !== null) return Promise.resolve(cachedProbedEditors);
+  if (probingEditors !== null) return probingEditors;
+  const probe = window.desktopBridge?.probeRemoteEditors;
+  if (probe === undefined) {
+    cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
+    return Promise.resolve(cachedProbedEditors);
+  }
+  probingEditors = Promise.resolve()
+    .then(() => probe())
+    .then(
+      (ids) => {
+        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
+        return remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
+      },
+      () => REMOTE_FALLBACK_EDITORS,
+    )
+    .then((ids) => {
+      cachedProbedEditors = ids;
+      probingEditors = null;
+      return ids;
+    });
+  return probingEditors;
+}
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
@@ -139,24 +165,10 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     if (cachedProbedEditors !== null) {
       return;
     }
-    const probe = window.desktopBridge?.probeRemoteEditors;
-    if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      return;
-    }
     let cancelled = false;
-    probe().then(
-      (ids) => {
-        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-        cachedProbedEditors = remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
-        if (!cancelled) {
-          setEditors(cachedProbedEditors);
-        }
-      },
-      () => {
-        cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      },
-    );
+    void getRemoteCapableEditors().then((ids) => {
+      if (!cancelled) setEditors(ids);
+    });
     return () => {
       cancelled = true;
     };
@@ -194,6 +206,10 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
  * so first click is the dismiss signal).
  */
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
+
+export function markRemoteOpenHintSeen(): void {
+  setLocalStorageItem(REMOTE_OPEN_HINT_KEY, true, Schema.Boolean);
+}
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {
   const [seen, setSeen] = useLocalStorage(REMOTE_OPEN_HINT_KEY, false, Schema.Boolean);
