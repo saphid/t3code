@@ -174,8 +174,8 @@ var __t3Client = (() => {
     const [major, minor, patch] = parts.map(Number);
     return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
   }
-  function parseVersion(text) {
-    const match = VERSION.exec(text);
+  function parseVersion(text2) {
+    const match = VERSION.exec(text2);
     return match ? toVersion(match.slice(1, 4)) : null;
   }
   function compareVersions(a, b) {
@@ -1218,6 +1218,208 @@ var __t3Client = (() => {
       }
     ]
   });
+
+  // node_modules/@t3tools/extension-sdk/dist/projects.js
+  var PROJECTS_CLONE = "t3.projects/clone";
+  var PROJECTS_CREATE = "t3.projects/create";
+  var SOURCE_CONTROL_DISCOVERY = "t3.source-control/discovery";
+  var SOURCE_CONTROL_READ = "t3.source-control/read";
+  var text = { type: "string", minLength: 1, maxLength: 2048 };
+  var nullable2 = (schema) => ({ anyOf: [schema, { type: "null" }] });
+  var providers = ["github", "gitlab", "forgejo", "azure-devops", "bitbucket"];
+  var providerSchema = { enum: providers };
+  var empty2 = { type: "object", additionalProperties: false, properties: {} };
+  var repositorySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["provider", "nameWithOwner", "url", "sshUrl"],
+    properties: {
+      provider: { enum: [...providers, "unknown"] },
+      nameWithOwner: text,
+      url: text,
+      sshUrl: text
+    }
+  };
+  var receiptProperties = {
+    projectId: text,
+    cwd: text,
+    remoteUrl: text,
+    repository: nullable2(repositorySchema)
+  };
+  var actionInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["projectId"],
+    properties: { projectId: text }
+  };
+  var actionOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var projectsCloneApi = defineStreamApi({
+    id: PROJECTS_CLONE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "destinationName"],
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 256 },
+            destinationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+              pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+            },
+            remoteUrl: text,
+            provider: providerSchema,
+            repository: text,
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: Object.keys(receiptProperties),
+          properties: receiptProperties
+        }
+      },
+      ...["cancel", "retry"].map((name) => ({
+        name,
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: actionInput,
+        outputSchema: actionOutput
+      }))
+    ],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: empty2,
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["clones", "truncated"],
+          properties: {
+            truncated: { type: "boolean" },
+            clones: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "projectId",
+                  "remoteUrl",
+                  "destinationPath",
+                  "repository",
+                  "phase",
+                  "stage",
+                  "percent",
+                  "detail",
+                  "error",
+                  "startedAt",
+                  "endedAt",
+                  "sequence"
+                ],
+                properties: {
+                  projectId: text,
+                  remoteUrl: text,
+                  destinationPath: text,
+                  repository: nullable2(repositorySchema),
+                  phase: { enum: ["running", "done", "failed", "cancelled"] },
+                  stage: { enum: ["connecting", "counting", "receiving", "resolving", "checkout"] },
+                  percent: nullable2({ type: "integer", minimum: 0, maximum: 100 }),
+                  detail: nullable2({ type: "string", maxLength: 200 }),
+                  error: nullable2({ type: "string", maxLength: 1e3 }),
+                  startedAt: text,
+                  endedAt: nullable2(text),
+                  sequence: { type: "integer", minimum: 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
+  var sourceControlDiscoveryApi = defineApi({
+    id: SOURCE_CONTROL_DISCOVERY,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "discover",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: empty2,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["providers"],
+          properties: {
+            providers: {
+              type: "array",
+              maxItems: 6,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "status", "authStatus", "account", "ready", "hint"],
+                properties: {
+                  kind: { enum: [...providers, "unknown"] },
+                  label: text,
+                  status: { enum: ["available", "missing"] },
+                  authStatus: { enum: ["authenticated", "unauthenticated", "unknown"] },
+                  account: nullable2(text),
+                  ready: { type: "boolean" },
+                  hint: nullable2(text)
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "lookupRepository",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository"],
+          properties: { provider: providerSchema, repository: text }
+        },
+        outputSchema: repositorySchema
+      },
+      {
+        name: "listRepositories",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider"],
+          properties: { provider: providerSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repositories", "truncated"],
+          properties: {
+            repositories: { type: "array", maxItems: 20, items: repositorySchema },
+            truncated: { type: "boolean" }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
 
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
@@ -8424,6 +8626,8 @@ var __t3Client = (() => {
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
+    projectsCloneApi.definition,
+    sourceControlDiscoveryApi.definition,
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     orchestrationLogsApi.definition,
@@ -9102,8 +9306,8 @@ var __t3Client = (() => {
     const prefix = marker(firstLine);
     return firstNumber === lastNumber ? `${prefix}${firstNumber}` : `${prefix}${firstNumber} to ${prefix}${lastNumber}`;
   }
-  function neutralizeReviewCommentTags(text) {
-    return text.replace(/<(?=\/?review_comment\b)/giu, "&lt;");
+  function neutralizeReviewCommentTags(text2) {
+    return text2.replace(/<(?=\/?review_comment\b)/giu, "&lt;");
   }
   function markerFor(change) {
     return change === "add" ? "+" : change === "delete" ? "-" : " ";
@@ -9120,11 +9324,11 @@ var __t3Client = (() => {
   function quoteLine(line) {
     return `${markerFor(line.change)}${neutralizeReviewCommentTags(line.content)}`;
   }
-  function cutOnCharacterBoundary(text, maxChars) {
+  function cutOnCharacterBoundary(text2, maxChars) {
     const cut = Math.max(0, maxChars);
-    if (text.length <= cut) return text;
-    const codeUnit = text.charCodeAt(cut - 1);
-    return codeUnit >= 55296 && codeUnit <= 56319 ? text.slice(0, cut - 1) : text.slice(0, cut);
+    if (text2.length <= cut) return text2;
+    const codeUnit = text2.charCodeAt(cut - 1);
+    return codeUnit >= 55296 && codeUnit <= 56319 ? text2.slice(0, cut - 1) : text2.slice(0, cut);
   }
   function buildDiffCommentTarget(options) {
     const { file, rows } = options;
@@ -10133,8 +10337,8 @@ ${prefix}`;
     return `t3.diff:${patch.length}:${hash.toString(36)}`;
   }
   var MAX_EXPANDED_CONTEXT_LINES = 200;
-  function splitLines(text) {
-    const lines = text.split("\n");
+  function splitLines(text2) {
+    const lines = text2.split("\n");
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     return lines;
   }
@@ -10285,11 +10489,11 @@ ${prefix}`;
       for (const segment of hunk.hunkContent) {
         if (segment.type === "context") {
           for (let index = 0; index < segment.lines; index += 1) {
-            const text = lineText2(
+            const text2 = lineText2(
               row.file.additionLines,
               additionLineIndex >= 0 ? additionLineIndex : deletionLineIndex
             );
-            if (lineText2(newLines, newLineNumber - 1) !== text || lineText2(oldLines, oldLineNumber - 1) !== text) {
+            if (lineText2(newLines, newLineNumber - 1) !== text2 || lineText2(oldLines, oldLineNumber - 1) !== text2) {
               return false;
             }
             oldLineNumber += 1;
@@ -10511,12 +10715,12 @@ ${prefix}`;
     }
     return streamOutcome(collected, signal);
   }
-  async function sha256Hex(text) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  async function sha256Hex(text2) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text2));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
-  function utf8Length(text) {
-    return new TextEncoder().encode(text).length;
+  function utf8Length(text2) {
+    return new TextEncoder().encode(text2).length;
   }
   function createPreviewAssembly() {
     return { manifest: null, chunks: [], complete: null };

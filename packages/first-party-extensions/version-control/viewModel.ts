@@ -820,9 +820,7 @@ export interface PublishProviderOption {
 
 /**
  * The publish offer's provider set — `open_publish`'s picker mirrored.
- * Native orders these by a readiness probe (`sourceControl.*` discovery)
- * that no contract exposes, so every concrete provider stays offered and
- * an unconfigured one fails by name at invoke time rather than hiding.
+ * Discovery determines which of these providers are ready to publish.
  */
 export const PUBLISH_PROVIDERS: readonly PublishProviderOption[] = [
   { value: "github", label: "GitHub", pathPlaceholder: "owner/repo" },
@@ -834,6 +832,15 @@ export const PUBLISH_PROVIDERS: readonly PublishProviderOption[] = [
 
 export function publishProviderOption(kind: PrsProviderKind): PublishProviderOption {
   return PUBLISH_PROVIDERS.find((option) => option.value === kind) ?? PUBLISH_PROVIDERS[0];
+}
+
+export function readyPublishProviders<T extends { readonly kind: string; readonly ready: boolean }>(
+  providers: readonly T[],
+) {
+  return providers.filter(
+    (provider): provider is T & { readonly kind: PublishProviderKind } =>
+      provider.ready && PUBLISH_PROVIDERS.some((option) => option.value === provider.kind),
+  );
 }
 
 export interface PublishOffer {

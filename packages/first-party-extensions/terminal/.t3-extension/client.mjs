@@ -174,8 +174,8 @@ var __t3Client = (() => {
     const [major, minor, patch] = parts.map(Number);
     return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
   }
-  function parseVersion(text) {
-    const match = VERSION.exec(text);
+  function parseVersion(text2) {
+    const match = VERSION.exec(text2);
     return match ? toVersion(match.slice(1, 4)) : null;
   }
   function compareVersions(a, b) {
@@ -322,8 +322,8 @@ var __t3Client = (() => {
   }
   var CAPABILITY_DENIED = /capability denied: ([\w.\-/]*[\w\-/])/;
   function describeGrantDenial(error) {
-    const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-    const grant = CAPABILITY_DENIED.exec(text)?.[1];
+    const text2 = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const grant = CAPABILITY_DENIED.exec(text2)?.[1];
     return grant ? { grant, message: grantDenialMessage(grant) } : null;
   }
   function validateRangeText(value) {
@@ -1219,6 +1219,208 @@ var __t3Client = (() => {
       }
     ]
   });
+
+  // node_modules/@t3tools/extension-sdk/dist/projects.js
+  var PROJECTS_CLONE = "t3.projects/clone";
+  var PROJECTS_CREATE = "t3.projects/create";
+  var SOURCE_CONTROL_DISCOVERY = "t3.source-control/discovery";
+  var SOURCE_CONTROL_READ = "t3.source-control/read";
+  var text = { type: "string", minLength: 1, maxLength: 2048 };
+  var nullable2 = (schema) => ({ anyOf: [schema, { type: "null" }] });
+  var providers = ["github", "gitlab", "forgejo", "azure-devops", "bitbucket"];
+  var providerSchema = { enum: providers };
+  var empty2 = { type: "object", additionalProperties: false, properties: {} };
+  var repositorySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["provider", "nameWithOwner", "url", "sshUrl"],
+    properties: {
+      provider: { enum: [...providers, "unknown"] },
+      nameWithOwner: text,
+      url: text,
+      sshUrl: text
+    }
+  };
+  var receiptProperties = {
+    projectId: text,
+    cwd: text,
+    remoteUrl: text,
+    repository: nullable2(repositorySchema)
+  };
+  var actionInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["projectId"],
+    properties: { projectId: text }
+  };
+  var actionOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var projectsCloneApi = defineStreamApi({
+    id: PROJECTS_CLONE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "destinationName"],
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 256 },
+            destinationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+              pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+            },
+            remoteUrl: text,
+            provider: providerSchema,
+            repository: text,
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: Object.keys(receiptProperties),
+          properties: receiptProperties
+        }
+      },
+      ...["cancel", "retry"].map((name) => ({
+        name,
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: actionInput,
+        outputSchema: actionOutput
+      }))
+    ],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: empty2,
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["clones", "truncated"],
+          properties: {
+            truncated: { type: "boolean" },
+            clones: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "projectId",
+                  "remoteUrl",
+                  "destinationPath",
+                  "repository",
+                  "phase",
+                  "stage",
+                  "percent",
+                  "detail",
+                  "error",
+                  "startedAt",
+                  "endedAt",
+                  "sequence"
+                ],
+                properties: {
+                  projectId: text,
+                  remoteUrl: text,
+                  destinationPath: text,
+                  repository: nullable2(repositorySchema),
+                  phase: { enum: ["running", "done", "failed", "cancelled"] },
+                  stage: { enum: ["connecting", "counting", "receiving", "resolving", "checkout"] },
+                  percent: nullable2({ type: "integer", minimum: 0, maximum: 100 }),
+                  detail: nullable2({ type: "string", maxLength: 200 }),
+                  error: nullable2({ type: "string", maxLength: 1e3 }),
+                  startedAt: text,
+                  endedAt: nullable2(text),
+                  sequence: { type: "integer", minimum: 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
+  var sourceControlDiscoveryApi = defineApi({
+    id: SOURCE_CONTROL_DISCOVERY,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "discover",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: empty2,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["providers"],
+          properties: {
+            providers: {
+              type: "array",
+              maxItems: 6,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "status", "authStatus", "account", "ready", "hint"],
+                properties: {
+                  kind: { enum: [...providers, "unknown"] },
+                  label: text,
+                  status: { enum: ["available", "missing"] },
+                  authStatus: { enum: ["authenticated", "unauthenticated", "unknown"] },
+                  account: nullable2(text),
+                  ready: { type: "boolean" },
+                  hint: nullable2(text)
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "lookupRepository",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository"],
+          properties: { provider: providerSchema, repository: text }
+        },
+        outputSchema: repositorySchema
+      },
+      {
+        name: "listRepositories",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider"],
+          properties: { provider: providerSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repositories", "truncated"],
+          properties: {
+            repositories: { type: "array", maxItems: 20, items: repositorySchema },
+            truncated: { type: "boolean" }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
 
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
@@ -8391,6 +8593,8 @@ var __t3Client = (() => {
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
+    projectsCloneApi.definition,
+    sourceControlDiscoveryApi.definition,
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     orchestrationLogsApi.definition,
@@ -8865,14 +9069,14 @@ var __t3Client = (() => {
       if (!currentLine) break;
       const nextLine = getLine(currentBufferLineNumber);
       const hasWrappedContinuation = nextLine?.isWrapped === true;
-      const text = currentLine.translateToString(!hasWrappedContinuation);
+      const text2 = currentLine.translateToString(!hasWrappedContinuation);
       segments.push({
         bufferLineNumber: currentBufferLineNumber,
-        text,
+        text: text2,
         startIndex: nextStartIndex,
-        endIndex: nextStartIndex + text.length
+        endIndex: nextStartIndex + text2.length
       });
-      nextStartIndex += text.length;
+      nextStartIndex += text2.length;
       if (!hasWrappedContinuation) break;
       currentBufferLineNumber += 1;
     }
@@ -9371,16 +9575,16 @@ var __t3Client = (() => {
   function ghosttyCellText(codepointView, graphemeLength) {
     if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(0, true));
     const CHUNK_SIZE = 4096;
-    let text = "";
+    let text2 = "";
     for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
       const count = Math.min(CHUNK_SIZE, graphemeLength - start);
       const codes = new Array(count);
       for (let index = 0; index < count; index += 1) {
         codes[index] = codepointView.getUint32((start + index) * 4, true);
       }
-      text += String.fromCodePoint(...codes);
+      text2 += String.fromCodePoint(...codes);
     }
-    return text;
+    return text2;
   }
   var GhosttyTerminalCore = class _GhosttyTerminalCore {
     runtime;
@@ -9661,8 +9865,8 @@ var __t3Client = (() => {
         this.keyEvent,
         ghosttyUnshiftedCodepoint(event, this.keyboardLayoutMap)
       );
-      const text = event.key.length === 1 ? event.key : "";
-      const textBytes = encoder.encode(text);
+      const text2 = event.key.length === 1 ? event.key : "";
+      const textBytes = encoder.encode(text2);
       const textPointer = textBytes.length === 0 ? 0 : this.runtime.alloc(textBytes.length);
       if (textPointer !== 0) this.runtime.bytes(textPointer, textBytes.length).set(textBytes);
       this.runtime.call("ghostty_key_event_set_utf8", this.keyEvent, textPointer, textBytes.length);
@@ -9945,7 +10149,7 @@ var __t3Client = (() => {
         written
       );
       const outputSize = this.runtime.view(written, 4).getUint32(0, true);
-      let text = "";
+      let text2 = "";
       if (sizeResult === GHOSTTY_OUT_OF_SPACE && outputSize > 0) {
         const output = this.runtime.alloc(outputSize);
         const result = this.runtime.call(
@@ -9958,13 +10162,13 @@ var __t3Client = (() => {
         );
         const outputLength = this.runtime.view(written, 4).getUint32(0, true);
         if (result === GHOSTTY_SUCCESS) {
-          text = decoder.decode(this.runtime.bytes(output, outputLength));
+          text2 = decoder.decode(this.runtime.bytes(output, outputLength));
         }
         this.runtime.free(output, outputSize);
       }
       this.runtime.call("ghostty_wasm_free_usize", written);
       this.runtime.free(options, SELECTION_FORMAT_OPTIONS_SIZE);
-      return text;
+      return text2;
     }
     viewportPointToScreen(col, row) {
       return this.convertPoint(col, row, 1, 2);
@@ -10072,7 +10276,7 @@ var __t3Client = (() => {
           this.style
         );
         const graphemeLength = this.getCellU32(cellsIterator, CELL_DATA.graphemesLength);
-        let text = "";
+        let text2 = "";
         if (graphemeLength > 0) {
           const bufferSize = graphemeLength * 4;
           if (bufferSize > this.graphemeCapacity) {
@@ -10089,11 +10293,11 @@ var __t3Client = (() => {
             this.graphemes
           ) === GHOSTTY_SUCCESS) {
             const codepointView = this.runtime.view(this.graphemes, bufferSize);
-            text = ghosttyCellText(codepointView, graphemeLength);
+            text2 = ghosttyCellText(codepointView, graphemeLength);
           }
         }
         let wide = 0;
-        if (text.length === 0 && cells.at(-1)?.text.length) {
+        if (text2.length === 0 && cells.at(-1)?.text.length) {
           this.assertSuccess(
             "ghostty_render_state_row_cells_get(raw)",
             this.runtime.call(
@@ -10120,7 +10324,7 @@ var __t3Client = (() => {
           foreground = blend(foreground, background);
         }
         cells.push({
-          text,
+          text: text2,
           wide,
           foreground,
           background,
@@ -10427,8 +10631,8 @@ var __t3Client = (() => {
           continue;
         }
         const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
-        const text = row.cells.slice(runStart, runEnd).map((cell) => cell.text).join("");
-        if (!first.invisible && text.trim().length > 0) {
+        const text2 = row.cells.slice(runStart, runEnd).map((cell) => cell.text).join("");
+        if (!first.invisible && text2.trim().length > 0) {
           context.save();
           context.beginPath();
           context.rect(
@@ -10441,7 +10645,7 @@ var __t3Client = (() => {
           context.font = fontForCell(first, fontSize, fontFamily);
           context.fillStyle = cssColor(first.foreground);
           context.fillText(
-            text,
+            text2,
             padding + runStart * metrics.width,
             top + metrics.baseline,
             (runEnd - runStart) * metrics.width
@@ -10586,7 +10790,7 @@ var __t3Client = (() => {
   }
   async function loadTerminalFontFamily(family, size, environment) {
     const candidate = uncheckedTerminalFontFamily(family);
-    const load = environment?.load ?? ((font, text) => document.fonts.load(font, text));
+    const load = environment?.load ?? ((font, text2) => document.fonts.load(font, text2));
     try {
       await Promise.all(
         TERMINAL_FONT_LOAD_VARIANTS.map(
@@ -10647,8 +10851,8 @@ var __t3Client = (() => {
     };
   }
   function terminalRowText(row, trimRight) {
-    const text = row.cells.map((cell) => cell.text || " ").join("");
-    return trimRight ? text.trimEnd() : text;
+    const text2 = row.cells.map((cell) => cell.text || " ").join("");
+    return trimRight ? text2.trimEnd() : text2;
   }
   function terminalColumnOffset(row, column) {
     let offset = 0;
@@ -11157,11 +11361,11 @@ var __t3Client = (() => {
      */
     async pasteFromClipboard(readText, isCurrent = () => true) {
       const token = ++this.pasteShortcutToken;
-      const text = await readText();
+      const text2 = await readText();
       if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
       this.pasteShortcutToken += 1;
-      if (text.length === 0) return;
-      const encoded = this.core.encodePaste(text);
+      if (text2.length === 0) return;
+      const encoded = this.core.encodePaste(text2);
       if (encoded.length > 0) this.options.onData(encoded);
     }
     /**
@@ -11288,10 +11492,10 @@ var __t3Client = (() => {
         if (typeof clipboard?.readText === "function") {
           const token = ++this.pasteShortcutToken;
           void clipboard.readText().then(
-            (text) => {
+            (text2) => {
               if (this.disposed || this.pasteShortcutToken !== token) return;
               this.pasteShortcutToken += 1;
-              if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+              if (text2.length > 0) this.options.onData(this.core.encodePaste(text2));
             },
             () => {
             }
@@ -13608,14 +13812,14 @@ var __t3Client = (() => {
     return { lineStart, lineEnd: Math.max(lineStart, position.end.y + 1) };
   }
   function buildTerminalChatSelection(input) {
-    const text = normalizeSelectionText(input.text);
-    if (input.position === null || text.length === 0) return null;
+    const text2 = normalizeSelectionText(input.text);
+    if (input.position === null || text2.length === 0) return null;
     const label = input.terminalLabel.trim() || "Terminal";
     return {
       terminalId: input.terminalId,
       terminalLabel: truncateUtf16(label, TERMINAL_CHAT_LABEL_MAX_CHARS),
       ...terminalSelectionLineRange(input.position),
-      text
+      text: text2
     };
   }
   function terminalChatSelectionError(selection) {
@@ -13814,17 +14018,17 @@ var __t3Client = (() => {
     if (chatSelection !== null) return items;
     return items.map((item) => item.id === "add-to-chat" ? { ...item, disabled: true } : item);
   }
-  function truncateUtf16(text, max) {
-    if (text.length <= max) return text;
-    const cut = text.slice(0, max);
+  function truncateUtf16(text2, max) {
+    if (text2.length <= max) return text2;
+    const cut = text2.slice(0, max);
     return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
   }
-  function normalizeSelectionText(text) {
-    return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+  function normalizeSelectionText(text2) {
+    return text2.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
   }
-  function nonEmpty(text) {
-    if (text === null) return null;
-    return normalizeSelectionText(text).length > 0 ? text : null;
+  function nonEmpty(text2) {
+    if (text2 === null) return null;
+    return normalizeSelectionText(text2).length > 0 ? text2 : null;
   }
 
   // selectionMenu.tsx
@@ -14034,18 +14238,18 @@ var __t3Client = (() => {
       this.timer = this.frame = null;
     }
   };
-  async function copyText(text, surface) {
+  async function copyText(text2, surface) {
     let failure = new Error("Clipboard writes are unavailable in this browser.");
     const clipboard = navigator.clipboard;
     if (typeof clipboard?.writeText === "function") {
       try {
-        await clipboard.writeText(text);
+        await clipboard.writeText(text2);
         return;
       } catch (error) {
         failure = error;
       }
     }
-    if (surface.hasSelection() && surface.getSelection() === text) {
+    if (surface.hasSelection() && surface.getSelection() === text2) {
       surface.focus();
       if (document.execCommand("copy")) return;
     }
@@ -15641,7 +15845,7 @@ var __t3Client = (() => {
           onSelectionChange: selectionMenu.onSelectionChange,
           onContextMenu: selectionMenu.onContextMenu,
           beforeKey: (event) => handleBeforeKey(event, panel, terminalId, host.keybindings, editingBinding.current),
-          onLinkActivate: (text, event) => {
+          onLinkActivate: (text2, event) => {
             if (surface === null) return;
             const paneSurface = surface;
             const signal = session.signal;
@@ -15649,22 +15853,22 @@ var __t3Client = (() => {
               if (failure !== null && !signal.aborted && surfaceRef.current === paneSurface)
                 writeSystemMessage(paneSurface, failure);
             };
-            if (isTerminalUrl(text)) {
+            if (isTerminalUrl(text2)) {
               const forceSystem = event.metaKey || event.ctrlKey;
               void openTerminalUrl(
                 (url) => openExternalLink(host, session.context, url, { forceSystem, signal }),
-                text
+                text2
               ).then(report);
               return;
             }
             const workspace = workspaceLaunchFromRevision(session.context.workspaceRevision);
             if (workspace === null) {
-              report(`${text} cannot be opened \u2014 the workspace is not available.`);
+              report(`${text2} cannot be opened \u2014 the workspace is not available.`);
               return;
             }
             void openTerminalPath(
               bindApi(uiEditorApi, host, session.context),
-              text,
+              text2,
               workspace.cwd,
               signal
             ).then(report);

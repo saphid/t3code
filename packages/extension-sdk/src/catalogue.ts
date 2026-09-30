@@ -22,6 +22,7 @@ import { compareVersions, parseVersion, type Version } from "./semver.js";
 import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
+import { projectsCloneApi, sourceControlDiscoveryApi } from "./projects.js";
 import {
   themeProviderStateSchema,
   terminalAppearanceSchema,
@@ -52,6 +53,7 @@ import {
 
 export * from "./workspaceResources.js";
 export * from "./agentSessions.js";
+export * from "./projects.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,
@@ -10030,6 +10032,8 @@ export const orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPrevie
 export const ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
 
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
+  projectsCloneApi.definition,
+  sourceControlDiscoveryApi.definition,
   orchestrationStatusApi.definition,
   orchestrationControlApi.definition,
   orchestrationLogsApi.definition,

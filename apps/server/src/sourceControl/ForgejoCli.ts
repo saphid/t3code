@@ -630,7 +630,8 @@ export const make = Effect.gen(function* () {
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
     const repository = yield* resolveTarget(
       input,
-      input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
+      ["user", "user/repos"].includes(input.path.replace(/^\/+/, "").split("?")[0] ?? "") &&
+        (!input.method || input.method === "GET"),
     );
     const stdin =
       input.body === undefined

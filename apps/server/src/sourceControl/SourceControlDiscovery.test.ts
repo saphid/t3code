@@ -912,6 +912,12 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
     const cli = yield* ForgejoCli.make;
     const viewer = yield* cli.api({ cwd: "/upstream-only", host: "code.test", path: "user" });
     assert.strictEqual(viewer.stdout, "[]");
+    const repositories = yield* cli.api({
+      cwd: "/upstream-only",
+      host: "code.test",
+      path: "user/repos?limit=21",
+    });
+    assert.strictEqual(repositories.stdout, "[]");
     const mountedRepository = yield* cli.resolveRepository({
       cwd: "/upstream-only",
       host: "code.test",
@@ -987,11 +993,12 @@ it.effect("routes mounted Forgejo repositories without repeating the mount in AP
             );
           const supported = [
             "https://code.test/forgejo/api/v1/user",
+            "https://code.test/forgejo/api/v1/user/repos?limit=21",
             "https://code.test/forgejo/api/v1/repos/maria/project/pulls?state=open",
             "https://code.test/forgejo/api/v1/repos/maria/project",
             "https://code.test/forgejo/api/v1/repos/reviewer/project/contents/file.ts",
           ];
-          if (input.args.at(-1)?.endsWith("/user")) assert.notInclude(input.args, "--repo");
+          if (input.args.at(-1)?.includes("/api/v1/user")) assert.notInclude(input.args, "--repo");
           assert.strictEqual(input.command, "tea");
           return Effect.succeed(
             supported.includes(input.args.at(-1) ?? "")

@@ -58,6 +58,8 @@ import { makeTextEditsApiProvider } from "./textEditsApi.ts";
 import { makeWorkspaceResourcesApiProvider } from "./workspaceResourcesApi.ts";
 import { makeResourcesLeaseApiProvider } from "./resourcesLeaseApi.ts";
 import { makeVcsApiProviders } from "./vcsApi.ts";
+import { makeProjectsCloneApiProvider } from "./projectsCloneApi.ts";
+import { makeSourceControlDiscoveryApiProvider } from "./sourceControlDiscoveryApi.ts";
 import { makePrHandoffClient, makeVcsActionsApiProvider } from "./vcsActionsApi.ts";
 import { makeVcsDiffApiProvider } from "./vcsDiffApi.ts";
 import { makeComposerApiProviders } from "./composerApi.ts";
@@ -125,6 +127,8 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
   const textEditsApi = yield* makeTextEditsApiProvider();
   const workspaceResourcesApi = yield* makeWorkspaceResourcesApiProvider();
   const vcsApis = yield* makeVcsApiProviders();
+  const projectsCloneApi = yield* makeProjectsCloneApiProvider();
+  const sourceControlDiscoveryApi = yield* makeSourceControlDiscoveryApiProvider();
   const vcsDiffApi = yield* makeVcsDiffApiProvider();
   // Built inside this service so the client-provider registry is shared by
   // the WS handlers (via this service's `clientApiProviders` field) and the
@@ -253,6 +257,8 @@ export const make = Effect.fn("EnvironmentExtensions.make")(function* (
             terminalOutputEventsApi,
             terminalControlApi,
             ...vcsApis,
+            projectsCloneApi,
+            sourceControlDiscoveryApi,
             vcsActionsApi,
             vcsDiffApi,
             ...orchestrationApis,

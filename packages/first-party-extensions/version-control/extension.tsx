@@ -9,6 +9,8 @@ import {
   vcsRefsApi,
   vcsRepositoryApi,
   vcsStatusApi,
+  projectsCloneApi,
+  sourceControlDiscoveryApi,
   type PrsRef,
   type VcsActionKind,
   type VcsActionsCapabilitiesResult,
@@ -30,7 +32,6 @@ import {
   IDLE_MUTATION,
   IDLE_STACKED_PROGRESS,
   COMMIT_FOLLOW_UP,
-  PUBLISH_PROVIDERS,
   applyStackedEvent,
   applyStatusEvent,
   canWorktreeRef,
@@ -57,6 +58,7 @@ import {
   planWorktreeCreate,
   publishOffer,
   publishProviderOption,
+  readyPublishProviders,
   pullState,
   pushState,
   refRows,
@@ -91,6 +93,7 @@ import {
 } from "./viewModel.js";
 import { PullRequestsPanel } from "./prsPanel.js";
 import { useMutationToasts } from "./mutationToasts.js";
+import { CloneRepositoryPanel, useSourceControlDiscovery } from "./clonePanel.js";
 
 const manifestId = "t3.version-control";
 
@@ -519,7 +522,8 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   // carries (provider, owner/name path, visibility, remote name,
   // protocol).
   const [publishOpen, setPublishOpen] = useState(false);
-  const [publishProvider, setPublishProvider] = useState<PublishProviderKind>("github");
+  const [selectedPublishProvider, setPublishProvider] = useState<PublishProviderKind>("github");
+  const [cloneOpen, setCloneOpen] = useState(false);
   const [publishRepositoryPath, setPublishRepositoryPath] = useState("");
   const [publishVisibility, setPublishVisibility] = useState<"private" | "public">("private");
   const [publishRemoteName, setPublishRemoteName] = useState("origin");
@@ -534,6 +538,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const inFlight = useRef(false);
   useEffect(() => session.onVisibility(setVisible), [session]);
   const themeVars = useThemeVars(host, session, visible);
+  const discovery = useSourceControlDiscovery(host, session, visible);
+  const readyProviders = readyPublishProviders(discovery.providers);
+  const publishProvider = readyProviders.some(
+    (provider) => provider.kind === selectedPublishProvider,
+  )
+    ? selectedPublishProvider
+    : (readyProviders[0]?.kind ?? "github");
 
   const restored =
     session.restoreState &&
@@ -648,7 +659,10 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
   const canPublish = actionCaps.capabilities?.operations["actions.publishRepository"] === true;
   // The offer tracks repository state: a repo without an "origin" remote
   // (native's menu condition), disabled by name on a detached HEAD.
-  const publish = canPublish ? publishOffer(status.local) : { offered: false, disabled: null };
+  const publish =
+    canPublish && readyProviders.length > 0
+      ? publishOffer(status.local)
+      : { offered: false, disabled: null };
   const publishPlan = planPublish({
     repository: publishRepositoryPath,
     remoteName: publishRemoteName,
@@ -926,7 +940,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
    * state, and the offer disappears once `hasPrimaryRemote` flips.
    */
   const runPublish = () => {
-    if (publishPlan.disabled !== null || publishPlan.repository === null) return;
+    if (
+      !publish.offered ||
+      publish.disabled !== null ||
+      publishPlan.disabled !== null ||
+      publishPlan.repository === null
+    )
+      return;
     const repository = publishPlan.repository;
     const remoteName = publishPlan.remoteName;
     runMutation("publish", "Publishing repository", (signal) =>
@@ -1083,6 +1103,17 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           alignItems: "center",
         }}
       >
+        <button
+          type="button"
+          aria-expanded={cloneOpen}
+          onClick={() => setCloneOpen((value) => !value)}
+          style={control}
+        >
+          Clone repository…
+        </button>
+        <button type="button" onClick={discovery.refresh} style={control}>
+          Rescan providers
+        </button>
         <span
           role="group"
           aria-label="Panel view"
@@ -1125,6 +1156,19 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
           <span style={{ color: muted, fontSize: 12 }}>{refreshError ?? headerStatus}</span>
         )}
       </header>
+      {cloneOpen && (
+        <CloneRepositoryPanel
+          host={host}
+          session={session}
+          discovery={discovery}
+          visible={visible}
+        />
+      )}
+      {discovery.error && (
+        <span role="alert" style={{ padding: 8, color: muted }}>
+          {discovery.error}
+        </span>
+      )}
 
       {view === "pull-requests" && (
         <PullRequestsPanel
@@ -1254,9 +1298,9 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
                       }
                       style={{ ...control, padding: "2px 4px" }}
                     >
-                      {PUBLISH_PROVIDERS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
+                      {readyProviders.map((provider) => (
+                        <option key={provider.kind} value={provider.kind}>
+                          {provider.label}
                         </option>
                       ))}
                     </select>
@@ -2242,7 +2286,7 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
         (actions, comments, reviews, thread reply/resolve — t3.prs/write), status, staging lanes,
         stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes
         (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions).
-        Clone/discovery, stash, and per-hunk diff expansion are deferred slices.
+        Stash and per-hunk diff expansion are deferred slices.
       </output>
     </section>
   );
@@ -2250,11 +2294,13 @@ function VersionControlView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.5.0",
+  version: "0.6.0",
   requires: [
     requireApi(prsReadApi),
     requireApi(prsWriteApi),
     requireApi(vcsActionsApi),
+    requireApi(projectsCloneApi),
+    requireApi(sourceControlDiscoveryApi),
     requireApi(vcsStatusApi),
     requireApi(vcsChangesApi, CHANGES_API_RANGE),
     requireApi(vcsRefsApi),

@@ -191,8 +191,8 @@ var __t3Client = (() => {
     const [major, minor, patch] = parts.map(Number);
     return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
   }
-  function parseVersion(text) {
-    const match4 = VERSION.exec(text);
+  function parseVersion(text2) {
+    const match4 = VERSION.exec(text2);
     return match4 ? toVersion(match4.slice(1, 4)) : null;
   }
   function compareVersions(a, b) {
@@ -339,8 +339,8 @@ var __t3Client = (() => {
   }
   var CAPABILITY_DENIED = /capability denied: ([\w.\-/]*[\w\-/])/;
   function describeGrantDenial(error) {
-    const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-    const grant = CAPABILITY_DENIED.exec(text)?.[1];
+    const text2 = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const grant = CAPABILITY_DENIED.exec(text2)?.[1];
     return grant ? { grant, message: grantDenialMessage(grant) } : null;
   }
   function validateRangeText(value) {
@@ -1236,6 +1236,208 @@ var __t3Client = (() => {
       }
     ]
   });
+
+  // node_modules/@t3tools/extension-sdk/dist/projects.js
+  var PROJECTS_CLONE = "t3.projects/clone";
+  var PROJECTS_CREATE = "t3.projects/create";
+  var SOURCE_CONTROL_DISCOVERY = "t3.source-control/discovery";
+  var SOURCE_CONTROL_READ = "t3.source-control/read";
+  var text = { type: "string", minLength: 1, maxLength: 2048 };
+  var nullable2 = (schema) => ({ anyOf: [schema, { type: "null" }] });
+  var providers = ["github", "gitlab", "forgejo", "azure-devops", "bitbucket"];
+  var providerSchema = { enum: providers };
+  var empty2 = { type: "object", additionalProperties: false, properties: {} };
+  var repositorySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["provider", "nameWithOwner", "url", "sshUrl"],
+    properties: {
+      provider: { enum: [...providers, "unknown"] },
+      nameWithOwner: text,
+      url: text,
+      sshUrl: text
+    }
+  };
+  var receiptProperties = {
+    projectId: text,
+    cwd: text,
+    remoteUrl: text,
+    repository: nullable2(repositorySchema)
+  };
+  var actionInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["projectId"],
+    properties: { projectId: text }
+  };
+  var actionOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var projectsCloneApi = defineStreamApi({
+    id: PROJECTS_CLONE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "destinationName"],
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 256 },
+            destinationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+              pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+            },
+            remoteUrl: text,
+            provider: providerSchema,
+            repository: text,
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: Object.keys(receiptProperties),
+          properties: receiptProperties
+        }
+      },
+      ...["cancel", "retry"].map((name) => ({
+        name,
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: actionInput,
+        outputSchema: actionOutput
+      }))
+    ],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: empty2,
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["clones", "truncated"],
+          properties: {
+            truncated: { type: "boolean" },
+            clones: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "projectId",
+                  "remoteUrl",
+                  "destinationPath",
+                  "repository",
+                  "phase",
+                  "stage",
+                  "percent",
+                  "detail",
+                  "error",
+                  "startedAt",
+                  "endedAt",
+                  "sequence"
+                ],
+                properties: {
+                  projectId: text,
+                  remoteUrl: text,
+                  destinationPath: text,
+                  repository: nullable2(repositorySchema),
+                  phase: { enum: ["running", "done", "failed", "cancelled"] },
+                  stage: { enum: ["connecting", "counting", "receiving", "resolving", "checkout"] },
+                  percent: nullable2({ type: "integer", minimum: 0, maximum: 100 }),
+                  detail: nullable2({ type: "string", maxLength: 200 }),
+                  error: nullable2({ type: "string", maxLength: 1e3 }),
+                  startedAt: text,
+                  endedAt: nullable2(text),
+                  sequence: { type: "integer", minimum: 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
+  var sourceControlDiscoveryApi = defineApi({
+    id: SOURCE_CONTROL_DISCOVERY,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "discover",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: empty2,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["providers"],
+          properties: {
+            providers: {
+              type: "array",
+              maxItems: 6,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "status", "authStatus", "account", "ready", "hint"],
+                properties: {
+                  kind: { enum: [...providers, "unknown"] },
+                  label: text,
+                  status: { enum: ["available", "missing"] },
+                  authStatus: { enum: ["authenticated", "unauthenticated", "unknown"] },
+                  account: nullable2(text),
+                  ready: { type: "boolean" },
+                  hint: nullable2(text)
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "lookupRepository",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository"],
+          properties: { provider: providerSchema, repository: text }
+        },
+        outputSchema: repositorySchema
+      },
+      {
+        name: "listRepositories",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider"],
+          properties: { provider: providerSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repositories", "truncated"],
+          properties: {
+            repositories: { type: "array", maxItems: 20, items: repositorySchema },
+            truncated: { type: "boolean" }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
 
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
@@ -8410,6 +8612,8 @@ var __t3Client = (() => {
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
+    projectsCloneApi.definition,
+    sourceControlDiscoveryApi.definition,
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     orchestrationLogsApi.definition,
@@ -10892,7 +11096,7 @@ ${ind(d)}}`;
   var isArray = Array2.isArray;
   var isArrayNonEmpty2 = isArrayNonEmpty;
   var isReadonlyArrayNonEmpty = isArrayNonEmpty;
-  var empty2 = () => [];
+  var empty3 = () => [];
   var map2 = /* @__PURE__ */ dual(2, (self, f) => self.map(f));
 
   // node_modules/effect/dist/Effectable.js
@@ -11029,7 +11233,7 @@ ${ind(d)}}`;
   var hasSameCache = (self, that) => self.cacheRoot === that.cacheRoot;
   var isContext = (u) => hasProperty(u, TypeId3);
   var isReference = (u) => !!u[ReferenceTypeId];
-  var empty3 = () => emptyContext2;
+  var empty4 = () => emptyContext2;
   var emptyContext2 = /* @__PURE__ */ makeUnsafe(/* @__PURE__ */ new Map());
   var make = (key, service2) => makeUnsafe(/* @__PURE__ */ new Map([[key.key, service2]]));
   var add = /* @__PURE__ */ dual(3, (self, key, service2) => addUnsafe(self, key.key, service2));
@@ -11534,7 +11738,7 @@ ${ind(d)}}`;
       }
       this._stack.length = 0;
       this._children = void 0;
-      this.context = empty3();
+      this.context = empty4();
     }
     runLoop(effect) {
       const prevFiber = globalThis[currentFiberTypeId];
@@ -11686,7 +11890,7 @@ ${ind(d)}}`;
   });
   var fiberInterruptAll = (fibers) => withFiber((parent) => {
     const annotations = fiberStackAnnotations(parent);
-    let fiberArr = empty2();
+    let fiberArr = empty3();
     for (const fiber2 of fibers) {
       fiber2.interruptUnsafe(parent.id, annotations);
       fiberArr.push(fiber2);
@@ -12194,7 +12398,7 @@ ${ind(d)}}`;
       return fiber2._exit ?? exitDie(new AsyncFiberError(fiber2));
     };
   };
-  var runSyncExit = /* @__PURE__ */ runSyncExitWith(/* @__PURE__ */ empty3());
+  var runSyncExit = /* @__PURE__ */ runSyncExitWith(/* @__PURE__ */ empty4());
   var MAX_TIMER_MILLIS = 2 ** 31 - 1;
   var TimeoutErrorTypeId = "~effect/Cause/TimeoutError";
   var TimeoutError = class extends (/* @__PURE__ */ TaggedError("TimeoutError")) {
@@ -13405,7 +13609,7 @@ ${ind(d)}}`;
             }
           }
         } else if (parseIndexes) {
-          const keyPairs = empty2();
+          const keyPairs = empty3();
           for (let i = 0; i < indexCount; i++) {
             const index = indexes[i];
             const keys = indexKeys?.[i] ?? (index.is.parameter === string2 ? Object.keys(record2) : getIndexSignatureKeys(record2, index.is.parameter, options));
@@ -15348,20 +15552,20 @@ ${ind(d)}}`;
     "AssetWorkspaceRootNormalizationError"
   ];
   function fileOpenErrorState(error) {
-    const text = error instanceof Error ? error.message : String(error);
+    const text2 = error instanceof Error ? error.message : String(error);
     for (const denial of LEASE_DENIALS)
-      if (text.includes(denial.name)) return fail6(denial.reason, denial.message);
-    if (CONTEXT_ERRORS.some((name) => text.includes(name)))
+      if (text2.includes(denial.name)) return fail6(denial.reason, denial.message);
+    if (CONTEXT_ERRORS.some((name) => text2.includes(name)))
       return fail6(
         "context-missing",
         "Cannot open the file \u2014 the thread's workspace could not be resolved."
       );
-    if (/\bAPI unavailable\b/.test(text))
+    if (/\bAPI unavailable\b/.test(text2))
       return fail6(
         "mint-unsupported",
         "Cannot open workspace files \u2014 this environment has no t3.resources/lease provider."
       );
-    return fail6("unavailable", `Cannot open the file${text ? ` \u2014 ${text.slice(0, 300)}` : ""}.`);
+    return fail6("unavailable", `Cannot open the file${text2 ? ` \u2014 ${text2.slice(0, 300)}` : ""}.`);
   }
   async function mintWorkspaceFileUrl(input) {
     const ref = fileLeaseRef(input.threadId, input.relativePath);
@@ -15968,7 +16172,7 @@ ${ind(d)}}`;
     return { kind: "ready", servers, truncated };
   }
   function localServersErrorState(error) {
-    const text = error instanceof Error ? error.message : String(error);
+    const text2 = error instanceof Error ? error.message : String(error);
     const denial = describeGrantDenial(error);
     if (denial)
       return {
@@ -15978,7 +16182,7 @@ ${ind(d)}}`;
       };
     return {
       kind: "unavailable",
-      message: `Local servers are unavailable${text ? ` \u2014 ${text.slice(0, 300)}` : ""}.`
+      message: `Local servers are unavailable${text2 ? ` \u2014 ${text2.slice(0, 300)}` : ""}.`
     };
   }
   var LOCAL_SERVERS_CLOSED_MESSAGE = "Local server discovery stopped \u2014 the environment's port scanner is unavailable.";
@@ -16083,8 +16287,8 @@ ${ind(d)}}`;
 
   // projectHistory.ts
   function projectHistoryErrorState(op, error) {
-    const text = error instanceof Error ? error.message : String(error);
-    if (text.includes("capability denied")) {
+    const text2 = error instanceof Error ? error.message : String(error);
+    if (text2.includes("capability denied")) {
       const grant = describeGrantDenial(error)?.grant ?? (op === "list" ? BROWSER_READ_HISTORY : BROWSER_RECORD_HISTORY);
       return {
         kind: "unavailable",
@@ -16093,7 +16297,7 @@ ${ind(d)}}`;
     }
     return {
       kind: "unavailable",
-      message: `Showing this view's history only \u2014 project history is unavailable${text ? ` (${text.slice(0, 300)})` : ""}.`
+      message: `Showing this view's history only \u2014 project history is unavailable${text2 ? ` (${text2.slice(0, 300)})` : ""}.`
     };
   }
   function displayedHistory(state2, own) {
@@ -16222,25 +16426,25 @@ ${ind(d)}}`;
   };
   function pageCommandErrorMessage(method, error) {
     const label = VERB_LABELS[method];
-    const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const text2 = error instanceof Error ? error.message : typeof error === "string" ? error : "";
     const denial = describeGrantDenial(error);
     if (denial) return `${label} \u2014 ${denial.message}`;
-    if (text.includes("BrowserSessionNotOwned"))
+    if (text2.includes("BrowserSessionNotOwned"))
       return `${label} is only available on pages this panel opened (not-owned).`;
-    if (text.includes("(engine-unsupported)"))
+    if (text2.includes("(engine-unsupported)"))
       return `${label} is not supported by the browser engine rendering this page (engine-unsupported).`;
-    if (text.includes("BrowserSessionEngineDetached"))
+    if (text2.includes("BrowserSessionEngineDetached"))
       return `${label} was not sent: no desktop engine has attached this page yet (no-attached-engine).`;
-    if (text.includes("BrowserSessionCommandUnsupported"))
+    if (text2.includes("BrowserSessionCommandUnsupported"))
       return `${label} needs the T3 Code desktop app, where the page renders (desktop-required).`;
-    if (text.includes("BrowserStaleEngineGeneration"))
+    if (text2.includes("BrowserStaleEngineGeneration"))
       return `${label} was not sent: the page's engine was replaced (stale-generation). Try again.`;
-    if (text.includes("BrowserSessionNotFound"))
+    if (text2.includes("BrowserSessionNotFound"))
       return `${label} was not sent: the session is gone (session-not-found).`;
-    const engineNotLive = /BrowserSessionEngineNotLive:.*\(([a-z-]+)\)/.exec(text);
+    const engineNotLive = /BrowserSessionEngineNotLive:.*\(([a-z-]+)\)/.exec(text2);
     if (engineNotLive)
       return `${label} needs a live page; the page's engine is not live (${engineNotLive[1]}).`;
-    return `${label} failed \u2014 ${text || "unknown error"}`;
+    return `${label} failed \u2014 ${text2 || "unknown error"}`;
   }
   function pageReceiptMessage(method, outcome) {
     const label = VERB_LABELS[method];
@@ -16624,23 +16828,23 @@ ${ind(d)}}`;
     return profileLabel(list, profileId);
   }
   function profileFailureMessage(action, error) {
-    const text = error instanceof Error ? error.message : String(error);
+    const text2 = error instanceof Error ? error.message : String(error);
     const label = ACTION_LABEL[action];
     const denial = describeGrantDenial(error);
     if (denial) return `${label} \u2014 ${denial.message}`;
-    if (text.includes("(desktop-required)")) {
+    if (text2.includes("(desktop-required)")) {
       return `${label} needs the T3 Code desktop app \u2014 no desktop browser engine is connected (desktop-required).`;
     }
-    if (text.includes("(engine-unsupported)")) {
+    if (text2.includes("(engine-unsupported)")) {
       return `${label} is not supported by this desktop's browser engine (engine-unsupported).`;
     }
-    if (text.includes("BrowserProfileNotFound")) {
+    if (text2.includes("BrowserProfileNotFound")) {
       return `${label} failed \u2014 that browser profile no longer exists (profile-not-found).`;
     }
-    if (text.includes("BrowserProfilesUnavailable")) {
+    if (text2.includes("BrowserProfilesUnavailable")) {
       return `${label} failed \u2014 the desktop did not answer in time (unknown).`;
     }
-    return `${label} failed${text ? ` \u2014 ${text.slice(0, 300)}` : ""}.`;
+    return `${label} failed${text2 ? ` \u2014 ${text2.slice(0, 300)}` : ""}.`;
   }
   function clearResultMessage(result2, kind, profileName) {
     const what = kind === "clearCookies" ? "cookies" : "the cache";

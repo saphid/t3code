@@ -21,9 +21,9 @@ const packageDir = NodeURL.fileURLToPath(new URL(".", import.meta.url));
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 /** Bundles `prsPanel.tsx` once and imports its exports. */
-export async function loadPrsPanel() {
+export async function loadPrsPanel(entryPoint = "prsPanel.tsx") {
   const built = await build({
-    entryPoints: [NodePath.join(packageDir, "prsPanel.tsx")],
+    entryPoints: [NodePath.join(packageDir, entryPoint)],
     bundle: true,
     write: false,
     jsx: "automatic",

@@ -4,6 +4,14 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProviderService } from "../provider/Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../provider/Services/ProviderSessionDirectory.ts";
 import { AgentSessionScanner } from "../project/AgentSessionScanner.ts";
+import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
+import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
+import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
+import { GitHubCli } from "../sourceControl/GitHubCli.ts";
+import { GitLabCli } from "../sourceControl/GitLabCli.ts";
+import { ForgejoCli } from "../sourceControl/ForgejoCli.ts";
+import { AzureDevOpsCli } from "../sourceControl/AzureDevOpsCli.ts";
+import { BitbucketApi } from "../sourceControl/BitbucketApi.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { PortDiscovery } from "../preview/PortScanner.ts";
 import * as ExtensionCatalogueChanges from "./catalogueChanges.ts";
@@ -309,6 +317,14 @@ function fixture() {
       listByThreadId: () => Effect.succeed([]),
     }),
     Layer.mock(VcsStatusBroadcaster)({}),
+    Layer.mock(ProjectCloneTracker)({}),
+    Layer.mock(RepositoryIdentityResolver)({}),
+    Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => undefined }),
+    Layer.mock(GitHubCli)({}),
+    Layer.mock(GitLabCli)({}),
+    Layer.mock(ForgejoCli)({}),
+    Layer.mock(AzureDevOpsCli)({}),
+    Layer.mock(BitbucketApi)({}),
     Layer.mock(GitWorkflowService)({}),
     Layer.mock(GitVcsDriver)({}),
     Layer.mock(VcsDriverRegistry)({}),
