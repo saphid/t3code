@@ -36,6 +36,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddressInput, committedAddress } from "./addressInput.js";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import { BrowserCaptureButtons } from "./annotateButton.js";
 import { capturePageView } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
@@ -256,6 +257,11 @@ function restoreState(value: unknown): value is PersistedViewState | null {
  * source of engine/navigation truth.
  */
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
+  const kit = resolveUiKit(props.host);
+  const ChromeButton = kit?.Button ?? "button";
+  const chromeProps = kit
+    ? { variant: "ghost" as const, size: "icon-xs" as const }
+    : { "data-t3-browser-fallback-control": "" };
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
   const [state, setState] = useState<NavigationState>(() =>
@@ -1063,6 +1069,48 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
+  const ChromeToolbar = kit?.Toolbar ?? "header";
+  const NavigationGroup = kit?.Toolbar ?? "div";
+  const toggleDeviceToolbar = () => {
+    if (!viewportSetting) return;
+    void commitViewportChange(
+      viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize),
+    );
+  };
+  const captureButtons = (
+    <BrowserCaptureButtons
+      kit={kit}
+      host={host}
+      session={session}
+      held={held}
+      page={capturePage}
+      onStatus={setNotice}
+      style={buttonStyle}
+    />
+  );
+  const externalButton = (
+    <Tooltip host={host} label="Open in system browser">
+      <ChromeButton
+        {...chromeProps}
+        type="button"
+        aria-label="Open in system browser"
+        disabled={externalTarget === null}
+        style={kit ? undefined : buttonStyle}
+        onClick={() => {
+          if (externalTarget === null) return;
+          void openExternally(
+            bindApi(uiExternalApi, host, session.context),
+            externalTarget,
+            session.signal,
+          ).then((fault) => {
+            if (fault !== null && !session.signal.aborted) setNotice(fault);
+          });
+        }}
+      >
+        {kit ? <kit.Icon name="external" /> : "↗"}
+      </ChromeButton>
+    </Tooltip>
+  );
   const surfaceNotice =
     epochChangedPresentation || surfaceDenial?.reason === "host-unavailable"
       ? null
@@ -1096,95 +1144,100 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           with a 1px canvas gap on focus-visible, matching the native address
           wrapper instead of the browser default 1px auto outline. */}
       <style>
-        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`[data-t3-browser-fallback-control]:focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
-      <header
-        style={{
-          display: "flex",
-          gap: 6,
-          padding: 8,
-          borderBottom: border,
-          flexShrink: 0,
-          alignItems: "center",
-        }}
+      <ChromeToolbar
+        style={
+          kit
+            ? undefined
+            : {
+                display: "flex",
+                gap: 6,
+                padding: 8,
+                borderBottom: border,
+                flexShrink: 0,
+                alignItems: "center",
+              }
+        }
       >
-        <Tooltip host={host} label="Back">
-          <button
-            type="button"
-            aria-label="Back"
-            disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
-            onClick={() => (held ? command("back") : commit(goBack(state)))}
-            style={buttonStyle}
-          >
-            ←
-          </button>
-        </Tooltip>
-        <Tooltip host={host} label="Forward">
-          <button
-            type="button"
-            aria-label="Forward"
-            disabled={
-              held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
-            }
-            onClick={() => (held ? command("forward") : commit(goForward(state)))}
-            style={buttonStyle}
-          >
-            →
-          </button>
-        </Tooltip>
-        <Tooltip host={host} label={pageLoading ? "Loading…" : "Refresh"}>
-          <button
-            type="button"
-            aria-label={pageLoading ? "Stop" : "Refresh"}
-            disabled={
-              fileSource === null &&
-              (held
-                ? pageBlock !== null && !isRecoveryExhausted(live)
-                : state.status.kind !== "target")
-            }
-            onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
-            style={buttonStyle}
-          >
-            ⟳
-          </button>
-        </Tooltip>
-        {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
-        <button
-          type="button"
-          aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
-          aria-pressed={deviceMode}
-          disabled={!held || viewportPending}
-          onClick={() => {
-            if (!viewportSetting) return;
-            // Native toggle semantics: non-fill → fill; fill → a responsive
-            // freeform sized from the panel this slot fills.
-            void commitViewportChange(
-              viewportSetting._tag !== "fill"
-                ? { _tag: "fill" }
-                : responsiveViewportForToggle(contentSize),
-            );
-          }}
-          style={{
-            ...buttonStyle,
-            ...(deviceMode
-              ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
-              : {}),
-          }}
+        <NavigationGroup
+          {...(kit ? ({ variant: "group" } as const) : { style: { display: "contents" } })}
+          role="group"
+          aria-label="Navigation"
         >
-          ⛶
-        </button>
-        <BrowserCaptureButtons
-          host={host}
-          session={session}
-          held={held}
-          page={capturePage}
-          onStatus={setNotice}
-          style={buttonStyle}
-        />
+          <Tooltip host={host} label="Back">
+            <ChromeButton
+              {...chromeProps}
+              type="button"
+              aria-label="Back"
+              disabled={
+                held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)
+              }
+              onClick={() => (held ? command("back") : commit(goBack(state)))}
+              style={kit ? undefined : buttonStyle}
+            >
+              {kit ? <kit.Icon name="back" /> : "←"}
+            </ChromeButton>
+          </Tooltip>
+          <Tooltip host={host} label="Forward">
+            <ChromeButton
+              {...chromeProps}
+              type="button"
+              aria-label="Forward"
+              disabled={
+                held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
+              }
+              onClick={() => (held ? command("forward") : commit(goForward(state)))}
+              style={kit ? undefined : buttonStyle}
+            >
+              {kit ? <kit.Icon name="forward" /> : "→"}
+            </ChromeButton>
+          </Tooltip>
+          <Tooltip host={host} label={pageLoading ? "Loading…" : "Refresh"}>
+            <ChromeButton
+              {...chromeProps}
+              type="button"
+              aria-label={pageLoading ? "Stop" : "Refresh"}
+              disabled={
+                fileSource === null &&
+                (held
+                  ? pageBlock !== null && !isRecoveryExhausted(live)
+                  : state.status.kind !== "target")
+              }
+              onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
+              style={kit ? undefined : buttonStyle}
+            >
+              {kit ? <kit.Icon name="refresh" refreshing={pageLoading} /> : "⟳"}
+            </ChromeButton>
+          </Tooltip>
+        </NavigationGroup>
+        {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
+        {!kit && (
+          <button
+            data-t3-browser-fallback-control
+            type="button"
+            aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
+            aria-pressed={deviceMode}
+            disabled={!held || viewportPending}
+            onClick={toggleDeviceToolbar}
+            style={{
+              ...buttonStyle,
+              ...(deviceMode
+                ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
+                : {}),
+            }}
+          >
+            ⛶
+          </button>
+        )}
+        {!kit && captureButtons}
         {held && live && (
           <ProfileBadge host={host} session={live} profiles={profiles} visible={visible} />
         )}
         <AddressInput
+          kit={kit}
+          addon={externalButton}
+          host={host}
           inputRef={addressRef}
           value={address}
           committed={committedAddress({
@@ -1205,26 +1258,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             padding: "0 4px",
           }}
         />
-        <Tooltip host={host} label="Open in system browser">
-          <button
-            type="button"
-            aria-label="Open in system browser"
-            disabled={externalTarget === null}
-            onClick={() => {
-              if (externalTarget === null) return;
-              void openExternally(
-                bindApi(uiExternalApi, host, session.context),
-                externalTarget,
-                session.signal,
-              ).then((fault) => {
-                if (fault !== null && !session.signal.aborted) setNotice(fault);
-              });
-            }}
-            style={buttonStyle}
-          >
-            ↗
-          </button>
-        </Tooltip>
+        {kit ? captureButtons : externalButton}
 
         <MiniPlayerButton
           host={host}
@@ -1240,11 +1274,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           report={setNotice}
         />
         <PageMenu
+          kit={kit}
           host={host}
           session={held ? live : null}
           blockReason={pageBlock}
           run={(verb) => runPage(verb)}
           zoomStep={zoomStep}
+          deviceMode={deviceMode}
+          deviceDisabled={!held || viewportPending}
+          onToggleDeviceToolbar={toggleDeviceToolbar}
           floating={floating}
           visible={visible}
         >
@@ -1252,6 +1290,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             held &&
             live && (
               <ProfileSection
+                kit={kit}
+                host={host}
                 session={live}
                 api={profilesApi}
                 profiles={profiles}
@@ -1263,7 +1303,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             )
           }
         </PageMenu>
-      </header>
+      </ChromeToolbar>
       {tabs.length > 0 && (
         <div
           role="tablist"
@@ -1287,6 +1327,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
               >
                 <button
+                  data-t3-browser-fallback-control
                   type="button"
                   role="tab"
                   aria-selected={active}
@@ -1314,6 +1355,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   audio, and reflects the engine-reported mute state. */}
                 {tab.audible === true && (
                   <button
+                    data-t3-browser-fallback-control
                     type="button"
                     aria-label={tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`}
                     aria-pressed={tab.audioMuted === true}
@@ -1447,6 +1489,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   <li key={entry.url} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <BrowserFavicon url={entry.url} size={14} />
                     <button
+                      data-t3-browser-fallback-control
                       type="button"
                       onClick={() => submit(entry.url)}
                       style={{
@@ -1461,6 +1504,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       {entry.title ? `${entry.title} — ${label}` : label}
                     </button>
                     <button
+                      data-t3-browser-fallback-control
                       type="button"
                       aria-label={`Remove ${label} from history`}
                       onClick={() => removeRecent(entry.url)}
@@ -1499,6 +1543,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               {recentTargets(state).map((target) => (
                 <li key={target.url}>
                   <button
+                    data-t3-browser-fallback-control
                     type="button"
                     aria-current={target.index === state.index}
                     onClick={() => submit(target.url)}

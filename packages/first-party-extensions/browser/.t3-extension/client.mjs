@@ -8901,13 +8901,7 @@ var __t3Client = (() => {
     [VCS_ACTIONS]: [PRS_WRITE]
   };
 
-  // node_modules/@t3tools/extension-sdk/dist/environment.js
-  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
-  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
-    "application/wasm",
-    "application/octet-stream",
-    "font/woff2"
-  ];
+  // node_modules/@t3tools/extension-sdk/dist/componentType.js
   var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
   var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
   function isComponentType(value, depth = 0) {
@@ -8922,6 +8916,14 @@ var __t3Client = (() => {
       return typeof wrapper.render === "function";
     return false;
   }
+
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
+  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
+  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
+    "application/wasm",
+    "application/octet-stream",
+    "font/woff2"
+  ];
   function resolveTooltip(host) {
     const member = host.tooltip;
     if (!member || typeof member !== "object")
@@ -9570,6 +9572,44 @@ var __t3Client = (() => {
 
   // addressInput.tsx
   var import_react = __toESM(require_react(), 1);
+
+  // node_modules/@t3tools/extension-sdk/dist/ui.js
+  var COMPONENTS = [
+    "Button",
+    "Input",
+    "InputGroup",
+    "InputGroupAddon",
+    "Toolbar",
+    "MenuRow",
+    "MenuNote",
+    "MenuGroup",
+    "Menu",
+    "MenuTrigger",
+    "MenuPopup",
+    "MenuSub",
+    "MenuSubTrigger",
+    "MenuSubPopup",
+    "MenuItem",
+    "MenuSeparator",
+    "MenuGroupLabel",
+    "MenuRadioGroup",
+    "MenuRadioItem",
+    "TreeRow",
+    "Icon"
+  ];
+  function resolveUiKit(host, minVersion = 1) {
+    const member = host.uiKit;
+    if (member === null || typeof member !== "object")
+      return null;
+    const kit = member;
+    if (!Number.isSafeInteger(minVersion) || minVersion < 1)
+      return null;
+    if (!Number.isSafeInteger(kit.version) || kit.version < minVersion)
+      return null;
+    return COMPONENTS.every((name) => isComponentType(kit[name])) ? member : null;
+  }
+
+  // addressInput.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   function committedAddress(input) {
     return input.fileSource ?? input.pageUrl ?? input.target ?? "";
@@ -9577,37 +9617,53 @@ var __t3Client = (() => {
   function AddressInput(props) {
     const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
     const [focused, setFocused] = (0, import_react.useState)(false);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      "input",
+    const kit = props.kit === void 0 ? resolveUiKit(props.host ?? {}) : props.kit;
+    const Input = kit?.Input ?? "input";
+    const InputGroup = kit?.InputGroup ?? "div";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      InputGroup,
       {
-        type: "text",
-        "aria-label": "Address",
-        placeholder: "Search or enter URL",
-        ref: inputRef,
-        value: focused ? value : committed,
-        onChange: (event) => onValueChange(event.target.value),
-        onFocus: (event) => {
-          onValueChange(committed);
-          setFocused(true);
-          const input = event.currentTarget;
-          queueMicrotask(() => input.select());
-        },
-        onBlur: () => setFocused(false),
-        onKeyDown: (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            const next = value.trim();
-            if (next.length === 0) return;
-            onSubmit(next);
-            event.currentTarget.blur();
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onValueChange(committed);
-            event.currentTarget.blur();
-          }
-        },
-        style
+        ...kit ? { variant: "ghost", controlSize: "sm" } : {},
+        style: { flex: 1, minWidth: 0 },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            Input,
+            {
+              ...kit ? { controlSize: "sm" } : {},
+              ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
+              type: "text",
+              spellCheck: false,
+              "aria-label": "Address",
+              placeholder: "Search or enter URL",
+              ref: inputRef,
+              value: focused ? value : committed,
+              onChange: (event) => onValueChange(event.target.value),
+              onFocus: (event) => {
+                onValueChange(committed);
+                setFocused(true);
+                const input = event.currentTarget;
+                queueMicrotask(() => input.select());
+              },
+              onBlur: () => setFocused(false),
+              onKeyDown: (event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  const next = value.trim();
+                  if (next.length === 0) return;
+                  onSubmit(next);
+                  event.currentTarget.blur();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onValueChange(committed);
+                  event.currentTarget.blur();
+                }
+              },
+              style: kit ? void 0 : style
+            }
+          ),
+          kit && !focused && props.addon ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(kit.InputGroupAddon, { align: "inline-end", revealOnHover: true, children: props.addon }) : null
+        ]
       }
     );
   }
@@ -10225,50 +10281,59 @@ var __t3Client = (() => {
     const capture = useBrowserCapture(host, session, held, page, onStatus);
     const recording = useBrowserRecording(host, session, held, page, onStatus);
     const capturing = capture.state.kind === "capturing" ? capture.state.target : null;
+    const kit = props.kit === void 0 ? resolveUiKit(host) : props.kit;
+    const screenshot = /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      ScreenshotButton,
+      {
+        host,
+        kit,
+        blockReason: capture.blockReason,
+        capturing,
+        pageFailed: page === "failed",
+        recording: recording.phase !== "idle",
+        recordingAvailable: recording.available,
+        onCapture: (record2) => {
+          if (record2 || recording.phase !== "idle") void recording.toggle();
+          else capture.capture("page");
+        },
+        style
+      }
+    );
+    const annotate2 = /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      AnnotateButton,
+      {
+        host,
+        kit,
+        blockReason: capture.blockReason,
+        capturing,
+        pageFailed: page === "failed",
+        onPick: () => capture.capture("element"),
+        style
+      }
+    );
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-        ScreenshotButton,
-        {
-          host,
-          blockReason: capture.blockReason,
-          capturing,
-          pageFailed: page === "failed",
-          recording: recording.phase !== "idle",
-          recordingAvailable: recording.available,
-          onCapture: (record2) => {
-            if (record2 || recording.phase !== "idle") void recording.toggle();
-            else capture.capture("page");
-          },
-          style
-        }
-      ),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-        AnnotateButton,
-        {
-          host,
-          blockReason: capture.blockReason,
-          capturing,
-          pageFailed: page === "failed",
-          onPick: () => capture.capture("element"),
-          style
-        }
-      )
+      kit ? annotate2 : screenshot,
+      kit ? screenshot : annotate2
     ] });
   }
   function AnnotateButton(props) {
     const { host, blockReason, onPick, style } = props;
     const annotate2 = annotationControl(props);
+    const kit = props.kit === void 0 ? resolveUiKit(host) : props.kit;
+    const Button = kit?.Button ?? "button";
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: annotate2.tooltip, showWhenDisabled: annotate2.hoverWhileDisabled, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-      "button",
+      Button,
       {
+        ...kit ? { variant: annotate2.picking ? "secondary" : "ghost", size: "icon-xs" } : {},
+        ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
         type: "button",
         "aria-label": annotate2.ariaLabel,
         "aria-description": annotate2.picking ? void 0 : blockReason ?? void 0,
         "aria-pressed": annotate2.picking,
         disabled: annotate2.disabled,
         onClick: onPick,
-        style,
-        children: "\u2316"
+        style: kit ? void 0 : style,
+        children: kit ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(kit.Icon, { name: "annotate", active: annotate2.picking }) : "\u2316"
       }
     ) });
   }
@@ -10283,31 +10348,36 @@ var __t3Client = (() => {
       recording = false,
       recordingAvailable = false
     } = props;
+    const kit = props.kit === void 0 ? resolveUiKit(host) : props.kit;
+    const Button = kit?.Button ?? "button";
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       Tooltip,
       {
         host,
         label: recording ? "Stop recording" : recordingAvailable ? "Screenshot \xB7 Shift-click to record" : "Screenshot",
         children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-          "button",
+          Button,
           {
+            ...kit ? { variant: recording ? "destructive" : "ghost", size: "icon-xs" } : { "data-t3-browser-fallback-control": "" },
             type: "button",
             "aria-label": recording ? "Stop recording" : "Capture screenshot",
             "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
             disabled: !recording && blockReason !== null || capturing !== null,
             onClick: (event) => onCapture(event.shiftKey),
-            style: {
+            style: kit ? void 0 : {
               ...style,
               position: "relative",
-              ...recording ? { color: "var(--destructive, #dc2626)", background: "var(--secondary, #f1f1f1)" } : {}
+              ...recording ? {
+                color: "var(--destructive, #dc2626)",
+                background: "var(--secondary, #f1f1f1)"
+              } : {}
             },
             children: [
-              "\u25A3",
-              recording && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+              kit ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(kit.Icon, { name: "camera" }) : "\u25A3",
+              recording && !kit && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "span",
                 {
                   "aria-hidden": true,
-                  className: "animate-status-pulse",
                   style: {
                     position: "absolute",
                     right: 2,
@@ -16764,6 +16834,7 @@ ${ind(d)}}`;
         /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 }, children: props.servers.map((server) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
           "button",
           {
+            "data-t3-browser-fallback-control": true,
             type: "button",
             onClick: () => props.onOpen(server.url),
             style: {
@@ -17080,6 +17151,147 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
+    const kit = props.kit === void 0 ? resolveUiKit(props.host) : props.kit;
+    return kit ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(NativePageMenu, { ...props, kit }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(LegacyPageMenu, { ...props });
+  }
+  function NativePageMenu({
+    host,
+    session,
+    blockReason,
+    run: run2,
+    zoomStep,
+    visible,
+    children,
+    kit,
+    deviceMode,
+    deviceDisabled,
+    onToggleDeviceToolbar
+  }) {
+    const [open, setOpen] = (0, import_react6.useState)(false);
+    if (open && !visible) setOpen(false);
+    const disabled = blockReason !== null;
+    const zoom = session?.zoomFactor ?? null;
+    const {
+      Button,
+      Icon,
+      Menu,
+      MenuTrigger,
+      MenuPopup,
+      MenuItem,
+      MenuSeparator,
+      MenuSub,
+      MenuSubTrigger,
+      MenuSubPopup,
+      MenuRadioGroup,
+      MenuRadioItem,
+      MenuRow,
+      MenuNote
+    } = kit;
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Menu, { open: open && visible, onOpenChange: setOpen, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuTrigger, { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        Button,
+        {
+          variant: "ghost",
+          size: "icon-xs",
+          "aria-label": "Preview menu",
+          disabled: session === null,
+          children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "more" })
+        }
+      ) }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+        MenuPopup,
+        {
+          align: "end",
+          sideOffset: 6,
+          "aria-label": "Page",
+          "data-t3-browser-popover": "",
+          style: { minWidth: 220 },
+          children: [
+            blockReason && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuNote, { children: blockReason }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuItem, { disabled, onClick: () => run2({ method: "hardReload" }), children: "Hard reload" }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+              MenuItem,
+              {
+                disabled: disabled || session?.devToolsOpen == null,
+                onClick: () => run2({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" }),
+                children: session?.devToolsOpen ? "Close DevTools" : "Open DevTools"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+              MenuItem,
+              {
+                disabled: disabled || session?.pictureInPicture == null,
+                onClick: () => run2({ method: "setPictureInPicture", open: session?.pictureInPicture !== true }),
+                children: session?.pictureInPicture ? "Close separate preview window" : "Open separate preview window"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuItem, { disabled: deviceDisabled ?? disabled, onClick: onToggleDeviceToolbar, children: deviceMode ? "Hide device toolbar" : "Show device toolbar" }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(MenuSub, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSubTrigger, { disabled, children: "Appearance" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSubPopup, { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                MenuRadioGroup,
+                {
+                  value: session?.appearance ?? "",
+                  onValueChange: (appearance) => run2({ method: "setAppearance", appearance }),
+                  children: APPEARANCE_OPTIONS.map((option2) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuRadioItem, { value: option2.value, children: option2.label }, option2.value))
+                }
+              ) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(MenuRow, { label: "Zoom", disabled, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                Button,
+                {
+                  variant: "outline",
+                  size: "icon-xs",
+                  "aria-label": "Zoom out",
+                  disabled,
+                  onClick: () => zoomStep("out"),
+                  children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "minus" })
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuNote, { numeric: true, "aria-label": "Zoom level", children: zoom === null ? "\u2014" : zoomPercent(zoom) }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                Button,
+                {
+                  variant: "outline",
+                  size: "icon-xs",
+                  "aria-label": "Zoom in",
+                  disabled,
+                  onClick: () => zoomStep("in"),
+                  children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "plus" })
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                Button,
+                {
+                  variant: "ghost",
+                  size: "icon-xs",
+                  "aria-label": "Reset zoom",
+                  disabled,
+                  onClick: () => run2({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR }),
+                  children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "reset" })
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+            children?.(() => setOpen(false)),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+              MenuItem,
+              {
+                disabled: disabled || session?.audioMuted == null,
+                closeOnClick: false,
+                onClick: () => run2({ method: "setAudioMuted", muted: session?.audioMuted !== true }),
+                children: session?.audioMuted ? "Unmute page" : "Mute page"
+              }
+            )
+          ]
+        }
+      )
+    ] });
+  }
+  function LegacyPageMenu(props) {
     const { host, session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
     const [open, setOpen] = (0, import_react6.useState)(false);
     if (open && !visible) setOpen(false);
@@ -17112,6 +17324,7 @@ ${ind(d)}}`;
       /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
         "button",
         {
+          "data-t3-browser-fallback-control": true,
           ref: setTrigger,
           type: "button",
           "aria-label": "Preview menu",
@@ -17150,6 +17363,7 @@ ${ind(d)}}`;
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "button",
               {
+                "data-t3-browser-fallback-control": true,
                 type: "button",
                 role: "menuitem",
                 disabled,
@@ -17166,6 +17380,7 @@ ${ind(d)}}`;
               /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
                 "select",
                 {
+                  "data-t3-browser-fallback-control": true,
                   "aria-label": "Appearance",
                   disabled,
                   value: session?.appearance ?? "",
@@ -17183,6 +17398,7 @@ ${ind(d)}}`;
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                 "button",
                 {
+                  "data-t3-browser-fallback-control": true,
                   type: "button",
                   "aria-label": "Zoom out",
                   disabled,
@@ -17194,6 +17410,7 @@ ${ind(d)}}`;
               /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
                 "select",
                 {
+                  "data-t3-browser-fallback-control": true,
                   "aria-label": "Zoom level",
                   disabled,
                   value: zoom === null ? "" : String(zoom),
@@ -17208,6 +17425,7 @@ ${ind(d)}}`;
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                 "button",
                 {
+                  "data-t3-browser-fallback-control": true,
                   type: "button",
                   "aria-label": "Zoom in",
                   disabled,
@@ -17219,6 +17437,7 @@ ${ind(d)}}`;
               /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
                 "button",
                 {
+                  "data-t3-browser-fallback-control": true,
                   type: "button",
                   "aria-label": "Reset zoom",
                   disabled: disabled || zoom === DEFAULT_ZOOM_FACTOR,
@@ -17231,6 +17450,7 @@ ${ind(d)}}`;
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "button",
               {
+                "data-t3-browser-fallback-control": true,
                 type: "button",
                 role: "menuitemcheckbox",
                 "aria-checked": audioMuted === true,
@@ -17243,6 +17463,7 @@ ${ind(d)}}`;
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "button",
               {
+                "data-t3-browser-fallback-control": true,
                 type: "button",
                 role: "menuitemcheckbox",
                 "aria-checked": devToolsOpen === true,
@@ -17258,6 +17479,7 @@ ${ind(d)}}`;
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
               "button",
               {
+                "data-t3-browser-fallback-control": true,
                 type: "button",
                 role: "menuitemcheckbox",
                 "aria-checked": pictureInPicture === true,
@@ -17628,6 +17850,11 @@ ${ind(d)}}`;
   }
   function ProfileSection(props) {
     const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
+    const kit = props.kit === void 0 ? resolveUiKit(props.host ?? {}) : props.kit;
+    const Action = kit?.MenuItem ?? "button";
+    const Heading = kit?.MenuGroupLabel ?? "span";
+    const Group = kit?.MenuGroup ?? "div";
+    const Note = kit?.MenuNote ?? "p";
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
@@ -17671,28 +17898,49 @@ ${ind(d)}}`;
     const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
     const selectedSource = importer.kind === "ready" ? importer.sources.find((source) => source.id === importer.sourceId) : void 0;
     return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
-      "div",
+      Group,
       {
         role: "group",
         "aria-label": "Profile",
-        style: { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
+        style: kit ? void 0 : { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
-            "span",
+            Heading,
             {
-              style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
+              title: `Profile: ${name}`,
+              style: kit ? {
+                display: "block",
+                maxWidth: 256,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap"
+              } : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
               children: [
                 "Profile: ",
                 name
               ]
             }
           ),
-          listNote && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
-          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+          listNote && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Note, { role: "note", style: kit ? void 0 : { margin: 0, color: muted4 }, children: listNote }),
+          others.length > 0 && kit ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+            kit.MenuRadioGroup,
+            {
+              value: "",
+              onValueChange: (profileId2) => {
+                onChosen();
+                onOpenInProfile(profileId2);
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuGroupLabel, { children: "Open page in" }),
+                others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuRadioItem, { value: profile.id, children: profile.name }, profile.id))
+              ]
+            }
+          ) : others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { children: "Open page in" }),
             /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
               "select",
               {
+                "data-t3-browser-fallback-control": true,
                 "aria-label": "Open page in profile",
                 value: "",
                 onChange: (event) => {
@@ -17709,38 +17957,54 @@ ${ind(d)}}`;
             )
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
+              ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
               role: "menuitem",
               onClick: () => clear("clearCookies"),
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Clear cookies"
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
+              ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
               role: "menuitem",
               onClick: () => clear("clearCache"),
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Clear cache"
             }
           ),
           importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
+              ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
+              ...kit ? { closeOnClick: false } : {},
               role: "menuitem",
               onClick: openImporter,
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Import cookies\u2026"
             }
-          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Note, { role: "note", style: kit ? void 0 : { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Note, { role: "note", style: kit ? void 0 : { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Note, { role: "note", style: kit ? void 0 : { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
+            kit ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+              kit.MenuRadioGroup,
+              {
+                value: importer.sourceId,
+                onValueChange: (sourceId) => setImporter({
+                  ...importer,
+                  sourceId,
+                  handle: firstProfile(importer.sources, sourceId)
+                }),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuGroupLabel, { children: "Import from browser" }),
+                  importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuRadioItem, { value: source.id, closeOnClick: false, children: source.name }, source.id))
+                ]
+              }
+            ) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
               "select",
               {
+                "data-t3-browser-fallback-control": true,
                 "aria-label": "Import from browser",
                 value: importer.sourceId,
                 onChange: (event) => setImporter({
@@ -17752,12 +18016,23 @@ ${ind(d)}}`;
                 children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: source.id, children: source.name }, source.id))
               }
             ),
-            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
+            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Note, { role: "note", style: kit ? void 0 : { margin: 0, color: muted4 }, children: importResultMessage(
               { outcome: "failed", profileId, reason: selectedSource.unavailable },
               name
-            ) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+            ) }) : kit ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+              kit.MenuRadioGroup,
+              {
+                value: importer.handle,
+                onValueChange: (handle) => setImporter({ ...importer, handle }),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuGroupLabel, { children: "Import from browser profile" }),
+                  selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(kit.MenuRadioItem, { value: profile.handle, closeOnClick: false, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
+                ]
+              }
+            ) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
               "select",
               {
+                "data-t3-browser-fallback-control": true,
                 "aria-label": "Import from browser profile",
                 value: importer.handle,
                 onChange: (event) => setImporter({ ...importer, handle: event.target.value }),
@@ -17766,13 +18041,13 @@ ${ind(d)}}`;
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
-              "button",
+              Action,
               {
-                type: "button",
+                ...!kit ? { "data-t3-browser-fallback-control": "" } : {},
                 role: "menuitem",
                 disabled: !importer.handle || selectedSource?.unavailable !== void 0,
                 onClick: () => runImport(importer.sourceId, importer.handle),
-                style: { ...control2, textAlign: "left" },
+                style: kit ? void 0 : { ...control2, textAlign: "left" },
                 children: [
                   "Import into ",
                   name
@@ -18370,6 +18645,7 @@ ${ind(d)}}`;
           /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
             "select",
             {
+              "data-t3-browser-fallback-control": true,
               "aria-label": "Browser device preset",
               value: selectedValue,
               disabled: pending,
@@ -18399,6 +18675,7 @@ ${ind(d)}}`;
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   "input",
                   {
+                    "data-t3-browser-fallback-control": true,
                     type: "number",
                     inputMode: "numeric",
                     min: PREVIEW_VIEWPORT_MIN_DIMENSION,
@@ -18422,6 +18699,7 @@ ${ind(d)}}`;
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   "input",
                   {
+                    "data-t3-browser-fallback-control": true,
                     type: "number",
                     inputMode: "numeric",
                     min: PREVIEW_VIEWPORT_MIN_DIMENSION,
@@ -18447,6 +18725,7 @@ ${ind(d)}}`;
           /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
+              "data-t3-browser-fallback-control": true,
               type: "button",
               "aria-label": aspectLocked ? "Unlock viewport aspect ratio" : "Lock viewport aspect ratio",
               "aria-pressed": aspectLocked,
@@ -18463,6 +18742,7 @@ ${ind(d)}}`;
           /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
+              "data-t3-browser-fallback-control": true,
               type: "button",
               "aria-label": "Rotate viewport",
               disabled: pending,
@@ -18480,6 +18760,7 @@ ${ind(d)}}`;
           /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
+              "data-t3-browser-fallback-control": true,
               type: "button",
               "aria-label": "Close device toolbar",
               disabled: pending,
@@ -18689,6 +18970,7 @@ ${ind(d)}}`;
       RAILS.map((rail) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
         "button",
         {
+          "data-t3-browser-fallback-control": true,
           type: "button",
           "aria-label": `Resize browser viewport from ${rail.label}. Use arrow keys to resize.`,
           onPointerDown: (event) => onPointerDown(rail.direction, event),
@@ -18943,6 +19225,9 @@ ${ind(d)}}`;
     });
   }
   function BrowserView(props) {
+    const kit = resolveUiKit(props.host);
+    const ChromeButton = kit?.Button ?? "button";
+    const chromeProps = kit ? { variant: "ghost", size: "icon-xs" } : { "data-t3-browser-fallback-control": "" };
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
     const [state2, setState] = (0, import_react10.useState)(
@@ -19534,6 +19819,47 @@ ${titledTitle}`;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
+    const ChromeToolbar = kit?.Toolbar ?? "header";
+    const NavigationGroup = kit?.Toolbar ?? "div";
+    const toggleDeviceToolbar = () => {
+      if (!viewportSetting) return;
+      void commitViewportChange(
+        viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
+      );
+    };
+    const captureButtons = /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+      BrowserCaptureButtons,
+      {
+        kit,
+        host,
+        session,
+        held,
+        page: capturePage,
+        onStatus: setNotice,
+        style: buttonStyle
+      }
+    );
+    const externalButton = /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+      ChromeButton,
+      {
+        ...chromeProps,
+        type: "button",
+        "aria-label": "Open in system browser",
+        disabled: externalTarget === null,
+        style: kit ? void 0 : buttonStyle,
+        onClick: () => {
+          if (externalTarget === null) return;
+          void openExternally(
+            bindApi(uiExternalApi, host, session.context),
+            externalTarget,
+            session.signal
+          ).then((fault) => {
+            if (fault !== null && !session.signal.aborted) setNotice(fault);
+          });
+        },
+        children: kit ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(kit.Icon, { name: "external" }) : "\u2197"
+      }
+    ) });
     const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" && leaseState.reason !== "superseded" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
       "section",
@@ -19552,11 +19878,11 @@ ${titledTitle}`;
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("style", { children: `:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("style", { children: `[data-t3-browser-fallback-control]:focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
           /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
-            "header",
+            ChromeToolbar,
             {
-              style: {
+              style: kit ? void 0 : {
                 display: "flex",
                 gap: 6,
                 padding: 8,
@@ -19565,52 +19891,61 @@ ${titledTitle}`;
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  "button",
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
+                  NavigationGroup,
                   {
-                    type: "button",
-                    "aria-label": "Back",
-                    disabled: held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state2),
-                    onClick: () => held ? command("back") : commit2(goBack(state2)),
-                    style: buttonStyle,
-                    children: "\u2190"
+                    ...kit ? { variant: "group" } : { style: { display: "contents" } },
+                    role: "group",
+                    "aria-label": "Navigation",
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+                        ChromeButton,
+                        {
+                          ...chromeProps,
+                          type: "button",
+                          "aria-label": "Back",
+                          disabled: held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state2),
+                          onClick: () => held ? command("back") : commit2(goBack(state2)),
+                          style: kit ? void 0 : buttonStyle,
+                          children: kit ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(kit.Icon, { name: "back" }) : "\u2190"
+                        }
+                      ) }),
+                      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+                        ChromeButton,
+                        {
+                          ...chromeProps,
+                          type: "button",
+                          "aria-label": "Forward",
+                          disabled: held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state2),
+                          onClick: () => held ? command("forward") : commit2(goForward(state2)),
+                          style: kit ? void 0 : buttonStyle,
+                          children: kit ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(kit.Icon, { name: "forward" }) : "\u2192"
+                        }
+                      ) }),
+                      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+                        ChromeButton,
+                        {
+                          ...chromeProps,
+                          type: "button",
+                          "aria-label": pageLoading ? "Stop" : "Refresh",
+                          disabled: fileSource === null && (held ? pageBlock !== null && !isRecoveryExhausted(live) : state2.status.kind !== "target"),
+                          onClick: () => held || fileSource ? command("reload") : commit2(reload(state2)),
+                          style: kit ? void 0 : buttonStyle,
+                          children: kit ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(kit.Icon, { name: "refresh", refreshing: pageLoading }) : "\u27F3"
+                        }
+                      ) })
+                    ]
                   }
-                ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+                ),
+                !kit && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
-                    type: "button",
-                    "aria-label": "Forward",
-                    disabled: held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state2),
-                    onClick: () => held ? command("forward") : commit2(goForward(state2)),
-                    style: buttonStyle,
-                    children: "\u2192"
-                  }
-                ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    "aria-label": pageLoading ? "Stop" : "Refresh",
-                    disabled: fileSource === null && (held ? pageBlock !== null && !isRecoveryExhausted(live) : state2.status.kind !== "target"),
-                    onClick: () => held || fileSource ? command("reload") : commit2(reload(state2)),
-                    style: buttonStyle,
-                    children: "\u27F3"
-                  }
-                ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  "button",
-                  {
+                    "data-t3-browser-fallback-control": true,
                     type: "button",
                     "aria-label": deviceMode ? "Hide device toolbar" : "Show device toolbar",
                     "aria-pressed": deviceMode,
                     disabled: !held || viewportPending,
-                    onClick: () => {
-                      if (!viewportSetting) return;
-                      void commitViewportChange(
-                        viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize)
-                      );
-                    },
+                    onClick: toggleDeviceToolbar,
                     style: {
                       ...buttonStyle,
                       ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
@@ -19618,21 +19953,14 @@ ${titledTitle}`;
                     children: "\u26F6"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  BrowserCaptureButtons,
-                  {
-                    host,
-                    session,
-                    held,
-                    page: capturePage,
-                    onStatus: setNotice,
-                    style: buttonStyle
-                  }
-                ),
+                !kit && captureButtons,
                 held && live && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(ProfileBadge, { host, session: live, profiles, visible }),
                 /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   AddressInput,
                   {
+                    kit,
+                    addon: externalButton,
+                    host,
                     inputRef: addressRef,
                     value: address,
                     committed: committedAddress({
@@ -19654,26 +19982,7 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  "button",
-                  {
-                    type: "button",
-                    "aria-label": "Open in system browser",
-                    disabled: externalTarget === null,
-                    onClick: () => {
-                      if (externalTarget === null) return;
-                      void openExternally(
-                        bindApi(uiExternalApi, host, session.context),
-                        externalTarget,
-                        session.signal
-                      ).then((fault) => {
-                        if (fault !== null && !session.signal.aborted) setNotice(fault);
-                      });
-                    },
-                    style: buttonStyle,
-                    children: "\u2197"
-                  }
-                ) }),
+                kit ? captureButtons : externalButton,
                 /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   MiniPlayerButton,
                   {
@@ -19689,16 +19998,22 @@ ${titledTitle}`;
                 /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   PageMenu,
                   {
+                    kit,
                     host,
                     session: held ? live : null,
                     blockReason: pageBlock,
                     run: (verb) => runPage(verb),
                     zoomStep,
+                    deviceMode,
+                    deviceDisabled: !held || viewportPending,
+                    onToggleDeviceToolbar: toggleDeviceToolbar,
                     floating,
                     visible,
                     children: (close) => held && live && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                       ProfileSection,
                       {
+                        kit,
+                        host,
                         session: live,
                         api: profilesApi,
                         profiles,
@@ -19738,6 +20053,7 @@ ${titledTitle}`;
                       /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
                         "button",
                         {
+                          "data-t3-browser-fallback-control": true,
                           type: "button",
                           role: "tab",
                           "aria-selected": active,
@@ -19762,6 +20078,7 @@ ${titledTitle}`;
                       tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                         "button",
                         {
+                          "data-t3-browser-fallback-control": true,
                           type: "button",
                           "aria-label": tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`,
                           "aria-pressed": tab.audioMuted === true,
@@ -19894,6 +20211,7 @@ ${titledTitle}`;
                         /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                           "button",
                           {
+                            "data-t3-browser-fallback-control": true,
                             type: "button",
                             onClick: () => submit(entry.url),
                             style: {
@@ -19910,6 +20228,7 @@ ${titledTitle}`;
                         /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                           "button",
                           {
+                            "data-t3-browser-fallback-control": true,
                             type: "button",
                             "aria-label": `Remove ${label} from history`,
                             onClick: () => removeRecent(entry.url),
@@ -19942,6 +20261,7 @@ ${titledTitle}`;
                     children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                       "button",
                       {
+                        "data-t3-browser-fallback-control": true,
                         type: "button",
                         "aria-current": target.index === state2.index,
                         onClick: () => submit(target.url),

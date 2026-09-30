@@ -85,6 +85,7 @@ export function LocalServersSection(props: {
             {props.servers.map((server) => (
               <li key={`${server.host}:${server.port}`}>
                 <button
+                  data-t3-browser-fallback-control
                   type="button"
                   onClick={() => props.onOpen(server.url)}
                   style={{

@@ -3,6 +3,7 @@ import type { BrowserCaptureTarget } from "@t3tools/extension-sdk/catalogue";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import type { CSSProperties } from "react";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 
 import {
   annotationControl,
@@ -14,6 +15,7 @@ import { useBrowserRecording } from "./recording.js";
 
 export function BrowserCaptureButtons(props: {
   host: ClientHost;
+  kit?: ClientUiKit | null;
   session: ViewSession;
   held: CaptureSessionRef | null;
   page: CapturePageView;
@@ -24,29 +26,38 @@ export function BrowserCaptureButtons(props: {
   const capture = useBrowserCapture(host, session, held, page, onStatus);
   const recording = useBrowserRecording(host, session, held, page, onStatus);
   const capturing = capture.state.kind === "capturing" ? capture.state.target : null;
+  const kit = props.kit === undefined ? resolveUiKit(host) : props.kit;
+  const screenshot = (
+    <ScreenshotButton
+      host={host}
+      kit={kit}
+      blockReason={capture.blockReason}
+      capturing={capturing}
+      pageFailed={page === "failed"}
+      recording={recording.phase !== "idle"}
+      recordingAvailable={recording.available}
+      onCapture={(record) => {
+        if (record || recording.phase !== "idle") void recording.toggle();
+        else capture.capture("page");
+      }}
+      style={style}
+    />
+  );
+  const annotate = (
+    <AnnotateButton
+      host={host}
+      kit={kit}
+      blockReason={capture.blockReason}
+      capturing={capturing}
+      pageFailed={page === "failed"}
+      onPick={() => capture.capture("element")}
+      style={style}
+    />
+  );
   return (
     <>
-      <ScreenshotButton
-        host={host}
-        blockReason={capture.blockReason}
-        capturing={capturing}
-        pageFailed={page === "failed"}
-        recording={recording.phase !== "idle"}
-        recordingAvailable={recording.available}
-        onCapture={(record) => {
-          if (record || recording.phase !== "idle") void recording.toggle();
-          else capture.capture("page");
-        }}
-        style={style}
-      />
-      <AnnotateButton
-        host={host}
-        blockReason={capture.blockReason}
-        capturing={capturing}
-        pageFailed={page === "failed"}
-        onPick={() => capture.capture("element")}
-        style={style}
-      />
+      {kit ? annotate : screenshot}
+      {kit ? screenshot : annotate}
     </>
   );
 }
@@ -54,6 +65,7 @@ export function BrowserCaptureButtons(props: {
 /** The header's annotate (element pick) button with native's tooltip. */
 export function AnnotateButton(props: {
   host: ClientHost;
+  kit?: ClientUiKit | null;
   blockReason: string | null;
   capturing: BrowserCaptureTarget | null;
   pageFailed: boolean;
@@ -62,19 +74,25 @@ export function AnnotateButton(props: {
 }) {
   const { host, blockReason, onPick, style } = props;
   const annotate = annotationControl(props);
+  const kit = props.kit === undefined ? resolveUiKit(host) : props.kit;
+  const Button = kit?.Button ?? "button";
   return (
     <Tooltip host={host} label={annotate.tooltip} showWhenDisabled={annotate.hoverWhileDisabled}>
-      <button
+      <Button
+        {...(kit
+          ? ({ variant: annotate.picking ? "secondary" : "ghost", size: "icon-xs" } as const)
+          : {})}
+        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
         type="button"
         aria-label={annotate.ariaLabel}
         aria-description={annotate.picking ? undefined : (blockReason ?? undefined)}
         aria-pressed={annotate.picking}
         disabled={annotate.disabled}
         onClick={onPick}
-        style={style}
+        style={kit ? undefined : style}
       >
-        ⌖
-      </button>
+        {kit ? <kit.Icon name="annotate" active={annotate.picking} /> : "⌖"}
+      </Button>
     </Tooltip>
   );
 }
@@ -86,6 +104,7 @@ export function AnnotateButton(props: {
  */
 export function ScreenshotButton(props: {
   host: ClientHost;
+  kit?: ClientUiKit | null;
   blockReason: string | null;
   capturing: BrowserCaptureTarget | null;
   pageFailed: boolean;
@@ -104,6 +123,8 @@ export function ScreenshotButton(props: {
     recording = false,
     recordingAvailable = false,
   } = props;
+  const kit = props.kit === undefined ? resolveUiKit(host) : props.kit;
+  const Button = kit?.Button ?? "button";
   return (
     <Tooltip
       host={host}
@@ -115,25 +136,34 @@ export function ScreenshotButton(props: {
             : "Screenshot"
       }
     >
-      <button
+      <Button
+        {...(kit
+          ? ({ variant: recording ? "destructive" : "ghost", size: "icon-xs" } as const)
+          : { "data-t3-browser-fallback-control": "" })}
         type="button"
         aria-label={recording ? "Stop recording" : "Capture screenshot"}
         aria-description={pageFailed ? undefined : (blockReason ?? undefined)}
         disabled={(!recording && blockReason !== null) || capturing !== null}
         onClick={(event) => onCapture(event.shiftKey)}
-        style={{
-          ...style,
-          position: "relative",
-          ...(recording
-            ? { color: "var(--destructive, #dc2626)", background: "var(--secondary, #f1f1f1)" }
-            : {}),
-        }}
+        style={
+          kit
+            ? undefined
+            : {
+                ...style,
+                position: "relative",
+                ...(recording
+                  ? {
+                      color: "var(--destructive, #dc2626)",
+                      background: "var(--secondary, #f1f1f1)",
+                    }
+                  : {}),
+              }
+        }
       >
-        ▣
-        {recording && (
+        {kit ? <kit.Icon name="camera" /> : "▣"}
+        {recording && !kit && (
           <span
             aria-hidden
-            className="animate-status-pulse"
             style={{
               position: "absolute",
               right: 2,
@@ -145,7 +175,7 @@ export function ScreenshotButton(props: {
             }}
           />
         )}
-      </button>
+      </Button>
     </Tooltip>
   );
 }

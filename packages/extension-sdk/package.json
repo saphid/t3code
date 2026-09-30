@@ -35,6 +35,10 @@
   ],
   "type": "module",
   "exports": {
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "default": "./dist/ui.js"
+    },
     "./contracts": {
       "types": "./dist/contracts.d.ts",
       "default": "./dist/contracts.js"

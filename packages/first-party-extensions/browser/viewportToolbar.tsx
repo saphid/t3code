@@ -289,6 +289,7 @@ export function BrowserViewportToolbar(props: {
       }}
     >
       <select
+        data-t3-browser-fallback-control
         aria-label="Browser device preset"
         value={selectedValue}
         disabled={pending}
@@ -318,6 +319,7 @@ export function BrowserViewportToolbar(props: {
         }}
       >
         <input
+          data-t3-browser-fallback-control
           type="number"
           inputMode="numeric"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
@@ -344,6 +346,7 @@ export function BrowserViewportToolbar(props: {
           ×
         </span>
         <input
+          data-t3-browser-fallback-control
           type="number"
           inputMode="numeric"
           min={PREVIEW_VIEWPORT_MIN_DIMENSION}
@@ -369,6 +372,7 @@ export function BrowserViewportToolbar(props: {
       </form>
       <Tooltip host={host} label={aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio"}>
         <button
+          data-t3-browser-fallback-control
           type="button"
           aria-label={aspectLocked ? "Unlock viewport aspect ratio" : "Lock viewport aspect ratio"}
           aria-pressed={aspectLocked}
@@ -386,6 +390,7 @@ export function BrowserViewportToolbar(props: {
         </button>
       </Tooltip>
       <button
+        data-t3-browser-fallback-control
         type="button"
         aria-label="Rotate viewport"
         disabled={pending}
@@ -403,6 +408,7 @@ export function BrowserViewportToolbar(props: {
         ⟳
       </button>
       <button
+        data-t3-browser-fallback-control
         type="button"
         aria-label="Close device toolbar"
         disabled={pending}
@@ -707,6 +713,7 @@ export function ViewportResizeRails(props: {
     <>
       {RAILS.map((rail) => (
         <button
+          data-t3-browser-fallback-control
           key={rail.direction}
           type="button"
           aria-label={`Resize browser viewport from ${rail.label}. Use arrow keys to resize.`}

@@ -8856,13 +8856,7 @@ var __t3Client = (() => {
     [VCS_ACTIONS]: [PRS_WRITE]
   };
 
-  // node_modules/@t3tools/extension-sdk/dist/environment.js
-  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
-  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
-    "application/wasm",
-    "application/octet-stream",
-    "font/woff2"
-  ];
+  // node_modules/@t3tools/extension-sdk/dist/componentType.js
   var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
   var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
   function isComponentType(value, depth = 0) {
@@ -8877,6 +8871,14 @@ var __t3Client = (() => {
       return typeof wrapper.render === "function";
     return false;
   }
+
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
+  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
+  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
+    "application/wasm",
+    "application/octet-stream",
+    "font/woff2"
+  ];
   function resolveTooltip(host) {
     const member = host.tooltip;
     if (!member || typeof member !== "object")

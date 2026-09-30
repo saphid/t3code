@@ -16,6 +16,7 @@ import { filePresentationApi, uiNavigationApi } from "@t3tools/extension-sdk/cat
 import type { ApiInvocation, ApiStreamInvocation } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientCodeView, CodeViewEditorProps } from "@t3tools/extension-sdk/environment";
+import type { ClientUiKit, UiButtonProps, UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
@@ -52,6 +53,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 type Frame = { readonly type: string; readonly value: unknown };
 type PackHost = {
   readonly React: typeof React;
+  readonly uiKit?: ClientUiKit;
   readonly codeView: ClientCodeView;
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<unknown>;
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<Frame>;
@@ -109,8 +111,60 @@ class FakeViewport {
   constructor(readonly clientHeight: number) {}
 }
 
+function KitButton({ variant, size: _size, ...props }: UiButtonProps) {
+  return <button data-kit-variant={variant} {...props} />;
+}
+function KitTreeRow({
+  path,
+  depth,
+  directory,
+  expanded,
+  selected,
+  label,
+  ...props
+}: UiTreeRowProps) {
+  return (
+    <button
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={directory ? expanded : undefined}
+      aria-selected={selected}
+      {...props}
+    >
+      {label ?? path.split("/").at(-1)}
+    </button>
+  );
+}
+const nullControl = () => null;
+const alternateKit: ClientUiKit = {
+  version: 1,
+  Button: KitButton,
+  TreeRow: KitTreeRow,
+  Input: ({ controlSize: _controlSize, ...props }) => <input {...props} />,
+  InputGroup: ({ controlSize: _controlSize, variant: _variant, ...props }) => <div {...props} />,
+  InputGroupAddon: nullControl,
+  Toolbar: ({ variant: _variant, ...props }) => <div {...props} />,
+  Menu: nullControl,
+  MenuTrigger: nullControl,
+  MenuPopup: nullControl,
+  MenuSub: nullControl,
+  MenuSubTrigger: nullControl,
+  MenuSubPopup: nullControl,
+  MenuGroup: nullControl,
+  MenuRow: nullControl,
+  MenuNote: nullControl,
+  MenuItem: nullControl,
+  MenuSeparator: nullControl,
+  MenuGroupLabel: nullControl,
+  MenuRadioGroup: nullControl,
+  MenuRadioItem: nullControl,
+  Icon: nullControl,
+};
+
 interface Disk {
   readonly files: Record<string, string>;
+  readonly uiKit?: ClientUiKit;
+  readonly externalEditor?: boolean;
   /** Directory entries the tree snapshot lists next to the files. */
   readonly directories?: readonly string[];
   /** The selected presentation provider's version; the pack's own by default. */
@@ -169,6 +223,7 @@ function packHost(disk: Disk, calls: Calls) {
   const navigationVersion = disk.navigationVersion ?? uiNavigationApi.definition.version;
   const host: PackHost = {
     React,
+    ...(disk.uiKit ? { uiKit: disk.uiKit } : {}),
     codeView: {
       version: 1,
       File: () => null,
@@ -205,6 +260,28 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (disk.externalEditor && request.id === "t3.ui/editor")
+        return request.method === "getCapabilities"
+          ? {
+              adapter: "host.ui.editor",
+              operations: { openPath: true },
+              clients: [],
+              editor: {
+                visible: true,
+                preferredEditor: "vscode",
+                remoteHint: "Remote workspace",
+                editors: [
+                  { id: "vscode", label: "VS Code" },
+                  { id: "cursor", label: "Cursor" },
+                ],
+              },
+            }
+          : {
+              status: "opened",
+              path: "/fixture/a.txt",
+              editor: "cursor",
+              url: "cursor://file/fixture/a.txt",
+            };
       if (request.id === "t3.ui/notifications" && request.method === "notify") {
         calls.notifications.push(request.input);
         return { id: "toast" };
@@ -1472,6 +1549,24 @@ describe("a long tree whose explorer is hidden and shown", () => {
   const toggle = (panel: Panel, label: string) =>
     act(async () => panel.button(label)!.props.onClick());
 
+  it("keeps full windowed positions on treeitems and the older host's six-pixel inset", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      const rows = list(panel).findAllByProps({ role: "treeitem" });
+      expect(rows.length).toBeLessThan(1000);
+      expect(rows[0]!.props["aria-setsize"]).toBe(1000);
+      expect(rows[0]!.props["aria-posinset"]).toBe(1);
+      const box = list(panel)
+        .findAllByType("li")
+        .find((node) => node.props.style.position === "absolute")!;
+      expect(box.props.style.left).toBe(6);
+      expect(rows[0]!.props.style.color).toBe("var(--t3-files-text, var(--foreground, #20252d))");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
   it("shows the rows at its scroll position again", async () => {
     const panel = await mountPanel(disk());
     try {
@@ -1579,4 +1674,111 @@ describe("a tree whose focused row goes away", () => {
       await panel.unmount();
     }
   });
+});
+
+describe("round 3 Files kit regressions", () => {
+  it.each([false, true])(
+    "keeps exactly one reachable tab stop after scrolling and blur (kit=%s)",
+    async (kit) => {
+      const panel = await mountPanel({
+        directories: Array.from({ length: 200 }, (_, i) => `folder${String(i).padStart(3, "0")}`),
+        files: { "open.txt": "open" },
+        viewportHeight: 240,
+        ...(kit ? { uiKit: alternateKit } : {}),
+      });
+      try {
+        await act(async () => useRightPanelStore.getState().openFile(ref, "open.txt"));
+        const list = () => panel.labelled("Workspace files")!;
+        const stops = () =>
+          list()
+            .findAllByType("button")
+            .filter((row) => row.props.tabIndex === 0);
+        await act(async () => stops()[0]!.props.onFocus());
+        for (let i = 0; i < 80; i++)
+          await act(async () => list().props.onKeyDown({ key: "ArrowDown", preventDefault() {} }));
+        expect(stops()).toHaveLength(1);
+        await act(async () => stops()[0]!.props.onBlur({ currentTarget: { isConnected: true } }));
+        expect(stops()).toHaveLength(1);
+        panel.viewport().scrollTop = 180 * 24;
+        await act(async () => list().props.onScroll({ currentTarget: panel.viewport() }));
+        expect(stops()).toHaveLength(1);
+        expect(list().findAllByType("button").length).toBeLessThan(100);
+      } finally {
+        await panel.unmount();
+      }
+    },
+  );
+
+  it("opens every part of a flattened chain and preserves it when a sibling appears", async () => {
+    const directories = ["src", "src/lib"];
+    const panel = await mountPanel({
+      files: { "open.txt": "open" },
+      directories,
+      uiKit: alternateKit,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "open.txt"));
+      const row = panel
+        .labelled("Workspace files")!
+        .findAllByType("button")
+        .find((row) => row.children.join("") === "src/lib")!;
+      await act(async () => row.props.onClick());
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
+      directories.push("src/other");
+      await act(async () => panel.labelled("Refresh workspace files")!.props.onClick());
+      const src = panel
+        .labelled("Workspace files")!
+        .findAllByType("button")
+        .find((row) => row.children.join("") === "src")!;
+      expect(src.props["aria-expanded"]).toBe(true);
+      expect(panel.rows()).toContain("lib");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("uses the kit for file actions and save-conflict controls while preserving edits", async () => {
+    vi.useFakeTimers();
+    const panel = await mountPanel({
+      files: { "a.txt": "disk" },
+      uiKit: alternateKit,
+      save: () => ({ kind: "conflict" }),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.button("Open in panel")!.props["data-kit-variant"]).toBe("outline");
+      await conflictedEdit(panel, "my edit");
+      expect(panel.button("Keep my version")!.props["data-kit-variant"]).toBe("outline");
+      expect(panel.button("Reload file")!.props["data-kit-variant"]).toBe("outline");
+      expect(panel.editor().props.contents).toBe("my edit");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+it("uses kit editor controls and still opens the chosen remote editor", async () => {
+  const panel = await mountPanel({
+    files: { "a.txt": "file" },
+    externalEditor: true,
+    uiKit: alternateKit,
+  });
+  try {
+    await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+    const controls = panel.labelled("File actions")!.findAllByType("button");
+    const main = controls.find((button) => button.children.join("") === "Open in VS Code")!;
+    expect(main.props["data-kit-variant"]).toBe("outline");
+    const cursor = controls.find((button) => button.children.join("") === "Cursor")!;
+    expect(cursor.props["data-kit-variant"]).toBe("outline");
+    await act(async () => cursor.props.onClick());
+    expect(panel.calls.log).toContainEqual(["t3.ui/editor", "openPath"]);
+    expect(
+      panel
+        .labelled("File actions")!
+        .findAllByType("button")
+        .some((button) => button.children.join("") === "Open in Cursor"),
+    ).toBe(true);
+  } finally {
+    await panel.unmount();
+  }
 });

@@ -19,6 +19,7 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -152,6 +153,8 @@ export function ProfileBadge(props: {
 }
 
 export function ProfileSection(props: {
+  host?: Pick<ClientHost, "uiKit">;
+  kit?: ClientUiKit | null;
   session: BrowserSession;
   api: ProfilesApi;
   profiles: ProfileListStore;
@@ -164,6 +167,11 @@ export function ProfileSection(props: {
   onChosen: () => void;
 }) {
   const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
+  const kit = props.kit === undefined ? resolveUiKit(props.host ?? {}) : props.kit;
+  const Action = kit?.MenuItem ?? "button";
+  const Heading = kit?.MenuGroupLabel ?? "span";
+  const Group = kit?.MenuGroup ?? "div";
+  const Note = kit?.MenuNote ?? "p";
   const profileId = sessionProfileId(session);
   const { list, error } = useProfileList(profiles);
   const listNote =
@@ -225,109 +233,175 @@ export function ProfileSection(props: {
       : undefined;
 
   return (
-    <div
+    <Group
       role="group"
       aria-label="Profile"
-      style={{ display: "grid", gap: 6, borderTop: border, paddingTop: 8 }}
+      style={kit ? undefined : { display: "grid", gap: 6, borderTop: border, paddingTop: 8 }}
     >
-      <span
-        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted }}
+      <Heading
+        title={`Profile: ${name}`}
+        style={
+          kit
+            ? {
+                display: "block",
+                maxWidth: 256,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }
+            : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted }
+        }
       >
         Profile: {name}
-      </span>
+      </Heading>
       {listNote && (
-        <p role="note" style={{ margin: 0, color: muted }}>
+        <Note role="note" style={kit ? undefined : { margin: 0, color: muted }}>
           {listNote}
-        </p>
+        </Note>
       )}
-      {others.length > 0 && (
-        <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-          <span>Open page in</span>
-          <select
-            aria-label="Open page in profile"
-            value=""
-            onChange={(event) => {
-              if (!event.target.value) return;
-              onChosen();
-              onOpenInProfile(event.target.value);
-            }}
-            style={{ ...control, maxWidth: 140 }}
-          >
-            <option value="">Choose…</option>
-            {others.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      {others.length > 0 && kit ? (
+        <kit.MenuRadioGroup
+          value=""
+          onValueChange={(profileId) => {
+            onChosen();
+            onOpenInProfile(profileId);
+          }}
+        >
+          <kit.MenuGroupLabel>Open page in</kit.MenuGroupLabel>
+          {others.map((profile) => (
+            <kit.MenuRadioItem key={profile.id} value={profile.id}>
+              {profile.name}
+            </kit.MenuRadioItem>
+          ))}
+        </kit.MenuRadioGroup>
+      ) : (
+        others.length > 0 && (
+          <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>Open page in</span>
+            <select
+              data-t3-browser-fallback-control
+              aria-label="Open page in profile"
+              value=""
+              onChange={(event) => {
+                if (!event.target.value) return;
+                onChosen();
+                onOpenInProfile(event.target.value);
+              }}
+              style={{ ...control, maxWidth: 140 }}
+            >
+              <option value="">Choose…</option>
+              {others.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )
       )}
-      <button
-        type="button"
+      <Action
+        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
         role="menuitem"
         onClick={() => clear("clearCookies")}
-        style={{ ...control, textAlign: "left" }}
+        style={kit ? undefined : { ...control, textAlign: "left" }}
       >
         Clear cookies
-      </button>
-      <button
-        type="button"
+      </Action>
+      <Action
+        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
         role="menuitem"
         onClick={() => clear("clearCache")}
-        style={{ ...control, textAlign: "left" }}
+        style={kit ? undefined : { ...control, textAlign: "left" }}
       >
         Clear cache
-      </button>
+      </Action>
       {importer.kind === "closed" ? (
-        <button
-          type="button"
+        <Action
+          {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
+          {...(kit ? { closeOnClick: false } : {})}
           role="menuitem"
           onClick={openImporter}
-          style={{ ...control, textAlign: "left" }}
+          style={kit ? undefined : { ...control, textAlign: "left" }}
         >
           Import cookies…
-        </button>
+        </Action>
       ) : importer.kind === "loading" ? (
-        <p role="note" style={{ margin: 0, color: muted }}>
+        <Note role="note" style={kit ? undefined : { margin: 0, color: muted }}>
           Listing browsers on the desktop…
-        </p>
+        </Note>
       ) : importer.kind === "failed" ? (
-        <p role="note" style={{ margin: 0, color: muted }}>
+        <Note role="note" style={kit ? undefined : { margin: 0, color: muted }}>
           {importer.message}
-        </p>
+        </Note>
       ) : importer.sources.length === 0 ? (
-        <p role="note" style={{ margin: 0, color: muted }}>
+        <Note role="note" style={kit ? undefined : { margin: 0, color: muted }}>
           No browser on the desktop can be imported from.
-        </p>
+        </Note>
       ) : (
         <div style={{ display: "grid", gap: 4 }}>
-          <select
-            aria-label="Import from browser"
-            value={importer.sourceId}
-            onChange={(event) =>
-              setImporter({
-                ...importer,
-                sourceId: event.target.value,
-                handle: firstProfile(importer.sources, event.target.value),
-              })
-            }
-            style={control}
-          >
-            {importer.sources.map((source) => (
-              <option key={source.id} value={source.id}>
-                {source.name}
-              </option>
-            ))}
-          </select>
+          {kit ? (
+            <kit.MenuRadioGroup
+              value={importer.sourceId}
+              onValueChange={(sourceId) =>
+                setImporter({
+                  ...importer,
+                  sourceId,
+                  handle: firstProfile(importer.sources, sourceId),
+                })
+              }
+            >
+              <kit.MenuGroupLabel>Import from browser</kit.MenuGroupLabel>
+              {importer.sources.map((source) => (
+                <kit.MenuRadioItem key={source.id} value={source.id} closeOnClick={false}>
+                  {source.name}
+                </kit.MenuRadioItem>
+              ))}
+            </kit.MenuRadioGroup>
+          ) : (
+            <select
+              data-t3-browser-fallback-control
+              aria-label="Import from browser"
+              value={importer.sourceId}
+              onChange={(event) =>
+                setImporter({
+                  ...importer,
+                  sourceId: event.target.value,
+                  handle: firstProfile(importer.sources, event.target.value),
+                })
+              }
+              style={control}
+            >
+              {importer.sources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+          )}
           {selectedSource?.unavailable ? (
-            <p role="note" style={{ margin: 0, color: muted }}>
+            <Note role="note" style={kit ? undefined : { margin: 0, color: muted }}>
               {importResultMessage(
                 { outcome: "failed", profileId, reason: selectedSource.unavailable },
                 name,
               )}
-            </p>
+            </Note>
+          ) : kit ? (
+            <kit.MenuRadioGroup
+              value={importer.handle}
+              onValueChange={(handle) => setImporter({ ...importer, handle })}
+            >
+              <kit.MenuGroupLabel>Import from browser profile</kit.MenuGroupLabel>
+              {selectedSource?.profiles.map((profile) => (
+                <kit.MenuRadioItem key={profile.handle} value={profile.handle} closeOnClick={false}>
+                  {profile.cookieCount === undefined
+                    ? profile.name
+                    : `${profile.name} (${profile.cookieCount} cookies)`}
+                </kit.MenuRadioItem>
+              ))}
+            </kit.MenuRadioGroup>
           ) : (
             <select
+              data-t3-browser-fallback-control
               aria-label="Import from browser profile"
               value={importer.handle}
               onChange={(event) => setImporter({ ...importer, handle: event.target.value })}
@@ -342,17 +416,17 @@ export function ProfileSection(props: {
               ))}
             </select>
           )}
-          <button
-            type="button"
+          <Action
+            {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
             role="menuitem"
             disabled={!importer.handle || selectedSource?.unavailable !== undefined}
             onClick={() => runImport(importer.sourceId, importer.handle)}
-            style={{ ...control, textAlign: "left" }}
+            style={kit ? undefined : { ...control, textAlign: "left" }}
           >
             Import into {name}
-          </button>
+          </Action>
         </div>
       )}
-    </div>
+    </Group>
   );
 }

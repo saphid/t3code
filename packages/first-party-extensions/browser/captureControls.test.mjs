@@ -231,3 +231,75 @@ NodeTest.test(
     fixture.lifetime.abort();
   },
 );
+
+NodeTest.test(
+  "kit capture controls keep native ordering and stop styling without changing recording actions",
+  async () => {
+    const fixture = harness();
+    const names = [
+      "Button",
+      "Input",
+      "InputGroup",
+      "InputGroupAddon",
+      "Toolbar",
+      "Menu",
+      "MenuTrigger",
+      "MenuPopup",
+      "MenuSub",
+      "MenuSubTrigger",
+      "MenuSubPopup",
+      "MenuGroup",
+      "MenuRow",
+      "MenuNote",
+      "MenuItem",
+      "MenuSeparator",
+      "MenuGroupLabel",
+      "MenuRadioGroup",
+      "MenuRadioItem",
+      "TreeRow",
+      "Icon",
+    ];
+    fixture.host.uiKit = {
+      version: 1,
+      ...Object.fromEntries(names.map((name) => [name, () => null])),
+      Button: ({ variant, size: _size, ...props }) =>
+        React.createElement("button", { ...props, "data-kit-variant": variant }),
+    };
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          React.createElement(BrowserCaptureButtons, {
+            host: fixture.host,
+            session: fixture.session,
+            held: { tabId: "tab", serverEpoch: "epoch" },
+            page: "shown",
+            style: {},
+          }),
+        );
+      });
+      NodeAssert.deepEqual(
+        renderer.root.findAllByType("button").map((button) => button.props["aria-label"]),
+        ["Annotate preview", "Capture screenshot"],
+      );
+      await act(async () =>
+        renderer.root
+          .findByProps({ "aria-label": "Capture screenshot" })
+          .props.onClick({ shiftKey: true }),
+      );
+      const stop = renderer.root
+        .findAllByType("button")
+        .find((button) => button.props["aria-label"] === "Stop recording");
+      NodeAssert.equal(stop.props["data-kit-variant"], "destructive");
+      NodeAssert.equal(
+        renderer.root.findAll((node) => node.props.className !== undefined).length,
+        0,
+      );
+      await act(async () => stop.props.onClick({ shiftKey: false }));
+      NodeAssert.deepEqual(fixture.calls, ["start", "stop", "Recording saved"]);
+    } finally {
+      if (renderer) await act(async () => renderer.unmount());
+      fixture.lifetime.abort();
+    }
+  },
+);

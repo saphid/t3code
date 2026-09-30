@@ -1,6 +1,7 @@
 import { Component, createElement, useCallback, useSyncExternalStore } from "react";
 import type { ComponentType, CSSProperties, ErrorInfo, ReactNode } from "react";
 import type { ExtensionHost, ViewSnapshot } from "./host.js";
+import { SurfaceVisibilityContext } from "./surfaceVisibility.js";
 
 export interface SurfaceRendererProps {
   readonly snapshot: ViewSnapshot;
@@ -72,7 +73,11 @@ export function ExtensionSurface(props: {
             fallback,
             onError: (error) => host.fail(viewId, error),
           },
-          createElement(Renderer, { snapshot }),
+          createElement(
+            SurfaceVisibilityContext.Provider,
+            { value: !hidden },
+            createElement(Renderer, { snapshot }),
+          ),
         )
       : fallback,
   );

@@ -19,6 +19,7 @@ import {
   type PageVerb,
 } from "./pageControls.js";
 import type { PanelFloating } from "./popover.js";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -108,7 +109,8 @@ export function ZoomIndicator(props: {
  * `blockReason` disables every page item and says why; `run` sends one verb.
  */
 export function PageMenu(props: {
-  host: Pick<ClientHost, "React" | "tooltip">;
+  host: Pick<ClientHost, "React" | "tooltip" | "uiKit">;
+  kit?: ClientUiKit | null;
   session: BrowserSession | null;
   blockReason: string | null;
   run: (verb: PageVerb) => void;
@@ -125,7 +127,157 @@ export function PageMenu(props: {
    * profile actions do not need a live page.
    */
   children?: (close: () => void) => ReactNode;
+  deviceMode?: boolean;
+  deviceDisabled?: boolean;
+  onToggleDeviceToolbar?: () => void;
 }) {
+  const kit = props.kit === undefined ? resolveUiKit(props.host) : props.kit;
+  return kit ? <NativePageMenu {...props} kit={kit} /> : <LegacyPageMenu {...props} />;
+}
+
+function NativePageMenu({
+  host,
+  session,
+  blockReason,
+  run,
+  zoomStep,
+  visible,
+  children,
+  kit,
+  deviceMode,
+  deviceDisabled,
+  onToggleDeviceToolbar,
+}: Parameters<typeof PageMenu>[0] & { kit: NonNullable<ReturnType<typeof resolveUiKit>> }) {
+  const [open, setOpen] = useState(false);
+  if (open && !visible) setOpen(false);
+  const disabled = blockReason !== null;
+  const zoom = session?.zoomFactor ?? null;
+  const {
+    Button,
+    Icon,
+    Menu,
+    MenuTrigger,
+    MenuPopup,
+    MenuItem,
+    MenuSeparator,
+    MenuSub,
+    MenuSubTrigger,
+    MenuSubPopup,
+    MenuRadioGroup,
+    MenuRadioItem,
+    MenuRow,
+    MenuNote,
+  } = kit;
+  return (
+    <Menu open={open && visible} onOpenChange={setOpen}>
+      <Tooltip host={host} label="More">
+        <MenuTrigger>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Preview menu"
+            disabled={session === null}
+          >
+            <Icon name="more" />
+          </Button>
+        </MenuTrigger>
+      </Tooltip>
+      <MenuPopup
+        align="end"
+        sideOffset={6}
+        aria-label="Page"
+        data-t3-browser-popover=""
+        style={{ minWidth: 220 }}
+      >
+        {blockReason && <MenuNote>{blockReason}</MenuNote>}
+        <MenuItem disabled={disabled} onClick={() => run({ method: "hardReload" })}>
+          Hard reload
+        </MenuItem>
+        <MenuItem
+          disabled={disabled || session?.devToolsOpen == null}
+          onClick={() => run({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" })}
+        >
+          {session?.devToolsOpen ? "Close DevTools" : "Open DevTools"}
+        </MenuItem>
+        <MenuItem
+          disabled={disabled || session?.pictureInPicture == null}
+          onClick={() =>
+            run({ method: "setPictureInPicture", open: session?.pictureInPicture !== true })
+          }
+        >
+          {session?.pictureInPicture
+            ? "Close separate preview window"
+            : "Open separate preview window"}
+        </MenuItem>
+        <MenuItem disabled={deviceDisabled ?? disabled} onClick={onToggleDeviceToolbar}>
+          {deviceMode ? "Hide device toolbar" : "Show device toolbar"}
+        </MenuItem>
+        <MenuSub>
+          <MenuSubTrigger disabled={disabled}>Appearance</MenuSubTrigger>
+          <MenuSubPopup>
+            <MenuRadioGroup
+              value={session?.appearance ?? ""}
+              onValueChange={(appearance) =>
+                run({ method: "setAppearance", appearance: appearance as PageAppearance })
+              }
+            >
+              {APPEARANCE_OPTIONS.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuRow label="Zoom" disabled={disabled}>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label="Zoom out"
+            disabled={disabled}
+            onClick={() => zoomStep("out")}
+          >
+            <Icon name="minus" />
+          </Button>
+          <MenuNote numeric aria-label="Zoom level">
+            {zoom === null ? "—" : zoomPercent(zoom)}
+          </MenuNote>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label="Zoom in"
+            disabled={disabled}
+            onClick={() => zoomStep("in")}
+          >
+            <Icon name="plus" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Reset zoom"
+            disabled={disabled}
+            onClick={() => run({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR })}
+          >
+            <Icon name="reset" />
+          </Button>
+        </MenuRow>
+        <MenuSeparator />
+        {children?.(() => setOpen(false))}
+        <MenuSeparator />
+        <MenuItem
+          disabled={disabled || session?.audioMuted == null}
+          closeOnClick={false}
+          onClick={() => run({ method: "setAudioMuted", muted: session?.audioMuted !== true })}
+        >
+          {session?.audioMuted ? "Unmute page" : "Mute page"}
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
   const { host, session, blockReason, run, zoomStep, floating, visible, children } = props;
   const [open, setOpen] = useState(false);
   if (open && !visible) setOpen(false);
@@ -162,6 +314,7 @@ export function PageMenu(props: {
     <div ref={root} style={{ position: "relative" }}>
       <Tooltip host={host} label="More">
         <button
+          data-t3-browser-fallback-control
           ref={setTrigger}
           type="button"
           aria-label="Preview menu"
@@ -202,6 +355,7 @@ export function PageMenu(props: {
             </p>
           )}
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitem"
             disabled={disabled}
@@ -216,6 +370,7 @@ export function PageMenu(props: {
           <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
             <span>Appearance</span>
             <select
+              data-t3-browser-fallback-control
               aria-label="Appearance"
               disabled={disabled}
               // Unreported appearance renders blank rather than a guessed default.
@@ -236,6 +391,7 @@ export function PageMenu(props: {
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ flex: 1 }}>Zoom</span>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Zoom out"
               disabled={disabled}
@@ -245,6 +401,7 @@ export function PageMenu(props: {
               −
             </button>
             <select
+              data-t3-browser-fallback-control
               aria-label="Zoom level"
               disabled={disabled}
               value={zoom === null ? "" : String(zoom)}
@@ -259,6 +416,7 @@ export function PageMenu(props: {
               ))}
             </select>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Zoom in"
               disabled={disabled}
@@ -268,6 +426,7 @@ export function PageMenu(props: {
               +
             </button>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Reset zoom"
               disabled={disabled || zoom === DEFAULT_ZOOM_FACTOR}
@@ -278,6 +437,7 @@ export function PageMenu(props: {
             </button>
           </div>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={audioMuted === true}
@@ -288,6 +448,7 @@ export function PageMenu(props: {
             {audioMuted ? "Unmute page" : "Mute page"}
           </button>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={devToolsOpen === true}
@@ -301,6 +462,7 @@ export function PageMenu(props: {
             {devToolsOpen ? "Close DevTools" : "Open DevTools"}
           </button>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={pictureInPicture === true}

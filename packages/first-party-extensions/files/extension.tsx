@@ -65,14 +65,11 @@ import { useAddToChat } from "./composerBridge.js";
 import { useExternalEditor } from "./editorBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import { EditableFileBody, ReadOnlyFileBody } from "./codeView.js";
-import {
-  FILE_SAVE_DEBOUNCE_MS,
-  FileEditCoordinator,
-  type EditorSaveState,
-} from "./saveCoordinator.js";
 import { useFileEditor } from "./editorSession.js";
 import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
 import { useWorkspaceTree } from "./workspaceTree.js";
+import { FileTreeRow } from "./treeRow.js";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import {
   collectResourceRead,
   contentMatchSegments,
@@ -632,6 +629,7 @@ function MarkdownInlineNode(props: {
         const anchor = links === undefined ? null : resolveWorkspaceLink(node.href, "");
         return links !== undefined && anchor?.kind === "anchor" && anchor.line !== undefined ? (
           <button
+            data-t3-files-fallback-control
             type="button"
             style={linkButtonStyle}
             onClick={() => links.revealLine(anchor.line ?? 0)}
@@ -656,6 +654,7 @@ function MarkdownInlineNode(props: {
       const target = links === undefined ? null : resolveWorkspaceLink(node.href, links.baseDir);
       return links !== undefined && target?.kind === "workspace" ? (
         <button
+          data-t3-files-fallback-control
           type="button"
           style={linkButtonStyle}
           onClick={() => links.openPath(target.path, target.line)}
@@ -773,6 +772,7 @@ function MarkdownBlockNode(props: {
             <li key={key} style={{ marginBottom: 4 }}>
               {item.task !== undefined && (
                 <input
+                  data-t3-files-fallback-control
                   type="checkbox"
                   checked={item.task.checked}
                   disabled
@@ -946,6 +946,7 @@ function FileBreadcrumbBar(props: {
               {menuable ? (
                 <Tooltip host={host} side="top" label={fileBreadcrumbTooltip(crumb)}>
                   <button
+                    data-t3-files-fallback-control
                     type="button"
                     aria-label={`Browse ${crumb.label}`}
                     aria-haspopup="menu"
@@ -1089,6 +1090,7 @@ function CrumbMenu(props: {
   return (
     <>
       <button
+        data-t3-files-fallback-control
         type="button"
         aria-label="Close directory menu"
         onClick={onClose}
@@ -1123,6 +1125,7 @@ function CrumbMenu(props: {
       >
         {menuDir !== rootPath && parent !== null && (
           <button
+            data-t3-files-fallback-control
             type="button"
             role="menuitem"
             onClick={() => onNavigate(parent)}
@@ -1134,6 +1137,7 @@ function CrumbMenu(props: {
         {children.map((child) => (
           <Tooltip key={child.path} host={host} side="right" label={child.path}>
             <button
+              data-t3-files-fallback-control
               type="button"
               role="menuitem"
               aria-current={child.path === selected ? "true" : undefined}
@@ -1186,6 +1190,11 @@ const toolbarControl = {
 } as const;
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
+  const kit = resolveUiKit(props.host);
+  const ActionButton = kit?.Button ?? "button";
+  const actionProps = kit
+    ? ({ variant: "outline", size: "xs" } as const)
+    : { "data-t3-files-fallback-control": "", style: toolbarControl };
   const { host, session } = props;
   const [visible, setVisible] = useState(session.visible);
   useEffect(() => session.onVisibility(setVisible), [session]);
@@ -1290,7 +1299,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   });
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
-  const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
+  const rows = useMemo(
+    () => visibleRows(entries, expanded, "", kit !== null),
+    [entries, expanded, kit],
+  );
   const rowIndex = useMemo(
     () => new Map(rows.map((row, index) => [row.entry.path, index])),
     [rows],
@@ -1299,10 +1311,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // the viewport mount, so an expanded tree of any size stays cheap. The
   // focused row stays mounted so keyboard focus survives scrolling.
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const tabStopPath =
+    focusedRow ?? (selected && rowIndex.has(selected) ? selected : rows[0]?.entry.path);
   const tree = useWindowedRows(host, {
     count: rows.length,
     rowHeight: TREE_ROW_HEIGHT,
-    ...(focusedRow !== null && rowIndex.has(focusedRow) ? { keep: rowIndex.get(focusedRow) } : {}),
+    ...(tabStopPath !== undefined ? { keep: rowIndex.get(tabStopPath) } : {}),
   });
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const focusTarget = useRef<string | null>(null);
@@ -1346,6 +1360,13 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     setFocusedRow(path);
     if (path !== null) revealFocusRow(next);
   }, [focusedRow, rowIndex, rows, kindByPath, revealFocusRow]);
+  const toggleTreeFolder = (row: (typeof rows)[number]) =>
+    setFolders((previous) => {
+      const next = toggleFolder(previous, row.entry.path);
+      // Flattened intermediates open with their visible row, so a new sibling
+      // can split the chain without hiding the branch the user opened.
+      return expanded.has(row.entry.path) ? next : openFolders(next, row.directoryPaths ?? []);
+    });
   // Tree keys, as native's: up/down/home/end move; right opens a folder or
   // enters it; left closes it or moves to its parent.
   const onTreeKeyDown = (event: KeyboardEvent) => {
@@ -1362,10 +1383,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       next = open ? ((rows[index + 1]?.depth ?? 0) > row.depth ? index + 1 : index) : undefined;
     else if (event.key === "ArrowLeft") {
       const parent = parentPath(row.entry.path);
-      next = open ? undefined : parent === null ? index : rowIndex.get(parent);
+      const parentIndex = kit
+        ? rows.slice(0, index).findLastIndex((candidate) => candidate.depth < row.depth)
+        : parent === null
+          ? index
+          : rowIndex.get(parent);
+      next = open ? undefined : parentIndex === -1 ? index : parentIndex;
     } else return;
     event.preventDefault();
-    if (next === undefined) setFolders((previous) => toggleFolder(previous, row.entry.path));
+    if (next === undefined) toggleTreeFolder(row);
     else focusRow(next);
   };
   // A file selected from anywhere — a link, search, the breadcrumb — scrolls
@@ -1947,7 +1973,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {/* Native focus treatment: the host's 2px accent ring with a 1px canvas
           gap on focus-visible (same rule as the other first-party panels). */}
       <style>
-        {`[data-t3-files-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`[data-t3-files-fallback-control]:focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       {showExplorer && (
         <header
@@ -1962,6 +1988,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         >
           <Tooltip host={host} label={pending ? "Refreshing…" : "Refresh files"}>
             <button
+              data-t3-files-fallback-control
               type="button"
               aria-label="Refresh workspace files"
               onClick={refresh}
@@ -1971,6 +1998,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             </button>
           </Tooltip>
           <select
+            data-t3-files-fallback-control
             aria-label="Search mode"
             value={searchMode}
             onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
@@ -1980,6 +2008,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             <option value="contents">File contents</option>
           </select>
           <input
+            data-t3-files-fallback-control
             ref={searchRef}
             type="search"
             aria-label="Search workspace files"
@@ -1995,6 +2024,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
           />
           <select
+            data-t3-files-fallback-control
             aria-label={
               searchMode === "contents"
                 ? "Search kind — not used for contents search"
@@ -2012,6 +2042,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {directories.length > 0 && (
             <Tooltip host={host} label={expandAllLabel}>
               <button
+                data-t3-files-fallback-control
                 type="button"
                 aria-label={expandAllLabel}
                 onClick={toggleAllDirectories}
@@ -2026,6 +2057,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {showExplorer && (
         <ul
           ref={tree.ref}
+          role={searching ? undefined : "tree"}
           aria-label="Workspace files"
           onScroll={tree.onScroll}
           onKeyDown={searching ? undefined : onTreeKeyDown}
@@ -2047,6 +2079,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 ).map(({ item: match, key }) => (
                   <li key={key}>
                     <button
+                      data-t3-files-fallback-control
                       type="button"
                       aria-current={match.path === selected ? "true" : undefined}
                       draggable
@@ -2120,6 +2153,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 ).map((entry) => (
                   <li key={entry.path}>
                     <button
+                      data-t3-files-fallback-control
                       type="button"
                       aria-current={entry.path === selected ? "true" : undefined}
                       draggable
@@ -2166,23 +2200,30 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   return (
                     <li
                       key={row.entry.path}
-                      aria-setsize={rows.length}
-                      aria-posinset={index + 1}
+                      role="none"
                       style={{
                         position: "absolute",
                         top: index * TREE_ROW_HEIGHT,
-                        left: 6,
-                        right: 6,
+                        left: kit ? 16 : 6,
+                        right: kit ? 16 : 6,
                         height: TREE_ROW_HEIGHT,
                       }}
                     >
-                      <button
+                      <FileTreeRow
+                        kit={kit}
+                        path={row.entry.path}
+                        label={row.label}
+                        depth={row.depth}
+                        aria-setsize={rows.length}
+                        aria-posinset={index + 1}
+                        directory={row.expandable}
+                        expanded={expanded.has(row.entry.path)}
+                        selected={row.entry.path === selected}
+                        tabIndex={row.entry.path === tabStopPath ? 0 : -1}
                         ref={(button) => {
                           if (button === null) rowButtons.current.delete(row.entry.path);
                           else rowButtons.current.set(row.entry.path, button);
                         }}
-                        type="button"
-                        aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
                         aria-current={row.entry.path === selected ? "true" : undefined}
                         draggable
                         onDragStart={(event) => startMentionDrag(event, row.entry.path)}
@@ -2198,36 +2239,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                             select(row.entry.path);
                             return;
                           }
-                          setFolders((previous) => toggleFolder(previous, row.entry.path));
+                          toggleTreeFolder(row);
                         }}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          height: TREE_ROW_HEIGHT,
-                          boxSizing: "border-box",
-                          textAlign: "left",
-                          font: "inherit",
-                          fontSize: 12,
-                          lineHeight: "16px",
-                          padding: "3px 6px",
-                          paddingLeft: 6 + row.depth * 14,
-                          border: "1px solid transparent",
-                          borderRadius: 5,
-                          cursor: "pointer",
-                          color: "var(--t3-files-text, var(--foreground, #20252d))",
-                          background:
-                            row.entry.path === selected
-                              ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                              : "transparent",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
-                        {row.entry.path.split("/").at(-1)}
-                        {row.expandable ? "/" : ""}
-                      </button>
+                      />
                     </li>
                   );
                 }),
@@ -2296,12 +2310,13 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             flexShrink: 0,
           }}
         >
-          <button type="button" onClick={openInPanel}>
+          <ActionButton {...actionProps} type="button" onClick={openInPanel}>
             Open in panel
-          </button>
+          </ActionButton>
           {externalEditor.visible && (
             <>
-              <button
+              <ActionButton
+                {...actionProps}
                 type="button"
                 disabled={
                   externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
@@ -2311,16 +2326,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 Open in{" "}
                 {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
                   ?.label ?? "editor"}
-              </button>
+              </ActionButton>
               <details
+                style={{ position: "relative" }}
                 onToggle={(event) => {
                   if (event.currentTarget.open) externalEditor.markHintShown();
                 }}
               >
-                <summary>Choose editor</summary>
+                <summary style={toolbarControl}>Choose editor</summary>
                 {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
                 {externalEditor.editors.map((editor) => (
-                  <button
+                  <ActionButton
+                    {...actionProps}
                     key={editor.id}
                     type="button"
                     disabled={
@@ -2329,7 +2346,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     onClick={() => externalEditor.openInEditor(selected, editor.id)}
                   >
                     {editor.label}
-                  </button>
+                  </ActionButton>
                 ))}
               </details>
             </>
@@ -2340,12 +2357,13 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             </span>
           )}
           {browserPreview && opensInPreviewBrowser(selected) && (
-            <button type="button" onClick={() => openSelected("browser")}>
+            <ActionButton {...actionProps} type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
-            </button>
+            </ActionButton>
           )}
           {addChat.blockReason === null ? (
-            <button
+            <ActionButton
+              {...actionProps}
               type="button"
               disabled={addChat.state.kind === "adding"}
               onClick={() => {
@@ -2353,7 +2371,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               Add to chat
-            </button>
+            </ActionButton>
           ) : (
             <span style={{ color: muted, fontSize: 11 }}>
               Add to chat unavailable — {addChat.blockReason}
@@ -2379,21 +2397,36 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               host={host}
               label={markdownRendered ? "Show markdown source" : "Show rendered markdown"}
             >
-              <button type="button" aria-pressed={markdownRendered} onClick={toggleMarkdown}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={markdownRendered}
+                onClick={toggleMarkdown}
+              >
                 {markdownRendered ? "Show markdown source" : "Show rendered markdown"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {leasePreviewMode(selected) === "html" && (
-            <button type="button" aria-pressed={selectedKind === "html"} onClick={toggleHtml}>
+            <ActionButton
+              {...actionProps}
+              type="button"
+              aria-pressed={selectedKind === "html"}
+              onClick={toggleHtml}
+            >
               {selectedKind === "html" ? "Show HTML source" : "Show rendered page"}
-            </button>
+            </ActionButton>
           )}
           {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
             <Tooltip host={host} label={wordWrap.value ? "Disable word wrap" : "Enable word wrap"}>
-              <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={wordWrap.value}
+                onClick={wordWrap.toggle}
+              >
                 {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {wordWrap.writeError !== null && (
@@ -2403,9 +2436,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           )}
           {presentationPath(selected) !== null && (
             <Tooltip host={host} label={explorerOpen ? "Hide file explorer" : "Show file explorer"}>
-              <button type="button" aria-pressed={explorerOpen} onClick={toggleExplorer}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={explorerOpen}
+                onClick={toggleExplorer}
+              >
                 {explorerOpen ? "Hide file explorer" : "Show file explorer"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
@@ -2457,6 +2495,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     </span>
                   )}
                   <textarea
+                    data-t3-files-fallback-control
                     aria-label="Comment text"
                     value={commentBody}
                     onChange={(event) => setCommentBody(event.target.value)}
@@ -2480,7 +2519,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     </span>
                   )}
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button
+                    <ActionButton
+                      {...actionProps}
                       type="button"
                       disabled={
                         commentDraftStale || commentBody.trim() === "" || commentSubmit.busy
@@ -2488,10 +2528,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       onClick={submitCommentDraft}
                     >
                       {commentSubmit.busy ? "Submitting…" : "Submit comment"}
-                    </button>
-                    <button type="button" disabled={commentSubmit.busy} onClick={closeCommentDraft}>
+                    </ActionButton>
+                    <ActionButton
+                      {...actionProps}
+                      type="button"
+                      disabled={commentSubmit.busy}
+                      onClick={closeCommentDraft}
+                    >
                       Cancel
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               ) : selectionRange !== null ? (
@@ -2509,10 +2554,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   }}
                 >
                   {commentBlockReason === null ? (
-                    <button type="button" onClick={() => openCommentDraft(selectionRange)}>
+                    <ActionButton
+                      {...actionProps}
+                      type="button"
+                      onClick={() => openCommentDraft(selectionRange)}
+                    >
                       Comment on{" "}
                       {formatCommentRangeLabel(selectionRange.startLine, selectionRange.endLine)}
-                    </button>
+                    </ActionButton>
                   ) : (
                     <span style={{ color: muted }}>
                       Commenting unavailable — {commentBlockReason}
@@ -2577,22 +2626,24 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       {comment.text !== null ? ` — ${comment.text}` : ""}
                     </span>
                     {comment.truncated === true && (
-                      <button
+                      <ActionButton
+                        {...actionProps}
                         type="button"
                         aria-label={`Show the whole comment on ${comment.rangeLabel}`}
                         onClick={() => posted.readFull(comment.annotationId)}
                       >
                         Show all
-                      </button>
+                      </ActionButton>
                     )}
                     {posted.removable && (
-                      <button
+                      <ActionButton
+                        {...actionProps}
                         type="button"
                         aria-label={`Remove comment on ${comment.rangeLabel}`}
                         onClick={() => posted.remove(comment.annotationId)}
                       >
                         Remove
-                      </button>
+                      </ActionButton>
                     )}
                   </span>
                 ))}
@@ -2623,12 +2674,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               File changed on disk — your edits are kept.
-              <button type="button" onClick={editor.reload}>
+              <ActionButton {...actionProps} type="button" onClick={editor.reload}>
                 Reload file
-              </button>
-              <button type="button" onClick={editor.keepMine}>
+              </ActionButton>
+              <ActionButton {...actionProps} type="button" onClick={editor.keepMine}>
                 Keep my version
-              </button>
+              </ActionButton>
             </div>
           )}
           {editorSurface.saveState.kind === "error" && (
@@ -2645,9 +2696,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               {describeSaveState(editorSurface.saveState)}
-              <button type="button" onClick={editor.retry}>
+              <ActionButton {...actionProps} type="button" onClick={editor.retry}>
                 Retry save
-              </button>
+              </ActionButton>
             </div>
           )}
         </div>

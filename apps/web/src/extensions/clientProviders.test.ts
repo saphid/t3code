@@ -794,6 +794,7 @@ describe("theme provider", () => {
     };
     expect(Object.keys(resolved.tokens).length).toBeGreaterThan(0);
     expect(resolved.cssVars.canvas).toContain("--");
+    expect(resolved).not.toHaveProperty("uiKitVersion");
     expectDenied(
       () => provider.invoke(invokeCall("resolveTokens", { appearance: "auto" })),
       "provider-rejected",

@@ -1,3 +1,4 @@
+export { SurfaceVisibilityContext } from "./surfaceVisibility.js";
 import {
   createContextSnapshotId,
   validateContextContent,
