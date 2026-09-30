@@ -125,6 +125,8 @@ export const BrowserEnginePageStatus = Schema.Struct({
   devToolsOpen: Schema.Boolean,
   /** The guest is shown in the host's native picture-in-picture window. */
   pictureInPicture: Schema.Boolean,
+  controller: Schema.optional(Schema.Literals(["human", "agent", "none"])),
+  remoteLive: Schema.optional(Schema.Boolean),
   favicon: Schema.NullOr(
     Schema.Struct({
       dataUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(BROWSER_ENGINE_FAVICON_MAX_LENGTH)),

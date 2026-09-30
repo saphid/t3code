@@ -246,6 +246,20 @@ describe("setDevToolsOpen", () => {
 });
 
 describe("toEnginePageStatus", () => {
+  it("reports agent control and remote activity once without pointer or timestamp chatter", () => {
+    const first = nextEnginePageReport(null, tabState());
+    expect(first?.status).toMatchObject({ controller: "human", remoteLive: false });
+    const agent = nextEnginePageReport(first!.statusKey, tabState({ controller: "agent" }));
+    expect(agent?.status).toMatchObject({ controller: "agent", remoteLive: false });
+    expect(
+      nextEnginePageReport(agent!.statusKey, tabState({ controller: "agent", updatedAt: "later" })),
+    ).toBeNull();
+    expect(
+      nextEnginePageReport(agent!.statusKey, tabState({ controller: "agent", remoteLive: true }))
+        ?.status,
+    ).toMatchObject({ controller: "agent", remoteLive: true });
+  });
+
   const decode = Schema.decodeUnknownSync(BrowserEnginePageStatus);
 
   it("produces a report the server contract accepts", () => {

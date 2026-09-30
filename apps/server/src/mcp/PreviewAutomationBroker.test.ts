@@ -93,6 +93,87 @@ it.effect("atomically registers a connected host and correlates its response", (
   ),
 );
 
+it.effect(
+  "automates an extension-presented engine tab on its leased host after another host gains focus",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const tabId = PreviewTabId.make("extension-session");
+        const routed: RoutedRequest[] = [];
+        let extensionConnectionId = "";
+        let nativeConnectionId = "";
+        const extensionRequests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId: "extension-engine-host" })),
+          (connectionId) => {
+            extensionConnectionId = connectionId;
+          },
+        );
+        const nativeRequests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId: "native-engine-host" })),
+          (connectionId) => {
+            nativeConnectionId = connectionId;
+          },
+        );
+        yield* Stream.runForEach(extensionRequests, (request) => {
+          routed.push(request);
+          return broker.respond({
+            clientId: "extension-engine-host",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { tabId, available: true },
+          });
+        }).pipe(Effect.forkScoped);
+        yield* Stream.runForEach(nativeRequests, (request) =>
+          broker.respond({
+            clientId: "native-engine-host",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { tabId: "foreign-tab" },
+          }),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* broker.focusHost({
+          clientId: "extension-engine-host",
+          connectionId: extensionConnectionId,
+          environmentId: scope.environmentId,
+          focused: true,
+        });
+        expect(yield* broker.invoke({ scope, operation: "status", input: {}, tabId })).toEqual({
+          tabId,
+          available: true,
+        });
+        yield* broker.focusHost({
+          clientId: "native-engine-host",
+          connectionId: nativeConnectionId,
+          environmentId: scope.environmentId,
+          focused: true,
+        });
+        for (const operation of ["snapshot", "click", "type", "scroll"] as const) {
+          expect(yield* broker.invoke({ scope, operation, input: {} })).toEqual({
+            tabId,
+            available: true,
+          });
+        }
+        expect(routed.map((request) => request.operation)).toEqual([
+          "status",
+          "snapshot",
+          "click",
+          "type",
+          "scroll",
+        ]);
+        expect(
+          routed.every((request) => request.tabId === tabId && request.threadId === scope.threadId),
+        ).toBe(true);
+        expect(routed.every((request) => request.connectionId === extensionConnectionId)).toBe(
+          true,
+        );
+      }),
+    ),
+);
+
 it.effect("targets multiple tabs explicitly while retaining a default tab", () =>
   Effect.scoped(
     Effect.gen(function* () {

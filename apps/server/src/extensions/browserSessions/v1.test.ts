@@ -1040,6 +1040,59 @@ describe("browser sessions adapter", () => {
     }),
   );
 
+  it.effect(
+    "extension sessions observe fenced agent control through the existing event stream",
+    () =>
+      Effect.gen(function* () {
+        const { provider, engineHosts } = yield* harness;
+        const opened = (yield* invoke(provider, "open", { url: "localhost:5173" })) as {
+          readonly serverEpoch: string;
+          readonly session: { readonly tabId: string };
+        };
+        expect(opened.session).toMatchObject({ controller: null, remoteLive: null });
+        const { fence } = yield* attachDesktopHost(engineHosts, {
+          tabId: opened.session.tabId,
+          serverEpoch: opened.serverEpoch,
+        });
+        const iterable = provider.subscribe!("events", {}, context(), signal, meta(provider));
+        const iterator = iterable[Symbol.asyncIterator]();
+        try {
+          let snapshot = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+          while (snapshot.kind !== "snapshot-complete") {
+            snapshot = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+          }
+          yield* engineHosts.report(DESKTOP_SOCKET, {
+            ...fence,
+            status: {
+              ...pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
+              controller: "agent",
+              remoteLive: true,
+            },
+          });
+          const upsert = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+          expect(upsert).toMatchObject({
+            kind: "session-upsert",
+            session: { tabId: opened.session.tabId, controller: "agent", remoteLive: true },
+          });
+          yield* engineHosts.report(DESKTOP_SOCKET, {
+            ...fence,
+            status: {
+              ...pageStatus({ _tag: "Success", url: "http://localhost:5173/", title: "Dev" }),
+              controller: "human",
+              remoteLive: false,
+            },
+          });
+          const human = eventValue((yield* Effect.promise(() => iterator.next())).value!);
+          expect(human).toMatchObject({
+            kind: "session-upsert",
+            session: { controller: "human", remoteLive: false },
+          });
+        } finally {
+          yield* Effect.promise(() => iterator.return!());
+        }
+      }),
+  );
+
   it.effect("picture-in-picture routes to the owner host and its state rides session upserts", () =>
     Effect.gen(function* () {
       const { provider, engineHosts } = yield* harness;

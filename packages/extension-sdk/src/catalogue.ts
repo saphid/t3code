@@ -5901,6 +5901,11 @@ export const PRS_WRITE_API = prsWriteApi.definition;
  * `pictureInPicture` (null until the owner host reports). A session whose
  * guest is recovering or crashed fails it by name
  * (`BrowserSessionEngineNotLive`), as does one with no host (desktop-required).
+ *
+ * Agent observations (1.3.0): optional `controller` and `remoteLive` fields
+ * follow the owner engine's existing status reports and session events. Null
+ * means unreported; absence means an older host. They confer no automation
+ * authority: MCP host leases and human interruption remain host-owned.
  * --------------------------------------------------------------------- */
 export const BROWSER_OPERATE = "t3.browser/operate";
 export const BROWSER_DEVTOOLS = "t3.browser/devtools";
@@ -5989,6 +5994,8 @@ export type BrowserSession = {
   readonly devToolsOpen: boolean | null;
   /** Shown in the host's native picture-in-picture window; null until reported. */
   readonly pictureInPicture: boolean | null;
+  readonly controller?: "human" | "agent" | "none" | null;
+  readonly remoteLive?: boolean | null;
   /** Captured favicon for the current page's origin; resolve with `getFavicon`. */
   readonly faviconRef?: string;
 };
@@ -6239,13 +6246,21 @@ const browserSessionObjectV1_1 = {
   required: [...browserSessionObjectV1.required, "devToolsOpen"],
   properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } },
 } as const;
-const browserSessionObject = {
+const browserSessionObjectV1_2 = {
   ...browserSessionObjectV1_1,
   required: [...browserSessionObjectV1_1.required, "pictureInPicture"],
   properties: {
     ...browserSessionObjectV1_1.properties,
     pictureInPicture: { type: ["boolean", "null"] },
     faviconRef: browserSessionFaviconRef,
+  },
+} as const;
+const browserSessionObject = {
+  ...browserSessionObjectV1_2,
+  properties: {
+    ...browserSessionObjectV1_2.properties,
+    controller: { enum: ["human", "agent", "none", null] },
+    remoteLive: { type: ["boolean", "null"] },
   },
 } as const;
 const browserSessionReceiptOf = (session: JsonObject) =>
@@ -6601,9 +6616,44 @@ export const browserSessionsApi: TypedApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>(
   browserSessionsDefinition(
-    "1.2.0",
+    "1.3.0",
     BROWSER_SESSION_COMMANDS,
     browserSessionObject,
+    (receipt) => [
+      ...browserSessionDevToolsMethods(receipt),
+      browserSessionCommandMethod(
+        receipt,
+        "setPictureInPicture",
+        { open: { type: "boolean" } },
+        ["open"],
+        [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE],
+      ),
+    ],
+    [browserSessionGetFaviconMethod],
+  ),
+  {
+    baseline: "1.2.0",
+    additions: [
+      { version: "1.3.0", method: "list", output: "sessions[].controller" },
+      { version: "1.3.0", method: "list", output: "sessions[].remoteLive" },
+      { version: "1.3.0", method: "events", output: "sessions[].controller" },
+      { version: "1.3.0", method: "events", output: "sessions[].remoteLive" },
+      { version: "1.3.0", method: "events", output: "session.controller" },
+      { version: "1.3.0", method: "events", output: "session.remoteLive" },
+      ...["open", "navigate", ...BROWSER_SESSION_COMMANDS].flatMap((method) => [
+        { version: "1.3.0", method, output: "session.controller" },
+        { version: "1.3.0", method, output: "session.remoteLive" },
+      ]),
+    ],
+  },
+);
+export const browserSessionsApiV1_2 = defineStreamApi<{
+  events: { input: Record<string, never>; event: BrowserSessionStreamValue };
+}>(
+  browserSessionsDefinition(
+    "1.2.0",
+    BROWSER_SESSION_COMMANDS,
+    browserSessionObjectV1_2,
     (receipt) => [
       ...browserSessionDevToolsMethods(receipt),
       browserSessionCommandMethod(
@@ -6639,6 +6689,7 @@ export const browserSessionsApiV1 = defineStreamApi<{
   events: { input: Record<string, never>; event: BrowserSessionStreamValue };
 }>(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
 export const BROWSER_SESSIONS_API = browserSessionsApi.definition;
+export const BROWSER_SESSIONS_API_V1_2 = browserSessionsApiV1_2.definition;
 export const BROWSER_SESSIONS_API_V1_1 = browserSessionsApiV1_1.definition;
 export const BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
 
@@ -10036,6 +10087,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   browserLocalServersApi.definition,
   browserHistoryApi.definition,
   browserSessionsApi.definition,
+  browserSessionsApiV1_2.definition,
   browserSessionsApiV1_1.definition,
   browserSessionsApiV1.definition,
   browserProfilesApi.definition,
