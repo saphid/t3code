@@ -1,5 +1,5 @@
 /**
- * Authenticated browser engine host registry (P08-ENGINE-ATTACH).
+ * Authenticated browser engine host registry.
  *
  * The desktop renderer owns Chromium guests; it registers here over its own
  * WebSocket and receives ordinary page commands on the registration stream.

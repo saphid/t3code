@@ -1624,7 +1624,7 @@ describe("composer provider", () => {
     expect(preview).toBe(`${long.trim().slice(0, 159)}…`);
   });
 
-  // Review repro (gaps-files-2 P2): a listing's preview is marked cut, and
+  // A listing's preview is marked cut, and
   // one own comment's whole text is readable on its own, within the frame.
   it("getAnnotation returns one own comment's whole text within the frame budget", () => {
     const provider = createComposerClientProvider(makeDeps(["t3.messages/write"]));

@@ -1,6 +1,6 @@
 /**
- * Empty-state "Local servers" section on the
- * public `t3.browser/local-servers` stream. The native panel's
+ * Empty-state "Local servers" section on the public
+ * `t3.browser/local-servers` stream. The native panel's
  * PreviewEmptyState renders "Recently used" (≤ 8) and then "Local servers";
  * this module owns the section's model: snapshot → sorted, deduped rows, and
  * every way the stream can end → a named state, never a silent empty list.

@@ -1040,7 +1040,7 @@ NodeTest.describe(
   },
 );
 
-// fix-d9 O2: after an app/backend restart the restored pane sat "closed"
+// After an app/backend restart the restored pane sat "closed"
 // until Start was clicked. Native attaches every pane it shows with the
 // launch cwd, which starts a session the server no longer has.
 NodeTest.test("a shown restored pane with no server session starts without a click", async () => {
@@ -1246,7 +1246,7 @@ NodeTest.describe("path link activation (Terminal 22 path half)", () => {
           "\r\n[terminal] https://t3.codes/docs was not opened (opener-refused).\r\n",
         ]);
         NodeAssert.equal(editorInvokes(invokes).length, editorCount);
-        // fix-d9: a plain click leaves the destination to the host's "Open
+        // A plain click leaves the destination to the host's "Open
         // links in" setting; only Cmd/Ctrl-click forces the system browser.
         await pane.activate("https://t3.codes/app", { metaKey: false, ctrlKey: false });
         await pane.activate("https://t3.codes/ctrl", { metaKey: false, ctrlKey: true });

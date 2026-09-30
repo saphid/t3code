@@ -85,7 +85,7 @@ export class PreviewManager extends Context.Service<
       Scope.Scope
     >;
     /**
-     * Engine-host authority (P08-HOST-AUTHORITY). Callers are the
+     * Engine-host authority. Callers are the
      * `BrowserEngineHosts` registry after it has matched the host connection
      * to its authenticated socket; these methods enforce epoch, single owner
      * and generation fencing. Engine writes publish on the detail bus only.
@@ -109,7 +109,7 @@ export class PreviewManager extends Context.Service<
  * navStatus Success before any engine report, so navStatus alone cannot
  * separate "navigate accepted" from "engine loaded" — the revision of the
  * last dispatch write versus the last authenticated engine report decides
- * which side authored the current navigation (P08-NAV-ACK). The legacy
+ * which side authored the current navigation. The legacy
  * `reportStatus` RPC is not host-fenced and never counts as an engine write.
  */
 export interface PreviewSessionNavigation {
@@ -509,7 +509,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
                 snapshot,
               };
         // Unfenced legacy report: it keeps the native snapshot current but
-        // is not proof of an engine load (P08-NAV-ACK), so no navigationWrite.
+        // is not proof of an engine load, so no navigationWrite.
         return { next: { ...session, snapshot }, emit, result: undefined as void };
       }),
     );

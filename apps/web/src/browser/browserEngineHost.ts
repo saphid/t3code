@@ -1,6 +1,5 @@
 /**
- * Desktop renderer side of the private browser engine host contract
- * (P08-ENGINE-ATTACH, P08-HOST-AUTHORITY, P08-NAV-ACK).
+ * Desktop renderer side of the private browser engine host contract.
  *
  * `BrowserEngineHostConnection` registers this window as the engine host of
  * the desktop's own environment. Each hosted webview then claims its guest

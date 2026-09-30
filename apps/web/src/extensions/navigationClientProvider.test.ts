@@ -373,7 +373,7 @@ describe("navigation provider", () => {
       expect(panelOf("thread-a").surfaces).toBe(surfaces);
     });
 
-    // Review repro (gaps-files-2 P2): native shows "Open file in preview
+    // Native shows "Open file in preview
     // browser" only where this client has one; a pack asks the same question.
     it("says whether this client has a preview browser, without a grant", async () => {
       for (const supported of [true, false]) {
@@ -411,7 +411,7 @@ describe("navigation provider", () => {
   });
 });
 
-// Review finding (proof-host-6 P3): the server sends openFile and asks for
+// The server sends openFile and asks for
 // renderBrowserFile only when this client registered the 1.1.0 areas.
 it("registers the 1.1.0 navigation and preferences areas", () => {
   for (const id of ["t3.client/navigation", "t3.client/preferences"])

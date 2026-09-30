@@ -51,7 +51,7 @@ interface EngineClaim {
  *
  * While this window is the environment's registered engine host, the guest is
  * also claimed under its webContents id and its page status is reported on
- * that fence (P08-NAV-ACK). The unfenced `reportStatus` keeps native UI
+ * that fence. The unfenced `reportStatus` keeps native UI
  * current but is not engine provenance.
  *
  * Returns the reporter for guest crash lifecycle. Once a lifecycle is

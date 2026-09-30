@@ -1,7 +1,7 @@
 /**
  * Open a workspace HTML file in the browser surface. Native mints a
- * `workspace-file` asset URL and opens a preview session
- * on it (the native openFileInPreview module); the plugin's equivalent is
+ * `workspace-file` asset URL and opens a preview session on it (the native
+ * openFileInPreview module); the plugin's equivalent is
  * `t3.resources/lease` `createPresentationUrl` → `t3.browser/sessions`.
  *
  * A `workspace-file` lease for an HTML file is a directory claim: the token

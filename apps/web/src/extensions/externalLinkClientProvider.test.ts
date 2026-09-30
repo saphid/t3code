@@ -79,7 +79,7 @@ function provider(decision: "app" | "system") {
   return { invoke, open, routed };
 }
 
-// fix-d9: terminal URL links always reached the OS opener, ignoring
+// Terminal URL links always reached the OS opener, ignoring
 // "Open links in: in-app browser". openLink routes like the native drawer.
 describe("t3.client/external openLink", () => {
   it("opens in the thread's preview browser when the setting says so", async () => {

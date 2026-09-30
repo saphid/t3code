@@ -427,7 +427,7 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       expect(openDetail?.navigation.engineRevision).toBeNull();
 
       // The unfenced legacy report updates the native snapshot but is not
-      // engine provenance (P08-NAV-ACK).
+      // engine provenance.
       yield* manager.reportStatus({
         threadId,
         tabId: opened.tabId,

@@ -704,7 +704,7 @@ NodeTest.describe("usePostedComments", () => {
     }
   });
 
-  // Review repro (gaps-files-2 P2): a long comment's listed preview is marked
+  // A long comment's listed preview is marked
   // cut after a reload, and opening it reads the whole comment back.
   NodeTest.it("after a reload opens a long comment's whole text", async () => {
     const long = "why this? ".repeat(40).trim();

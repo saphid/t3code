@@ -686,7 +686,7 @@ NodeTest.describe("open in presentation", () => {
     NodeAssert.equal(isFilesViewState(saved), true);
   });
 
-  // Review repro (gaps-files-2 P3): expand-all saves as a flag plus the
+  // Expand-all saves as a flag plus the
   // folders closed since, so it survives any number of folders.
   NodeTest.it("expand-all round-trips past the saved-folder bound", () => {
     const entries = Array.from({ length: MAX_PERSISTED_EXPANDED * 2 }, (_, i) => [

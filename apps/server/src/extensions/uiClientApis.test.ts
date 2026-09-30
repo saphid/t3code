@@ -318,7 +318,7 @@ describe("external adapter", () => {
   });
 });
 
-// fix-d9: terminal URL links ignored "Open links in: in-app browser". The
+// Terminal URL links ignored "Open links in: in-app browser". The
 // setting is client state, so openLink (1.1.0) reaches the caller's own
 // client, which routes it; a 1.0.0 client keeps the system browser.
 describe("1.1.0 openLink", () => {
@@ -596,7 +596,7 @@ describe("navigation adapter openFile", () => {
   });
 });
 
-// Review finding (proof-host-6 P3): openFile and renderBrowserFile are 1.1.0
+// openFile and renderBrowserFile are 1.1.0
 // additions to the client seam. A client still on 1.0.0 never sees a frame it
 // cannot validate, and an older server never gets a field it would reject.
 describe("1.1.0 client seam additions", () => {
@@ -676,7 +676,7 @@ describe("1.1.0 client seam additions", () => {
     expect(bridge.invoked).toHaveLength(0);
   });
 
-  // Review finding (proof-host-8 P3): an unlisted version is not a current one.
+  // An unlisted version is not a current one.
   it("treats a client that lists no version as predating the additions", async () => {
     const bridge = fakeBridge({ targets: [{ connectionId: "conn-1", providers: [] }] });
     const { navigation, preferences } = makeProviders(bridge);
@@ -691,7 +691,7 @@ describe("1.1.0 client seam additions", () => {
   });
 });
 
-// Review repro (gaps-files-2 P2): the file explorer choice is a 1.2.0
+// The file explorer choice is a 1.2.0
 // preference; a 1.1.0 client is asked only for what it knows.
 describe("1.2.0 file explorer preference", () => {
   const seam = (preferences: string) =>
@@ -751,7 +751,7 @@ describe("1.2.0 file explorer preference", () => {
   });
 });
 
-// Review repro (gaps-files-2 P2): whether the invoking client has a preview
+// Whether the invoking client has a preview
 // browser is its own answer, asked only of a 1.2.0 navigation client.
 describe("1.2.0 preview-browser capability", () => {
   const seam = (navigation: string) =>

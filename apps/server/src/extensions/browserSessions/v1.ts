@@ -15,9 +15,9 @@
  * to sessions the calling installation opened.
  * Navigation honesty compares the dispatch-side
  * request revision against the last owner-host report carried by
- * `PreviewSessionDetail` (P08-NAV-ACK, see `Manager.ts`). Favicons ride as a
+ * `PreviewSessionDetail` (see `Manager.ts`). Favicons ride as a
  * ref into the bounded per-project asset store (`faviconAssets.ts`), resolved
- * through `getFavicon` — never as bytes on the stream (P08-FAVICON-REF).
+ * through `getFavicon` — never as bytes on the stream.
  * `setPictureInPicture` is an engine verb under its own grant (the broker
  * enforces the method's `requiredGrants`); it additionally refuses a guest
  * that is recovering or crashed by name, since there is no live page to pop out.
@@ -447,7 +447,7 @@ export function createBrowserSessionsApiProvider(
         yield* postChecks(operation, scope.context, metadata, signal);
         return {
           metadata: { supported: true },
-          // Presentation needs a host-issued slot (P08-PRESENTATION-SLOT) —
+          // Presentation needs a host-issued slot —
           // a named deferral even while an engine host is registered.
           presentation: { supported: false, reason: "desktop-required" },
           // Discovery is environment-wide: page verbs are listed while any

@@ -51,7 +51,7 @@ NodeTest.test("checkExternalUrl refuses relative input and every other scheme", 
     );
 });
 
-// fix-d9: terminal URL links ignored "Open links in: in-app browser" because
+// Terminal URL links ignored "Open links in: in-app browser" because
 // the only surface was the OS opener. `openLink` is a 1.1.0 addition where
 // the host, not the pack, applies the setting.
 NodeTest.test("openLink is a 1.1.0 addition over a frozen 1.0.0", async () => {

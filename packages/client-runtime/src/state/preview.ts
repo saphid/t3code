@@ -55,7 +55,7 @@ export function createPreviewEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
     }),
     /**
-     * Desktop-only engine host registration (P08-ENGINE-ATTACH). The server
+     * Desktop-only engine host registration. The server
      * rejects every other session, and drops the host's guest claims when
      * this stream ends, so it is disposed with its owner.
      */

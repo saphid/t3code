@@ -8,7 +8,7 @@ export const ExtensionContentHash = Schema.String.check(Schema.isPattern(/^[a-f0
 /**
  * Most capabilities one installation may hold. A sanity bound, mirrored by the
  * extension runtime's grants validator; the largest first-party pack's
- * declared APIs check 19. Raised 16 -> 32 by operator decision for the browser pack.
+ * declared APIs check 19. Raised from 16 to 32 for the browser pack.
  */
 export const EXTENSION_GRANT_CAPABILITIES_MAX = 32;
 export const ExtensionGrants = Schema.Struct({

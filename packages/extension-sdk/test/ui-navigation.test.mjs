@@ -157,7 +157,7 @@ NodeTest.test(
   },
 );
 
-// Review finding (proof-host-6 P3): openFile shipped inside the immutable
+// openFile shipped inside the immutable
 // 1.0.0. It is a 1.1.0 addition: packs keep loading on a 1.0.0 host and
 // probe before they call it.
 NodeTest.test("openFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
@@ -204,7 +204,7 @@ NodeTest.test("openWorkspaceFile degrades on a host older than 1.1.0", async () 
   NodeAssert.match(Catalogue.describeOpenFileRefusal("host-unsupported"), /\S/);
 });
 
-// Review finding (proof-host-6 P5): a file link's line reaches the selected
+// A file link's line reaches the selected
 // presentation. `open.line` is a 1.1.0 addition; 1.0.0 providers keep matching.
 NodeTest.test("t3.file/presentation 1.1.0 adds open.line and keeps 1.0.0 frozen", async () => {
   const { filePresentationApi } = Catalogue;
@@ -228,7 +228,7 @@ NodeTest.test("t3.file/presentation 1.1.0 adds open.line and keeps 1.0.0 frozen"
   );
 });
 
-// Review repro (proof-host-8 P2): the 1.1.0 bumps must not un-publish 1.0.0.
+// The 1.1.0 bumps must not un-publish 1.0.0.
 // The fixture is each definition as published at 1.0.0, dumped from that build.
 NodeTest.test(
   "providers of the published 1.0.0 UI and presentation contracts stay valid",
@@ -348,7 +348,7 @@ NodeTest.test("openWorkspaceFile opens a page in the preview browser on a 1.2.0 
     NodeAssert.match(Catalogue.describeOpenFileRefusal(reason), /\S/);
 });
 
-// Review repro (gaps-files-2 P2): native offers "Open file in preview
+// Native offers "Open file in preview
 // browser" only on a client that has one; a pack asks the invoking client.
 NodeTest.test("canOpenFilesInBrowser asks a 1.2.0 host about the invoking client", async () => {
   const context = { client: "web", resource: { namespace: "ext", id: "ext.a", threadId: "t" } };

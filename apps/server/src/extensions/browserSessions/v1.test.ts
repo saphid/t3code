@@ -503,7 +503,7 @@ describe("browser sessions adapter", () => {
       // projection must still say pending because the engine has not reported.
       expect(navigated.session.navigation.kind).toBe("pending");
 
-      // The unfenced legacy report is not engine provenance (P08-NAV-ACK).
+      // The unfenced legacy report is not engine provenance.
       yield* preview.reportStatus({
         threadId: ThreadId.make(THREAD_ID),
         tabId: opened.session.tabId,
@@ -969,7 +969,7 @@ describe("browser sessions adapter", () => {
         "closeDevTools",
         "setPictureInPicture",
       ]);
-      // Presentation stays a named deferral (P08-PRESENTATION-SLOT).
+      // Presentation stays a named deferral.
       expect(capabilities.presentation).toEqual({ supported: false, reason: "desktop-required" });
 
       const answer = (result: BrowserEngineHosts.BrowserEngineDispatchOutcome) =>

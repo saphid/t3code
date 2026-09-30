@@ -1,6 +1,5 @@
 /**
- * Private wire types for the authenticated browser engine host (P08-ENGINE-ATTACH,
- * P08-HOST-AUTHORITY, P08-NAV-ACK).
+ * Private wire types for the authenticated browser engine host.
  *
  * A desktop renderer that owns Chromium guests registers as the environment's
  * engine host over its authenticated WebSocket. Registration is accepted only
@@ -113,7 +112,7 @@ export type BrowserEngineSessionTarget = typeof BrowserEngineSessionTarget.Type;
 /**
  * Observed page state of a claimed guest. Title rides `navStatus`. The
  * favicon stays server-side: the public sessions projection stores it as a
- * bounded asset and carries only its ref (P08-FAVICON-REF).
+ * bounded asset and carries only its ref.
  */
 export const BrowserEnginePageStatus = Schema.Struct({
   navStatus: PreviewNavStatus,

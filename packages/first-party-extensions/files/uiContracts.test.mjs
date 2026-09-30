@@ -58,7 +58,7 @@ NodeTest.describe("watchPreferences", () => {
   });
 });
 
-// proof-host-4 P2: the HTML source/rendered choice lives in the shared client
+// The HTML source/rendered choice lives in the shared client
 // preference, like the native panel's, so a fresh presentation starts from it.
 NodeTest.describe("HTML render preference", () => {
   const viewContext = { resource: { environmentId: "env-1", threadId: "thread-1" } };

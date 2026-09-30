@@ -471,7 +471,7 @@ NodeTest.test(
   },
 );
 
-// Review repro (gaps-files-2 P2): a listed preview says when it was cut, and
+// A listed preview says when it was cut, and
 // one own comment's whole text is read on its own at 1.2.0.
 NodeTest.test("readOwnAnnotationText reads one comment's whole text on a 1.2.0 host", async () => {
   const definition = messagesEnrichmentApi.definition;
@@ -522,7 +522,7 @@ NodeTest.test("readOwnAnnotationText reads one comment's whole text on a 1.2.0 h
   ]);
 });
 
-// Review repro (gaps-files-3 P2): getAnnotation is a 1.2.0 addition, so a
+// getAnnotation is a 1.2.0 addition, so a
 // binding at the ^1.1.0 baseline refuses it before transport.
 NodeTest.test("getAnnotation is refused below ^1.2.0 and dispatched at it", async () => {
   const context = { client: "web", resource: { namespace: "ext", id: "ext.a" } };

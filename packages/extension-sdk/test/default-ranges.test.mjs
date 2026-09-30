@@ -216,7 +216,7 @@ NodeTest.test("a large patch below the adding minor does not guarantee it", asyn
   }
 });
 
-// Reproductions from the sdk-capture-actions round-4 review.
+// Ranges that previously reached members they did not declare.
 NodeTest.test("a prerelease range never dispatches a member added at its release", async () => {
   // Prereleases cannot be declared, so the 0.0.0-0 baseline is gone; an
   // exact 0.0.0-0 binding is refused rather than floored at 0.0.0.

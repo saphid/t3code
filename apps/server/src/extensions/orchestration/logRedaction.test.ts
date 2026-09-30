@@ -120,7 +120,7 @@ it("redacts every line of a key whose lines carry spaces or tabs", () => {
 });
 
 it("redacts a key cut off inside a JSON string, even on one spaced line", () => {
-  // The reviewer's repro: the closing quote ends the last base64 line.
+  // Regression: the closing quote ends the last base64 line.
   expect(
     redactLogSecrets(JSON.stringify({ content: "-----BEGIN PRIVATE KEY-----\nAAAA \nBBBB" })),
   ).toBe(`{"content":"${R}`);
@@ -352,7 +352,7 @@ it("fails closed on a secret value whose closing quote is not followed by JSON",
       expect(redacted, `${JSON.stringify(ending)} depth ${depth}`).not.toContain(secret);
       expect(unnest(redacted, depth)).toBe(`{"password":"${R}"}`);
     }
-  // The reviewer's probes, and a value closed by valid JSON.
+  // Escaped quotes before the secret, and a value closed by valid JSON.
   for (const input of [
     String.raw`{"content":"{\"password\":\"first\\" UNIQUESECRET\"}"}`,
     String.raw`{"content":"{\"password\":\"first\\"-UNIQUESECRET\"}"}`,

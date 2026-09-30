@@ -67,7 +67,7 @@ NodeTest.test("renderBrowserFile is an optional boolean so older hosts stay vali
   });
 });
 
-// Review finding (proof-host-6 P3): renderBrowserFile shipped inside the
+// renderBrowserFile shipped inside the
 // immutable 1.0.0. It is a 1.1.0 addition over a 1.0.0 baseline, and the
 // client seam moves with it.
 NodeTest.test("renderBrowserFile is a 1.1.0 addition over the 1.0.0 baseline", async () => {
@@ -101,7 +101,7 @@ NodeTest.test("renderBrowserFile is a 1.1.0 addition over the 1.0.0 baseline", a
   );
 });
 
-// Review repro (gaps-files-2 P2): the Files explorer choice is the native
+// The Files explorer choice is the native
 // panel's shared one — a 1.2.0 key over the published 1.1.0, which stays frozen.
 NodeTest.test("fileExplorerOpen is a 1.2.0 addition; 1.1.0 stays frozen", async () => {
   NodeAssert.equal(UI_PREFERENCES_API.version, "1.2.0");

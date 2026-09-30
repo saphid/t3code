@@ -257,7 +257,7 @@ NodeTest.describe("useFileEditor", () => {
   });
 });
 
-// Review repro (proof-host-4 P1): switching an HTML file source → rendered →
+// Switching an HTML file source → rendered →
 // source must not throw away edits the user has not resolved. The rendered
 // page is the same file, so the editor session — buffer, save state and the
 // recovery actions — outlives the presentation switch.
@@ -398,7 +398,7 @@ NodeTest.describe("useFileEditor across the HTML source/rendered toggle", () => 
     }
   });
 
-  // Review repro (proof-host-6 P2): the rendered page cancels a source read
+  // The rendered page cancels a source read
   // still in flight; coming back to source must read again, not sit unloaded.
   NodeTest.it("restarts an open read the rendered page cancelled", async () => {
     let reads = 0;

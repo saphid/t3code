@@ -199,7 +199,7 @@ describe("preferences client provider", () => {
     expect(events).toHaveLength(2);
   });
 
-  // Review repro (gaps-files-2 P2): the Files pack's explorer choice is the
+  // The Files pack's explorer choice is the
   // native file preview's own stored one, in both directions.
   describe("file explorer preference", () => {
     /** A 1.2.0 server asks for the key; an older one never does. */
@@ -250,7 +250,7 @@ describe("preferences client provider", () => {
     /** A 1.1.0 server asks for the key; an older one never does. */
     const INCLUDE = { include: ["renderBrowserFile"] };
 
-    // Review finding (proof-host-6 P3): an older server validates the client's
+    // An older server validates the client's
     // answers against its closed 1.0.0 shapes, so the key only goes to a
     // server that asked for it — word wrap keeps working across the skew.
     it("answers a server that did not ask with the 1.0.0 shape", async () => {
