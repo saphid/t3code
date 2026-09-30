@@ -3118,6 +3118,50 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+// Ingestion stops at these terminals, so a roster kept on the final provider
+// thread is never cleared and delegated parents wait on it forever.
+const staleBackgroundTask = {
+  taskId: "bg-stale",
+  description: "until test -f done; do sleep 3; done",
+  kind: "command",
+} as const;
+
+for (const scenario of [
+  { name: "a provider stream error", status: "failed", roster: [] },
+  { name: "an interrupted terminal", status: "interrupted", roster: [] },
+  { name: "a completed terminal", status: "completed", roster: [staleBackgroundTask] },
+] as const) {
+  it.effect(
+    `${scenario.status === "completed" ? "keeps" : "drops"} the background roster after ${scenario.name}`,
+    () =>
+      Effect.gen(function* () {
+        const { writtenProviderThreads, observed } = yield* captureRootRunTermination({
+          key: `background-roster:${scenario.status}`,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          pendingBackgroundTasks: [staleBackgroundTask],
+          events: (ids) =>
+            scenario.status === "failed"
+              ? Stream.fail(
+                  new ProviderAdapterEventStreamError({
+                    driver,
+                    providerSessionId: ProviderSessionId.make("session:exited"),
+                    cause: "provider process exited",
+                  }),
+                )
+              : Stream.make(rootTerminalEvent(ids, scenario.status)),
+        });
+        assert.include(
+          observed,
+          `run:${scenario.status === "completed" ? "waiting" : scenario.status}`,
+        );
+        assert.deepEqual(
+          writtenProviderThreads.map((thread) => thread.pendingBackgroundTasks),
+          [scenario.roster],
+        );
+      }),
+  );
+}
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -3170,6 +3214,7 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3182,6 +3227,9 @@ function captureRootRunTermination(input: {
       status: "running",
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
+    const writtenProviderThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ProviderThread>>(
+      [],
+    );
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
@@ -3210,6 +3258,13 @@ function captureRootRunTermination(input: {
                     yield* Ref.update(observed, (current) => [
                       ...current,
                       `run:${event.payload.status}`,
+                    ]);
+                  }
+                  if (event.type === "provider-thread.updated") {
+                    const providerThread = event.payload;
+                    yield* Ref.update(writtenProviderThreads, (current) => [
+                      ...current,
+                      providerThread,
                     ]);
                   }
                 }
@@ -3288,6 +3343,9 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          ...(input.pendingBackgroundTasks === undefined
+            ? {}
+            : { pendingBackgroundTasks: input.pendingBackgroundTasks }),
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
@@ -3324,7 +3382,11 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return {
+      written: yield* Ref.get(writtenItems),
+      writtenProviderThreads: yield* Ref.get(writtenProviderThreads),
+      observed: yield* Ref.get(observed),
+    };
   });
 }
 

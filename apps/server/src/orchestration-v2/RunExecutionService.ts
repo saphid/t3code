@@ -638,6 +638,10 @@ export const layer: Layer.Layer<
         };
         const finalizedProviderThread: OrchestrationV2ProviderThread = {
           ...input.providerThread,
+          // Ingestion stops at a non-completed terminal, so no later update
+          // could clear this roster. Fallback terminals start from a stale
+          // snapshot, and a kept roster leaves delegated parents waiting forever.
+          ...(input.terminal.status === "completed" ? {} : { pendingBackgroundTasks: [] }),
           status: finalProviderThreadStatus(input.terminal.threadDisposition),
           updatedAt: completedAt,
         };
