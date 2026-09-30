@@ -111,6 +111,7 @@ type WriteService = Pick<
   | "setReaction"
   | "requestReviewers"
   | "setLabels"
+  | "setFilesViewed"
   | "list"
 >;
 type Deps = Parameters<typeof createPrsWriteApiProvider>[0];
@@ -218,6 +219,7 @@ const makeDeps = (
         pullRequests.setThreadResolution ?? (() => Effect.void),
       ),
       setReaction: record("setReaction", pullRequests.setReaction ?? (() => Effect.void)),
+      setFilesViewed: record("setFilesViewed", pullRequests.setFilesViewed ?? (() => Effect.void)),
       requestReviewers: record(
         "requestReviewers",
         pullRequests.requestReviewers ?? (() => Effect.void),
@@ -236,6 +238,80 @@ const makeDeps = (
 };
 
 it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
+  it.effect("marks and unmarks viewed files through the bound native service", () =>
+    Effect.gen(function* () {
+      for (const store of ["host", "environment"] as const) {
+        const deps = makeDeps(
+          {},
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                { viewedFiles: store },
+                store === "host" ? { setFilesViewed: () => Effect.void } : {},
+              ),
+            ]),
+          },
+        );
+        const provider = createPrsWriteApiProvider(deps);
+        const capabilities = yield* invoke(provider, "getCapabilities", {});
+        expect(capabilities).toMatchObject({ operations: { "prs.setFilesViewed": true } });
+        const files = [
+          { path: "src/a.ts", viewed: true },
+          { path: "src/b.ts", viewed: false },
+        ];
+        expect(yield* invoke(provider, "setFilesViewed", { ...REF, files })).toEqual({});
+        expect(deps.calls.find((call) => call.method === "setFilesViewed")?.input).toEqual({
+          projectId: PROJECT_ID,
+          repository: REF.repository,
+          number: REF.number,
+          files,
+        });
+      }
+    }),
+  );
+
+  it.effect("does not offer or invoke viewed writes on unsupported providers", () =>
+    Effect.gen(function* () {
+      for (const viewedFiles of [undefined, "host"] as const) {
+        const deps = makeDeps(
+          {},
+          { registry: fromProviders([githubProviderApi({ viewedFiles })]) },
+        );
+        const provider = createPrsWriteApiProvider(deps);
+        const capabilities = yield* invoke(provider, "getCapabilities", {});
+        expect(capabilities).toMatchObject({ operations: { "prs.setFilesViewed": false } });
+        const error = yield* invokeError(provider, "setFilesViewed", {
+          ...REF,
+          files: [{ path: "a.ts", viewed: true }],
+        });
+        expect(error.detail).toContain("provider-unsupported");
+        expect(deps.calls.filter((call) => call.method === "setFilesViewed")).toHaveLength(0);
+      }
+    }),
+  );
+
+  it.effect("validates viewed writes and their authority before invoking the service", () =>
+    Effect.gen(function* () {
+      const deps = makeDeps(
+        {},
+        { registry: fromProviders([githubProviderApi({ viewedFiles: "environment" })]) },
+      );
+      const provider = createPrsWriteApiProvider(deps);
+      for (const input of [
+        { ...REF, files: [{ path: "", viewed: true }] },
+        { ...REF, files: [{ path: "a".repeat(1025), viewed: true }] },
+        { ...REF, files: [{ path: "a.ts", viewed: "yes" }] },
+        { ...REF, files: Array.from({ length: 501 }, () => ({ path: "a.ts", viewed: true })) },
+        { ...REF, repository: "other/repo", files: [{ path: "a.ts", viewed: true }] },
+      ]) {
+        yield* invokeError(provider, "setFilesViewed", input);
+      }
+      yield* invokeError(provider, "setFilesViewed", { ...REF, files: [] }, makeContext(), [
+        AuthOrchestrationReadScope,
+      ]);
+      expect(deps.calls.filter((call) => call.method === "setFilesViewed")).toHaveLength(0);
+    }),
+  );
   it.effect("reports declared write support from the bound project's provider", () =>
     Effect.gen(function* () {
       const deps = makeDeps();
@@ -262,6 +338,7 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
         "prs.setReaction": true,
         "prs.requestReviewers": true,
         "prs.setLabels": true,
+        "prs.setFilesViewed": false,
       });
       expect(caps.actions).toEqual(["merge", "close", "ready"]);
       expect(caps.mergeMethods).toEqual(["merge", "squash"]);

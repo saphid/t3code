@@ -3392,6 +3392,7 @@ export type PrsLinkedThreadsResult = {
   readonly truncated: boolean;
 };
 export type PrsCapabilities = {
+  readonly viewedFiles?: "host" | "environment";
   readonly diff: boolean;
   readonly comment: boolean;
   readonly actions: readonly string[];
@@ -3423,6 +3424,8 @@ export type PrsViewerPermissions = {
 };
 export type PrsDetail = {
   readonly provider: PrsProviderKind;
+  readonly filesViewed?: PrsFilesViewedResult;
+  readonly filesViewedError?: string;
   readonly capabilities: PrsCapabilities;
   readonly viewerPermissions: PrsViewerPermissions;
   readonly projectId: string;
@@ -4037,12 +4040,52 @@ const prsDetailSchemaV1 = {
   },
 } as const;
 /** 1.1.0 adds `preferredMergeMethod` and `observedAt`. */
-const prsDetailSchema = {
+const prsDetailSchemaV1_1 = {
   ...prsDetailSchemaV1,
   properties: {
     ...prsDetailSchemaV1.properties,
     preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
     observedAt: prsObservedAtField,
+  },
+} as const;
+export type PrsFileViewedState = "unviewed" | "viewed" | "dismissed";
+export type PrsFilesViewedResult = {
+  readonly files: readonly { readonly path: string; readonly state: PrsFileViewedState }[];
+  readonly truncated: boolean;
+};
+const prsDetailSchema = {
+  ...prsDetailSchemaV1_1,
+  properties: {
+    ...prsDetailSchemaV1_1.properties,
+    capabilities: {
+      ...prsCapabilitiesSchema,
+      properties: {
+        ...prsCapabilitiesSchema.properties,
+        viewedFiles: { enum: ["host", "environment"] },
+      },
+    },
+    filesViewed: {
+      type: "object",
+      additionalProperties: false,
+      required: ["files", "truncated"],
+      properties: {
+        files: {
+          type: "array",
+          maxItems: 500,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["path", "state"],
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: 1024 },
+              state: { enum: ["unviewed", "viewed", "dismissed"] },
+            },
+          },
+        },
+        truncated: { type: "boolean" },
+      },
+    },
+    filesViewedError: { type: "string", maxLength: 512 },
   },
 } as const;
 const prsCommentSchema = {
@@ -4657,20 +4700,27 @@ function prsReadDefinition(
  * (HTTP-routed natively) as `t3.vcs/diff@1.1.0`-family frames so payload
  * size never matters; `subscribeRefreshes` mirrors the native refresh
  * counter so a plugin re-reads exactly when the native client would.
- * 1.1.0 only adds optional outputs (`detail.preferredMergeMethod`, and
- * `observedAt` on list entries and the detail), so consumers still default to
- * `^1.0.0` and must treat them as absent on a 1.0.0 host.
+ * 1.1.0 adds optional merge preferences and observation times; 1.2.0 adds
+ * optional viewed-file capabilities, states and read errors to the detail.
+ * Consumers still default to `^1.0.0` and must treat newer outputs as absent
+ * on older hosts.
  */
 export const prsReadApi: PrsReadApi = defineStreamApi<PrsReadStreams>(
-  prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema),
+  prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
   {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
       { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "detail", output: "filesViewed" },
+      { version: "1.2.0", method: "detail", output: "filesViewedError" },
     ],
   },
+);
+export const prsReadApiV1_1: PrsReadApi = defineStreamApi<PrsReadStreams>(
+  prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1),
 );
 /** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
 export const prsReadApiV1: PrsReadApi = defineStreamApi<PrsReadStreams>(
@@ -5361,6 +5411,7 @@ export const PRS_WRITE = "t3.prs/write";
 
 /** Per-write-operation support flags keyed by `prs.<method>`. */
 export type PrsWriteOperationsSupport = {
+  readonly "prs.setFilesViewed"?: boolean;
   readonly "prs.runAction": boolean;
   readonly "prs.update": boolean;
   readonly "prs.comment": boolean;
@@ -5473,6 +5524,9 @@ export type PrsWriteLabelsInput = PrsRef & {
   readonly applied: boolean;
 };
 export type PrsWriteEmptyResult = Record<string, never>;
+export type PrsWriteSetFilesViewedInput = PrsRef & {
+  readonly files: readonly { readonly path: string; readonly viewed: boolean }[];
+};
 
 const prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 } as const;
 const prsWriteOperationsSupportSchema = {
@@ -5620,7 +5674,7 @@ const prsWriteReviewCommentDraftSchema = {
   },
 } as const;
 
-export const prsWriteApi = defineApi<{
+type PrsWriteMethods = {
   getCapabilities: { input: Record<string, never>; output: PrsWriteCapabilitiesResult };
   runAction: { input: PrsWriteActionInput; output: PrsWriteEmptyResult };
   update: { input: PrsWriteUpdateInput; output: PrsWriteEmptyResult };
@@ -5632,7 +5686,8 @@ export const prsWriteApi = defineApi<{
   setReaction: { input: PrsWriteReactionInput; output: PrsWriteEmptyResult };
   requestReviewers: { input: PrsWriteReviewerRequestInput; output: PrsWriteEmptyResult };
   setLabels: { input: PrsWriteLabelsInput; output: PrsWriteEmptyResult };
-}>({
+};
+export const prsWriteApiV1 = defineApi<PrsWriteMethods>({
   id: PRS_WRITE,
   version: "1.0.0",
   methods: [
@@ -5845,6 +5900,74 @@ export const prsWriteApi = defineApi<{
     },
   ],
 });
+export const prsWriteApi = defineApi<
+  PrsWriteMethods & {
+    setFilesViewed: { input: PrsWriteSetFilesViewedInput; output: PrsWriteEmptyResult };
+  }
+>(
+  {
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods!.map((method) =>
+        method.name === "getCapabilities"
+          ? {
+              ...method,
+              outputSchema: {
+                ...prsWriteCapabilitiesResultSchema,
+                properties: {
+                  ...prsWriteCapabilitiesResultSchema.properties,
+                  operations: {
+                    ...prsWriteOperationsSupportSchema,
+                    properties: {
+                      ...prsWriteOperationsSupportSchema.properties,
+                      "prs.setFilesViewed": { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            }
+          : method,
+      ),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 1024 },
+                  viewed: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+        outputSchema: prsEmptyOutputSchema,
+      },
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "getCapabilities", output: "operations" },
+      { version: "1.1.0", method: "setFilesViewed" },
+    ],
+  },
+);
 export const PRS_WRITE_API = prsWriteApi.definition;
 
 /* ------------------------------------------------------------------------
@@ -10068,8 +10191,10 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   resourcesLeaseApiV1.definition,
   workspaceResourcesApi.definition,
   prsReadApi.definition,
+  prsReadApiV1_1.definition,
   prsReadApiV1.definition,
   prsWriteApi.definition,
+  prsWriteApiV1.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
   messagesEnrichmentApiV1_1.definition,

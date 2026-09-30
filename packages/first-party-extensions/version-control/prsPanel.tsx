@@ -31,6 +31,7 @@ import {
   type PrsStack,
   type PrsThreadComment,
   type PrsWriteCapabilitiesResult,
+  type PrsWriteOperationsSupport,
   type PrsWriteMergeMethod,
   type PrsWriteUpdateMethod,
   type PrsWriteVerdict,
@@ -49,6 +50,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
+import { usePrsFilesViewed } from "./usePrsFilesViewed.js";
 import {
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
@@ -1635,7 +1637,15 @@ function PrsDiffRow({ row }: { row: ReturnType<typeof fileRows>[number] }) {
   );
 }
 
-function PrsFileSection({ row }: { row: DiffFileRow }) {
+function PrsFileSection({
+  row,
+  viewed,
+  host,
+}: {
+  row: DiffFileRow;
+  viewed: ReturnType<typeof usePrsFilesViewed>;
+  host: ClientHost;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const rows = useMemo(
     () => (collapsed || row.binary || row.textless ? [] : fileRows(row)),
@@ -1677,6 +1687,38 @@ function PrsFileSection({ row }: { row: DiffFileRow }) {
             {fileStatLabel(row) !== "" ? ` ${fileStatLabel(row)}` : ""}
           </span>
         </span>
+        {viewed.enabled && (
+          <label
+            data-viewed-toggle=""
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11,
+              color: muted,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              aria-label={viewed.file(row.path).stale ? "Changed" : "Viewed"}
+              checked={viewed.file(row.path).viewed}
+              onChange={(event) => {
+                viewed.setViewed(row.path, event.target.checked);
+                setCollapsed(event.target.checked);
+              }}
+              style={{ margin: 0, accentColor: "var(--primary, #2563eb)" }}
+            />
+            {viewed.file(row.path).stale ? (
+              <Tooltip host={host} label="This file has been pushed to since you marked it viewed.">
+                <span style={{ color: "var(--warning, #b45309)" }}>Changed</span>
+              </Tooltip>
+            ) : (
+              "Viewed"
+            )}
+          </label>
+        )}
       </header>
       {!collapsed && row.binary && (
         <p role="note" style={noteStyle}>
@@ -1693,8 +1735,26 @@ function PrsFileSection({ row }: { row: DiffFileRow }) {
   );
 }
 
-function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadMore: () => void }) {
+function PrsDiffSection(props: {
+  diff: PrsDiffState;
+  supported: boolean;
+  onLoadMore: () => void;
+  host: ClientHost;
+  session: ViewSession;
+  reference: PrsRef | null;
+  detail: PrsDetail | null;
+  write: PrsWriteOperationsSupport | null;
+  onViewedFailure: () => void;
+}) {
   const { diff, supported, onLoadMore } = props;
+  const viewed = usePrsFilesViewed(
+    props.host,
+    props.session,
+    props.reference,
+    props.detail,
+    props.write,
+    props.onViewedFailure,
+  );
   if (!supported) {
     return (
       <p role="note" style={noteStyle}>
@@ -1742,8 +1802,46 @@ function PrsDiffSection(props: { diff: PrsDiffState; supported: boolean; onLoadM
       )}
       {renderable !== null && renderable.kind === "files" && (
         <div>
+          {viewed.enabled && renderable.files.length > 0 && (
+            <p
+              style={{ ...noteStyle, display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+            >
+              {renderable.files.filter((row) => viewed.file(row.path).viewed).length} /{" "}
+              {renderable.files.length}
+              {props.detail?.capabilities.viewedFiles === "environment"
+                ? " viewed in T3 Code"
+                : " viewed"}
+              {props.detail?.capabilities.viewedFiles === "environment" && (
+                <Tooltip
+                  host={props.host}
+                  label="This host keeps no shared record of which files you have read, so these ticks are kept by this environment. They follow you between the apps connected to it, but the host's own web UI will not show them."
+                >
+                  <span aria-label="These ticks are kept here, not on the host">ⓘ</span>
+                </Tooltip>
+              )}
+              {viewed.truncated && (
+                <Tooltip
+                  host={props.host}
+                  label="The host had more files than were read, so this count is short."
+                >
+                  <span>· partial count</span>
+                </Tooltip>
+              )}
+            </p>
+          )}
+          {viewed.enabled && viewed.error !== null && (
+            <p role="alert" style={noteStyle}>
+              Your ticks could not be read. The boxes are whatever was last read, and empty if
+              nothing has been read yet. {viewed.error}
+            </p>
+          )}
+          {viewed.enabled && viewed.failure !== null && (
+            <p role="alert" style={noteStyle}>
+              Could not update viewed files. {viewed.failure}
+            </p>
+          )}
           {renderable.files.map((row) => (
-            <PrsFileSection key={row.key} row={row} />
+            <PrsFileSection key={row.key} row={row} viewed={viewed} host={props.host} />
           ))}
         </div>
       )}
@@ -3665,9 +3763,21 @@ export function PullRequestsPanel(props: {
                 <section aria-label="Diff" style={{ paddingBottom: 4 }}>
                   <h3 style={headingStyle}>Diff</h3>
                   <PrsDiffSection
+                    key={`${session.context.resource.environmentId ?? ""}:${session.context.resource.projectId ?? ""}:${selected === null ? "" : prsRefKey(selected)}`}
                     diff={diff}
                     supported={ops?.["prs.streamDiff"] === true}
                     onLoadMore={loadMore}
+                    host={host}
+                    session={session}
+                    reference={selected}
+                    detail={sections.detail}
+                    write={writeOps}
+                    onViewedFailure={() => {
+                      toasts.report(
+                        { severity: "error", title: "Could not update viewed files" },
+                        () => {},
+                      );
+                    }}
                   />
                 </section>
 

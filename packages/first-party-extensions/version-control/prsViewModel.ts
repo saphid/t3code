@@ -24,6 +24,9 @@ import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type {
   PrsActor,
+  PrsCapabilities,
+  PrsFilesViewedResult,
+  PrsFileViewedState,
   PrsCheck,
   PrsDiffStreamEvent,
   PrsListEntry,
@@ -45,6 +48,53 @@ import type {
   VcsActionPrepareThreadResult,
   VcsRefEntry,
 } from "@t3tools/extension-sdk/catalogue";
+
+export function prsViewedFilesEnabled(
+  store: PrsCapabilities["viewedFiles"],
+  operations: PrsWriteOperationsSupport | null,
+): boolean {
+  return store !== undefined && operations?.["prs.setFilesViewed"] === true;
+}
+
+export function prsFileViewedStates(result: PrsFilesViewedResult | null) {
+  return result === null ? null : new Map(result.files.map((file) => [file.path, file.state]));
+}
+
+export function prsFileViewed(
+  path: string,
+  states: ReadonlyMap<string, PrsFileViewedState> | null,
+  overlay: ReadonlyMap<string, boolean>,
+) {
+  return {
+    viewed: overlay.get(path) ?? states?.get(path) === "viewed",
+    stale: !overlay.has(path) && states?.get(path) === "dismissed",
+  };
+}
+
+export function prsSettleViewedOverlay(
+  overlay: ReadonlyMap<string, boolean>,
+  states: ReadonlyMap<string, PrsFileViewedState> | null,
+  pending: ReadonlySet<string>,
+  answered: ReadonlySet<string>,
+): ReadonlyMap<string, boolean> {
+  if (states === null || overlay.size === 0) return overlay;
+  const next = new Map(overlay);
+  for (const [path, viewed] of overlay) {
+    if (!pending.has(path) && (answered.has(path) || (states.get(path) === "viewed") === viewed)) {
+      next.delete(path);
+    }
+  }
+  return next.size === overlay.size ? overlay : next;
+}
+
+export function prsRevertViewedOverlay(
+  overlay: ReadonlyMap<string, boolean>,
+  owned: ReadonlySet<string>,
+): ReadonlyMap<string, boolean> {
+  const next = new Map(overlay);
+  for (const path of owned) next.delete(path);
+  return next;
+}
 
 /* ---------------- capability gate ---------------- */
 

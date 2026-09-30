@@ -4814,12 +4814,47 @@ var __t3Client = (() => {
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1_1 = {
     ...prsDetailSchemaV1,
     properties: {
       ...prsDetailSchemaV1.properties,
       preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
       observedAt: prsObservedAtField
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1_1,
+    properties: {
+      ...prsDetailSchemaV1_1.properties,
+      capabilities: {
+        ...prsCapabilitiesSchema,
+        properties: {
+          ...prsCapabilitiesSchema.properties,
+          viewedFiles: { enum: ["host", "environment"] }
+        }
+      },
+      filesViewed: {
+        type: "object",
+        additionalProperties: false,
+        required: ["files", "truncated"],
+        properties: {
+          files: {
+            type: "array",
+            maxItems: 500,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "state"],
+              properties: {
+                path: { type: "string", minLength: 1, maxLength: 1024 },
+                state: { enum: ["unviewed", "viewed", "dismissed"] }
+              }
+            }
+          },
+          truncated: { type: "boolean" }
+        }
+      },
+      filesViewedError: { type: "string", maxLength: 512 }
     }
   };
   var prsCommentSchema = {
@@ -5391,14 +5426,18 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi(prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema), {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
-      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "detail", output: "filesViewed" },
+      { version: "1.2.0", method: "detail", output: "filesViewedError" }
     ]
   });
+  var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
   var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
@@ -5971,7 +6010,7 @@ var __t3Client = (() => {
       body: prsWriteBodySchema
     }
   };
-  var prsWriteApi = defineApi({
+  var prsWriteApiV1 = defineApi({
     id: PRS_WRITE,
     version: "1.0.0",
     methods: [
@@ -6182,6 +6221,63 @@ var __t3Client = (() => {
         },
         outputSchema: prsEmptyOutputSchema
       }
+    ]
+  });
+  var prsWriteApi = defineApi({
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsWriteCapabilitiesResultSchema,
+          properties: {
+            ...prsWriteCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsWriteOperationsSupportSchema,
+              properties: {
+                ...prsWriteOperationsSupportSchema.properties,
+                "prs.setFilesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 1024 },
+                  viewed: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "getCapabilities", output: "operations" },
+      { version: "1.1.0", method: "setFilesViewed" }
     ]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
@@ -8365,8 +8461,10 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1_1.definition,
     prsReadApiV1.definition,
     prsWriteApi.definition,
+    prsWriteApiV1.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
     messagesEnrichmentApiV1_1.definition,

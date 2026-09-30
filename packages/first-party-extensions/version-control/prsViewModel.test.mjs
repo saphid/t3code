@@ -55,6 +55,75 @@ import {
 } from "./prsViewModel.ts";
 import * as PrsViewModel from "./prsViewModel.ts";
 
+NodeTest.test("viewed-file model gates ticks and distinguishes files changed since viewing", () => {
+  NodeAssert.equal(typeof PrsViewModel.prsViewedFilesEnabled, "function");
+  NodeAssert.equal(
+    PrsViewModel.prsViewedFilesEnabled(undefined, { "prs.setFilesViewed": true }),
+    false,
+  );
+  NodeAssert.equal(PrsViewModel.prsViewedFilesEnabled("host", {}), false);
+  NodeAssert.equal(
+    PrsViewModel.prsViewedFilesEnabled("environment", { "prs.setFilesViewed": true }),
+    true,
+  );
+  const states = PrsViewModel.prsFileViewedStates({
+    files: [
+      { path: "a", state: "viewed" },
+      { path: "b", state: "dismissed" },
+    ],
+    truncated: false,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("a", states, new Map()), {
+    viewed: true,
+    stale: false,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("b", states, new Map()), {
+    viewed: false,
+    stale: true,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("c", states, new Map()), {
+    viewed: false,
+    stale: false,
+  });
+});
+
+NodeTest.test(
+  "viewed ticks optimistically toggle, roll back only owned failures, and settle on fresh reads",
+  () => {
+    NodeAssert.equal(typeof PrsViewModel.prsFileViewed, "function");
+    const states = PrsViewModel.prsFileViewedStates({
+      files: [{ path: "b", state: "viewed" }],
+      truncated: false,
+    });
+    const overlay = new Map([
+      ["a", true],
+      ["b", false],
+    ]);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("a", states, overlay).viewed, true);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("b", states, overlay).viewed, false);
+    const reverted = PrsViewModel.prsRevertViewedOverlay(overlay, new Set(["a"]));
+    NodeAssert.equal(PrsViewModel.prsFileViewed("a", states, reverted).viewed, false);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("b", states, reverted).viewed, false);
+    NodeAssert.deepEqual(
+      PrsViewModel.prsSettleViewedOverlay(overlay, states, new Set(["a"]), new Set(["a", "b"])),
+      new Map([["a", true]]),
+    );
+    NodeAssert.deepEqual(
+      PrsViewModel.prsSettleViewedOverlay(overlay, null, new Set(), new Set(["a", "b"])),
+      overlay,
+    );
+    const pushed = PrsViewModel.prsFileViewedStates({
+      files: [{ path: "a", state: "dismissed" }],
+      truncated: false,
+    });
+    const settled = PrsViewModel.prsSettleViewedOverlay(overlay, pushed, new Set(), new Set(["a"]));
+    NodeAssert.deepEqual(PrsViewModel.prsFileViewed("a", pushed, settled), {
+      viewed: false,
+      stale: true,
+    });
+  },
+);
+
 const sha256Hex = async (text) => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

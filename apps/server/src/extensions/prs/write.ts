@@ -49,6 +49,17 @@ const refFields = {
 const decode = <A, I>(schema: Schema.Codec<A, I>) =>
   Schema.decodeUnknownSync(schema, { onExcessProperty: "error" });
 const emptyInput = decode(Schema.Struct({}));
+const filesViewedInput = decode(
+  Schema.Struct({
+    ...refFields,
+    files: Schema.Array(
+      Schema.Struct({
+        path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+        viewed: Schema.Boolean,
+      }),
+    ).check(Schema.isMaxLength(500)),
+  }),
+);
 // Mirrors contracts' CommentBody: markdown is not trimmed; the service
 // rejects a whitespace-only body.
 const bodyField = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(65_536));
@@ -224,6 +235,7 @@ const NO_WRITE_OPERATIONS: PrsWriteOperationsSupport = {
   "prs.setReaction": false,
   "prs.requestReviewers": false,
   "prs.setLabels": false,
+  "prs.setFilesViewed": false,
 };
 
 /**
@@ -247,6 +259,9 @@ const writeOperationsSupport = (api: PullRequestProviderApi | null): PrsWriteOpe
     "prs.setReaction": capabilities.reactions === true,
     "prs.requestReviewers": capabilities.reviewers.request,
     "prs.setLabels": capabilities.labels === true && api.setLabels !== undefined,
+    "prs.setFilesViewed":
+      capabilities.viewedFiles === "environment" ||
+      (capabilities.viewedFiles === "host" && api.setFilesViewed !== undefined),
   };
 };
 
@@ -269,6 +284,7 @@ interface PrsWriteApiDependencies extends ScopeDependencies {
     | "setReaction"
     | "requestReviewers"
     | "setLabels"
+    | "setFilesViewed"
     | "list"
   >;
   readonly prRegistry: Pick<PullRequestProviderRegistry["Service"], "get">;
@@ -480,6 +496,19 @@ export function createPrsWriteApiProvider(dependencies: PrsWriteApiDependencies)
           applied: safe.applied,
         }),
       ),
+      setFilesViewed: runMethod({
+        operation: "setFilesViewed",
+        decode: filesViewedInput,
+        run: Effect.fn("prs.setFilesViewed")(function* (safe, scope) {
+          const ref = yield* bindRef(scope, safe);
+          const bound = yield* bindRepository(scope);
+          if (writeOperationsSupport(bound.api)["prs.setFilesViewed"] !== true) {
+            return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+          }
+          yield* dependencies.pullRequests.setFilesViewed({ ...ref, files: safe.files });
+          return {} satisfies PrsWriteEmptyResult;
+        }),
+      }),
     }),
   };
 }

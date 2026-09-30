@@ -354,6 +354,7 @@ interface PrsApiDependencies extends ScopeDependencies {
     | "summary"
     | "stack"
     | "detail"
+    | "filesViewed"
     | "activity"
     | "threadComments"
     | "diff"
@@ -826,16 +827,36 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         decode: refInput,
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
-            Effect.flatMap((ref) =>
-              Effect.all([
-                dependencies.pullRequests.detail(ref),
-                dependencies.projectMergeMethod?.(ref.projectId) ?? Effect.succeed(null),
-              ]),
+            Effect.flatMap(
+              Effect.fn("PrsApi.detail")(function* (ref) {
+                const [detail, preferredMergeMethod] = yield* Effect.all([
+                  dependencies.pullRequests.detail(ref),
+                  dependencies.projectMergeMethod?.(ref.projectId) ?? Effect.succeed(null),
+                ]);
+                const bounded = boundDetail(detail);
+                const result =
+                  preferredMergeMethod === null ? bounded : { ...bounded, preferredMergeMethod };
+                if (detail.capabilities.viewedFiles === undefined) return result;
+                const viewed = yield* dependencies.pullRequests.filesViewed(ref).pipe(
+                  Effect.map((filesViewed) => ({ filesViewed })),
+                  Effect.catch((cause: PullRequestError) =>
+                    Effect.succeed({
+                      filesViewedError: operationError("prs.filesViewed")(cause).detail,
+                    }),
+                  ),
+                );
+                if (!("filesViewed" in viewed)) return { ...result, ...viewed };
+                let files = viewed.filesViewed.files.slice(0, 500);
+                let truncated =
+                  viewed.filesViewed.truncated || files.length < viewed.filesViewed.files.length;
+                const assembled = () => ({ ...result, filesViewed: { files, truncated } });
+                while (files.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
+                  files = shrink(files);
+                  truncated = true;
+                }
+                return assembled();
+              }),
             ),
-            Effect.map(([detail, preferredMergeMethod]) => {
-              const bounded = boundDetail(detail);
-              return preferredMergeMethod === null ? bounded : { ...bounded, preferredMergeMethod };
-            }),
           ),
       }),
       activity: runMethod({

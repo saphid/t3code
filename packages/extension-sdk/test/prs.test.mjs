@@ -15,6 +15,7 @@ const {
   PRS_READ_API_V1,
   prsReadApi,
   prsReadApiV1,
+  prsReadApiV1_1,
 } = Catalogue;
 
 const methods = Object.fromEntries(PRS_READ_API.methods.map((m) => [m.name, m]));
@@ -32,33 +33,51 @@ const canonical = (value) =>
         "}"
       : JSON.stringify(value);
 
-NodeTest.test("t3.prs/read 1.1.0 is registered beside its frozen 1.0.0 definition", () => {
-  NodeAssert.equal(PRS_READ_API.id, PRS_READ);
-  NodeAssert.equal(PRS_READ_API.version, "1.1.0");
-  NodeAssert.equal(prsReadApi.definition, PRS_READ_API);
-  NodeAssert.equal(PRS_READ_API_V1.version, "1.0.0");
-  NodeAssert.equal(prsReadApiV1.definition, PRS_READ_API_V1);
-  NodeAssert.deepEqual(
-    GENERIC_API_CATALOGUE.filter((d) => d.id === PRS_READ),
-    [PRS_READ_API, PRS_READ_API_V1],
-  );
-  // The published 1.0.0 contract, byte for byte (canonical form).
-  NodeAssert.equal(
-    NodeCrypto.createHash("sha256").update(canonical(PRS_READ_API_V1)).digest("hex"),
-    "623bee3fe260c832aa7fd77d7ba570122d13f347b0f89d2b701d769955bce6d3",
-  );
-});
+NodeTest.test(
+  "t3.prs/read 1.2.0 is registered beside its frozen 1.0.0 and 1.1.0 definitions",
+  () => {
+    NodeAssert.equal(PRS_READ_API.id, PRS_READ);
+    NodeAssert.equal(PRS_READ_API.version, "1.2.0");
+    NodeAssert.equal(prsReadApi.definition, PRS_READ_API);
+    NodeAssert.equal(PRS_READ_API_V1.version, "1.0.0");
+    NodeAssert.equal(prsReadApiV1.definition, PRS_READ_API_V1);
+    NodeAssert.deepEqual(
+      GENERIC_API_CATALOGUE.filter((d) => d.id === PRS_READ),
+      [PRS_READ_API, prsReadApiV1_1.definition, PRS_READ_API_V1],
+    );
+    // The published 1.0.0 contract, byte for byte (canonical form).
+    NodeAssert.equal(
+      NodeCrypto.createHash("sha256").update(canonical(PRS_READ_API_V1)).digest("hex"),
+      "623bee3fe260c832aa7fd77d7ba570122d13f347b0f89d2b701d769955bce6d3",
+    );
+  },
+);
 
 NodeTest.test("a provider still registering the published 1.0.0 descriptor is accepted", () => {
-  const published = structuredClone(PRS_READ_API);
-  published.version = "1.0.0";
-  const detail = published.methods.find((method) => method.name === "detail");
-  delete detail.outputSchema.properties.preferredMergeMethod;
-  delete detail.outputSchema.properties.observedAt;
-  const list = published.methods.find((method) => method.name === "list");
-  delete list.outputSchema.properties.entries.items.properties.observedAt;
+  const published = structuredClone(PRS_READ_API_V1);
   NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", published));
   NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", PRS_READ_API));
+});
+
+NodeTest.test("viewed state is an optional output-only read addition", () => {
+  const detail = methods.detail.outputSchema;
+  NodeAssert.ok("viewedFiles" in detail.properties.capabilities.properties);
+  NodeAssert.equal(detail.properties.capabilities.required.includes("viewedFiles"), false);
+  for (const output of ["filesViewed", "filesViewedError"]) {
+    NodeAssert.ok(output in detail.properties);
+    NodeAssert.equal(detail.required.includes(output), false);
+    NodeAssert.ok(
+      prsReadApi.additions.some(
+        (addition) => addition.version === "1.2.0" && addition.output === output,
+      ),
+    );
+  }
+  const published = prsReadApiV1_1.definition.methods.find(
+    (method) => method.name === "detail",
+  ).outputSchema;
+  NodeAssert.equal("filesViewed" in published.properties, false);
+  NodeAssert.equal("viewedFiles" in published.properties.capabilities.properties, false);
+  NodeAssert.deepEqual(requireApi(prsReadApi), { id: PRS_READ, versionRange: "^1.0.0" });
 });
 
 NodeTest.test("1.1.0 only adds optional outputs, so default consumers stay on ^1.0.0", async () => {
