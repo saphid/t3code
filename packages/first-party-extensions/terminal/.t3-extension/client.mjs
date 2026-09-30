@@ -8793,8 +8793,12 @@ var __t3Client = (() => {
   var URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
   var FILE_PATH_PATTERN = /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
   var TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
-  function trimClosingDelimiters(value) {
-    let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
+  var TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
+  function trimClosingDelimiters(value, kind) {
+    let output = value.replace(
+      kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
+      ""
+    );
     if (output.length === 0) return output;
     const trimUnbalanced = (open, close) => {
       while (output.endsWith(close)) {
@@ -8819,7 +8823,7 @@ var __t3Client = (() => {
       const raw = rawMatch[0];
       const start = rawMatch.index ?? -1;
       if (start < 0 || raw.length === 0) continue;
-      const trimmed = trimClosingDelimiters(raw);
+      const trimmed = trimClosingDelimiters(raw, kind);
       if (trimmed.length === 0) continue;
       if (kind === "path" && isTerminalUrl(trimmed)) continue;
       const candidate = {
