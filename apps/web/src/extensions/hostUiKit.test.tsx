@@ -10,6 +10,7 @@ import type { BrowserSession } from "@t3tools/extension-sdk/catalogue";
 import type { ClientHost, FloatingPopoverProps } from "@t3tools/extension-sdk/environment";
 import type { ClientUiKit, UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import { TooltipProvider } from "~/components/ui/tooltip";
+import { PreviewChromeRow } from "~/components/preview/PreviewChromeRow";
 import { hostTooltip } from "./hostTooltip";
 import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalogue";
 import { createExtensionHost, type ViewSession } from "@t3tools/extension-sdk/host";
@@ -961,10 +962,50 @@ it("mini-player kit and fallback controls track native open state and preserve t
     button = container.querySelector<HTMLButtonElement>('[aria-label="Close floating preview"]')!;
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.getAttribute("aria-label")).toBe("Close floating preview");
-    if (native) expect(button.classList.contains("bg-secondary")).toBe(true);
+    if (native) {
+      const packClasses = Array.from(button.classList);
+      expect(packClasses).toContain("[--control-icon-color:var(--color-primary)]");
+      // Compare the real kit control to native, including the secondary variant.
+      const comparator = document.createElement("div");
+      container.append(comparator);
+      const comparatorRoot = createRoot(comparator);
+      await act(async () =>
+        comparatorRoot.render(
+          <TooltipProvider delay={0}>
+            <PreviewChromeRow
+              url="https://example.com"
+              loading={false}
+              canGoBack={false}
+              canGoForward={false}
+              refreshDisabled={false}
+              onBack={vi.fn()}
+              onForward={vi.fn()}
+              onRefresh={vi.fn()}
+              onSubmit={vi.fn()}
+              onPictureInPicture={vi.fn()}
+              pictureInPicture
+            />
+          </TooltipProvider>,
+        ),
+      );
+      const nativeButton = comparator.querySelector('[aria-label="Close floating preview"]')!;
+      expect(nativeButton.querySelector("svg")!.classList.contains("text-primary")).toBe(true);
+      expect(
+        packClasses.filter((token) => !token.startsWith("[--control-icon-color:")).sort(),
+      ).toEqual(
+        Array.from(nativeButton.classList)
+          .filter((token) => !token.startsWith("[--control-icon-color:"))
+          .sort(),
+      );
+      await act(async () => comparatorRoot.unmount());
+      comparator.remove();
+    } else {
+      expect(button.style.color).toBe("var(--primary)");
+    }
     await act(async () => button.click());
     button = container.querySelector<HTMLButtonElement>('[aria-label="Float preview over chat"]')!;
     expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(button.classList.contains("[--control-icon-color:var(--color-primary)]")).toBe(false);
     expect(
       toggle.mock.calls.filter(([request]) => request.method === "setBrowserMiniPlayer"),
     ).toHaveLength(2);

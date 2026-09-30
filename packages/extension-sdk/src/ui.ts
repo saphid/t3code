@@ -3,6 +3,8 @@ import { isComponentType } from "./componentType.js";
 
 export interface UiButtonProps extends React.ComponentPropsWithRef<"button"> {
   readonly variant?: "default" | "ghost" | "ghost-muted" | "outline" | "destructive" | "secondary";
+  /** Override the inherited SVG colour without changing the button foreground. */
+  readonly iconTone?: "primary";
   readonly size?: "default" | "compact" | "icon-xs" | "icon-sm" | "xs";
 }
 
