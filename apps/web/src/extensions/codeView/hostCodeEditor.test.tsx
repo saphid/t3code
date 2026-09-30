@@ -175,13 +175,12 @@ function typeText(element: HTMLElement, text: string) {
   );
 }
 
-async function renderFiles(contents = "original") {
-  const fileReads = vi.spyOn(Editor.prototype, "getFile");
+async function mountFiles(contents = "original", nativeEditor = true, revealLine?: number) {
   const saves: ApiInvocation[] = [];
   const requests: ApiInvocation[] = [];
   const host: ClientHost = {
     React,
-    codeView: hostCodeView,
+    ...(nativeEditor ? { codeView: hostCodeView } : {}),
     discoverApis: async () => [],
     invokeTool: async () => {
       throw new Error("unavailable");
@@ -249,7 +248,10 @@ async function renderFiles(contents = "original") {
     },
     visible: true,
     restoring: false,
-    restoreState: { relativePath: "app.ts" },
+    restoreState: {
+      relativePath: "app.ts",
+      ...(revealLine === undefined ? {} : { line: revealLine }),
+    },
     signal: stop.signal,
     onVisibility: () => () => {},
     onDispose: () => {},
@@ -261,6 +263,12 @@ async function renderFiles(contents = "original") {
     root.render(createElement(View));
     await vi.dynamicImportSettled();
   });
+  return { saves, requests };
+}
+
+async function renderFiles(contents = "original") {
+  const fileReads = vi.spyOn(Editor.prototype, "getFile");
+  const { saves, requests } = await mountFiles(contents);
   expect(container.textContent).not.toContain("Native code editor unavailable");
   await editorReady();
   await act(async () => {});
@@ -447,7 +455,7 @@ it("uses native dismissal, leaves save shortcuts alone, and remounts on a theme 
   });
 });
 
-it("normalizes text selections once and preserves the caller range on an outside pointer", async () => {
+it("reports repeated text selections but dedupes empty selections after pointer dismissal", async () => {
   const fileReads = vi.spyOn(Editor.prototype, "getFile");
   const onSelectionChange = vi.fn();
   await act(async () =>
@@ -477,25 +485,49 @@ it("normalizes text selections once and preserves the caller range on an outside
       new KeyboardEvent("keyup", { key: "Shift", bubbles: true, composed: true }),
     ),
   );
-  expect(onSelectionChange).toHaveBeenCalledTimes(1);
+  expect(onSelectionChange).toHaveBeenCalledTimes(2);
+  expect(onSelectionChange).toHaveBeenLastCalledWith({ startLine: 1, endLine: 2 });
   const outside = document.createElement("button");
   document.body.append(outside);
   await act(async () =>
     outside.dispatchEvent(new Event("pointerdown", { bubbles: true, composed: true })),
   );
-  expect(onSelectionChange).toHaveBeenCalledTimes(1);
+  expect(onSelectionChange).toHaveBeenCalledTimes(2);
   expect(instance.getState().selections).toBeUndefined();
   outside.remove();
   await act(async () =>
     editor.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true, composed: true })),
   );
-  expect(onSelectionChange).toHaveBeenCalledTimes(1);
+  expect(onSelectionChange).toHaveBeenCalledTimes(2);
+  instance.setSelections([
+    { start: { line: 0, character: 1 }, end: { line: 2, character: 0 }, direction: "backward" },
+  ]);
+  await act(async () =>
+    editor.dispatchEvent(new Event("pointerup", { bubbles: true, composed: true })),
+  );
+  expect(onSelectionChange).toHaveBeenCalledTimes(3);
+  expect(onSelectionChange).toHaveBeenLastCalledWith({ startLine: 1, endLine: 2 });
   instance.setSelections([
     { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, direction: "none" },
   ]);
   await act(async () =>
     editor.dispatchEvent(new Event("pointerup", { bubbles: true, composed: true })),
   );
-  expect(onSelectionChange).toHaveBeenCalledTimes(2);
+  expect(onSelectionChange).toHaveBeenCalledTimes(4);
   expect(onSelectionChange).toHaveBeenLastCalledWith(null);
+  await act(async () =>
+    editor.dispatchEvent(new Event("pointerup", { bubbles: true, composed: true })),
+  );
+  expect(onSelectionChange).toHaveBeenCalledTimes(4);
+});
+
+it("reveals a restored line in editable Files on an editor-less host", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(2000);
+  const contents = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join("\n");
+  await mountFiles(contents, false, 40);
+  expect(container.textContent).toContain("Native code editor unavailable");
+  const fallback = container.querySelector("pre");
+  expect(fallback?.textContent).toBe(contents);
+  expect(fallback?.scrollTop).toBeGreaterThan(0);
 });

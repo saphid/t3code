@@ -1896,8 +1896,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     const reveal = revealRequest;
     if (reveal === null || reveal === handledRevealRef.current) return;
     if (reveal.path !== selected || selectedKind !== "text" || markdownBlocks !== null) return;
-    if (editorSurface?.open.editable === true) return;
-    const text = currentRead?.contents;
+    const text =
+      editorSurface?.open.editable === true ? editorSurface.contents : currentRead?.contents;
     const element = readOnlyRef.current;
     if (text === undefined || element === null) return;
     const style = getComputedStyle(element);
@@ -2541,7 +2541,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     });
                 }}
                 renderFallback={() => (
-                  <pre style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 0, padding: 12 }}>
+                  <pre
+                    ref={readOnlyRef}
+                    style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 0, padding: 12 }}
+                  >
                     {editorSurface.contents}
                   </pre>
                 )}
