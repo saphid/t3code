@@ -2,10 +2,10 @@
   "kind": "package-check",
   "installed": false,
   "packageId": "t3.version-control",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "hashes": {
-    "t3-extension.json": "e95eae53c836e04052d04e2593112b71c8ebb9bbbd20c3ebbb58d1c748318b9a",
-    "client.mjs": "9b90e126c751462c90b074ecdb62daa09d81788c79344fe6d2af49fc2892ca3f"
+    "t3-extension.json": "2847ef5d11b6c942ffe9f774286f4a5e2a4060ccf8cf15dcf5f1d36f56d8e414",
+    "client.mjs": "719e26d80d84b11e190e63c168c5907f5b2bdda17f68cb3fb10c90b13fbe696c"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

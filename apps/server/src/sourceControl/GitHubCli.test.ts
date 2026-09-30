@@ -541,9 +541,10 @@ describe("GitHubCli.layer", () => {
       expect(mockRun.mock.calls.at(-1)?.[0].args).toEqual([
         "repo",
         "view",
-        "forge.example:8443/team/repo",
         "--json",
         "nameWithOwner,url,sshUrl",
+        "--",
+        "forge.example:8443/team/repo",
       ]);
     }).pipe(Effect.provide(layer)),
   );

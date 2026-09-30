@@ -114,6 +114,30 @@ function installed(
   };
 }
 describe("installed package settings", () => {
+  it("describes environment-wide clone and discovery grants without project-scoped consent", async () => {
+    fixture.manage = true;
+    fixture.installations = [
+      installed({ projectIds: [], capabilities: ["t3.projects/create", "t3.source-control/read"] }),
+    ];
+    const text = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(text).join("");
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(<InstalledExtensionsSettings />);
+      });
+      await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+      expect(text(root.root)).toContain("provider credentials or SSH keys");
+      expect(text(root.root)).toContain(
+        "account-wide repository names, including private repositories",
+      );
+      expect(text(root.root)).not.toContain("Allow t3.projects/create in selected projects");
+      expect(text(root.root)).not.toContain("Allow t3.source-control/read in selected projects");
+    } finally {
+      if (root) await act(async () => root.unmount());
+      fixture.installations = [];
+    }
+  });
   it("requires explicit trust and project selection, then resets consent on environment switch", async () => {
     fixture.manage = true;
     fixture.install.mockClear();

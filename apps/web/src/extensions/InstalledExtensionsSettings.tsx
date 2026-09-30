@@ -131,7 +131,9 @@ function PermissionChoices(props: {
             checked={value.capabilities.includes(grant)}
             onCheckedChange={(checked) => setGrant(grant, checked === true)}
           />
-          Allow {grant} in selected projects
+          {grant === "t3.projects/create" || grant === "t3.source-control/read"
+            ? grantUses(grant)
+            : `Allow ${grant} in selected projects`}
         </label>
       ))}
     </>

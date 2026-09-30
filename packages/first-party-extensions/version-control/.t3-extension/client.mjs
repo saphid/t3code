@@ -174,8 +174,8 @@ var __t3Client = (() => {
     const [major, minor, patch] = parts.map(Number);
     return [major, minor, patch].every(Number.isSafeInteger) ? [major, minor, patch] : null;
   }
-  function parseVersion(text) {
-    const match = VERSION.exec(text);
+  function parseVersion(text2) {
+    const match = VERSION.exec(text2);
     return match ? toVersion(match.slice(1, 4)) : null;
   }
   function compareVersions(a, b) {
@@ -1227,6 +1227,208 @@ var __t3Client = (() => {
       }
     ]
   });
+
+  // node_modules/@t3tools/extension-sdk/dist/projects.js
+  var PROJECTS_CLONE = "t3.projects/clone";
+  var PROJECTS_CREATE = "t3.projects/create";
+  var SOURCE_CONTROL_DISCOVERY = "t3.source-control/discovery";
+  var SOURCE_CONTROL_READ = "t3.source-control/read";
+  var text = { type: "string", minLength: 1, maxLength: 2048 };
+  var nullable2 = (schema) => ({ anyOf: [schema, { type: "null" }] });
+  var providers = ["github", "gitlab", "forgejo", "azure-devops", "bitbucket"];
+  var providerSchema = { enum: providers };
+  var empty2 = { type: "object", additionalProperties: false, properties: {} };
+  var repositorySchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["provider", "nameWithOwner", "url", "sshUrl"],
+    properties: {
+      provider: { enum: [...providers, "unknown"] },
+      nameWithOwner: text,
+      url: text,
+      sshUrl: text
+    }
+  };
+  var receiptProperties = {
+    projectId: text,
+    cwd: text,
+    remoteUrl: text,
+    repository: nullable2(repositorySchema)
+  };
+  var actionInput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["projectId"],
+    properties: { projectId: text }
+  };
+  var actionOutput = {
+    type: "object",
+    additionalProperties: false,
+    required: ["applied"],
+    properties: { applied: { type: "boolean" } }
+  };
+  var projectsCloneApi = defineStreamApi({
+    id: PROJECTS_CLONE,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "start",
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "destinationName"],
+          properties: {
+            title: { type: "string", minLength: 1, maxLength: 256 },
+            destinationName: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+              pattern: "^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+            },
+            remoteUrl: text,
+            provider: providerSchema,
+            repository: text,
+            protocol: { enum: ["auto", "ssh", "https"] }
+          }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: Object.keys(receiptProperties),
+          properties: receiptProperties
+        }
+      },
+      ...["cancel", "retry"].map((name) => ({
+        name,
+        effect: "write",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: actionInput,
+        outputSchema: actionOutput
+      }))
+    ],
+    streams: [
+      {
+        name: "subscribe",
+        requiredGrants: [PROJECTS_CREATE],
+        inputSchema: empty2,
+        eventSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["clones", "truncated"],
+          properties: {
+            truncated: { type: "boolean" },
+            clones: {
+              type: "array",
+              maxItems: 16,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: [
+                  "projectId",
+                  "remoteUrl",
+                  "destinationPath",
+                  "repository",
+                  "phase",
+                  "stage",
+                  "percent",
+                  "detail",
+                  "error",
+                  "startedAt",
+                  "endedAt",
+                  "sequence"
+                ],
+                properties: {
+                  projectId: text,
+                  remoteUrl: text,
+                  destinationPath: text,
+                  repository: nullable2(repositorySchema),
+                  phase: { enum: ["running", "done", "failed", "cancelled"] },
+                  stage: { enum: ["connecting", "counting", "receiving", "resolving", "checkout"] },
+                  percent: nullable2({ type: "integer", minimum: 0, maximum: 100 }),
+                  detail: nullable2({ type: "string", maxLength: 200 }),
+                  error: nullable2({ type: "string", maxLength: 1e3 }),
+                  startedAt: text,
+                  endedAt: nullable2(text),
+                  sequence: { type: "integer", minimum: 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
+  var sourceControlDiscoveryApi = defineApi({
+    id: SOURCE_CONTROL_DISCOVERY,
+    version: "1.0.0",
+    methods: [
+      {
+        name: "discover",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: empty2,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["providers"],
+          properties: {
+            providers: {
+              type: "array",
+              maxItems: 6,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "label", "status", "authStatus", "account", "ready", "hint"],
+                properties: {
+                  kind: { enum: [...providers, "unknown"] },
+                  label: text,
+                  status: { enum: ["available", "missing"] },
+                  authStatus: { enum: ["authenticated", "unauthenticated", "unknown"] },
+                  account: nullable2(text),
+                  ready: { type: "boolean" },
+                  hint: nullable2(text)
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        name: "lookupRepository",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider", "repository"],
+          properties: { provider: providerSchema, repository: text }
+        },
+        outputSchema: repositorySchema
+      },
+      {
+        name: "listRepositories",
+        effect: "read",
+        requiredGrants: [SOURCE_CONTROL_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["provider"],
+          properties: { provider: providerSchema }
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repositories", "truncated"],
+          properties: {
+            repositories: { type: "array", maxItems: 20, items: repositorySchema },
+            truncated: { type: "boolean" }
+          }
+        }
+      }
+    ]
+  }, { baseline: "1.0.0" });
 
   // node_modules/@t3tools/extension-sdk/dist/browserPresentation.js
   var composerPreviewAnnotationResultSchema = {
@@ -7379,6 +7581,8 @@ var __t3Client = (() => {
   var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
   var BROWSER_RECORDING = "t3.browser/recording";
   var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    "t3.projects/create": "Create project directories and clone repositories using provider credentials or SSH keys, including local-network remotes",
+    "t3.source-control/read": "Read provider accounts and account-wide repository names, including private repositories",
     [BROWSER_RECORDING]: "Record the browser panel as video",
     [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
   };
@@ -8763,6 +8967,8 @@ var __t3Client = (() => {
   var orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPreviewStreamEventSchema);
   var ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
   var GENERIC_API_CATALOGUE = [
+    projectsCloneApi.definition,
+    sourceControlDiscoveryApi.definition,
     orchestrationStatusApi.definition,
     orchestrationControlApi.definition,
     orchestrationLogsApi.definition,
@@ -9135,18 +9341,18 @@ var __t3Client = (() => {
   function requireApi(api, versionRange = defaultVersionRange(api)) {
     return { id: api.definition.id, versionRange };
   }
-  async function copyText(text) {
+  async function copyText(text2) {
     const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
     if (typeof clipboard?.writeText === "function")
-      return clipboard.writeText(text);
-    if (!copyWithSelection(text))
+      return clipboard.writeText(text2);
+    if (!copyWithSelection(text2))
       throw new Error("Clipboard unavailable");
   }
-  function copyWithSelection(text) {
+  function copyWithSelection(text2) {
     if (typeof document === "undefined" || typeof document.execCommand !== "function")
       return false;
     const textarea = document.createElement("textarea");
-    textarea.value = text;
+    textarea.value = text2;
     textarea.setAttribute("readonly", "");
     textarea.setAttribute("aria-hidden", "true");
     Object.assign(textarea.style, {
@@ -9161,7 +9367,7 @@ var __t3Client = (() => {
     try {
       textarea.focus({ preventScroll: true });
       textarea.select();
-      textarea.setSelectionRange(0, text.length);
+      textarea.setSelectionRange(0, text2.length);
       return document.execCommand("copy");
     } catch {
       return false;
@@ -9178,7 +9384,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
 
   // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
@@ -9530,6 +9736,11 @@ var __t3Client = (() => {
   ];
   function publishProviderOption(kind) {
     return PUBLISH_PROVIDERS.find((option) => option.value === kind) ?? PUBLISH_PROVIDERS[0];
+  }
+  function readyPublishProviders(providers2) {
+    return providers2.filter(
+      (provider) => provider.ready && PUBLISH_PROVIDERS.some((option) => option.value === provider.kind)
+    );
   }
   function publishOffer(local) {
     if (local === null || !local.isRepo || local.hasPrimaryRemote) {
@@ -11141,12 +11352,12 @@ ${ref.number}`;
     }
     return { ok: true, assembly: { ...assembly, complete: event.payloadSha256 } };
   }
-  async function sha256Hex(text) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  async function sha256Hex(text2) {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text2));
     return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
-  function utf8Length(text) {
-    return new TextEncoder().encode(text).length;
+  function utf8Length(text2) {
+    return new TextEncoder().encode(text2).length;
   }
   async function verifyPrsDiffAssembly(assembly) {
     if (assembly.manifest === null) {
@@ -12927,7 +13138,7 @@ ${writeKey}`;
     }, [value, delay]);
     return debounced;
   }
-  function badge(text, tone) {
+  function badge(text2, tone) {
     const colors = {
       // `--success`/`--info` are host constants outside the theme contract's
       // role set — the native panel reads the same variables.
@@ -12947,13 +13158,13 @@ ${writeKey}`;
           border: `1px solid ${colors[tone]}`,
           color: colors[tone]
         },
-        children: text
+        children: text2
       }
     );
   }
   function stateBadge(host, entry) {
-    const [text, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
+    const [text2, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: text2, children: badge(text2, tone) });
   }
   var CHECKS_TONES = {
     success: "var(--success, #2da44e)",
@@ -13194,11 +13405,11 @@ ${writeKey}`;
   }
   function BranchChips(props) {
     const chips = prsBranchChips(props.detail, props.stacked);
-    const openControl = (text, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+    const openControl = (text2, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text2} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "button",
       {
         type: "button",
-        "aria-label": `Open branch ${text} on host`,
+        "aria-label": `Open branch ${text2} on host`,
         onClick: () => props.onOpen(url),
         style: { ...linkButton, textDecoration: "none", flexShrink: 0, fontSize: 11 },
         children: "\u2197"
@@ -15206,8 +15417,387 @@ ${thread.id}`) === activity,
     );
   }
 
-  // extension.tsx
+  // clonePanel.tsx
+  var import_react5 = __toESM(require_react(), 1);
   var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
+  var stageLabels = {
+    connecting: "Connecting",
+    counting: "Counting objects",
+    receiving: "Receiving objects",
+    resolving: "Resolving deltas",
+    checkout: "Checking out files"
+  };
+  function useSourceControlDiscovery(host, session, visible) {
+    const [data, setData] = (0, import_react5.useState)({ providers: [] });
+    const [error, setError] = (0, import_react5.useState)(null);
+    const [revision2, setRevision] = (0, import_react5.useState)(0);
+    const scanned = (0, import_react5.useRef)(null);
+    (0, import_react5.useEffect)(() => {
+      if (!visible || scanned.current?.host === host && scanned.current.session === session && scanned.current.revision === revision2)
+        return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(sourceControlDiscoveryApi, host, session.context).invoke("discover", {}, signal).then(
+        (result) => {
+          if (!signal.aborted) {
+            scanned.current = { host, session, revision: revision2 };
+            setData(result);
+            setError(null);
+          }
+        },
+        (cause) => {
+          if (!signal.aborted) {
+            scanned.current = { host, session, revision: revision2 };
+            setError(
+              cause instanceof Error ? cause.message : "Source control discovery unavailable"
+            );
+          }
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, visible, revision2]);
+    return {
+      ...data,
+      error,
+      refresh: () => {
+        setRevision((value) => value + 1);
+      }
+    };
+  }
+  function CloneRepositoryPanel({
+    host,
+    session,
+    discovery,
+    visible
+  }) {
+    const [selectedSource, setSource] = (0, import_react5.useState)("url");
+    const ready = readyPublishProviders(discovery.providers);
+    const source = selectedSource === "url" || ready.some((provider) => provider.kind === selectedSource) ? selectedSource : "url";
+    const [repositoryInput, setRepositoryInput] = (0, import_react5.useState)("");
+    const [prepared, setPrepared] = (0, import_react5.useState)(null);
+    const [title, setTitle] = (0, import_react5.useState)("");
+    const [destinationName, setDestinationName] = (0, import_react5.useState)("");
+    const [protocol, setProtocol] = (0, import_react5.useState)("auto");
+    const [listingCache, setListings] = (0, import_react5.useState)({ providers: discovery.providers, values: {} });
+    const listings = listingCache.providers === discovery.providers ? listingCache.values : {};
+    const listing = source === "url" ? null : listings[source];
+    const [error, setError] = (0, import_react5.useState)(null);
+    const [pending, setPending] = (0, import_react5.useState)(false);
+    const [receipt2, setReceipt] = (0, import_react5.useState)(null);
+    const [clones, setClones] = (0, import_react5.useState)({ clones: [], truncated: false });
+    const guard2 = (0, import_react5.useRef)(false);
+    const mounted = (0, import_react5.useRef)(true);
+    (0, import_react5.useEffect)(() => {
+      mounted.current = true;
+      return () => {
+        mounted.current = false;
+      };
+    }, []);
+    const preparedRepository = prepared?.source === source && prepared.input === repositoryInput ? prepared : null;
+    (0, import_react5.useEffect)(() => {
+      if (!visible || source === "url" || listingCache.providers === discovery.providers && listingCache.values[source])
+        return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void bindApi(sourceControlDiscoveryApi, host, session.context).invoke("listRepositories", { provider: source }, signal).then(
+        (result) => {
+          if (!signal.aborted)
+            setListings((current) => ({
+              providers: discovery.providers,
+              values: {
+                ...current.providers === discovery.providers ? current.values : {},
+                [source]: result
+              }
+            }));
+        },
+        (cause) => {
+          if (!signal.aborted)
+            setError(cause instanceof Error ? cause.message : "Repository list unavailable");
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, source, visible, discovery.providers, listingCache]);
+    (0, import_react5.useEffect)(() => {
+      if (!visible) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      void (async () => {
+        try {
+          for await (const event of bindStreamApi(projectsCloneApi, host, session.context).subscribe(
+            "subscribe",
+            {},
+            signal
+          )) {
+            if (signal.aborted) return;
+            if (event.type === "snapshot" || event.type === "data") setClones(event.value);
+          }
+        } catch (cause) {
+          if (!signal.aborted)
+            setError(cause instanceof Error ? cause.message : "Clone progress unavailable");
+        }
+      })();
+      return () => controller.abort();
+    }, [host, session, visible]);
+    const run = (operation) => {
+      if (guard2.current) return;
+      guard2.current = true;
+      setPending(true);
+      setError(null);
+      void operation().catch((cause) => {
+        if (mounted.current && !session.signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Clone unavailable");
+      }).finally(() => {
+        guard2.current = false;
+        if (mounted.current && !session.signal.aborted) setPending(false);
+      });
+    };
+    const next = () => run(async () => {
+      const input = repositoryInput.trim();
+      const repository = source === "url" ? null : await bindApi(sourceControlDiscoveryApi, host, session.context).invoke(
+        "lookupRepository",
+        { provider: source, repository: input },
+        session.signal
+      );
+      if (!mounted.current || session.signal.aborted) return;
+      const name = (repository?.nameWithOwner ?? input).split(/[/:]/).findLast((segment) => segment.length > 0)?.replace(/\.git$/, "") ?? "repository";
+      setTitle(name);
+      setDestinationName(name);
+      setPrepared({ source, input: repositoryInput, repository });
+    });
+    const start = () => run(async () => {
+      if (!preparedRepository) return;
+      const result = await bindApi(projectsCloneApi, host, session.context).invoke(
+        "start",
+        {
+          title,
+          destinationName,
+          protocol,
+          ...source === "url" ? { remoteUrl: repositoryInput.trim() } : {
+            provider: source,
+            repository: preparedRepository.input.trim()
+          }
+        },
+        session.signal
+      );
+      if (mounted.current && !session.signal.aborted) setReceipt(result);
+    });
+    const action = (method, projectId) => run(async () => {
+      const result = await bindApi(projectsCloneApi, host, session.context).invoke(
+        method,
+        { projectId },
+        session.signal
+      );
+      if (!result.applied) throw new Error("Clone is no longer available for this action.");
+    });
+    const control3 = {
+      background: "var(--background, #fff)",
+      color: "inherit",
+      border: "1px solid var(--border, #dfe3e8)",
+      borderRadius: 4,
+      padding: "4px 6px",
+      fontSize: 12
+    };
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+      "section",
+      {
+        "aria-label": "Clone repository",
+        style: {
+          display: "grid",
+          gap: 8,
+          padding: 8,
+          borderBottom: "1px solid var(--border, #dfe3e8)",
+          fontSize: 12
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+            "Source",
+            " ",
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              "select",
+              {
+                "aria-label": "Clone source",
+                value: source,
+                disabled: pending,
+                onChange: (event) => {
+                  setSource(event.target.value);
+                  setPrepared(null);
+                  setError(null);
+                },
+                style: control3,
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "url", children: "Git URL" }),
+                  discovery.providers.filter((provider) => provider.kind !== "unknown").map((provider) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("option", { value: provider.kind, disabled: !provider.ready, children: [
+                    provider.label,
+                    provider.ready ? "" : ` \u2014 ${provider.hint ?? "Unavailable"}`
+                  ] }, provider.kind))
+                ]
+              }
+            )
+          ] }),
+          source !== "url" && listing && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+            "Your repositories",
+            " ",
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              "select",
+              {
+                "aria-label": "Your repositories",
+                value: "",
+                disabled: pending,
+                onChange: (event) => {
+                  setRepositoryInput(event.target.value);
+                  setPrepared(null);
+                },
+                style: control3,
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "", children: "Select a repository\u2026" }),
+                  listing.repositories.map((repository) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: repository.nameWithOwner, children: repository.nameWithOwner }, repository.nameWithOwner))
+                ]
+              }
+            ),
+            listing.truncated && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "Recent repositories only; enter another repository below." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+            source === "url" ? "Git URL" : "Repository",
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "input",
+              {
+                "aria-label": "Clone repository input",
+                value: repositoryInput,
+                disabled: pending,
+                onChange: (event) => {
+                  setRepositoryInput(event.target.value);
+                  setPrepared(null);
+                },
+                placeholder: source === "url" ? "https://host/owner/repository.git" : publishProviderOption(source).pathPlaceholder,
+                style: control3
+              }
+            )
+          ] }),
+          preparedRepository === null ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            "button",
+            {
+              type: "button",
+              disabled: pending || repositoryInput.trim() === "",
+              onClick: next,
+              style: control3,
+              children: "Next"
+            }
+          ) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+              "Project name",
+              " ",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "input",
+                {
+                  "aria-label": "Clone project name",
+                  value: title,
+                  disabled: pending,
+                  onChange: (event) => setTitle(event.target.value),
+                  style: control3
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+              "Directory name",
+              " ",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "input",
+                {
+                  "aria-label": "Clone directory name",
+                  value: destinationName,
+                  disabled: pending,
+                  onChange: (event) => setDestinationName(event.target.value),
+                  style: control3
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "The environment clones into its managed projects folder." }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("label", { children: [
+              "Protocol",
+              " ",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                "select",
+                {
+                  "aria-label": "Clone protocol",
+                  value: protocol,
+                  disabled: pending,
+                  onChange: (event) => setProtocol(event.target.value),
+                  style: control3,
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "auto", children: "Automatic" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "ssh", children: "SSH" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "https", children: "HTTPS" })
+                  ]
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "button",
+                {
+                  type: "button",
+                  disabled: pending,
+                  onClick: () => setPrepared(null),
+                  style: control3,
+                  children: "Back"
+                }
+              ),
+              " ",
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                "button",
+                {
+                  type: "button",
+                  disabled: pending || title.trim() === "" || !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/.test(destinationName) || destinationName.length > 128,
+                  onClick: start,
+                  style: control3,
+                  children: "Clone repository"
+                }
+              )
+            ] })
+          ] }),
+          pending && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { role: "status", children: "Working\u2026" }),
+          error && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { role: "alert", children: error }),
+          receipt2 && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { role: "status", children: [
+            "Project added: ",
+            receipt2.cwd
+          ] }),
+          clones.clones.map((clone) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+              clone.repository?.nameWithOwner ?? clone.destinationPath.split(/[/\\]/).at(-1),
+              " \xB7",
+              " ",
+              clone.phase === "running" ? `${stageLabels[clone.stage]}${clone.percent === null ? "" : ` \xB7 ${clone.percent}%`}${clone.detail ? ` \xB7 ${clone.detail}` : ""}` : clone.phase
+            ] }),
+            clone.error && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { role: "alert", children: clone.error }),
+            clone.phase === "running" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "button",
+              {
+                type: "button",
+                disabled: pending,
+                onClick: () => action("cancel", clone.projectId),
+                style: control3,
+                children: "Cancel clone"
+              }
+            ),
+            (clone.phase === "failed" || clone.phase === "cancelled") && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              "button",
+              {
+                type: "button",
+                disabled: pending,
+                onClick: () => action("retry", clone.projectId),
+                style: control3,
+                children: "Retry clone"
+              }
+            )
+          ] }, clone.projectId)),
+          clones.truncated && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { children: "More clones are active in this environment." })
+        ]
+      }
+    );
+  }
+
+  // extension.tsx
+  var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var REPOSITORY_API_RANGE = "^1.0.0";
   var CHANGES_API_RANGE = "^1.0.0";
@@ -15222,8 +15812,8 @@ ${thread.id}`) === activity,
     ) && (record.selectedPath === void 0 || typeof record.selectedPath === "string") && (record.selectedLane === void 0 || typeof record.selectedLane === "string" && LANES.has(record.selectedLane)) && (record.view === void 0 || typeof record.view === "string" && VIEWS.has(record.view)) && (record.prHost === void 0 || typeof record.prHost === "string") && (record.prRepository === void 0 || typeof record.prRepository === "string") && (record.prNumber === void 0 || typeof record.prNumber === "number");
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [result, setResult] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15245,8 +15835,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusStream(host, session, visible, tick) {
-    const [model, setModel] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [model, setModel] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15303,8 +15893,8 @@ ${thread.id}`) === activity,
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
   function useVcsActionsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [result, setResult] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15326,8 +15916,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useChangesList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [result, setResult] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15353,8 +15943,8 @@ ${thread.id}`) === activity,
     return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [result, setResult] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15377,8 +15967,8 @@ ${thread.id}`) === activity,
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   function useRemotesList(host, session, visible, enabled, revision2) {
-    const [result, setResult] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [result, setResult] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible || !enabled || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15401,8 +15991,8 @@ ${thread.id}`) === activity,
     return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react5.useState)(null);
-    (0, import_react5.useEffect)(() => {
+    const [vars, setVars] = (0, import_react6.useState)(null);
+    (0, import_react6.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -15458,48 +16048,54 @@ ${thread.id}`) === activity,
   };
   function VersionControlView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react5.useState)(session.visible);
-    const [tick, setTick] = (0, import_react5.useState)(0);
-    const [refreshError, setRefreshError] = (0, import_react5.useState)(null);
-    const [mutation, setMutation] = (0, import_react5.useState)(IDLE_MUTATION);
-    const [mutationSerial, setMutationSerial] = (0, import_react5.useState)(0);
-    const [commitMessage, setCommitMessage] = (0, import_react5.useState)("");
-    const [stackedChoice, setStackedChoice] = (0, import_react5.useState)(null);
-    const [featureBranch, setFeatureBranch] = (0, import_react5.useState)(false);
-    const [pendingConfirm, setPendingConfirm] = (0, import_react5.useState)(null);
-    const [pendingDiscard, setPendingDiscard] = (0, import_react5.useState)(null);
-    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react5.useState)(null);
-    const [stacked, setStacked] = (0, import_react5.useState)(null);
-    const [newRefName, setNewRefName] = (0, import_react5.useState)("");
-    const [newWorktreeName, setNewWorktreeName] = (0, import_react5.useState)("");
-    const [publishOpen, setPublishOpen] = (0, import_react5.useState)(false);
-    const [publishProvider, setPublishProvider] = (0, import_react5.useState)("github");
-    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react5.useState)("");
-    const [publishVisibility, setPublishVisibility] = (0, import_react5.useState)("private");
-    const [publishRemoteName, setPublishRemoteName] = (0, import_react5.useState)("origin");
-    const [publishProtocol, setPublishProtocol] = (0, import_react5.useState)("ssh");
-    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react5.useState)(false);
-    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react5.useState)(
+    const [visible, setVisible] = (0, import_react6.useState)(session.visible);
+    const [tick, setTick] = (0, import_react6.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react6.useState)(null);
+    const [mutation, setMutation] = (0, import_react6.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react6.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react6.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react6.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react6.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react6.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react6.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react6.useState)(null);
+    const [stacked, setStacked] = (0, import_react6.useState)(null);
+    const [newRefName, setNewRefName] = (0, import_react6.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react6.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react6.useState)(false);
+    const [selectedPublishProvider, setPublishProvider] = (0, import_react6.useState)("github");
+    const [cloneOpen, setCloneOpen] = (0, import_react6.useState)(false);
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react6.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react6.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react6.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react6.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react6.useState)(false);
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react6.useState)(
       /* @__PURE__ */ new Set()
     );
-    const inFlight = (0, import_react5.useRef)(false);
-    (0, import_react5.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const inFlight = (0, import_react6.useRef)(false);
+    (0, import_react6.useEffect)(() => session.onVisibility(setVisible), [session]);
     const themeVars = useThemeVars(host, session, visible);
+    const discovery = useSourceControlDiscovery(host, session, visible);
+    const readyProviders = readyPublishProviders(discovery.providers);
+    const publishProvider = readyProviders.some(
+      (provider) => provider.kind === selectedPublishProvider
+    ) ? selectedPublishProvider : readyProviders[0]?.kind ?? "github";
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [selection, setSelection] = (0, import_react5.useState)(
+    const [selection, setSelection] = (0, import_react6.useState)(
       () => restored?.selectedPath && restored.selectedLane && LANES.has(restored.selectedLane) ? { path: restored.selectedPath, lane: restored.selectedLane } : null
     );
-    const [view, setView] = (0, import_react5.useState)(
+    const [view, setView] = (0, import_react6.useState)(
       restored?.view === "repository" ? "repository" : "pull-requests"
     );
-    const [selectedPr, setSelectedPr] = (0, import_react5.useState)(
+    const [selectedPr, setSelectedPr] = (0, import_react6.useState)(
       () => restored?.prRepository !== void 0 && typeof restored.prNumber === "number" ? {
         repository: restored.prRepository,
         number: restored.prNumber,
         ...restored.prHost !== void 0 && restored.prHost !== "" ? { host: restored.prHost } : {}
       } : null
     );
-    const savedState = (0, import_react5.useRef)({ ...restored });
+    const savedState = (0, import_react6.useRef)({ ...restored });
     const persist = (patch) => {
       const next = { ...savedState.current, ...patch };
       for (const key of Object.keys(next)) if (next[key] === void 0) delete next[key];
@@ -15507,7 +16103,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const runFollowUpRef = (0, import_react5.useRef)(() => {
+    const runFollowUpRef = (0, import_react6.useRef)(() => {
     });
     const { begin: beginToast } = useMutationToasts(
       host,
@@ -15542,15 +16138,15 @@ ${thread.id}`) === activity,
       isRepo && ops?.["repository.listRemotes"] === true,
       listRevision
     );
-    const lanes = (0, import_react5.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    const lanes = (0, import_react6.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
     const selected = retainSelection(selection, lanes);
     const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
     const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
-    const rows = (0, import_react5.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const remoteList = (0, import_react5.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
-    const worktrees = (0, import_react5.useMemo)(() => worktreeRows(rows), [rows]);
+    const rows = (0, import_react6.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const remoteList = (0, import_react6.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react6.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
@@ -15568,12 +16164,12 @@ ${thread.id}`) === activity,
     const commit = planCommit(lanes, commitMessage);
     const canRunActions = actionCaps.capabilities?.operations["actions.run"] === true;
     const canPublish = actionCaps.capabilities?.operations["actions.publishRepository"] === true;
-    const publish = canPublish ? publishOffer(status.local) : { offered: false, disabled: null };
+    const publish = canPublish && readyProviders.length > 0 ? publishOffer(status.local) : { offered: false, disabled: null };
     const publishPlan = planPublish({
       repository: publishRepositoryPath,
       remoteName: publishRemoteName
     });
-    const stackedOffers = (0, import_react5.useMemo)(
+    const stackedOffers = (0, import_react6.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
     );
@@ -15760,7 +16356,8 @@ ${thread.id}`) === activity,
       })
     );
     const runPublish = () => {
-      if (publishPlan.disabled !== null || publishPlan.repository === null) return;
+      if (!publish.offered || publish.disabled !== null || publishPlan.disabled !== null || publishPlan.repository === null)
+        return;
       const repository2 = publishPlan.repository;
       const remoteName = publishPlan.remoteName;
       runMutation(
@@ -15837,7 +16434,7 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
-    (0, import_react5.useEffect)(() => {
+    (0, import_react6.useEffect)(() => {
       runFollowUpRef.current = (action) => {
         switchView("repository");
         setStackedChoice(action);
@@ -15852,7 +16449,7 @@ ${thread.id}`) === activity,
         else runStacked(offer);
       };
     });
-    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
       "section",
       {
         "aria-label": "Version Control",
@@ -15868,8 +16465,8 @@ ${thread.id}`) === activity,
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("style", { children: `[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("style", { children: `[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
             "header",
             {
               style: {
@@ -15881,7 +16478,18 @@ ${thread.id}`) === activity,
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-expanded": cloneOpen,
+                    onClick: () => setCloneOpen((value) => !value),
+                    style: control2,
+                    children: "Clone repository\u2026"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { type: "button", onClick: discovery.refresh, style: control2, children: "Rescan providers" }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "span",
                   {
                     role: "group",
@@ -15890,7 +16498,7 @@ ${thread.id}`) === activity,
                     children: [
                       ["pull-requests", "Pull requests"],
                       ["repository", "Repository"]
-                    ].map(([value, label]) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    ].map(([value, label]) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                       "button",
                       {
                         type: "button",
@@ -15909,12 +16517,22 @@ ${thread.id}`) === activity,
                     ))
                   }
                 ),
-                view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
-                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? headerStatus })
+                view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
+                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? headerStatus })
               ]
             }
           ),
-          view === "pull-requests" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          cloneOpen && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            CloneRepositoryPanel,
+            {
+              host,
+              session,
+              discovery,
+              visible
+            }
+          ),
+          discovery.error && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { role: "alert", style: { padding: 8, color: muted2 }, children: discovery.error }),
+          view === "pull-requests" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
             PullRequestsPanel,
             {
               host,
@@ -15924,13 +16542,13 @@ ${thread.id}`) === activity,
               onSelect: selectPr
             }
           ),
-          view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
-            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
-            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+          view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
+            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
+            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "Repository status unavailable \u2014 ",
               repo.detail
             ] }),
-            mutation.kind !== "idle" && mutation.receipt === "inline" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            mutation.kind !== "idle" && mutation.receipt === "inline" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
               "output",
               {
                 "aria-label": "Mutation status",
@@ -15944,11 +16562,11 @@ ${thread.id}`) === activity,
                 children: describeMutation(mutation)
               }
             ),
-            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "This workspace is not a repository",
               repo.detail ? ` \u2014 ${repo.detail}` : "",
               ".",
-              canInit && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              canInit && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                 "button",
                 {
                   type: "button",
@@ -15960,20 +16578,20 @@ ${thread.id}`) === activity,
               ),
               !canInit && " Repository init is not supported by the detected drivers."
             ] }),
-            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "Unsupported repository driver: ",
               repo.driverKind,
               ". ",
               repo.detail
             ] }),
-            repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
-              (canPull || canPush || publish.offered) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+            repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
+              (canPull || canPush || publish.offered) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                 "section",
                 {
                   "aria-label": "Sync",
                   style: { display: "flex", alignItems: "center", gap: 6, padding: "2px 6px 6px" },
                   children: [
-                    canPull && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    canPull && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                       "button",
                       {
                         type: "button",
@@ -15983,7 +16601,7 @@ ${thread.id}`) === activity,
                         children: pull.label
                       }
                     ),
-                    canPush && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    canPush && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                       "button",
                       {
                         type: "button",
@@ -15993,7 +16611,7 @@ ${thread.id}`) === activity,
                         children: push.label
                       }
                     ),
-                    publish.offered && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    publish.offered && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                       "button",
                       {
                         type: "button",
@@ -16003,7 +16621,7 @@ ${thread.id}`) === activity,
                         children: "Publish repository\u2026"
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: syncBlockReasons([
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: syncBlockReasons([
                       canPull ? pull.disabled : null,
                       canPush ? push.disabled : null,
                       publish.offered ? publish.disabled : null
@@ -16011,7 +16629,7 @@ ${thread.id}`) === activity,
                   ]
                 }
               ),
-              publish.offered && publishOpen && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              publish.offered && publishOpen && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                 "section",
                 {
                   "aria-label": "Publish repository",
@@ -16023,8 +16641,8 @@ ${thread.id}`) === activity,
                     fontSize: 11
                   },
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "select",
                         {
                           "aria-label": "Publish provider",
@@ -16032,10 +16650,10 @@ ${thread.id}`) === activity,
                           disabled: busy,
                           onChange: (event) => setPublishProvider(event.target.value),
                           style: { ...control2, padding: "2px 4px" },
-                          children: PUBLISH_PROVIDERS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: option.value, children: option.label }, option.value))
+                          children: readyProviders.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: provider.kind, children: provider.label }, provider.kind))
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "input",
                         {
                           "aria-label": "Repository path",
@@ -16059,7 +16677,7 @@ ${thread.id}`) === activity,
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "select",
                         {
                           "aria-label": "Repository visibility",
@@ -16068,14 +16686,14 @@ ${thread.id}`) === activity,
                           onChange: (event) => setPublishVisibility(event.target.value),
                           style: { ...control2, padding: "2px 4px" },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "private", children: "Private" }),
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "public", children: "Public" })
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "private", children: "Private" }),
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "public", children: "Public" })
                           ]
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { marginTop: 2 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { marginTop: 2 }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16091,7 +16709,7 @@ ${thread.id}`) === activity,
                           children: "Advanced"
                         }
                       ),
-                      publishAdvancedOpen && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      publishAdvancedOpen && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "div",
                         {
                           style: {
@@ -16102,7 +16720,7 @@ ${thread.id}`) === activity,
                             flexWrap: "wrap"
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                               "input",
                               {
                                 "aria-label": "Remote name",
@@ -16122,7 +16740,7 @@ ${thread.id}`) === activity,
                                 }
                               }
                             ),
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                               "select",
                               {
                                 "aria-label": "Remote protocol",
@@ -16131,8 +16749,8 @@ ${thread.id}`) === activity,
                                 onChange: (event) => setPublishProtocol(event.target.value),
                                 style: { ...control2, padding: "2px 4px" },
                                 children: [
-                                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "ssh", children: "SSH" }),
-                                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "https", children: "HTTPS" })
+                                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "ssh", children: "SSH" }),
+                                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("option", { value: "https", children: "HTTPS" })
                                 ]
                               }
                             )
@@ -16140,7 +16758,7 @@ ${thread.id}`) === activity,
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                       "div",
                       {
                         style: {
@@ -16151,7 +16769,7 @@ ${thread.id}`) === activity,
                           flexWrap: "wrap"
                         },
                         children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                             "button",
                             {
                               type: "button",
@@ -16161,7 +16779,7 @@ ${thread.id}`) === activity,
                               children: "Publish"
                             }
                           ),
-                          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                             "button",
                             {
                               type: "button",
@@ -16171,14 +16789,14 @@ ${thread.id}`) === activity,
                               children: "Cancel"
                             }
                           ),
-                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: publishPlan.disabled })
+                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: publishPlan.disabled })
                         ]
                       }
                     )
                   ]
                 }
               ),
-              changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                 "output",
                 {
                   "aria-label": "Changes status",
@@ -16186,7 +16804,7 @@ ${thread.id}`) === activity,
                   children: changes.error
                 }
               ),
-              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { padding: "4px 6px", color: muted2, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
+              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { style: { padding: "4px 6px", color: muted2, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
               CHANGE_LANES.map((lane) => {
                 const bulk = laneMutation(lane);
                 const rowAction = entryMutation(lane);
@@ -16194,8 +16812,8 @@ ${thread.id}`) === activity,
                 const rowAllowed = rowAction !== null && (rowAction.op === "stage" ? canStage : canUnstage);
                 const discard = canDiscard ? discardAction(lane) : null;
                 const discardConfirm = pendingDiscard?.lane === lane ? planDiscard(lanes, pendingDiscard) : null;
-                return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                     "h3",
                     {
                       style: {
@@ -16212,14 +16830,14 @@ ${thread.id}`) === activity,
                         gap: 6
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { children: [
                           laneTitle(lane),
                           " (",
                           lanes[lane].length,
                           ")"
                         ] }),
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { display: "flex", gap: 4 }, children: [
-                          discard !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: { display: "flex", gap: 4 }, children: [
+                          discard !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                             "button",
                             {
                               type: "button",
@@ -16232,7 +16850,7 @@ ${thread.id}`) === activity,
                               children: discard.bulk
                             }
                           ),
-                          bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                          bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                             "button",
                             {
                               type: "button",
@@ -16250,7 +16868,7 @@ ${thread.id}`) === activity,
                       ]
                     }
                   ),
-                  pendingDiscard !== null && discardConfirm !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                  pendingDiscard !== null && discardConfirm !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                     "div",
                     {
                       role: "alertdialog",
@@ -16263,8 +16881,8 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { marginBottom: 4 }, children: discardConfirm.prompt }),
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { marginBottom: 4 }, children: discardConfirm.prompt }),
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                           "div",
                           {
                             style: {
@@ -16274,7 +16892,7 @@ ${thread.id}`) === activity,
                               flexWrap: "wrap"
                             },
                             children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -16287,7 +16905,7 @@ ${thread.id}`) === activity,
                                   children: discardConfirm.confirmLabel
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -16297,19 +16915,19 @@ ${thread.id}`) === activity,
                                   children: "Cancel"
                                 }
                               ),
-                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2 }, children: discardConfirm.disabled })
+                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2 }, children: discardConfirm.disabled })
                             ]
                           }
                         )
                       ]
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                     "li",
                     {
                       style: { display: "flex", alignItems: "center", gap: 4 },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                           "button",
                           {
                             type: "button",
@@ -16333,14 +16951,14 @@ ${thread.id}`) === activity,
                             },
                             children: [
                               entry.path,
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: { color: muted2 }, children: [
                                 " \u2014 ",
                                 describeEntry(entry)
                               ] })
                             ]
                           }
                         ),
-                        rowAllowed && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                        rowAllowed && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16359,7 +16977,7 @@ ${thread.id}`) === activity,
                             children: rowAction.label
                           }
                         ),
-                        discard !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                        discard !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16380,8 +16998,8 @@ ${thread.id}`) === activity,
                   )) })
                 ] }, lane);
               }),
-              (canCommit || canRunActions) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+              (canCommit || canRunActions) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "h3",
                   {
                     style: {
@@ -16396,7 +17014,7 @@ ${thread.id}`) === activity,
                     children: "Commit"
                   }
                 ),
-                status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "p",
                   {
                     style: {
@@ -16408,7 +17026,7 @@ ${thread.id}`) === activity,
                     children: "Warning: committing on the default branch"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "textarea",
                   {
                     "aria-label": "Commit message",
@@ -16433,8 +17051,8 @@ ${thread.id}`) === activity,
                     }
                   }
                 ),
-                canCommit && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                canCommit && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                     "button",
                     {
                       type: "button",
@@ -16444,9 +17062,9 @@ ${thread.id}`) === activity,
                       children: commit.label
                     }
                   ),
-                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: commit.disabled })
+                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: commit.disabled })
                 ] }),
-                canRunActions && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                canRunActions && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "div",
                   {
                     style: {
@@ -16457,7 +17075,7 @@ ${thread.id}`) === activity,
                       flexWrap: "wrap"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "select",
                         {
                           "aria-label": "Stacked action",
@@ -16468,7 +17086,7 @@ ${thread.id}`) === activity,
                             setPendingConfirm(null);
                           },
                           style: { ...control2, padding: "2px 4px" },
-                          children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                          children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                             "option",
                             {
                               value: offer.action,
@@ -16479,7 +17097,7 @@ ${thread.id}`) === activity,
                           ))
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16489,7 +17107,7 @@ ${thread.id}`) === activity,
                           children: busy && mutation.kind === "running" && mutation.op === "stacked" ? `${chosenOffer.label}\u2026` : "Run"
                         }
                       ),
-                      status.local?.isDefaultRef === true && stackedActionCommits(chosenOffer.action) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      status.local?.isDefaultRef === true && stackedActionCommits(chosenOffer.action) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "label",
                         {
                           style: {
@@ -16500,7 +17118,7 @@ ${thread.id}`) === activity,
                             color: muted2
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                               "input",
                               {
                                 type: "checkbox",
@@ -16516,7 +17134,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: chooserReason })
+                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: chooserReason })
                     ]
                   }
                 ),
@@ -16527,7 +17145,7 @@ ${thread.id}`) === activity,
                   if (pending === void 0 || pending.disabled !== null) return null;
                   const branchName = status.local?.refName ?? "the default ref";
                   const canFeatureBranch = stackedActionCommits(pending.action);
-                  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                     "div",
                     {
                       role: "alertdialog",
@@ -16540,14 +17158,14 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { marginBottom: 4 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { style: { marginBottom: 4 }, children: [
                           pending.label,
                           ' on default ref "',
                           branchName,
                           '"?',
                           canFeatureBranch ? " You can continue on this ref or create a feature ref and run the same action there." : " Continue on this ref or cancel."
                         ] }),
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                           "div",
                           {
                             style: {
@@ -16557,7 +17175,7 @@ ${thread.id}`) === activity,
                               flexWrap: "wrap"
                             },
                             children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                                 "button",
                                 {
                                   type: "button",
@@ -16571,7 +17189,7 @@ ${thread.id}`) === activity,
                                   ]
                                 }
                               ),
-                              canFeatureBranch && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                              canFeatureBranch && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -16584,7 +17202,7 @@ ${thread.id}`) === activity,
                                   children: "New feature branch"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -16601,7 +17219,7 @@ ${thread.id}`) === activity,
                     }
                   );
                 })(),
-                stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "div",
                   {
                     "aria-label": "Action progress",
@@ -16613,15 +17231,15 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { children: describeStackedProgress(stacked.model) }),
-                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { color: muted2 }, children: stacked.model.phases.map((phase) => {
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { children: describeStackedProgress(stacked.model) }),
+                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { color: muted2 }, children: stacked.model.phases.map((phase) => {
                         const startedAt = stacked.model.started.findIndex(
                           (entry) => entry.phase === phase
                         );
                         const mark = startedAt === -1 ? "\u25CB" : stacked.model.result !== null || stacked.model.failure !== null || startedAt < stacked.model.started.length - 1 ? "\u2713" : "\u2026";
                         return `${mark} ${phase}`;
                       }).join(" \xB7 ") }),
-                      stacked.model.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      stacked.model.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "p",
                         {
                           role: "alert",
@@ -16634,13 +17252,13 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: "2px 0 0", color: muted2 }, children: describeStackedResult(stacked.model.result) })
+                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { style: { margin: "2px 0 0", color: muted2 }, children: describeStackedResult(stacked.model.result) })
                     ]
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "h3",
                   {
                     style: {
@@ -16658,7 +17276,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateRef && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                canCreateRef && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "div",
                   {
                     style: {
@@ -16668,7 +17286,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px 4px"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "input",
                         {
                           "aria-label": "New branch name",
@@ -16692,7 +17310,7 @@ ${thread.id}`) === activity,
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16705,7 +17323,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateRef && create.disabled !== null && newRefName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                canCreateRef && create.disabled !== null && newRefName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "output",
                   {
                     "aria-label": "Branch create status",
@@ -16713,7 +17331,7 @@ ${thread.id}`) === activity,
                     children: create.disabled
                   }
                 ),
-                refs.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                refs.error !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "output",
                   {
                     "aria-label": "Refs status",
@@ -16721,9 +17339,9 @@ ${thread.id}`) === activity,
                     children: refs.error
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => {
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => {
                   const switchState = refSwitchState(row, currentBranch);
-                  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                     "li",
                     {
                       style: {
@@ -16734,7 +17352,7 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                           "span",
                           {
                             style: {
@@ -16746,15 +17364,15 @@ ${thread.id}`) === activity,
                             },
                             children: [
                               row.name,
-                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
+                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: { color: muted2 }, children: [
                                 " \u2014 ",
                                 describeRef(row)
                               ] })
                             ]
                           }
                         ),
-                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
-                        canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { style: { color: muted2, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
+                        canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16764,7 +17382,7 @@ ${thread.id}`) === activity,
                             children: "Switch"
                           }
                         ),
-                        canCreateWorktree && canWorktreeRef(row) && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                        canCreateWorktree && canWorktreeRef(row) && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                           "button",
                           {
                             type: "button",
@@ -16780,8 +17398,8 @@ ${thread.id}`) === activity,
                   );
                 }) })
               ] }),
-              (canCreateWorktree || canRemoveWorktree) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Worktrees", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              (canCreateWorktree || canRemoveWorktree) && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { "aria-label": "Worktrees", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "h3",
                   {
                     style: {
@@ -16799,7 +17417,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateWorktree && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                canCreateWorktree && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "div",
                   {
                     style: {
@@ -16809,7 +17427,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px 4px"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "input",
                         {
                           "aria-label": "New worktree branch",
@@ -16838,7 +17456,7 @@ ${thread.id}`) === activity,
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16858,7 +17476,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateWorktree && worktreePlan.disabled !== null && newWorktreeName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                canCreateWorktree && worktreePlan.disabled !== null && newWorktreeName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "output",
                   {
                     "aria-label": "Worktree create status",
@@ -16871,8 +17489,8 @@ ${thread.id}`) === activity,
                     children: worktreePlan.disabled
                   }
                 ),
-                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No additional worktrees." }),
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No additional worktrees." }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "li",
                   {
                     style: {
@@ -16883,7 +17501,7 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "span",
                         {
                           style: {
@@ -16895,14 +17513,14 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             worktree.refName,
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: { color: muted2 }, children: [
                               " \u2014 ",
                               worktree.path
                             ] })
                           ]
                         }
                       ),
-                      canRemoveWorktree && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      canRemoveWorktree && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16912,7 +17530,7 @@ ${thread.id}`) === activity,
                           children: "Remove"
                         }
                       ),
-                      canRemoveWorktree && worktreeRemoveFailures.has(worktree.path) && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      canRemoveWorktree && worktreeRemoveFailures.has(worktree.path) && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16933,8 +17551,8 @@ ${thread.id}`) === activity,
                   worktree.path
                 )) })
               ] }),
-              canListRemotes && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Remotes", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+              canListRemotes && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { "aria-label": "Remotes", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "h3",
                   {
                     style: {
@@ -16951,11 +17569,11 @@ ${thread.id}`) === activity,
                       gap: 6
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { children: [
                         "Remotes",
                         remoteList.length > 0 ? ` (${remoteList.length})` : ""
                       ] }),
-                      canFetch && remoteList.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      canFetch && remoteList.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -16968,7 +17586,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                remotes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                remotes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                   "output",
                   {
                     "aria-label": "Remotes status",
@@ -16976,8 +17594,8 @@ ${thread.id}`) === activity,
                     children: remotes.error
                   }
                 ),
-                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No remotes configured." }),
-                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No remotes configured." }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                   "li",
                   {
                     style: {
@@ -16988,7 +17606,7 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
                         "span",
                         {
                           style: {
@@ -17000,7 +17618,7 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             remote.name,
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { style: { color: muted2 }, children: [
                               " ",
                               "\u2014 ",
                               remote.url,
@@ -17009,7 +17627,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      canFetch && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+                      canFetch && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                         "button",
                         {
                           type: "button",
@@ -17025,7 +17643,7 @@ ${thread.id}`) === activity,
                 )) })
               ] })
             ] }),
-            selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+            selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
               "output",
               {
                 "aria-label": "Selection",
@@ -17045,7 +17663,7 @@ ${thread.id}`) === activity,
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
             "output",
             {
               "aria-label": "Slice notice",
@@ -17056,7 +17674,7 @@ ${thread.id}`) === activity,
                 borderTop: border2,
                 flexShrink: 0
               },
-              children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions). Clone/discovery, stash, and per-hunk diff expansion are deferred slices."
+              children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions). Stash and per-hunk diff expansion are deferred slices."
             }
           )
         ]
@@ -17065,11 +17683,13 @@ ${thread.id}`) === activity,
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.5.0",
+    version: "0.6.0",
     requires: [
       requireApi(prsReadApi),
       requireApi(prsWriteApi),
       requireApi(vcsActionsApi),
+      requireApi(projectsCloneApi),
+      requireApi(sourceControlDiscoveryApi),
       requireApi(vcsStatusApi),
       requireApi(vcsChangesApi, CHANGES_API_RANGE),
       requireApi(vcsRefsApi),
@@ -17090,7 +17710,7 @@ ${thread.id}`) === activity,
         stateVersion: 2,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(VersionControlView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(VersionControlView, { host, session }) };
         }
       }
     ]

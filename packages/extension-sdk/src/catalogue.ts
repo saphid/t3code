@@ -22,6 +22,7 @@ import { compareVersions, parseVersion, type Version } from "./semver.js";
 import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./textEdits.js";
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
+import { projectsCloneApi, sourceControlDiscoveryApi } from "./projects.js";
 import {
   browserMiniPlayerInputProperties,
   browserMiniPlayerStateSchema,
@@ -60,6 +61,7 @@ import {
 
 export * from "./workspaceResources.js";
 export * from "./agentSessions.js";
+export * from "./projects.js";
 
 export {
   EDITABLE_TEXT_MAX_BYTES,
@@ -7799,6 +7801,10 @@ export const BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
 export const BROWSER_RECORDING = "t3.browser/recording";
 export const BROWSER_RECORDING_MIN_VERSION = "1.2.0";
 export const HOST_CAPABILITY_GRANT_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  "t3.projects/create":
+    "Create project directories and clone repositories using provider credentials or SSH keys, including local-network remotes",
+  "t3.source-control/read":
+    "Read provider accounts and account-wide repository names, including private repositories",
   [BROWSER_RECORDING]: "Record the browser panel as video",
   [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths",
 };
@@ -10487,6 +10493,8 @@ export const orchestrationStatusApi = defineOrchestrationStatusApi(vcsDiffPrevie
 export const ORCHESTRATION_STATUS_API = orchestrationStatusApi.definition;
 
 export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
+  projectsCloneApi.definition,
+  sourceControlDiscoveryApi.definition,
   orchestrationStatusApi.definition,
   orchestrationControlApi.definition,
   orchestrationLogsApi.definition,
