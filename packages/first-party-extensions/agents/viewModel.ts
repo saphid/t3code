@@ -19,7 +19,11 @@
  */
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
-import { WORKFLOW_NAME_PATTERN } from "@t3tools/extension-sdk/catalogue";
+import {
+  WORKFLOW_NAME_PATTERN,
+  WORKFLOW_SCRIPT_MAX_CHUNKS,
+  WORKSPACE_RESOURCE_CHUNK_UNITS,
+} from "@t3tools/extension-sdk/catalogue";
 import type {
   AgentSessionImportReceipt,
   AgentSessionsScanResult,
@@ -39,6 +43,7 @@ import type {
   UserInputQuestion,
   VcsDiffPreviewStreamEvent,
   VcsDiffStreamSource,
+  WorkflowScriptStreamEvent,
 } from "@t3tools/extension-sdk/catalogue";
 
 /** One runnable entry parsed from the checked-in t3.json (`T3ProjectFileScript` shape). */
@@ -316,7 +321,7 @@ export async function runWorkspaceScript(options: {
       });
     } catch (error) {
       rejections.push(
-        `${terminalId}: ${error instanceof Error ? error.message : "terminal control unavailable"}`,
+        `${terminalId}: ${describeAgentsError(error, "Terminal control is unavailable.")}`,
       );
       continue;
     }
@@ -332,7 +337,7 @@ export async function runWorkspaceScript(options: {
         kind: "failed",
         stage: "write",
         terminalId,
-        message: error instanceof Error ? error.message : "terminal control unavailable",
+        message: describeAgentsError(error, "Terminal control is unavailable."),
       };
       report(failure);
       return failure;
@@ -1059,17 +1064,69 @@ export function describeSessionScan(
   };
 }
 
-/**
- * A failed scan or import → named text. A missing grant names the permission
- * to grant; anything else keeps its (bounded) detail.
- */
 export function describeSessionsError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
+  return describeAgentsError(
+    error,
+    text.includes("AgentSessionScanTimedOut")
+      ? "The session scan hit its time limit before finding this session. Scan again to retry."
+      : "Session import is unavailable.",
+  );
+}
+
+export function describeAgentsError(error: unknown, fallback: string): string {
   const denial = describeGrantDenial(error);
   if (denial) return denial.message;
-  if (text.includes("AgentSessionScanTimedOut"))
-    return "The session scan hit its time limit before finding this session. Scan again to retry.";
-  return `Session import is unavailable${text ? ` — ${text.slice(0, 300)}` : ""}.`;
+  const text = error instanceof Error ? error.message : String(error);
+  const scope = /AuthorityDenied: ([\w:]+)/.exec(text)?.[1];
+  return scope ? `This device's access does not include ${scope}.` : fallback;
+}
+
+export type WorkflowScriptViewState = {
+  readonly open: boolean;
+  readonly result: { readonly contents: string; readonly truncated: boolean } | "loading" | "error";
+};
+
+export async function collectWorkflowScriptStream(
+  stream: AsyncIterable<StreamFrameLike<WorkflowScriptStreamEvent>>,
+  signal: AbortSignal,
+): Promise<{ readonly contents: string; readonly truncated: boolean }> {
+  let manifest: Extract<WorkflowScriptStreamEvent, { kind: "manifest" }> | null = null;
+  const chunks: string[] = [];
+  for await (const frame of stream) {
+    if (signal.aborted) throw signal.reason;
+    const event = frame.value;
+    if (frame.type === "error") throw new Error("Workflow script stream failed.");
+    if (event.kind === "manifest") {
+      if (
+        manifest ||
+        frame.type !== "snapshot" ||
+        !Number.isInteger(event.chunkCount) ||
+        event.chunkCount < 0 ||
+        event.chunkCount > WORKFLOW_SCRIPT_MAX_CHUNKS
+      )
+        throw new Error("Invalid workflow script manifest.");
+      manifest = event;
+    } else if (event.kind === "chunk") {
+      if (
+        !manifest ||
+        frame.type !== "data" ||
+        event.chunkIndex !== chunks.length ||
+        chunks.length >= manifest.chunkCount ||
+        event.data.length > WORKSPACE_RESOURCE_CHUNK_UNITS
+      )
+        throw new Error("Invalid workflow script chunk.");
+      chunks.push(event.data);
+    } else if (event.kind === "complete") {
+      if (!manifest || frame.type !== "closed" || chunks.length !== manifest.chunkCount)
+        throw new Error("Incomplete workflow script.");
+      const contents = chunks.join("");
+      if ((await sha256Hex(contents)) !== event.sha256)
+        throw new Error("Workflow script checksum mismatch.");
+      return { contents, truncated: manifest.truncated };
+    } else throw new Error("Invalid workflow script frame.");
+  }
+  throw new Error("Incomplete workflow script.");
 }
 
 // --- Pending approvals ------------------------------------------------------
@@ -1406,7 +1463,7 @@ export async function collectDiffStream(
     if (signal.aborted) return { kind: "cancelled" };
     return {
       kind: "protocol",
-      detail: error instanceof Error ? error.message : "diff stream failed",
+      detail: describeAgentsError(error, "Could not load the diff."),
     };
   }
   if (signal.aborted) return { kind: "cancelled" };
