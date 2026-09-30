@@ -16,10 +16,13 @@ NodeTest.test("workflow script transfer is an additive, read-granted 1.1.0 strea
   NodeAssert.deepEqual(stream.requiredGrants, ["t3.orchestration/read"]);
   NodeAssert.deepEqual(Object.keys(stream.inputSchema.properties), ["workflowId"]);
   NodeAssert.equal(
-    definition.methods.find((entry) => entry.name === "getWorkflowScript").outputSchema.properties
-      .contents.maxLength,
-    8192,
+    definition.methods.some((entry) => entry.name === "getWorkflowScript"),
+    false,
   );
+  const manifest = stream.eventSchema.oneOf.find(
+    (entry) => entry.properties.kind.const === "manifest",
+  );
+  NodeAssert.deepEqual(Object.keys(manifest.properties), ["kind", "chunkCount", "truncated"]);
 });
 
 NodeTest.test("workflow script transfer cannot run without negotiating the stream addition", () => {

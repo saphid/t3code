@@ -1720,7 +1720,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   const toggleWorkflowScript = async (workflowId: string, scriptPath: string) => {
     const key = JSON.stringify([workflowId, scriptPath]);
     const previous = scriptsRef.current[key];
-    if (previous) {
+    if (previous && (previous.open || previous.result !== "error")) {
       updateWorkflowScript(key, { ...previous, open: !previous.open });
       return;
     }

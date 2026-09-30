@@ -18,8 +18,9 @@ terminal.
   controls carry an explicit Refresh button as the recovery path for those;
   `readWorkflowScript` and the `getTurnDiff`/`getThreadDiff` chunked streams
   serve the script viewer and checkpoint diffs. Scripts use native's 256 KiB
-  read limit, with chunk-order, byte-length, and SHA-256 verification. The
-  Script toggle and Close hide the view without refetching cached contents.
+  read limit, with chunk-order/count and SHA-256 verification. The Script
+  toggle and Close hide the view without refetching successful reads; reopening
+  a failed read retries it, matching native.
   Diff frames are reassembled
   and verified end-to-end (chunk order, byte lengths, per-source and
   whole-payload sha256) before a byte renders — the same verification the

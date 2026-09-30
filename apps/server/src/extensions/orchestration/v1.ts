@@ -16,7 +16,6 @@ import {
   ORCHESTRATION_CONTROL_API,
   WORKFLOW_NAME_PATTERN,
   splitWorkspaceResourceChunks,
-  WORKFLOW_SCRIPT_MAX_BYTES,
   type AgentsState,
   type OrchestrationReceipt,
 } from "@t3tools/extension-sdk/catalogue";
@@ -39,7 +38,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointDiffQuery } from "../../checkpointing/CheckpointDiffQuery.ts";
 import { readWorkflowScript } from "../../orchestration/workflowScriptQuery.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
-import { boundedPrefix, streamDiffPreview } from "../vcsDiffApi.ts";
+import { streamDiffPreview } from "../vcsDiffApi.ts";
 
 const fail = (detail: string) =>
   new ExtensionOperationError({ operation: "orchestration", detail });
@@ -62,8 +61,6 @@ const turnDiffInput = Schema.decodeUnknownSync(
 const queueCap = 64;
 const queueBytesCap = 1024 * 1024;
 const frameBytesCap = 60 * 1024;
-/** The contract caps getWorkflowScript contents at 8 192 units. */
-const workflowScriptUnitsCap = 8_192;
 const nativeTypes = {
   "turn.start": "thread.turn.start",
   "turn.interrupt": "thread.turn.interrupt",
@@ -216,7 +213,6 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         subscribeAgents: true,
         getTurnDiff: true,
         getThreadDiff: true,
-        getWorkflowScript: hasWorkflowScript,
         readWorkflowScript: hasWorkflowScript,
         "turn.start": known,
         "turn.interrupt": known,
@@ -249,7 +245,7 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       (agent) => agent.id === safe.workflowId && agent.kind === "workflow",
     );
     if (!workflow?.runHandles?.scriptPath)
-      throw fail("OrchestrationUnsupported: getWorkflowScript");
+      throw fail("OrchestrationUnsupported: readWorkflowScript");
     const script = await Effect.runPromise(
       deps.readScript({ scriptPath: workflow.runHandles.scriptPath }),
       { signal },
@@ -411,14 +407,6 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
     definition: ORCHESTRATION_STATUS_API,
     requiresRootAuthority: true,
     async invoke(method, input, context, signal, metadata) {
-      if (method === "getWorkflowScript") {
-        const script = await loadWorkflowScript(input, context, signal, metadata);
-        const contents = boundedPrefix(script.contents, workflowScriptUnitsCap);
-        return {
-          contents,
-          truncated: script.truncated || contents.length < script.contents.length,
-        };
-      }
       await guard(context, signal, metadata);
       const state = await Effect.runPromise(snapshot(context.resource.threadId!), { signal });
       if (method === "getCapabilities") {
@@ -434,14 +422,10 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         return (async function* (): AsyncIterable<ApiStreamEvent> {
           const script = await loadWorkflowScript(input, context, signal, metadata);
           const chunks = splitWorkspaceResourceChunks(script.contents);
-          const byteLength = Buffer.byteLength(script.contents, "utf8");
-          if (byteLength > WORKFLOW_SCRIPT_MAX_BYTES + 2)
-            throw fail("Workflow script exceeds native read limit.");
           yield {
             type: "snapshot",
             value: {
               kind: "manifest",
-              byteLength,
               chunkCount: chunks.length,
               truncated: script.truncated,
             },

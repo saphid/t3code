@@ -28,6 +28,7 @@ import {
   createDiffAssembly,
   deriveAgentsPanelModel,
   describeAgentSessionReceipt,
+  describeAgentsError,
   describeLaunchReceipt,
   describeNavigationReceipt,
   describeReceipt,
@@ -939,6 +940,21 @@ NodeTest.describe("verified diff reassembly", () => {
   };
   const utf8 = (text) => new TextEncoder().encode(text).length;
 
+  NodeTest.it("rejects transport failures without displaying remote endpoint details", async () => {
+    const result = await collectDiffStream(
+      {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              Promise.reject(new Error("Failed to fetch remote environment endpoint private-url")),
+          };
+        },
+      },
+      new AbortController().signal,
+    );
+    NodeAssert.equal(result.detail, "Could not load the diff.");
+  });
+
   const buildFrames = async (bodies, splitAt = 3) => {
     const sources = [];
     const chunks = [];
@@ -1262,7 +1278,7 @@ NodeTest.describe("session import", () => {
     );
     NodeAssert.equal(
       describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),
-      "Session import needs orchestration:operate permission.",
+      "This device's access does not include orchestration:operate.",
     );
     NodeAssert.match(describeSessionsError(new Error("AgentSessionScanTimedOut")), /time limit/);
   });
@@ -1299,6 +1315,46 @@ NodeTest.describe("session import", () => {
   });
 });
 
+NodeTest.describe("actionable Agents errors", () => {
+  for (const [code, scope] of [
+    ["OrchestrationAuthorityDenied", "orchestration:operate"],
+    ["OrchestrationAuthorityDenied", "orchestration:read"],
+    ["AgentLogsAuthorityDenied", "orchestration:read"],
+    ["AgentSessionsAuthorityDenied", "orchestration:read"],
+    ["AgentSessionsAuthorityDenied", "orchestration:operate"],
+  ])
+    NodeTest.it(`preserves device scope guidance for ${code}: ${scope}`, () => {
+      const message = `Failed to fetch remote environment endpoint private-url (ExtensionOperationError: ${code}: ${scope}).`;
+      const expected = `This device's access does not include ${scope}.`;
+      NodeAssert.equal(
+        describeAgentsError(new Error(message), "Could not complete the operation."),
+        expected,
+      );
+      NodeAssert.equal(describeSessionsError(message), expected);
+    });
+  NodeTest.it("keeps extension grant guidance distinct from device scopes", () => {
+    const message = "API capability denied: t3.orchestration/operate";
+    const expected =
+      "Needs permission t3.orchestration/operate. Grant it in Settings → Extensions.";
+    NodeAssert.equal(
+      describeAgentsError(new Error(message), "Could not complete the operation."),
+      expected,
+    );
+    NodeAssert.equal(describeAgentsError(message, "Could not complete the operation."), expected);
+  });
+  NodeTest.it("collapses opaque transport and operation noise to the named fallback", () => {
+    NodeAssert.equal(
+      describeAgentsError(
+        new Error(
+          "Failed to fetch remote environment endpoint private-url (ExtensionOperationError: OrchestrationCommandConflict).",
+        ),
+        "Could not complete the operation.",
+      ),
+      "Could not complete the operation.",
+    );
+  });
+});
+
 NodeTest.describe("workflow script transfer", () => {
   const contents = `${"a".repeat(8_191)}🦀${"z".repeat(16_000)}`;
   const frames = [
@@ -1306,7 +1362,6 @@ NodeTest.describe("workflow script transfer", () => {
       type: "snapshot",
       value: {
         kind: "manifest",
-        byteLength: new TextEncoder().encode(contents).byteLength,
         chunkCount: 2,
         truncated: false,
       },
@@ -1317,20 +1372,6 @@ NodeTest.describe("workflow script transfer", () => {
   const stream = async function* (events) {
     yield* events;
   };
-  NodeTest.it("rejects transport failures without displaying remote endpoint details", async () => {
-    const result = await collectDiffStream(
-      {
-        [Symbol.asyncIterator]() {
-          return {
-            next: () =>
-              Promise.reject(new Error("Failed to fetch remote environment endpoint private-url")),
-          };
-        },
-      },
-      new AbortController().signal,
-    );
-    NodeAssert.equal(result.detail, "Could not load the diff.");
-  });
   for (const [name, events] of [
     ["missing manifest", [frames[1]]],
     [
@@ -1339,10 +1380,7 @@ NodeTest.describe("workflow script transfer", () => {
     ],
     ["oversized chunks", frames],
     ["incomplete transfer", [frames[0], frames[1]]],
-    [
-      "over-native manifest",
-      [{ ...frames[0], value: { ...frames[0].value, byteLength: 256 * 1024 + 3 } }],
-    ],
+    ["over-limit chunk count", [{ ...frames[0], value: { ...frames[0].value, chunkCount: 65 } }]],
   ])
     NodeTest.it(`rejects ${name}`, async () => {
       await NodeAssert.rejects(
@@ -1360,7 +1398,6 @@ NodeTest.describe("workflow script transfer", () => {
         type: "snapshot",
         value: {
           kind: "manifest",
-          byteLength: new TextEncoder().encode(text).byteLength,
           chunkCount: 1,
           truncated: true,
         },

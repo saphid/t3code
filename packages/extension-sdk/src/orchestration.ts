@@ -491,17 +491,11 @@ export const orchestrationControlApi = defineApi<OrchestrationControlMethods>({
 });
 type StatusMethods = {
   getCapabilities: { input: Record<string, never>; output: OrchestrationCapabilities };
-  getWorkflowScript: {
-    input: { readonly workflowId: string };
-    output: { readonly contents: string; readonly truncated: boolean };
-  };
 };
-export const WORKFLOW_SCRIPT_MAX_BYTES = 256 * 1024;
 export const WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
 export type WorkflowScriptStreamEvent =
   | {
       readonly kind: "manifest";
-      readonly byteLength: number;
       readonly chunkCount: number;
       readonly truncated: boolean;
     }
@@ -532,13 +526,6 @@ export function defineOrchestrationStatusApi(
             revision: num,
           }),
         },
-        {
-          name: "getWorkflowScript",
-          effect: "read",
-          requiredGrants: [ORCHESTRATION_READ],
-          inputSchema: obj({ workflowId: id }),
-          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool }),
-        },
       ],
       streams: [
         {
@@ -549,7 +536,6 @@ export function defineOrchestrationStatusApi(
             oneOf: [
               obj({
                 kind: { const: "manifest" },
-                byteLength: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_BYTES + 2 },
                 chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
                 truncated: bool,
               }),

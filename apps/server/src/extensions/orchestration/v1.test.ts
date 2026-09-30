@@ -505,7 +505,7 @@ it("keeps the stale name when the workspace change reverts before any later read
   expect(f.calls).toHaveLength(0);
 });
 
-it("truncates workflow scripts without splitting a surrogate pair", async () => {
+it("streams workflow scripts without splitting a surrogate pair", async () => {
   const f = await fixture();
   const workflow = decodeActivity({
     id: "workflow",
@@ -522,18 +522,24 @@ it("truncates workflow scripts without splitting a surrogate pair", async () => 
     },
   });
   f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
-  // An astral pair straddles the 8 192-unit bound, so the delivered contents
-  // must shrink to 8 191 units rather than emit a lone surrogate.
   const crafted = `${"a".repeat(8_191)}\u{1F980}${"z".repeat(100)}`;
   f.setScriptContents(crafted);
-  const result = (await invoke(f.status, "getWorkflowScript", {
-    workflowId: "workflow",
-  })) as { contents: string; truncated: boolean };
-  expect(result.contents).toBe("a".repeat(8_191));
-  expect(result.truncated).toBe(true);
+  const chunks: string[] = [];
+  for await (const frame of f.status.subscribe!(
+    "readWorkflowScript",
+    { workflowId: "workflow" },
+    context,
+    signal,
+    meta(f.status),
+  )) {
+    const event = frame.value as WorkflowScriptStreamEvent;
+    if (event.kind === "chunk") chunks.push(event.data);
+  }
+  expect(chunks[0]).toBe("a".repeat(8_191));
+  expect(chunks.join("")).toBe(crafted);
 });
 
-it("resolves workflow scripts only from this thread's folded workflow handles", async () => {
+it("retires the unused unary workflow script method and capability", async () => {
   const f = await fixture();
   const workflow = decodeActivity({
     id: "workflow",
@@ -551,74 +557,71 @@ it("resolves workflow scripts only from this thread's folded workflow handles", 
   });
   f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
   expect(await invoke(f.status, "getCapabilities")).toMatchObject({
-    operations: { getWorkflowScript: true, readWorkflowScript: true },
+    operations: { readWorkflowScript: true },
   });
-  expect(await invoke(f.status, "getWorkflowScript", { workflowId: "workflow" })).toEqual({
-    contents: "export default 1;",
-    truncated: false,
-  });
-  await expect(invoke(f.status, "getWorkflowScript", { workflowId: "other" })).rejects.toThrow(
+  const capabilities = (await invoke(f.status, "getCapabilities")) as {
+    operations: Record<string, boolean>;
+  };
+  expect(capabilities.operations).not.toHaveProperty("getWorkflowScript");
+  await expect(invoke(f.status, "getWorkflowScript", { workflowId: "workflow" })).rejects.toThrow(
     "OrchestrationUnsupported",
   );
-  await expect(
-    invoke(f.status, "getWorkflowScript", { workflowId: "workflow", scriptPath: "/arbitrary.js" }),
-  ).rejects.toThrow();
 });
 
-it.each([16_087, 256 * 1024])(
-  "D2: streams the whole native-sized %i-byte workflow script",
-  async (length) => {
-    const f = await fixture();
-    const workflow = decodeActivity({
-      id: "workflow",
-      kind: "task.started",
-      tone: "info",
-      summary: "Workflow",
-      createdAt: "2026-09-30T00:00:00.000Z",
-      turnId: null,
-      payload: {
-        taskId: "workflow",
-        agentKind: "agent",
-        taskType: "local_workflow",
-        runHandles: { scriptPath: "/home/workflow.js" },
-      },
-    });
-    f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
-    const contents = "a".repeat(length);
-    f.setScriptContents(contents);
-    const frames: (Omit<ApiStreamEvent, "value"> & {
-      readonly value: WorkflowScriptStreamEvent;
-    })[] = [];
-    for await (const frame of f.status.subscribe!(
-      "readWorkflowScript",
-      { workflowId: "workflow" },
-      context,
-      signal,
-      meta(f.status),
-    ))
-      frames.push(
-        frame as Omit<ApiStreamEvent, "value"> & { readonly value: WorkflowScriptStreamEvent },
-      );
-    expect(frames[0]).toMatchObject({
-      type: "snapshot",
-      value: { kind: "manifest", byteLength: length, truncated: false },
-    });
-    const chunks = frames.flatMap((frame) =>
-      frame.value.kind === "chunk" ? [frame.value.data] : [],
+it.each([
+  { label: "16,087-byte UTF-8", contents: "a".repeat(16_087) },
+  { label: "native-limit UTF-8", contents: "a".repeat(256 * 1024) },
+  { label: "200 KiB non-UTF-8", contents: Buffer.alloc(200 * 1024, 0xff).toString("utf8") },
+  { label: "native-limit non-UTF-8", contents: Buffer.alloc(256 * 1024, 0xff).toString("utf8") },
+])("streams the complete native-decoded $label workflow script", async ({ contents }) => {
+  const f = await fixture();
+  const workflow = decodeActivity({
+    id: "workflow",
+    kind: "task.started",
+    tone: "info",
+    summary: "Workflow",
+    createdAt: "2026-09-30T00:00:00.000Z",
+    turnId: null,
+    payload: {
+      taskId: "workflow",
+      agentKind: "agent",
+      taskType: "local_workflow",
+      runHandles: { scriptPath: "/home/workflow.js" },
+    },
+  });
+  f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
+  f.setScriptContents(contents);
+  const frames: (Omit<ApiStreamEvent, "value"> & {
+    readonly value: WorkflowScriptStreamEvent;
+  })[] = [];
+  for await (const frame of f.status.subscribe!(
+    "readWorkflowScript",
+    { workflowId: "workflow" },
+    context,
+    signal,
+    meta(f.status),
+  ))
+    frames.push(
+      frame as Omit<ApiStreamEvent, "value"> & { readonly value: WorkflowScriptStreamEvent },
     );
-    expect(chunks.join("")).toBe(contents);
-    expect(frames.at(-1)).toMatchObject({
-      type: "closed",
-      value: {
-        kind: "complete",
-        sha256: NodeCrypto.createHash("sha256").update(contents).digest("hex"),
-      },
-    });
-    expect(frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) < 64 * 1024)).toBe(
-      true,
-    );
-  },
-);
+  expect(frames[0]).toMatchObject({
+    type: "snapshot",
+    value: { kind: "manifest", truncated: false },
+  });
+  expect(frames[0]!.value).not.toHaveProperty("byteLength");
+  const chunks = frames.flatMap((frame) =>
+    frame.value.kind === "chunk" ? [frame.value.data] : [],
+  );
+  expect(chunks.join("")).toBe(contents);
+  expect(frames.at(-1)).toMatchObject({
+    type: "closed",
+    value: {
+      kind: "complete",
+      sha256: NodeCrypto.createHash("sha256").update(contents).digest("hex"),
+    },
+  });
+  expect(frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) < 64 * 1024)).toBe(true);
+});
 
 it("workflow script streams share read authority and contained handle resolution", async () => {
   const f = await fixture();

@@ -78,6 +78,7 @@ const workflow = {
 async function renderPanel({
   contents = "export default 1;",
   failure = false,
+  failuresBeforeSuccess = 0,
   pending = null,
   capabilityFailure = false,
 } = {}) {
@@ -86,16 +87,10 @@ async function renderPanel({
   const host = {
     React,
     async invokeApi(request) {
-      if (request.method === "getWorkflowScript") {
-        scriptReads += 1;
-        if (failure) throw new Error(rawError);
-        if (pending) await pending;
-        return { contents: contents.slice(0, 8192), truncated: contents.length > 8192 };
-      }
       if (request.method === "getCapabilities") {
         if (capabilityFailure) throw new Error(rawError);
         return {
-          operations: { getWorkflowScript: true, readWorkflowScript: true },
+          operations: { readWorkflowScript: true },
           streamEpoch: "epoch",
           revision: 1,
         };
@@ -106,14 +101,13 @@ async function renderPanel({
     async *subscribeApi(request, signal) {
       if (request.name === "readWorkflowScript") {
         scriptReads += 1;
-        if (failure) throw new Error(rawError);
+        if (failure || scriptReads <= failuresBeforeSuccess) throw new Error(rawError);
         if (pending) await pending;
         const chunks = contents.match(/[\s\S]{1,8192}/gu) ?? [];
         yield {
           type: "snapshot",
           value: {
             kind: "manifest",
-            byteLength: Buffer.byteLength(contents),
             chunkCount: chunks.length,
             truncated: false,
           },
@@ -269,16 +263,39 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("reopening a failed script keeps the native failure without refetching", async () => {
-  const panel = await renderPanel({ failure: true });
-  try {
-    await panel.clickToggle();
-    await panel.clickToggle();
-    NodeAssert.ok(!textOf(panel.root.toJSON()).includes("Could not load the script."));
-    await panel.clickToggle();
-    NodeAssert.ok(textOf(panel.root.toJSON()).includes("Could not load the script."));
-    NodeAssert.equal(panel.reads(), 1);
-  } finally {
-    await panel.close();
-  }
-});
+NodeTest.test(
+  "reopening a failed script retries the read and keeps native failure wording",
+  async () => {
+    const panel = await renderPanel({ failure: true });
+    try {
+      await panel.clickToggle();
+      await panel.clickToggle();
+      NodeAssert.ok(!textOf(panel.root.toJSON()).includes("Could not load the script."));
+      await panel.clickToggle();
+      NodeAssert.ok(textOf(panel.root.toJSON()).includes("Could not load the script."));
+      NodeAssert.equal(panel.reads(), 2);
+    } finally {
+      await panel.close();
+    }
+  },
+);
+
+NodeTest.test(
+  "reopening after a transient script failure loads and caches the successful read",
+  async () => {
+    const panel = await renderPanel({ failuresBeforeSuccess: 1 });
+    try {
+      await panel.clickToggle();
+      NodeAssert.ok(textOf(panel.root.toJSON()).includes("Could not load the script."));
+      await panel.clickToggle();
+      await panel.clickToggle();
+      NodeAssert.equal(textOf(panel.root.root.findByType("pre")), "export default 1;");
+      NodeAssert.equal(panel.reads(), 2);
+      await panel.clickToggle();
+      await panel.clickToggle();
+      NodeAssert.equal(panel.reads(), 2);
+    } finally {
+      await panel.close();
+    }
+  },
+);

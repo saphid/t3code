@@ -21,7 +21,6 @@ import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
 import {
   WORKFLOW_NAME_PATTERN,
-  WORKFLOW_SCRIPT_MAX_BYTES,
   WORKFLOW_SCRIPT_MAX_CHUNKS,
   WORKSPACE_RESOURCE_CHUNK_UNITS,
 } from "@t3tools/extension-sdk/catalogue";
@@ -1065,23 +1064,22 @@ export function describeSessionScan(
   };
 }
 
-/**
- * A failed scan or import → named text. A missing grant names the permission
- * to grant; anything else keeps its (bounded) detail.
- */
 export function describeSessionsError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  const denial = describeGrantDenial(error);
-  if (denial) return denial.message;
-  if (text.includes("AgentSessionScanTimedOut"))
-    return "The session scan hit its time limit before finding this session. Scan again to retry.";
-  if (text.includes("AgentSessionsAuthorityDenied: orchestration:operate"))
-    return "Session import needs orchestration:operate permission.";
-  return "Session import is unavailable.";
+  return describeAgentsError(
+    error,
+    text.includes("AgentSessionScanTimedOut")
+      ? "The session scan hit its time limit before finding this session. Scan again to retry."
+      : "Session import is unavailable.",
+  );
 }
 
 export function describeAgentsError(error: unknown, fallback: string): string {
-  return describeGrantDenial(error)?.message ?? fallback;
+  const denial = describeGrantDenial(error);
+  if (denial) return denial.message;
+  const text = error instanceof Error ? error.message : String(error);
+  const scope = /AuthorityDenied: ([\w:]+)/.exec(text)?.[1];
+  return scope ? `This device's access does not include ${scope}.` : fallback;
 }
 
 export type WorkflowScriptViewState = {
@@ -1095,7 +1093,6 @@ export async function collectWorkflowScriptStream(
 ): Promise<{ readonly contents: string; readonly truncated: boolean }> {
   let manifest: Extract<WorkflowScriptStreamEvent, { kind: "manifest" }> | null = null;
   const chunks: string[] = [];
-  let receivedBytes = 0;
   for await (const frame of stream) {
     if (signal.aborted) throw signal.reason;
     const event = frame.value;
@@ -1106,10 +1103,7 @@ export async function collectWorkflowScriptStream(
         frame.type !== "snapshot" ||
         !Number.isInteger(event.chunkCount) ||
         event.chunkCount < 0 ||
-        event.chunkCount > WORKFLOW_SCRIPT_MAX_CHUNKS ||
-        !Number.isInteger(event.byteLength) ||
-        event.byteLength < 0 ||
-        event.byteLength > WORKFLOW_SCRIPT_MAX_BYTES + 2
+        event.chunkCount > WORKFLOW_SCRIPT_MAX_CHUNKS
       )
         throw new Error("Invalid workflow script manifest.");
       manifest = event;
@@ -1122,16 +1116,9 @@ export async function collectWorkflowScriptStream(
         event.data.length > WORKSPACE_RESOURCE_CHUNK_UNITS
       )
         throw new Error("Invalid workflow script chunk.");
-      receivedBytes += new TextEncoder().encode(event.data).byteLength;
-      if (receivedBytes > manifest.byteLength) throw new Error("Workflow script length mismatch.");
       chunks.push(event.data);
     } else if (event.kind === "complete") {
-      if (
-        !manifest ||
-        frame.type !== "closed" ||
-        chunks.length !== manifest.chunkCount ||
-        receivedBytes !== manifest.byteLength
-      )
+      if (!manifest || frame.type !== "closed" || chunks.length !== manifest.chunkCount)
         throw new Error("Incomplete workflow script.");
       const contents = chunks.join("");
       if ((await sha256Hex(contents)) !== event.sha256)
