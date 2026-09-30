@@ -11,12 +11,43 @@ import {
   goForward,
   initialNavigationState,
   isBrowserPreviewFile,
+  isEpochChangedPresentation,
   normalizeAddress,
   recentTargets,
   reload,
   submitAddress,
   tabLabel,
 } from "./viewModel.ts";
+
+NodeTest.describe("isEpochChangedPresentation", () => {
+  NodeTest.it("recognizes an epoch-ended lease", () => {
+    NodeAssert.equal(isEpochChangedPresentation({ kind: "ended", reason: "epoch-changed" }), true);
+  });
+
+  NodeTest.it("keeps active, unacquired, and other ended presentations", () => {
+    NodeAssert.equal(isEpochChangedPresentation(null), false);
+    NodeAssert.equal(
+      isEpochChangedPresentation({ kind: "active", presentation: { supported: true } }),
+      false,
+    );
+    NodeAssert.equal(
+      isEpochChangedPresentation({
+        kind: "active",
+        presentation: { supported: false, reason: "desktop-required" },
+      }),
+      false,
+    );
+    for (const reason of [
+      "session-unverified",
+      "superseded",
+      "released",
+      "session-closed",
+      "scope-invalidated",
+      "grant-revoked",
+    ])
+      NodeAssert.equal(isEpochChangedPresentation({ kind: "ended", reason }), false);
+  });
+});
 
 NodeTest.describe("normalizeAddress", () => {
   NodeTest.it("defaults bare loopback hosts to http", () => {

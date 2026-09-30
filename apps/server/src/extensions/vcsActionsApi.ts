@@ -866,7 +866,7 @@ export function createVcsActionsApiProvider(
                 ).pipe(Effect.ensuring(Effect.sync(() => markDone(record)))),
             }),
           );
-          yield* Effect.forkDetach(work);
+          yield* Effect.forkDetach(Effect.scoped(work));
           return { actionId } satisfies VcsActionRunResult;
         }),
       }),
