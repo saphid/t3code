@@ -5,7 +5,7 @@ export function FileTreeRow({
   ...props
 }: UiTreeRowProps & { readonly kit: ClientUiKit | null }) {
   if (kit) return <kit.TreeRow {...props} />;
-  const { path, depth, directory, expanded, selected, style, ...attributes } = props;
+  const { path, depth, directory, expanded, selected, style, label, ...attributes } = props;
   return (
     <button
       type="button"
@@ -27,7 +27,7 @@ export function FileTreeRow({
         border: "1px solid transparent",
         borderRadius: 5,
         cursor: "pointer",
-        color: "inherit",
+        color: "var(--t3-files-text, var(--foreground, #20252d))",
         background: selected
           ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
           : "transparent",
@@ -39,7 +39,7 @@ export function FileTreeRow({
       {...attributes}
     >
       {directory ? (expanded ? "▾ " : "▸ ") : ""}
-      {path.split("/").at(-1)}
+      {label ?? path.split("/").at(-1)}
       {directory ? "/" : ""}
     </button>
   );

@@ -1291,7 +1291,10 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   });
   const kindByPath = useMemo(() => new Map(entries.map((e) => [e.path, e.kind])), [entries]);
   const searching = query.trim() !== "";
-  const rows = useMemo(() => visibleRows(entries, expanded, ""), [entries, expanded]);
+  const rows = useMemo(
+    () => visibleRows(entries, expanded, "", kit !== null),
+    [entries, expanded, kit],
+  );
   const rowIndex = useMemo(
     () => new Map(rows.map((row, index) => [row.entry.path, index])),
     [rows],
@@ -1363,7 +1366,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       next = open ? ((rows[index + 1]?.depth ?? 0) > row.depth ? index + 1 : index) : undefined;
     else if (event.key === "ArrowLeft") {
       const parent = parentPath(row.entry.path);
-      next = open ? undefined : parent === null ? index : rowIndex.get(parent);
+      const parentIndex = kit
+        ? rows.slice(0, index).findLastIndex((candidate) => candidate.depth < row.depth)
+        : parent === null
+          ? index
+          : rowIndex.get(parent);
+      next = open ? undefined : parentIndex === -1 ? index : parentIndex;
     } else return;
     event.preventDefault();
     if (next === undefined) setFolders((previous) => toggleFolder(previous, row.entry.path));
@@ -2178,15 +2186,18 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       style={{
                         position: "absolute",
                         top: index * TREE_ROW_HEIGHT,
-                        left: 16,
-                        right: 16,
+                        left: kit ? 16 : 6,
+                        right: kit ? 16 : 6,
                         height: TREE_ROW_HEIGHT,
                       }}
                     >
                       <FileTreeRow
                         kit={kit}
                         path={row.entry.path}
+                        label={row.label}
                         depth={row.depth}
+                        aria-setsize={rows.length}
+                        aria-posinset={index + 1}
                         directory={row.expandable}
                         expanded={expanded.has(row.entry.path)}
                         selected={row.entry.path === selected}

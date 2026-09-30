@@ -11,6 +11,9 @@ import type { ClientHost, FloatingPopoverProps } from "@t3tools/extension-sdk/en
 import type { ClientUiKit, UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import { hostTooltip } from "./hostTooltip";
+import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalogue";
+import { createExtensionHost } from "@t3tools/extension-sdk/host";
+import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
 
 type PageMenuProps = {
   host: Pick<ClientHost, "React" | "tooltip" | "uiKit">;
@@ -285,4 +288,401 @@ it("keeps plain tree controls functional on a host without UI primitives", async
   expect(row.textContent).toContain("src/");
   await act(async () => row.click());
   expect(selected).toHaveBeenCalledOnce();
+});
+
+it("opens the real held-session profile menu and clears its current profile", async () => {
+  const PageMenu = await loadPageMenu();
+  const profilePath = "../../../../packages/first-party-extensions/browser/profileMenu.tsx";
+  const {
+    ProfileSection,
+  }: {
+    ProfileSection: React.ComponentType<{
+      host: Pick<ClientHost, "uiKit">;
+      session: BrowserSession;
+      api: { invoke: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown> };
+      profiles: {
+        subscribe: (listener: () => void) => () => void;
+        getSnapshot: () => { list: null; error: null };
+        refresh: () => void;
+      };
+      signal: AbortSignal;
+      onOpenInProfile: (profileId: string) => void;
+      report: (message: string) => void;
+      onChosen: () => void;
+    }>;
+  } = await import(new URL(profilePath, import.meta.url).pathname);
+  const invoke = vi.fn().mockResolvedValue({ cleared: true });
+  const snapshot = { list: null, error: null };
+  const profiles = { subscribe: () => () => {}, getSnapshot: () => snapshot, refresh: vi.fn() };
+  const props = pageMenuProps();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <PageMenu {...props}>
+          {(close) => (
+            <ProfileSection
+              host={props.host}
+              session={props.session!}
+              api={{ invoke }}
+              profiles={profiles}
+              signal={new AbortController().signal}
+              onOpenInProfile={vi.fn()}
+              report={vi.fn()}
+              onChosen={close}
+            />
+          )}
+        </PageMenu>
+      </TooltipProvider>,
+    ),
+  );
+  await openPageMenu();
+  const menu = document.querySelector('[role="menu"]')!;
+  expect(menu.textContent).toContain("Profile: Default");
+  const clear = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent === "Clear cookies",
+  )!;
+  await act(async () => clear.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "clearCookies",
+    { profileId: "default" },
+    expect.any(AbortSignal),
+  );
+});
+
+it("marks the opened popup as an allowed browser-surface overlay", async () => {
+  const PageMenu = await loadPageMenu();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <PageMenu {...pageMenuProps()} />
+      </TooltipProvider>,
+    ),
+  );
+  await openPageMenu();
+  expect(
+    document.querySelector('[role="menu"]')!.hasAttribute(BROWSER_SURFACE_OVERLAY_ATTRIBUTE),
+  ).toBe(true);
+});
+
+it("points closed directories right and expanded directories down", async () => {
+  await act(async () =>
+    root.render(<testKit.TreeRow path="src" depth={0} directory expanded={false} />),
+  );
+  expect(container.querySelector("svg")!.classList.contains("-rotate-90")).toBe(true);
+  await act(async () => root.render(<testKit.TreeRow path="src" depth={0} directory expanded />));
+  expect(container.querySelector("svg")!.classList.contains("rotate-90")).toBe(false);
+  expect(container.querySelector("svg")!.classList.contains("-rotate-90")).toBe(false);
+});
+
+it("ignores future icon names instead of failing the surface", async () => {
+  await act(async () => root.render(<testKit.Icon name={"download" as "back"} />));
+  expect(container.innerHTML).toBe("");
+});
+
+it("uses the native refreshing glyph state", async () => {
+  await act(async () => root.render(<testKit.Icon name="refresh" refreshing />));
+  expect(
+    container.querySelector("svg")!.classList.contains("motion-safe:visible-animate-spin"),
+  ).toBe(true);
+});
+
+it("closes a third-party portal when its retained extension surface hides", async () => {
+  const host = createExtensionHost<SurfaceRenderer>({ authorize: () => true });
+  function Renderer() {
+    const [open, setOpen] = React.useState(true);
+    return (
+      <testKit.Menu open={open} onOpenChange={setOpen}>
+        <testKit.MenuTrigger>
+          <testKit.Button aria-label="Preview menu">More</testKit.Button>
+        </testKit.MenuTrigger>
+        <testKit.MenuPopup>
+          <testKit.MenuItem>Action</testKit.MenuItem>
+        </testKit.MenuPopup>
+      </testKit.Menu>
+    );
+  }
+  host.register({
+    manifest: {
+      id: "test.kit",
+      apiVersion: 1,
+      version: "1.0.0",
+      surfaces: [
+        {
+          id: "test.kit/view",
+          title: "Kit",
+          placements: ["side-panel"],
+          clients: ["web"],
+          scope: "environment",
+          capabilities: [],
+          stateVersion: 1,
+        },
+      ],
+    },
+    surfaces: [
+      {
+        id: "test.kit/view",
+        validateRestore: () => true,
+        createView: () => ({ renderer: Renderer }),
+      },
+    ],
+  });
+  const viewId = await host.open({
+    version: 1,
+    surfaceId: "test.kit/view",
+    placement: "side-panel",
+    stateVersion: 1,
+    restoreState: null,
+    fallback: "Unavailable",
+    context: {
+      client: "web",
+      resource: { namespace: "test.kit", id: "one", environmentId: "env" },
+    },
+  });
+  await host.show(viewId);
+  expect(host.snapshot(viewId).status).toBe("ready");
+  await act(async () => root.render(<ExtensionSurface host={host} viewId={viewId} />));
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Preview menu"]')!;
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  await act(async () => host.hide(viewId));
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  await act(async () => host.show(viewId));
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => host.close(viewId));
+});
+
+it("matches the native page menu order and reported zoom display", async () => {
+  const PageMenu = await loadPageMenu();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <PageMenu {...pageMenuProps()} />
+      </TooltipProvider>,
+    ),
+  );
+  await openPageMenu();
+  const labels = Array.from(
+    document.querySelector('[role="menu"]')!.querySelectorAll('[role="menuitem"]'),
+  ).map((item) => item.textContent);
+  expect(labels.slice(0, 4)).toEqual([
+    "Hard reload",
+    "Open DevTools",
+    "Open separate preview window",
+    "Show device toolbar",
+  ]);
+  expect(document.querySelector('select[aria-label="Zoom level"]')).toBeNull();
+  expect(document.querySelector('[role="menu"]')!.textContent).toContain("100%");
+});
+
+it("keeps generic inputs independent of Browser defaults and preserves HTML size", async () => {
+  await act(async () =>
+    root.render(
+      <testKit.InputGroup>
+        <testKit.Input size={42} />
+      </testKit.InputGroup>,
+    ),
+  );
+  const group = container.querySelector('[data-slot="input-group"]')!;
+  expect(group.classList.contains("h-7")).toBe(false);
+  expect(group.classList.contains("flex-1")).toBe(false);
+  expect(group.classList.contains("bg-transparent")).toBe(false);
+  expect(container.querySelector("input")!.getAttribute("size")).toBe("42");
+});
+
+it("keeps generic popup positioning independent of Browser defaults", async () => {
+  await act(async () =>
+    root.render(
+      <testKit.Menu open={true} onOpenChange={vi.fn()}>
+        <testKit.MenuTrigger>
+          <testKit.Button>Generic menu</testKit.Button>
+        </testKit.MenuTrigger>
+        <testKit.MenuPopup>
+          <testKit.MenuItem>Generic action</testKit.MenuItem>
+        </testKit.MenuPopup>
+      </testKit.Menu>,
+    ),
+  );
+  expect(document.querySelector('[data-slot="menu-positioner"]')!.getAttribute("data-align")).toBe(
+    "center",
+  );
+});
+
+it("keeps the native external-address addon reachable until editing starts", async () => {
+  const addressPath = "../../../../packages/first-party-extensions/browser/addressInput.tsx";
+  const {
+    AddressInput,
+  }: {
+    AddressInput: React.ComponentType<{
+      host: Pick<ClientHost, "uiKit">;
+      value: string;
+      committed: string;
+      onValueChange: (value: string) => void;
+      onSubmit: (value: string) => void;
+      inputRef: React.Ref<HTMLInputElement>;
+      style: React.CSSProperties;
+      addon: React.ReactNode;
+    }>;
+  } = await import(new URL(addressPath, import.meta.url).pathname);
+  const opened = vi.fn();
+  await act(async () =>
+    root.render(
+      <AddressInput
+        host={{ uiKit: testKit }}
+        value="https://example.test"
+        committed="https://example.test"
+        onValueChange={vi.fn()}
+        onSubmit={vi.fn()}
+        inputRef={null}
+        style={{}}
+        addon={
+          <testKit.Button aria-label="Open in system browser" onClick={opened}>
+            Open
+          </testKit.Button>
+        }
+      />,
+    ),
+  );
+  const input = container.querySelector("input")!;
+  const button = container.querySelector<HTMLButtonElement>(
+    '[aria-label="Open in system browser"]',
+  )!;
+  expect(button.closest('[data-slot="input-group"]')).toBe(
+    input.closest('[data-slot="input-group"]'),
+  );
+  expect(button.parentElement!.classList.contains("group-hover/extension-input:opacity-100")).toBe(
+    true,
+  );
+  await act(async () => button.click());
+  expect(opened).toHaveBeenCalledOnce();
+  await act(async () => input.focus());
+  expect(container.querySelector('[aria-label="Open in system browser"]')).toBeNull();
+  await act(async () => input.blur());
+  expect(container.querySelector('[aria-label="Open in system browser"]')).not.toBeNull();
+});
+
+it("shows native pressed chrome while annotation is active and can cancel", async () => {
+  const path = "../../../../packages/first-party-extensions/browser/annotateButton.tsx";
+  const {
+    AnnotateButton,
+  }: {
+    AnnotateButton: React.ComponentType<{
+      host: ClientHost;
+      blockReason: string | null;
+      capturing: "element";
+      pageFailed: boolean;
+      onPick: () => void;
+      style: React.CSSProperties;
+    }>;
+  } = await import(new URL(path, import.meta.url).pathname);
+  const cancel = vi.fn();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <AnnotateButton
+          host={pageMenuProps().host as ClientHost}
+          blockReason={null}
+          capturing="element"
+          pageFailed={false}
+          onPick={cancel}
+          style={{}}
+        />
+      </TooltipProvider>,
+    ),
+  );
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Cancel annotation"]')!;
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+  expect(button.classList.contains("bg-secondary")).toBe(true);
+  await act(async () => button.click());
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
+it("renders the real Browser chrome in native order without changing the older-host order", async () => {
+  const browserPath = "../../../../packages/first-party-extensions/browser/extension.tsx";
+  for (const native of [true, false]) {
+    const extensionHost = createExtensionHost<SurfaceRenderer>({ authorize: () => true });
+    const {
+      default: browser,
+    }: {
+      default: {
+        client(host: ClientHost): Parameters<typeof extensionHost.register>[0];
+      };
+    } = await import(new URL(browserPath, import.meta.url).pathname);
+    const clientHost = {
+      React,
+      tooltip: hostTooltip,
+      ...(native ? { uiKit: testKit } : {}),
+      invokeApi: () => Promise.reject(new Error("Environment is not connected")),
+      subscribeApi: async function* () {},
+      discoverApis: async () => [],
+    } as unknown as ClientHost;
+    extensionHost.register(browser.client(clientHost));
+    const viewId = await extensionHost.open({
+      version: 1,
+      surfaceId: "t3.browser/view",
+      placement: "side-panel",
+      stateVersion: 1,
+      restoreState: null,
+      fallback: "Browser unavailable",
+      context: {
+        client: "web",
+        resource: {
+          namespace: "t3.extensions",
+          id: "t3.browser",
+          environmentId: "env",
+          projectId: "project",
+          threadId: "thread",
+        },
+      },
+    });
+    await act(async () =>
+      root.render(
+        <TooltipProvider delay={0}>
+          <ExtensionSurface host={extensionHost} viewId={viewId} />
+        </TooltipProvider>,
+      ),
+    );
+    const address = container.querySelector<HTMLInputElement>('[aria-label="Address"]')!;
+    expect(address).not.toBeNull();
+    const chrome = native
+      ? (container.querySelector("[data-surface-subheader]") ?? container.querySelector("header"))!
+      : container.querySelector("header")!;
+    const labels = Array.from(chrome.querySelectorAll("button")).map((button) =>
+      button.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(
+      native
+        ? [
+            "Back",
+            "Forward",
+            "Refresh",
+            "Open in system browser",
+            "Annotate preview",
+            "Capture screenshot",
+            "Preview menu",
+          ]
+        : [
+            "Back",
+            "Forward",
+            "Refresh",
+            "Show device toolbar",
+            "Capture screenshot",
+            "Annotate preview",
+            "Open in system browser",
+            "Preview menu",
+          ],
+    );
+    if (native) {
+      const external = chrome.querySelector('[aria-label="Open in system browser"]')!;
+      expect(external.closest('[data-slot="input-group"]')).toBe(
+        address.closest('[data-slot="input-group"]'),
+      );
+      expect(
+        container.querySelector('[aria-label="Navigation"]')!.classList.contains("gap-0.5"),
+      ).toBe(true);
+    }
+    await act(async () => {
+      root.render(null);
+      await extensionHost.close(viewId);
+    });
+  }
 });

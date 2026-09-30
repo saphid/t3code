@@ -8,6 +8,11 @@ const names = [
   "Button",
   "Input",
   "InputGroup",
+  "InputGroupAddon",
+  "Toolbar",
+  "MenuRow",
+  "MenuNote",
+  "MenuGroup",
   "Menu",
   "MenuTrigger",
   "MenuPopup",
@@ -36,16 +41,17 @@ NodeTest.describe("host UI kit negotiation", () => {
       NodeAssert.equal(resolveUiKit({ uiKit: { ...valid, [name]: "div" } }), null, name);
   });
 
-  NodeTest.it("advertises rendering through the grant-gated theme API's optional output", () => {
-    NodeAssert.equal(uiThemeApi.definition.version, "1.1.0");
-    NodeAssert.ok(
-      uiThemeApi.additions.some(
-        (addition) => addition.method === "getTokens" && addition.output === "uiKitVersion",
-      ),
-    );
+  NodeTest.it("rejects hosts below the pack's requested kit version", () => {
+    NodeAssert.equal(resolveUiKit({ uiKit: { version: 1, ...kit } }, 2), null);
+    const future = { version: 2, ...kit };
+    NodeAssert.equal(resolveUiKit({ uiKit: future }, 2), future);
+  });
+
+  NodeTest.it("keeps theme at 1.0.0 with no duplicate kit version advertisement", () => {
+    NodeAssert.equal(uiThemeApi.definition.version, "1.0.0");
+    NodeAssert.equal(uiThemeApi.additions, undefined);
     const method = uiThemeApi.definition.methods.find((member) => member.name === "getTokens");
     NodeAssert.deepEqual(method.requiredGrants, ["t3.ui/theme.read"]);
-    NodeAssert.equal(method.outputSchema.properties.uiKitVersion.type, "integer");
-    NodeAssert.ok(!method.outputSchema.required.includes("uiKitVersion"));
+    NodeAssert.equal(method.outputSchema.properties.uiKitVersion, undefined);
   });
 });

@@ -7565,7 +7565,7 @@ var __t3Client = (() => {
   });
   var uiThemeApi = defineApi({
     id: UI_THEME,
-    version: "1.1.0",
+    version: "1.0.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7603,8 +7603,7 @@ var __t3Client = (() => {
           required: ["tokens", "cssVars"],
           properties: {
             tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
-            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } },
-            uiKitVersion: { type: "integer", minimum: 1 }
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
           }
         }
       },
@@ -7657,9 +7656,6 @@ var __t3Client = (() => {
         requiredGrants: [UI_THEME_READ]
       }
     ]
-  }, {
-    baseline: "1.0.0",
-    additions: [{ version: "1.1.0", method: "getTokens", output: "uiKitVersion" }]
   });
   var uiKeybindingsApi = defineApi(
     {

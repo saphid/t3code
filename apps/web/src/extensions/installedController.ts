@@ -587,9 +587,7 @@ export function createInstalledExtensionController(options: {
               ...(keybindings ? { keybindings } : {}),
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),
-              ...(options.uiKit && item.grants.capabilities.includes("t3.ui/theme.read")
-                ? { uiKit: options.uiKit }
-                : {}),
+              ...(options.uiKit ? { uiKit: options.uiKit } : {}),
               ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
               ...(subscribeResumableApi
                 ? {

@@ -34,6 +34,7 @@ export interface TreeRow {
   readonly entry: TreeEntry;
   readonly depth: number;
   readonly expandable: boolean;
+  readonly label?: string;
 }
 
 export function parentPath(path: string): string | null {
@@ -150,7 +151,42 @@ export function visibleRows(
   entries: readonly TreeEntry[],
   expanded: ReadonlySet<string>,
   query = "",
+  flattenEmptyDirectories = false,
 ): TreeRow[] {
+  if (flattenEmptyDirectories && !query.trim()) {
+    const children = new Map<string | null, TreeEntry[]>();
+    const paths = new Set(entries.map((entry) => entry.path));
+    for (const entry of sortTreeEntries(entries)) {
+      const parent = parentPath(entry.path);
+      const key = parent !== null && paths.has(parent) ? parent : null;
+      const siblings = children.get(key) ?? [];
+      siblings.push(entry);
+      children.set(key, siblings);
+    }
+    const rows: TreeRow[] = [];
+    const pending = (children.get(null) ?? []).toReversed().map((entry) => ({ entry, depth: 0 }));
+    while (pending.length > 0) {
+      const next = pending.pop()!;
+      let entry = next.entry;
+      const labels = [entry.path.split("/").at(-1)!];
+      while (entry.kind === "directory") {
+        const nested = children.get(entry.path) ?? [];
+        if (nested.length !== 1 || nested[0]!.kind !== "directory") break;
+        entry = nested[0]!;
+        labels.push(entry.path.split("/").at(-1)!);
+      }
+      rows.push({
+        entry,
+        depth: next.depth,
+        expandable: entry.kind === "directory",
+        label: labels.join("/"),
+      });
+      if (entry.kind === "directory" && expanded.has(entry.path))
+        for (const child of (children.get(entry.path) ?? []).toReversed())
+          pending.push({ entry: child, depth: next.depth + 1 });
+    }
+    return rows;
+  }
   const keep = query.trim() ? filterEntries(entries, query) : null;
   const rows: TreeRow[] = [];
   for (const entry of sortTreeEntries(entries)) {

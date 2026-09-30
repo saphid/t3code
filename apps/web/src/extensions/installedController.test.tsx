@@ -133,13 +133,18 @@ describe("installed environment controller", () => {
     expect(resolveTooltip(offered.getHost())).toBe(tooltip);
     offered.controller.dispose();
   });
-  it("offers UI primitives only under the theme read grant and removes them on revoke", async () => {
+  it("offers UI primitives without a theme grant and preserves them on revoke", async () => {
     const Component = () => null;
     const uiKit: ClientUiKit = {
       version: 1,
       Button: Component,
       Input: Component,
       InputGroup: Component,
+      InputGroupAddon: Component,
+      Toolbar: Component,
+      MenuRow: Component,
+      MenuNote: Component,
+      MenuGroup: Component,
       Menu: Component,
       MenuTrigger: Component,
       MenuPopup: Component,
@@ -156,7 +161,7 @@ describe("installed environment controller", () => {
     };
     const harnessWithKit = harness("env-a", { uiKit });
     await harnessWithKit.controller.refresh();
-    expect(resolveUiKit(harnessWithKit.getHost())).toBeNull();
+    expect(resolveUiKit(harnessWithKit.getHost())).toBe(uiKit);
     harnessWithKit.setCatalog([
       {
         ...installation,
@@ -170,7 +175,7 @@ describe("installed environment controller", () => {
     expect(resolveUiKit(harnessWithKit.getHost())).toBe(uiKit);
     harnessWithKit.setCatalog([installation]);
     await harnessWithKit.controller.refresh();
-    expect(resolveUiKit(harnessWithKit.getHost())).toBeNull();
+    expect(resolveUiKit(harnessWithKit.getHost())).toBe(uiKit);
     harnessWithKit.controller.dispose();
   });
   it("retains unchanged factories and unloads disabled/replaced/removed generations", async () => {

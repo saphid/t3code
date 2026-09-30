@@ -59,6 +59,39 @@ import {
 /** Folder expansion with exactly `paths` open. */
 const openOnly = (paths) => ({ all: false, paths });
 
+NodeTest.test("flattens single-directory chains only on the native-kit path", () => {
+  const entries = [
+    { path: "src", kind: "directory" },
+    { path: "src/lib", kind: "directory" },
+    { path: "src/lib/utils", kind: "directory" },
+    { path: "src/lib/utils/a.ts", kind: "file" },
+    { path: "src/lib/utils/b.ts", kind: "file" },
+    { path: "empty", kind: "directory" },
+  ];
+  const closed = visibleRows(entries, new Set(), "", true);
+  NodeAssert.deepEqual(
+    closed.map((row) => [row.entry.path, row.depth, row.label]),
+    [
+      ["empty", 0, "empty"],
+      ["src/lib/utils", 0, "src/lib/utils"],
+    ],
+  );
+  const opened = visibleRows(entries, new Set(["src/lib/utils"]), "", true);
+  NodeAssert.deepEqual(
+    opened.map((row) => [row.entry.path, row.depth]),
+    [
+      ["empty", 0],
+      ["src/lib/utils", 0],
+      ["src/lib/utils/a.ts", 1],
+      ["src/lib/utils/b.ts", 1],
+    ],
+  );
+  NodeAssert.deepEqual(
+    visibleRows(entries, new Set()).map((row) => row.entry.path),
+    ["empty", "src"],
+  );
+});
+
 const fixture = [
   { path: "src/lib", kind: "directory" },
   { path: "README.md", kind: "file" },

@@ -22,7 +22,9 @@ export function AnnotateButton(props: {
   return (
     <Tooltip host={host} label={annotate.tooltip} showWhenDisabled={annotate.hoverWhileDisabled}>
       <Button
-        {...(kit ? ({ variant: "ghost", size: "icon-xs" } as const) : {})}
+        {...(kit
+          ? ({ variant: annotate.picking ? "secondary" : "ghost", size: "icon-xs" } as const)
+          : {})}
         type="button"
         aria-label={annotate.ariaLabel}
         aria-description={annotate.picking ? undefined : (blockReason ?? undefined)}

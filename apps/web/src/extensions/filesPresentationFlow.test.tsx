@@ -1492,6 +1492,24 @@ describe("a long tree whose explorer is hidden and shown", () => {
   const toggle = (panel: Panel, label: string) =>
     act(async () => panel.button(label)!.props.onClick());
 
+  it("keeps full windowed positions on treeitems and the older host's six-pixel inset", async () => {
+    const panel = await mountPanel(disk());
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "f000.txt"));
+      const rows = list(panel).findAllByProps({ role: "treeitem" });
+      expect(rows.length).toBeLessThan(1000);
+      expect(rows[0]!.props["aria-setsize"]).toBe(1000);
+      expect(rows[0]!.props["aria-posinset"]).toBe(1);
+      const box = list(panel)
+        .findAllByType("li")
+        .find((node) => node.props.style.position === "absolute")!;
+      expect(box.props.style.left).toBe(6);
+      expect(rows[0]!.props.style.color).toBe("var(--t3-files-text, var(--foreground, #20252d))");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
   it("shows the rows at its scroll position again", async () => {
     const panel = await mountPanel(disk());
     try {

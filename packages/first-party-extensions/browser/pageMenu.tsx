@@ -126,6 +126,9 @@ export function PageMenu(props: {
    * profile actions do not need a live page.
    */
   children?: (close: () => void) => ReactNode;
+  deviceMode?: boolean;
+  deviceDisabled?: boolean;
+  onToggleDeviceToolbar?: () => void;
 }) {
   const kit = resolveUiKit(props.host);
   return kit ? <NativePageMenu {...props} kit={kit} /> : <LegacyPageMenu {...props} />;
@@ -140,6 +143,9 @@ function NativePageMenu({
   visible,
   children,
   kit,
+  deviceMode,
+  deviceDisabled,
+  onToggleDeviceToolbar,
 }: Parameters<typeof PageMenu>[0] & { kit: NonNullable<ReturnType<typeof resolveUiKit>> }) {
   const [open, setOpen] = useState(false);
   if (open && !visible) setOpen(false);
@@ -158,6 +164,8 @@ function NativePageMenu({
     MenuSubPopup,
     MenuRadioGroup,
     MenuRadioItem,
+    MenuRow,
+    MenuNote,
   } = kit;
   return (
     <Menu open={open && visible} onOpenChange={setOpen}>
@@ -173,16 +181,36 @@ function NativePageMenu({
           </Button>
         </MenuTrigger>
       </Tooltip>
-      <MenuPopup aria-label="Page" data-t3-browser-popover="" style={{ minWidth: 220 }}>
-        {blockReason && (
-          <p role="note" className="px-2 text-xs text-muted-foreground">
-            {blockReason}
-          </p>
-        )}
+      <MenuPopup
+        align="end"
+        sideOffset={6}
+        aria-label="Page"
+        data-t3-browser-popover=""
+        style={{ minWidth: 220 }}
+      >
+        {blockReason && <MenuNote>{blockReason}</MenuNote>}
         <MenuItem disabled={disabled} onClick={() => run({ method: "hardReload" })}>
           Hard reload
         </MenuItem>
-        <MenuSeparator />
+        <MenuItem
+          disabled={disabled || session?.devToolsOpen == null}
+          onClick={() => run({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" })}
+        >
+          {session?.devToolsOpen ? "Close DevTools" : "Open DevTools"}
+        </MenuItem>
+        <MenuItem
+          disabled={disabled || session?.pictureInPicture == null}
+          onClick={() =>
+            run({ method: "setPictureInPicture", open: session?.pictureInPicture !== true })
+          }
+        >
+          {session?.pictureInPicture
+            ? "Close separate preview window"
+            : "Open separate preview window"}
+        </MenuItem>
+        <MenuItem disabled={deviceDisabled ?? disabled} onClick={onToggleDeviceToolbar}>
+          {deviceMode ? "Hide device toolbar" : "Show device toolbar"}
+        </MenuItem>
         <MenuSub>
           <MenuSubTrigger disabled={disabled}>Appearance</MenuSubTrigger>
           <MenuSubPopup>
@@ -201,58 +229,40 @@ function NativePageMenu({
           </MenuSubPopup>
         </MenuSub>
         <MenuSeparator />
-        <MenuItem
-          closeOnClick={false}
-          onClick={(event) => event.preventDefault()}
-          className="justify-between"
-          disabled={disabled}
-        >
-          <span>Zoom</span>
-          <span className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon-xs"
-              aria-label="Zoom out"
-              disabled={disabled}
-              onClick={() => zoomStep("out")}
-            >
-              <Icon name="minus" />
-            </Button>
-            <select
-              aria-label="Zoom level"
-              disabled={disabled}
-              value={zoom === null ? "" : String(zoom)}
-              onChange={(event) => run({ method: "zoom", zoomFactor: Number(event.target.value) })}
-              className="rounded-sm bg-transparent text-xs tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {zoom === null && <option value="">—</option>}
-              {ZOOM_LADDER.map((level) => (
-                <option key={level} value={String(level)}>
-                  {zoomPercent(level)}
-                </option>
-              ))}
-            </select>
-            <Button
-              variant="outline"
-              size="icon-xs"
-              aria-label="Zoom in"
-              disabled={disabled}
-              onClick={() => zoomStep("in")}
-            >
-              <Icon name="plus" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Reset zoom"
-              disabled={disabled || zoom === DEFAULT_ZOOM_FACTOR}
-              onClick={() => run({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR })}
-            >
-              <Icon name="reset" />
-            </Button>
-          </span>
-        </MenuItem>
+        <MenuRow label="Zoom" disabled={disabled}>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label="Zoom out"
+            disabled={disabled}
+            onClick={() => zoomStep("out")}
+          >
+            <Icon name="minus" />
+          </Button>
+          <MenuNote numeric aria-label="Zoom level">
+            {zoom === null ? "—" : zoomPercent(zoom)}
+          </MenuNote>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label="Zoom in"
+            disabled={disabled}
+            onClick={() => zoomStep("in")}
+          >
+            <Icon name="plus" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Reset zoom"
+            disabled={disabled}
+            onClick={() => run({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR })}
+          >
+            <Icon name="reset" />
+          </Button>
+        </MenuRow>
         <MenuSeparator />
+        {children?.(() => setOpen(false))}
         <MenuItem
           disabled={disabled || session?.audioMuted == null}
           closeOnClick={false}
@@ -260,21 +270,6 @@ function NativePageMenu({
         >
           {session?.audioMuted ? "Unmute page" : "Mute page"}
         </MenuItem>
-        <MenuItem
-          disabled={disabled || session?.devToolsOpen == null}
-          onClick={() => run({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" })}
-        >
-          {session?.devToolsOpen ? "Close DevTools" : "Open DevTools"}
-        </MenuItem>
-        <MenuItem
-          disabled={disabled || session?.pictureInPicture == null}
-          onClick={() =>
-            run({ method: "setPictureInPicture", open: session?.pictureInPicture !== true })
-          }
-        >
-          {session?.pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
-        </MenuItem>
-        {children?.(() => setOpen(false))}
       </MenuPopup>
     </Menu>
   );

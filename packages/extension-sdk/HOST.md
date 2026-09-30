@@ -28,11 +28,49 @@ Installed web and desktop clients can offer `ClientHost.uiKit`, the native
 buttons, grouped inputs, menus, icons, and compact file-tree rows. Packs import
 `resolveUiKit` from `@t3tools/extension-sdk/ui`, resolve once for a view, and
 compose the returned components without bundling a UI library or a second React
-renderer. Keep a plain-control fallback when resolution returns null. The host
-offers this seam only under `t3.ui/theme.read`; `t3.ui/theme@1.1.0` advertises
-its optional `getTokens.uiKitVersion` through `ApiAddition`, retaining the
-1.0.0 baseline. Tooltip and modal dialog behavior stays on the existing
+renderer. Keep a plain-control fallback when resolution returns null. The kit
+is an ungated local rendering seam, like `tooltip`, `floatingLayer` and
+`codeView`; `t3.ui/theme` remains at 1.0.0. `ClientHost.uiKit.version` is the
+only kit version source. Tooltip and modal dialog behavior stays on the existing
 `tooltip` and `floatingLayer` seams. No rendering call crosses the WebSocket.
+
+UI kit v1 is additive-only: existing components, supported props and their
+meanings are frozen. A future host must preserve them. Packs can request an
+optional minimum integer version with `resolveUiKit(host, minVersion)`; hosts
+below that version, missing components, or malformed kits resolve to null.
+Unknown icon names render nothing, so new glyphs never crash an older host.
+Only the documented props are supported, even if a host implementation accepts
+more. `className` values are **not part of the contract**: packs must not author
+Tailwind class strings or depend on the host scanning their bundles. Use kit
+layout components, or inline `style` for layout that no kit component owns.
+
+The frozen v1 component/prop list is:
+
+| Component                                      | Frozen props (HTML inheritance includes attributes and handlers; ref support follows the TypeScript contract)                                                    |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`                                       | `variant`: `default`, `ghost`, `ghost-muted`, `outline`, `destructive`, `secondary`; `size`: `default`, `compact`, `icon-xs`, `icon-sm`, `xs`                    |
+| `Input`                                        | Standard input props (including numeric HTML `size`); `controlSize`: `default`, `sm`                                                                             |
+| `InputGroup`                                   | Standard div props; `variant`: `default`, `ghost`; `controlSize`: `default`, `sm`                                                                                |
+| `InputGroupAddon`                              | Standard div props; `align`: `inline-start`, `inline-end`; `revealOnHover`                                                                                       |
+| `Toolbar`                                      | Standard div props; `variant`: `chrome` (subheader row), `group` (compact control group)                                                                         |
+| `Menu`                                         | Controlled `open`, `onOpenChange`, `children`                                                                                                                    |
+| `MenuTrigger`                                  | Standard button props; one React element child rendered as the trigger                                                                                           |
+| `MenuPopup`, `MenuSubPopup`                    | Standard div props; `align`: `start`, `center`, `end`; `side`: `top`, `bottom`, `left`, `right`; numeric `sideOffset`, `alignOffset`                             |
+| `MenuSub`                                      | `children`                                                                                                                                                       |
+| `MenuSubTrigger`                               | Standard div props; `disabled`                                                                                                                                   |
+| `MenuItem`                                     | Standard div props; `disabled`, `closeOnClick`                                                                                                                   |
+| `MenuGroup`, `MenuGroupLabel`, `MenuSeparator` | Standard div props; group labels must be inside a `MenuGroup` or `MenuRadioGroup`                                                                                |
+| `MenuRow`                                      | Standard div props; string `label`, `disabled`; child controls stay in an open menu                                                                              |
+| `MenuNote`                                     | Standard div props; `numeric` for a compact numeric display                                                                                                      |
+| `MenuRadioGroup`                               | String `value`, `onValueChange`, `children`                                                                                                                      |
+| `MenuRadioItem`                                | String `value`, `disabled`, `children`                                                                                                                           |
+| `TreeRow`                                      | Standard button props except `children`; `path`, `depth`, `directory`, `expanded`, `selected`, optional display `label`; positional ARIA attributes pass through |
+| `Icon`                                         | `name`: `back`, `forward`, `refresh`, `more`, `external`, `camera`, `annotate`, `viewport`, `minus`, `plus`, `reset`; `refreshing`, `className`                  |
+
+Generic input groups and menus do not assume Browser sizing or popup placement;
+packs choose their documented props. Menu portals carry the browser-surface
+overlay marker. `ExtensionSurface` supplies visibility to host menus: hiding a
+retained view closes its portals, and showing it does not reopen them.
 
 Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native needs a native renderer and bridge; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The SDK package does not itself serve endpoints. The application environment runtime supplies authenticated installation and API transports; domain support must still be discovered and verified. Broader orchestration operations, structured attachments, asynchronous context resolution and untrusted isolation remain later phases.
 

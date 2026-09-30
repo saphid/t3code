@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type Ref } from "react";
+import { useState, type CSSProperties, type Ref, type ReactNode } from "react";
 import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 
@@ -31,6 +31,7 @@ export function AddressInput(props: {
   readonly onSubmit: (value: string) => void;
   readonly inputRef: Ref<HTMLInputElement>;
   readonly style: CSSProperties;
+  readonly addon?: ReactNode;
 }) {
   const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
   const [focused, setFocused] = useState(false);
@@ -38,8 +39,12 @@ export function AddressInput(props: {
   const Input = kit?.Input ?? "input";
   const InputGroup = kit?.InputGroup ?? "div";
   return (
-    <InputGroup style={{ flex: 1, minWidth: 0 }}>
+    <InputGroup
+      {...(kit ? ({ variant: "ghost", controlSize: "sm" } as const) : {})}
+      style={{ flex: 1, minWidth: 0 }}
+    >
       <Input
+        {...(kit ? ({ controlSize: "sm" } as const) : {})}
         type="text"
         aria-label="Address"
         placeholder="Search or enter URL"
@@ -70,6 +75,11 @@ export function AddressInput(props: {
         }}
         style={kit ? undefined : style}
       />
+      {kit && !focused && props.addon ? (
+        <kit.InputGroupAddon align="inline-end" revealOnHover>
+          {props.addon}
+        </kit.InputGroupAddon>
+      ) : null}
     </InputGroup>
   );
 }

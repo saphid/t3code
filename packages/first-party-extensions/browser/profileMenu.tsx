@@ -169,6 +169,7 @@ export function ProfileSection(props: {
   const kit = resolveUiKit(props.host ?? {});
   const Action = kit?.MenuItem ?? "button";
   const Heading = kit?.MenuGroupLabel ?? "span";
+  const Group = kit?.MenuGroup ?? "div";
   const profileId = sessionProfileId(session);
   const { list, error } = useProfileList(profiles);
   const listNote =
@@ -230,12 +231,11 @@ export function ProfileSection(props: {
       : undefined;
 
   return (
-    <div
+    <Group
       role="group"
       aria-label="Profile"
       style={kit ? undefined : { display: "grid", gap: 6, borderTop: border, paddingTop: 8 }}
     >
-      {kit && <kit.MenuSeparator />}
       <Heading
         style={
           kit
@@ -377,6 +377,6 @@ export function ProfileSection(props: {
           </Action>
         </div>
       )}
-    </div>
+    </Group>
   );
 }
