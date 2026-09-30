@@ -15258,8 +15258,8 @@ ${ind(d)}}`;
         return `Requested ${state2.status.url} (request ${state2.epoch})`;
     }
   }
-  function isEpochChangedPresentation(leaseState, denial) {
-    return leaseState?.kind === "ended" && leaseState.reason === "epoch-changed" || denial?.reason === "epoch-changed";
+  function isEpochChangedPresentation(leaseState) {
+    return leaseState?.kind === "ended" && leaseState.reason === "epoch-changed";
   }
   function isBrowserPreviewFile(path3) {
     return /\.(?:html?|pdf)$/i.test(path3.split(/[?#]/, 1)[0] ?? "");
@@ -18252,9 +18252,7 @@ ${ind(d)}}`;
                 if (current && !(value.serverEpoch === current.serverEpoch && value.revision < heldRevision.current)) {
                   const found = pending?.find((item) => item.tabId === current.tabId);
                   if (value.serverEpoch !== current.serverEpoch || !found) {
-                    heldRef.current = null;
-                    setHeld(null);
-                    setLive(null);
+                    dropHeldSession();
                     if (value.serverEpoch === current.serverEpoch)
                       setNotice("Session ended (session-closed)");
                   } else {
@@ -18284,17 +18282,13 @@ ${ind(d)}}`;
               case "session-removed":
                 setTabs((currentTabs) => currentTabs.filter((item) => item.tabId !== value.tabId));
                 if (current && value.tabId === current.tabId) {
-                  heldRef.current = null;
-                  setHeld(null);
-                  setLive(null);
+                  dropHeldSession();
                   setNotice(`Session ended (session-closed: ${value.reason})`);
                 }
                 break;
               case "closed":
                 if (current) {
-                  heldRef.current = null;
-                  setHeld(null);
-                  setLive(null);
+                  dropHeldSession();
                 }
                 tabsEpoch.current = null;
                 setTabs([]);
@@ -18343,10 +18337,7 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
-    const epochChangedPresentation = isEpochChangedPresentation(
-      surfaceLease?.state ?? null,
-      surfaceDenial
-    );
+    const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null);
     (0, import_react8.useEffect)(() => {
       if (epochChangedPresentation) dropHeldSession();
     }, [epochChangedPresentation, dropHeldSession]);
@@ -18727,7 +18718,7 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = epochChangedPresentation ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "epoch-changed" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {

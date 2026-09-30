@@ -408,9 +408,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               ) {
                 const found = pending?.find((item) => item.tabId === current.tabId);
                 if (value.serverEpoch !== current.serverEpoch || !found) {
-                  heldRef.current = null;
-                  setHeld(null);
-                  setLive(null);
+                  dropHeldSession();
                   // Like native's re-list, a restarted server's missing tab
                   // just drops back to the empty Browser.
                   if (value.serverEpoch === current.serverEpoch)
@@ -450,17 +448,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             case "session-removed":
               setTabs((currentTabs) => currentTabs.filter((item) => item.tabId !== value.tabId));
               if (current && value.tabId === current.tabId) {
-                heldRef.current = null;
-                setHeld(null);
-                setLive(null);
+                dropHeldSession();
                 setNotice(`Session ended (session-closed: ${value.reason})`);
               }
               break;
             case "closed":
               if (current) {
-                heldRef.current = null;
-                setHeld(null);
-                setLive(null);
+                dropHeldSession();
               }
               tabsEpoch.current = null;
               setTabs([]);
@@ -525,10 +519,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     visible: visible && held !== null,
     cornerRadius: 8,
   });
-  const epochChangedPresentation = isEpochChangedPresentation(
-    surfaceLease?.state ?? null,
-    surfaceDenial,
-  );
+  const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null);
   useEffect(() => {
     if (epochChangedPresentation) dropHeldSession();
   }, [epochChangedPresentation, dropHeldSession]);
@@ -1045,17 +1036,18 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-  const surfaceNotice = epochChangedPresentation
-    ? null
-    : leaseState?.kind === "ended"
-      ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
-      : remoteEligible
-        ? remoteNotice
-        : surfaceDenial
-          ? surfaceDenial.grant
-            ? `Native presentation is unavailable — ${grantDenialMessage(surfaceDenial.grant)}`
-            : `Native presentation is unavailable — ${surfaceDenial.reason}: ${surfaceDenial.detail}`
-          : null;
+  const surfaceNotice =
+    epochChangedPresentation || surfaceDenial?.reason === "epoch-changed"
+      ? null
+      : leaseState?.kind === "ended"
+        ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+        : remoteEligible
+          ? remoteNotice
+          : surfaceDenial
+            ? surfaceDenial.grant
+              ? `Native presentation is unavailable — ${grantDenialMessage(surfaceDenial.grant)}`
+              : `Native presentation is unavailable — ${surfaceDenial.reason}: ${surfaceDenial.detail}`
+            : null;
 
   return (
     <section

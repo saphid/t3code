@@ -278,7 +278,7 @@ describe("browserSurfaceBridge", () => {
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "scope-invalidated" });
   });
 
-  it("denies malformed session identity and stale epochs by name", () => {
+  it("denies malformed session identity and refreshes mismatched epochs", () => {
     const h = harness();
     const host = h.host();
     const malformed = host.acquire({ context, session: { tabId: "", serverEpoch: "e" } });
@@ -288,8 +288,46 @@ describe("browserSurfaceBridge", () => {
     h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 1, listFailures: 0 });
     const stale = host.acquire({ context, session: sessionRef });
     expect(stale.ok).toBe(false);
-    if (!stale.ok) expect(stale.denial.reason).toBe("epoch-changed");
+    if (!stale.ok) expect(stale.denial.reason).toBe("host-unavailable");
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
   });
+
+  it.each([true, false])(
+    "refreshes a stale cached epoch without mounted sync before retrying acquire (composites=%s)",
+    (composites) => {
+      const h = harness({ composites });
+      const host = h.host();
+      const freshSession = { tabId: "tab-3", serverEpoch: "epoch-3" };
+      h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 2, listFailures: 0 });
+      expect(h.syncMounts).toEqual([]);
+
+      const denied = host.acquire({ context, session: freshSession });
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+      expect(denied.ok).toBe(false);
+      if (denied.ok) throw new Error("expected retryable denial");
+      expect(denied.denial.reason).toBe("host-unavailable");
+      expect(denied.denial.detail).not.toContain("epoch-changed");
+      expect(h.syncMounts).toEqual(["env-a/thread-a"]);
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+      expect(h.sessionListeners.size).toBe(0);
+      expect(h.nativeLeases).toEqual([]);
+
+      h.setPreviewState({
+        serverEpoch: "epoch-3",
+        sessions: { "tab-3": {} },
+        listSeq: 3,
+        listFailures: 0,
+      });
+      const acquired = host.acquire({ context, session: freshSession });
+      if (!acquired.ok) throw new Error("expected refreshed session to acquire");
+      expect(acquired.lease.state.kind).toBe("active");
+      expect(h.syncMounts).toEqual(["env-a/thread-a", "env-a/thread-a"]);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+      acquired.lease.release();
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a", "env-a/thread-a"]);
+      expect(h.sessionListeners.size).toBe(0);
+    },
+  );
 
   it("coalesces present calls into one latest-wins native write per frame", () => {
     const h = harness();

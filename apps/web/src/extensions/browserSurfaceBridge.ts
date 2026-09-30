@@ -244,11 +244,18 @@ export function createBrowserSurfaceBridge(
         if (request.signal?.aborted)
           return deny("scope-invalid", "the calling view's lifetime has already ended.");
         const synced = deps.readSessions(threadRef);
-        if (synced.serverEpoch !== null && synced.serverEpoch !== serverEpoch)
+        if (synced.serverEpoch !== null && synced.serverEpoch !== serverEpoch) {
+          const unmountSync = deps.mountSessionSync(threadRef);
+          try {
+            deps.refreshSessions(threadRef);
+          } finally {
+            unmountSync();
+          }
           return deny(
-            "epoch-changed",
-            `the synced server epoch has moved past this session's epoch; re-list sessions and acquire again.`,
+            "host-unavailable",
+            `${BROWSER_SURFACE} is refreshing this thread's sessions; retry once synchronization completes.`,
           );
+        }
 
         const composite = presentation.supported;
         const unmountSync = deps.mountSessionSync(threadRef);

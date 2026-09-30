@@ -21,30 +21,20 @@ import {
 
 NodeTest.describe("isEpochChangedPresentation", () => {
   NodeTest.it("recognizes an epoch-ended lease", () => {
-    NodeAssert.equal(
-      isEpochChangedPresentation({ kind: "ended", reason: "epoch-changed" }, null),
-      true,
-    );
-  });
-
-  NodeTest.it("recognizes an epoch-denied acquisition without a lease", () => {
-    NodeAssert.equal(
-      isEpochChangedPresentation(null, { reason: "epoch-changed", detail: "stale session" }),
-      true,
-    );
+    NodeAssert.equal(isEpochChangedPresentation({ kind: "ended", reason: "epoch-changed" }), true);
   });
 
   NodeTest.it("keeps active, unacquired, and other ended presentations", () => {
-    NodeAssert.equal(isEpochChangedPresentation(null, null), false);
+    NodeAssert.equal(isEpochChangedPresentation(null), false);
     NodeAssert.equal(
-      isEpochChangedPresentation({ kind: "active", presentation: { supported: true } }, null),
+      isEpochChangedPresentation({ kind: "active", presentation: { supported: true } }),
       false,
     );
     NodeAssert.equal(
-      isEpochChangedPresentation(
-        { kind: "active", presentation: { supported: false, reason: "desktop-required" } },
-        null,
-      ),
+      isEpochChangedPresentation({
+        kind: "active",
+        presentation: { supported: false, reason: "desktop-required" },
+      }),
       false,
     );
     for (const reason of [
@@ -55,12 +45,7 @@ NodeTest.describe("isEpochChangedPresentation", () => {
       "scope-invalidated",
       "grant-revoked",
     ])
-      NodeAssert.equal(isEpochChangedPresentation({ kind: "ended", reason }, null), false);
-  });
-
-  NodeTest.it("keeps non-epoch acquisition denials visible", () => {
-    for (const reason of ["host-unavailable", "scope-invalid", "session-invalid", "grant-denied"])
-      NodeAssert.equal(isEpochChangedPresentation(null, { reason, detail: "denied" }), false);
+      NodeAssert.equal(isEpochChangedPresentation({ kind: "ended", reason }), false);
   });
 });
 
