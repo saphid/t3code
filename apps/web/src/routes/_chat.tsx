@@ -18,7 +18,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { editableOwnsUndo, isEditableFocused } from "../lib/editableFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
+import { threadUndoNoticeShownAt, undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -70,7 +70,7 @@ function ChatRouteGlobalShortcuts() {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
-          editableFocus: editableOwnsUndo(event.target),
+          editableFocus: editableOwnsUndo(event.target, threadUndoNoticeShownAt()),
           modelPickerOpen: isModelPickerOpen(),
         },
       });
