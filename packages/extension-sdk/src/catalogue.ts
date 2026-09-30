@@ -7429,7 +7429,7 @@ export type BrowserSurfaceAcquireResult =
   | { readonly ok: false; readonly denial: BrowserSurfaceDenial };
 
 /**
- * The host side of `t3.browser/surface@1.0.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/surface@2.0.0`. Present on `ClientHost` as
  * `browserSurface`; absence means the host predates the contract (treat as
  * `host-unavailable`).
  */
