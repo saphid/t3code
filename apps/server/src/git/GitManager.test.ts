@@ -5751,8 +5751,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               Layer.mock(VcsProcess.VcsProcess)({
                 run: (call) => {
                   const flag = call.args.indexOf("--hostname");
-                  const hostname = flag === -1 ? undefined : (call.args[flag + 1] ?? "");
-                  if (hostname?.includes(":")) {
+                  const flagHostname = flag === -1 ? undefined : (call.args[flag + 1] ?? "");
+                  const hostname = call.env?.GITLAB_HOST ?? flagHostname;
+                  if (flagHostname?.includes(":")) {
                     return Effect.fail(
                       new VcsProcessExitError({
                         operation: call.operation,
@@ -5858,8 +5859,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         merge: "refs/heads/feature/http-fork",
       });
       expect(lookups.length).toBeGreaterThan(0);
-      // Fork lookups stay unqualified: glab's own host answers, as before this lane.
-      expect(lookups.every((host) => host === undefined)).toBe(true);
+      expect(lookups.every((host) => host === "forge.example")).toBe(true);
     }),
   );
 
