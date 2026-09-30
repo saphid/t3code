@@ -67,6 +67,72 @@ function fakeHost({ capture, insert } = {}) {
   };
 }
 
+NodeTest.test(
+  "element picks insert the native annotation and crop in one composer operation",
+  async () => {
+    const host = fakeHost({
+      capture: async () => ({
+        ok: true,
+        artifact: { ...artifact, target: "element" },
+        annotationRef: "annotation-ref",
+      }),
+      insert: async () => ({
+        inserted: true,
+        imageInserted: true,
+        screenshotFailed: false,
+        target: "env-a:thread-a",
+      }),
+    });
+    host.discoverApis = async () => [{ id: "t3.composer/context", version: "1.3.0" }];
+    const outcome = await captureToChat(
+      host,
+      context,
+      held,
+      "element",
+      new AbortController().signal,
+    );
+    NodeAssert.equal(host.calls.invoke.length, 1);
+    NodeAssert.equal(host.calls.invoke[0].method, "insertPreviewAnnotation");
+    NodeAssert.deepEqual(host.calls.invoke[0].input, {
+      threadId: "thread-a",
+      annotationRef: "annotation-ref",
+    });
+    NodeAssert.equal(outcome.kind, "annotated");
+  },
+);
+
+NodeTest.test(
+  "a lost crop keeps the annotation and reports native's image-loss toast",
+  async () => {
+    const host = fakeHost({
+      capture: async () => ({
+        ok: false,
+        annotationRef: "annotation-ref",
+        failure: { reason: "capture-failed", detail: "no crop" },
+      }),
+      insert: async () => ({
+        inserted: true,
+        imageInserted: false,
+        screenshotFailed: true,
+        target: "env-a:thread-a",
+      }),
+    });
+    host.discoverApis = async () => [{ id: "t3.composer/context", version: "1.3.0" }];
+    const outcome = await captureToChat(
+      host,
+      context,
+      held,
+      "element",
+      new AbortController().signal,
+    );
+    NodeAssert.equal(outcome.kind, "annotated");
+    NodeAssert.equal(
+      captureOutcomeToast("element", outcome)?.body,
+      "The annotation was kept without the screenshot.",
+    );
+  },
+);
+
 NodeTest.describe("captureUnavailableReason", () => {
   NodeTest.it("names each missing precondition", () => {
     const host = fakeHost();

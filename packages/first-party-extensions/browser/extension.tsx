@@ -80,6 +80,7 @@ import {
 } from "./pageControls.js";
 import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
+import { MiniPlayerButton } from "./miniPlayer.js";
 import { panelPopover, type PanelFloating } from "./popover.js";
 import { bindProfilesApi, ProfileBadge, ProfileSection } from "./profileMenu.js";
 import { createProfileListStore, profileFailureMessage, reopenRequest } from "./profiles.js";
@@ -1207,6 +1208,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           </button>
         </Tooltip>
 
+        <MiniPlayerButton
+          host={host}
+          session={session}
+          held={held}
+          visible={visible}
+          style={buttonStyle}
+          report={setNotice}
+        />
         <PageMenu
           host={host}
           session={held ? live : null}

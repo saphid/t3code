@@ -123,7 +123,13 @@ import { readLocalApi } from "../localApi";
 import { isBrowserPreviewFile, openWorkspaceFileInPreview } from "../browser/openFileInPreview";
 import { filePresentationRequest, presentBeforeOpen } from "./SelectedApiPresentation";
 import { rightPanelViewContext } from "./installedContext";
-import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { isPreviewSupportedInRuntime, readThreadPreviewState } from "../previewStateStore";
+import {
+  browserMiniPlayerSource,
+  selectThreadPreviewMiniPlayerTabId,
+  usePreviewMiniPlayerStore,
+} from "../previewMiniPlayerStore";
+import { readBrowserCaptureAnnotation } from "./browserCaptureAnnotations";
 import { openTerminalLinkInPreview } from "../components/preview/openTerminalLinkInPreview";
 import { previewEnvironment } from "../state/preview";
 import {
@@ -740,9 +746,20 @@ function installationSurface(deps: ClientProviderDeps, installationId: string, s
   return { installation, surface };
 }
 
-export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLocalProvider {
+export function createPanelsClientProvider(
+  deps: ClientProviderDeps,
+  readPreview: (ref: ScopedThreadRef) => {
+    readonly serverEpoch: string | null;
+    readonly sessions: Readonly<Record<string, unknown>>;
+  } = readThreadPreviewState,
+  miniPlayerSupported: () => boolean = isPreviewSupportedInRuntime,
+): ClientLocalProvider {
   return {
     invoke(call) {
+      if (call.method === "getCapabilities") {
+        authorizeCaller(deps, call.caller, call.context, []);
+        return { browserMiniPlayer: miniPlayerSupported() };
+      }
       authorizeCaller(deps, call.caller, call.context, ["t3.ui/panels"]);
       const input = readInputObject(call.input);
       const threadId = readInputString(input, "threadId");
@@ -750,6 +767,46 @@ export function createPanelsClientProvider(deps: ClientProviderDeps): ClientLoca
       const ref = scopeThreadRef(deps.environmentId, ThreadId.make(threadId));
       const store = useRightPanelStore.getState();
       switch (call.method) {
+        case "getBrowserMiniPlayer":
+        case "setBrowserMiniPlayer": {
+          composerThread(call, threadId);
+          if (!miniPlayerSupported())
+            throw new ClientProviderOpError(
+              "provider-rejected",
+              "Floating browser previews require the desktop client",
+            );
+          const miniPlayer = usePreviewMiniPlayerStore.getState();
+          if (call.method === "setBrowserMiniPlayer") {
+            authorizeCaller(deps, call.caller, call.context, ["t3.browser/sessions"]);
+            const tabId = readInputString(input, "tabId")!;
+            const serverEpoch = readInputString(input, "serverEpoch")!;
+            if (typeof input.open !== "boolean" || tabId.length > 128 || serverEpoch.length > 128)
+              throw new ClientProviderOpError("provider-rejected", "Invalid mini-player request");
+            const preview = readPreview(ref);
+            if (preview.serverEpoch !== serverEpoch)
+              throw new ClientProviderOpError(
+                "provider-rejected",
+                "The browser session epoch changed",
+              );
+            if (input.open) {
+              if (!Object.hasOwn(preview.sessions, tabId))
+                throw new ClientProviderOpError(
+                  "provider-rejected",
+                  "The browser session is not in this thread",
+                );
+              miniPlayer.open(ref, browserMiniPlayerSource(tabId));
+              store.close(ref);
+            } else if (selectThreadPreviewMiniPlayerTabId(miniPlayer.byThreadKey, ref) === tabId) {
+              miniPlayer.close(ref);
+            }
+          }
+          return {
+            tabId: selectThreadPreviewMiniPlayerTabId(
+              usePreviewMiniPlayerStore.getState().byThreadKey,
+              ref,
+            ),
+          } as Json;
+        }
         case "openSurface": {
           const surfaceId = readInputString(input, "surfaceId")!;
           const { installation, surface } = installationSurface(
@@ -963,11 +1020,56 @@ export function createComposerClientProvider(
   deps: ClientProviderDeps,
   fetchCaptureArtifact: FetchCaptureArtifact = fetchBrowserCaptureArtifact,
   releaseCaptureArtifact: ReleaseCaptureArtifact = releaseBrowserCaptureArtifact,
+  readAnnotation: typeof readBrowserCaptureAnnotation = readBrowserCaptureAnnotation,
 ): ClientLocalProvider {
   return {
     invoke(call) {
       const input = readInputObject(call.input);
       switch (call.method) {
+        case "insertPreviewAnnotation": {
+          authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
+          const threadId = readInputString(input, "threadId")!;
+          const ref = composerThread(call, threadId);
+          const annotationRef = readInputString(input, "annotationRef")!;
+          const capture = readAnnotation(
+            ref.environmentId,
+            ref.threadId,
+            call.caller.installationId,
+            annotationRef,
+          );
+          if (!capture)
+            throw new ClientProviderOpError(
+              "provider-rejected",
+              "The captured annotation is no longer available to this installation and thread",
+            );
+          const store = useComposerDraftStore.getState();
+          let imageInserted = false;
+          if (capture.file && capture.annotation.screenshot) {
+            const image: ComposerImageAttachment = {
+              type: "image",
+              id: capture.annotation.id,
+              name: capture.file.name,
+              mimeType: "image/png",
+              sizeBytes: capture.file.size,
+              previewUrl: URL.createObjectURL(capture.file),
+              file: capture.file,
+            };
+            imageInserted = store.addImage(ref, image);
+            if (!imageInserted) URL.revokeObjectURL(image.previewUrl);
+          }
+          store.addPreviewAnnotation(
+            ref,
+            imageInserted ? capture.annotation : { ...capture.annotation, screenshot: null },
+          );
+          if (capture.artifactRef) releaseCaptureArtifact(ref.environmentId, capture.artifactRef);
+          capture.consume();
+          return {
+            inserted: true,
+            imageInserted,
+            screenshotFailed: capture.screenshotFailed || (capture.file !== null && !imageInserted),
+            target: `${ref.environmentId}:${ref.threadId}`,
+          } as Json;
+        }
         case "insertContext": {
           authorizeCaller(deps, call.caller, call.context, ["t3.composer/write"]);
           const threadId = readInputString(input, "threadId")!;
@@ -2118,8 +2220,8 @@ export const CLIENT_PROVIDER_DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
   { id: "t3.client/notifications", version: "1.1.0" },
   { id: "t3.client/keybindings", version: "1.0.0" },
-  { id: "t3.client/panels", version: "1.0.0" },
-  { id: "t3.client/composer", version: "1.3.0" },
+  { id: "t3.client/panels", version: "1.1.0" },
+  { id: "t3.client/composer", version: "1.4.0" },
   { id: "t3.client/terminal-appearance", version: "1.0.0" },
   { id: "t3.client/preferences", version: "1.2.0" },
   { id: "t3.client/external", version: "1.1.0" },

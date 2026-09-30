@@ -404,6 +404,7 @@ export function createInstalledExtensionController(options: {
               lifetime: lifetime.signal,
             });
             const browserCapture = options.browserCapture?.({
+              installationId: item.id,
               grants: item.grants,
               lifetime: lifetime.signal,
             });

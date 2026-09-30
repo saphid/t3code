@@ -1237,6 +1237,30 @@ var __t3Client = (() => {
     ]
   });
 
+  // node_modules/@t3tools/extension-sdk/dist/browserPresentation.js
+  var composerPreviewAnnotationResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["inserted", "imageInserted", "screenshotFailed", "target"],
+    properties: {
+      inserted: { type: "boolean" },
+      imageInserted: { type: "boolean" },
+      screenshotFailed: { type: "boolean" },
+      target: { type: "string", minLength: 1, maxLength: 256 }
+    }
+  };
+  var browserMiniPlayerStateSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tabId"],
+    properties: { tabId: { type: ["string", "null"], minLength: 1, maxLength: 128 } }
+  };
+  var browserMiniPlayerInputProperties = {
+    tabId: { type: "string", minLength: 1, maxLength: 128 },
+    serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+    open: { type: "boolean" }
+  };
+
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
     type: "object",
@@ -1620,8 +1644,39 @@ var __t3Client = (() => {
   };
   var CLIENT_PANELS_API = validateApiDefinition({
     id: "t3.client/panels",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["browserMiniPlayer"],
+          properties: { browserMiniPlayer: { type: "boolean" } }
+        }
+      },
+      {
+        name: "getBrowserMiniPlayer",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: browserMiniPlayerStateSchema
+      },
+      {
+        name: "setBrowserMiniPlayer",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput, ...browserMiniPlayerInputProperties }, [
+          "threadId",
+          "tabId",
+          "serverEpoch",
+          "open"
+        ]),
+        outputSchema: browserMiniPlayerStateSchema
+      },
       {
         name: "openSurface",
         effect: "write",
@@ -1800,8 +1855,18 @@ var __t3Client = (() => {
   };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.3.0",
+    version: "1.4.0",
     methods: [
+      {
+        name: "insertPreviewAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotationRef: { type: "string", minLength: 1, maxLength: 128 }
+        }, ["threadId", "annotationRef"]),
+        outputSchema: composerPreviewAnnotationResultSchema
+      },
       {
         name: "insertContext",
         effect: "write",
@@ -7195,7 +7260,7 @@ var __t3Client = (() => {
   };
   var composerContextApi = defineApi({
     id: COMPOSER_CONTEXT,
-    version: "1.2.0",
+    version: "1.3.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7209,8 +7274,24 @@ var __t3Client = (() => {
           "getDraftState",
           "insertMention",
           "insertTerminalContext",
-          "insertImage"
+          "insertImage",
+          "insertPreviewAnnotation"
         ])
+      },
+      {
+        name: "insertPreviewAnnotation",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationRef"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            annotationRef: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        },
+        outputSchema: composerPreviewAnnotationResultSchema
       },
       {
         name: "insertContext",
@@ -7369,6 +7450,9 @@ var __t3Client = (() => {
         }
       }
     ]
+  }, {
+    baseline: "1.2.0",
+    additions: [{ version: "1.3.0", method: "insertPreviewAnnotation" }]
   });
   var messagesEnrichmentDefinition = (withText) => ({
     id: MESSAGES_ENRICHMENT,
@@ -7918,7 +8002,7 @@ var __t3Client = (() => {
   );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7931,8 +8015,33 @@ var __t3Client = (() => {
           "closeSurface",
           "listSurfaces",
           "hideDock",
-          "showDock"
+          "showDock",
+          "getBrowserMiniPlayer",
+          "setBrowserMiniPlayer"
         ])
+      },
+      {
+        name: "getBrowserMiniPlayer",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput2 }
+        },
+        outputSchema: browserMiniPlayerStateSchema
+      },
+      {
+        name: "setBrowserMiniPlayer",
+        effect: "write",
+        requiredGrants: [UI_PANELS, BROWSER_SESSIONS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "open"],
+          properties: { threadId: composerThreadIdInput2, ...browserMiniPlayerInputProperties }
+        },
+        outputSchema: browserMiniPlayerStateSchema
       },
       {
         name: "openSurface",
@@ -8063,6 +8172,12 @@ var __t3Client = (() => {
           properties: { applied: { type: "boolean" } }
         }
       }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "getBrowserMiniPlayer" },
+      { version: "1.1.0", method: "setBrowserMiniPlayer" }
     ]
   });
   var uiPreferencesDefinition = (version2, preferences, patch) => ({
@@ -8817,18 +8932,18 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef4, useState: useState8 } = host.React;
-    const [element, setElement] = useState8(null);
-    const [result2, setResult] = useState8(null);
-    const [shown, setShown] = useState8(false);
-    const [, setLeaseVersion] = useState8(0);
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef5, useState: useState9 } = host.React;
+    const [element, setElement] = useState9(null);
+    const [result2, setResult] = useState9(null);
+    const [shown, setShown] = useState9(false);
+    const [, setLeaseVersion] = useState9(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
-    const presentationRef = useRef4({
+    const presentationRef = useRef5({
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
       zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
     });
-    const updateRef = useRef4(null);
+    const updateRef = useRef5(null);
     const ref = useCallback2((node) => setElement(node), []);
     useLayoutEffect(() => {
       presentationRef.current = {
@@ -8971,20 +9086,20 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect7, useRef: useRef4, useState: useState8 } = host.React;
-    const [element, setElement] = useState8(null);
-    const [status, setStatus] = useState8({ kind: "idle" });
-    const [view, setView] = useState8({
+    const { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef5, useState: useState9 } = host.React;
+    const [element, setElement] = useState9(null);
+    const [status, setStatus] = useState9({ kind: "idle" });
+    const [view, setView] = useState9({
       status: "connecting",
       inputConnected: false,
       droppedFrames: 0,
       rejectedInput: 0
     });
-    const sessionRef = useRef4(options.session);
+    const sessionRef = useRef5(options.session);
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect7(() => {
+    useEffect8(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -9159,7 +9274,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react8 = __toESM(require_react(), 1);
+  var import_react9 = __toESM(require_react(), 1);
 
   // addressInput.tsx
   var import_react = __toESM(require_react(), 1);
@@ -9326,6 +9441,33 @@ var __t3Client = (() => {
       };
     }
     if (signal.aborted) return { kind: "cancelled" };
+    if (target === "element" && captured.annotationRef && host.discoverApis) {
+      try {
+        const apis = await host.discoverApis(context2, signal);
+        if (apis.some(
+          (api) => api.id === composerContextApi.definition.id && satisfiesSemverRange(api.version, "^1.3.0")
+        )) {
+          const inserted = await bindApi(composerContextApi, host, context2, "^1.3.0").invoke(
+            "insertPreviewAnnotation",
+            { threadId, annotationRef: captured.annotationRef },
+            signal
+          );
+          if (signal.aborted) return { kind: "cancelled" };
+          return {
+            kind: "annotated",
+            imageInserted: inserted.imageInserted,
+            screenshotFailed: inserted.screenshotFailed
+          };
+        }
+      } catch (error) {
+        if (signal.aborted) return { kind: "cancelled" };
+        return {
+          kind: "failed",
+          stage: "insert",
+          message: `The annotation could not be added to chat: ${error instanceof Error ? error.message : "the composer refused it"}`
+        };
+      }
+    }
     if (!captured.ok) {
       if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
       return {
@@ -9355,6 +9497,8 @@ var __t3Client = (() => {
   }
   function captureOutcomeMessage(target, outcome) {
     switch (outcome.kind) {
+      case "annotated":
+        return outcome.screenshotFailed ? "The annotation was kept without the screenshot." : "Annotation added to chat.";
       case "cancelled":
         return null;
       case "failed":
@@ -9381,6 +9525,13 @@ var __t3Client = (() => {
   }
   function captureOutcomeToast(target, outcome, actions = []) {
     switch (outcome.kind) {
+      case "annotated":
+        return outcome.screenshotFailed ? {
+          severity: "error",
+          title: "Could not capture the picked element",
+          body: "The annotation was kept without the screenshot.",
+          durationMs: CAPTURE_TOAST_DURATION_MS
+        } : null;
       case "cancelled":
         return null;
       case "failed":
@@ -16564,8 +16715,112 @@ ${ind(d)}}`;
     ] });
   }
 
-  // popover.tsx
+  // miniPlayer.tsx
+  var import_react6 = __toESM(require_react(), 1);
   var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
+  async function readBrowserMiniPlayer(host, session, signal) {
+    const apis = await host.discoverApis(session.context, signal);
+    if (!apis.some(
+      (api2) => api2.id === uiPanelsApi.definition.id && satisfiesSemverRange(api2.version, "^1.1.0")
+    ))
+      throw new Error("Floating previews require a newer T3 Code host.");
+    const api = bindApi(uiPanelsApi, host, session.context, "^1.1.0");
+    const capabilities = await api.invoke("getCapabilities", {}, signal);
+    if (!capabilities.operations.getBrowserMiniPlayer || !capabilities.operations.setBrowserMiniPlayer)
+      throw new Error("This client cannot show a floating preview.");
+    return (await api.invoke("getBrowserMiniPlayer", {}, signal)).tabId;
+  }
+  async function setBrowserMiniPlayer(host, session, held, open, signal) {
+    return (await bindApi(uiPanelsApi, host, session.context, "^1.1.0").invoke(
+      "setBrowserMiniPlayer",
+      { ...held, open },
+      signal
+    )).tabId;
+  }
+  function MiniPlayerButton(props) {
+    const { host, session, held, visible, style, report } = props;
+    const tabId = held?.tabId;
+    const serverEpoch = held?.serverEpoch;
+    const identity2 = JSON.stringify([
+      session.context.resource.environmentId,
+      session.context.resource.threadId,
+      tabId,
+      serverEpoch
+    ]);
+    const lifetime = (0, import_react6.useRef)(null);
+    const [state2, setState] = (0, import_react6.useState)(null);
+    const [pendingSignal, setPendingSignal] = (0, import_react6.useState)(null);
+    const pending = pendingSignal !== null && !pendingSignal.aborted;
+    (0, import_react6.useEffect)(() => {
+      if (!visible || !tabId || !serverEpoch) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([session.signal, controller.signal]);
+      lifetime.current = signal;
+      void readBrowserMiniPlayer(host, session, signal).then(
+        (current2) => {
+          if (!signal.aborted) setState({ identity: identity2, signal, open: current2 === tabId, reason: null });
+        },
+        (error) => {
+          if (!signal.aborted)
+            setState({
+              identity: identity2,
+              signal,
+              open: false,
+              reason: error instanceof Error ? error.message : "Floating preview unavailable."
+            });
+        }
+      );
+      return () => controller.abort();
+    }, [host, session, visible, tabId, serverEpoch, identity2]);
+    const current = state2?.identity === identity2 && !state2.signal.aborted && visible ? state2 : null;
+    const label = current?.open ? "Close floating preview" : "Float preview over chat";
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: current?.reason ?? label, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      "button",
+      {
+        type: "button",
+        "aria-label": label,
+        disabled: !held || !current || current.reason !== null || pending,
+        style,
+        onClick: () => {
+          const signal = lifetime.current;
+          if (!held || !current || !signal || signal.aborted || pending || current.reason) return;
+          setPendingSignal(signal);
+          void setBrowserMiniPlayer(host, session, held, !current.open, signal).then(
+            (active) => {
+              if (!signal.aborted) setState({ ...current, open: active === held.tabId });
+            },
+            (error) => {
+              if (!signal.aborted)
+                report(error instanceof Error ? error.message : "Floating preview unavailable.");
+            }
+          ).finally(() => {
+            if (!signal.aborted) setPendingSignal(null);
+          });
+        },
+        children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
+          "svg",
+          {
+            viewBox: "0 0 24 24",
+            width: "14",
+            height: "14",
+            fill: "none",
+            stroke: "currentColor",
+            strokeWidth: "2",
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            "aria-hidden": "true",
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("path", { d: "M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4" }),
+              /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("rect", { width: "10", height: "7", x: "12", y: "13", rx: "2" })
+            ]
+          }
+        )
+      }
+    ) });
+  }
+
+  // popover.tsx
+  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
   function panelPopover(host, zIndex) {
     return resolveFloatingLayer(host)?.Popover ?? inlinePopover(zIndex);
   }
@@ -16581,7 +16836,7 @@ ${ind(d)}}`;
     }) {
       if (anchor === null) return null;
       const inset = side === "inset" ? offset : 0;
-      return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
         "div",
         {
           ...attributes,
@@ -16600,7 +16855,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
 
   // profiles.ts
   var DEFAULT_PROFILE_ID = "default";
@@ -16748,7 +17003,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_jsx_runtime7 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime8 = __toESM(require_jsx_runtime(), 1);
   var CHANGES_RANGE = "^1.1.0";
   var bindProfilesApi = (host, context2) => ({
     ...bindApi(browserProfilesApi, host, context2),
@@ -16772,7 +17027,7 @@ ${ind(d)}}`;
       })();
     }
   });
-  var useProfileList = (profiles) => (0, import_react6.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
+  var useProfileList = (profiles) => (0, import_react7.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
   var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var control2 = {
@@ -16794,12 +17049,12 @@ ${ind(d)}}`;
     const { host, session, profiles, visible } = props;
     const profileId = sessionProfileId(session);
     const { list } = useProfileList(profiles);
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (visible) profiles.refresh();
     }, [profiles, profileId, visible]);
     const name = profileBadgeName(list, profileId);
     if (name === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Tooltip, { host, label: name, children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Tooltip, { host, label: name, children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
       "span",
       {
         "data-t3-browser-profile-badge": true,
@@ -16815,7 +17070,7 @@ ${ind(d)}}`;
           fontWeight: 500,
           whiteSpace: "nowrap"
         },
-        children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: name })
+        children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: name })
       }
     ) });
   }
@@ -16824,8 +17079,8 @@ ${ind(d)}}`;
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
-    const [importer, setImporter] = (0, import_react6.useState)({ kind: "closed" });
-    (0, import_react6.useEffect)(() => profiles.refresh(), [profiles]);
+    const [importer, setImporter] = (0, import_react7.useState)({ kind: "closed" });
+    (0, import_react7.useEffect)(() => profiles.refresh(), [profiles]);
     const name = profileLabel(list, profileId);
     const choose = (action) => {
       onChosen();
@@ -16863,14 +17118,14 @@ ${ind(d)}}`;
     };
     const others = list?.profiles.filter((profile) => profile.id !== profileId) ?? [];
     const selectedSource = importer.kind === "ready" ? importer.sources.find((source) => source.id === importer.sourceId) : void 0;
-    return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
       "div",
       {
         role: "group",
         "aria-label": "Profile",
         style: { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
             "span",
             {
               style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
@@ -16880,10 +17135,10 @@ ${ind(d)}}`;
               ]
             }
           ),
-          listNote && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
-          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { children: "Open page in" }),
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+          listNote && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
+          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { children: "Open page in" }),
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
               "select",
               {
                 "aria-label": "Open page in profile",
@@ -16895,13 +17150,13 @@ ${ind(d)}}`;
                 },
                 style: { ...control2, maxWidth: 140 },
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("option", { value: "", children: "Choose\u2026" }),
-                  others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("option", { value: profile.id, children: profile.name }, profile.id))
+                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: "", children: "Choose\u2026" }),
+                  others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: profile.id, children: profile.name }, profile.id))
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -16911,7 +17166,7 @@ ${ind(d)}}`;
               children: "Clear cookies"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -16921,7 +17176,7 @@ ${ind(d)}}`;
               children: "Clear cache"
             }
           ),
-          importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -16930,8 +17185,8 @@ ${ind(d)}}`;
               style: { ...control2, textAlign: "left" },
               children: "Import cookies\u2026"
             }
-          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
               "select",
               {
                 "aria-label": "Import from browser",
@@ -16942,23 +17197,23 @@ ${ind(d)}}`;
                   handle: firstProfile(importer.sources, event.target.value)
                 }),
                 style: control2,
-                children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("option", { value: source.id, children: source.name }, source.id))
+                children: importer.sources.map((source) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: source.id, children: source.name }, source.id))
               }
             ),
-            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
+            selectedSource?.unavailable ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importResultMessage(
               { outcome: "failed", profileId, reason: selectedSource.unavailable },
               name
-            ) }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+            ) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
               "select",
               {
                 "aria-label": "Import from browser profile",
                 value: importer.handle,
                 onChange: (event) => setImporter({ ...importer, handle: event.target.value }),
                 style: control2,
-                children: selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("option", { value: profile.handle, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
+                children: selectedSource?.profiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: profile.handle, children: profile.cookieCount === void 0 ? profile.name : `${profile.name} (${profile.cookieCount} cookies)` }, profile.handle))
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
               "button",
               {
                 type: "button",
@@ -16979,7 +17234,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_react7 = __toESM(require_react(), 1);
+  var import_react8 = __toESM(require_react(), 1);
 
   // viewport.ts
   var PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
@@ -17404,7 +17659,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_jsx_runtime8 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
   var muted5 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border3 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var chromeButton = {
@@ -17428,10 +17683,10 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useElementSize(element) {
-    const [size, setSize] = (0, import_react7.useState)(
+    const [size, setSize] = (0, import_react8.useState)(
       null
     );
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
@@ -17446,7 +17701,7 @@ ${ind(d)}}`;
     return size;
   }
   function AspectLockIcon(props) {
-    return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
       "svg",
       {
         "aria-hidden": true,
@@ -17459,16 +17714,16 @@ ${ind(d)}}`;
         strokeLinecap: "round",
         strokeLinejoin: "round",
         style: { display: "block" },
-        children: props.locked ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M9 17H7A5 5 0 0 1 7 7h2" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M15 7h2a5 5 0 1 1 0 10h-2" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("line", { x1: "8", x2: "16", y1: "12", y2: "12" })
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("path", { d: "M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" })
+        children: props.locked ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("path", { d: "M9 17H7A5 5 0 0 1 7 7h2" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("path", { d: "M15 7h2a5 5 0 1 1 0 10h-2" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("line", { x1: "8", x2: "16", y1: "12", y2: "12" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("path", { d: "M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2" })
       }
     );
   }
   function useAspectLocks(tabs, held) {
-    const [locks, setLocks] = (0, import_react7.useState)(() => /* @__PURE__ */ new Map());
+    const [locks, setLocks] = (0, import_react8.useState)(() => /* @__PURE__ */ new Map());
     const live = (tabId) => held?.tabId === tabId || tabs.some((tab) => tab.tabId === tabId);
     return {
       isLocked: (tab) => tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
@@ -17483,7 +17738,7 @@ ${ind(d)}}`;
   function BrowserViewportToolbar(props) {
     const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
     const aspectRatio = lockedAspectRatio(setting, aspectLocked);
-    const [edit, setEdit] = (0, import_react7.useState)(null);
+    const [edit, setEdit] = (0, import_react8.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
     const presentedSize = customSize ?? {
@@ -17531,7 +17786,7 @@ ${ind(d)}}`;
       const preset = presetViewport(value);
       if (preset) void onCommit(preset);
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "div",
       {
         role: "toolbar",
@@ -17560,7 +17815,7 @@ ${ind(d)}}`;
           applyCustomSize();
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
             "select",
             {
               "aria-label": "Browser device preset",
@@ -17569,12 +17824,12 @@ ${ind(d)}}`;
               onChange: (event) => selectViewport(event.target.value),
               style: { ...chromeButton, padding: "2px 4px" },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: "responsive", children: "Responsive" }),
-                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("option", { value: "responsive", children: "Responsive" }),
+                PREVIEW_VIEWPORT_PRESETS.map((preset) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("option", { value: preset.id, children: `${preset.label} \u2014 ${preset.detail}` }, preset.id))
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
             "form",
             {
               style: { display: "flex", alignItems: "center", gap: 4, margin: 0 },
@@ -17589,7 +17844,7 @@ ${ind(d)}}`;
                 applyCustomSize();
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   "input",
                   {
                     type: "number",
@@ -17611,8 +17866,8 @@ ${ind(d)}}`;
                     style: numberInput
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { "aria-hidden": true, style: { color: muted5, fontSize: 11 }, children: "\xD7" }),
-                /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { "aria-hidden": true, style: { color: muted5, fontSize: 11 }, children: "\xD7" }),
+                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   "input",
                   {
                     type: "number",
@@ -17637,7 +17892,7 @@ ${ind(d)}}`;
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(Tooltip, { host, label: aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: aspectLocked ? "Unlock aspect ratio" : "Lock aspect ratio", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
               type: "button",
@@ -17650,10 +17905,10 @@ ${ind(d)}}`;
                 ...chromeButton,
                 ...aspectLocked ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
               },
-              children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(AspectLockIcon, { locked: aspectLocked })
+              children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(AspectLockIcon, { locked: aspectLocked })
             }
           ) }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
               type: "button",
@@ -17670,7 +17925,7 @@ ${ind(d)}}`;
               children: "\u27F3"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
             "button",
             {
               type: "button",
@@ -17699,8 +17954,8 @@ ${ind(d)}}`;
       zoomFactor
     );
     const percent = Math.round(layout.scale * 100);
-    return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
         "div",
         {
           "aria-hidden": true,
@@ -17719,7 +17974,7 @@ ${ind(d)}}`;
           }
         }
       ),
-      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+      layout.scale < 1 ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
         "div",
         {
           "aria-label": `Viewport scaled to ${percent}%`,
@@ -17747,12 +18002,12 @@ ${ind(d)}}`;
   }
   function useViewportRails(options) {
     const { setting, target, slot, zoomFactor, aspectRatio, commit: commit2 } = options;
-    const [preview, setPreview] = (0, import_react7.useState)(null);
-    const [gestures] = (0, import_react7.useState)(() => createRailGestures(setPreview));
-    (0, import_react7.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
+    const [preview, setPreview] = (0, import_react8.useState)(null);
+    const [gestures] = (0, import_react8.useState)(() => createRailGestures(setPreview));
+    (0, import_react8.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
     const committedKey = setting === null ? null : viewportSettingKey(setting);
-    (0, import_react7.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
-    (0, import_react7.useEffect)(() => () => gestures.dispose(), [gestures]);
+    (0, import_react8.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
+    (0, import_react8.useEffect)(() => () => gestures.dispose(), [gestures]);
     const displayed = setting === null ? null : preview === null ? setting : { _tag: "freeform", width: preview.width, height: preview.height };
     const onPointerDown = (direction, event) => {
       if (displayed === null || setting === null || target === null) return;
@@ -17878,8 +18133,8 @@ ${ind(d)}}`;
   });
   function ViewportResizeRails(props) {
     const { layout, preview, onPointerDown, onKeyDown } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-      RAILS.map((rail) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+      RAILS.map((rail) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
         "button",
         {
           type: "button",
@@ -17896,11 +18151,11 @@ ${ind(d)}}`;
             cursor: rail.cursor,
             touchAction: "none"
           },
-          children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { "aria-hidden": true, style: grip(rail.kind, preview?.direction === rail.direction) })
+          children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { "aria-hidden": true, style: grip(rail.kind, preview?.direction === rail.direction) })
         },
         rail.direction
       )),
-      preview ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+      preview ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
         "div",
         {
           "aria-hidden": true,
@@ -18074,7 +18329,7 @@ ${ind(d)}}`;
   }
 
   // extension.tsx
-  var import_jsx_runtime9 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime10 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.browser";
   var muted6 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border4 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -18088,8 +18343,8 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react8.useState)(null);
-    (0, import_react8.useEffect)(() => {
+    const [vars, setVars] = (0, import_react9.useState)(null);
+    (0, import_react9.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       watchThemeVars(
@@ -18138,51 +18393,51 @@ ${ind(d)}}`;
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
-    const [state2, setState] = (0, import_react8.useState)(
+    const [state2, setState] = (0, import_react9.useState)(
       () => restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState
     );
-    const [fileSource, setFileSource] = (0, import_react8.useState)(
+    const [fileSource, setFileSource] = (0, import_react9.useState)(
       restored?.url ? null : restored?.relativePath ?? null
     );
-    const fileSourceRef = (0, import_react8.useRef)(fileSource);
-    const fileLeaseUrl = (0, import_react8.useRef)(null);
-    const fileRun = (0, import_react8.useRef)(null);
-    const [address, setAddress] = (0, import_react8.useState)(restored?.url ?? restored?.relativePath ?? "");
-    const [history, setHistory] = (0, import_react8.useState)(
+    const fileSourceRef = (0, import_react9.useRef)(fileSource);
+    const fileLeaseUrl = (0, import_react9.useRef)(null);
+    const fileRun = (0, import_react9.useRef)(null);
+    const [address, setAddress] = (0, import_react9.useState)(restored?.url ?? restored?.relativePath ?? "");
+    const [history, setHistory] = (0, import_react9.useState)(
       () => sanitizeHistoryEntries(restored?.history)
     );
-    const [held, setHeld] = (0, import_react8.useState)(
+    const [held, setHeld] = (0, import_react9.useState)(
       () => restored?.tabId && restored?.serverEpoch ? {
         tabId: restored.tabId,
         serverEpoch: restored.serverEpoch,
         engineGeneration: null
       } : null
     );
-    const [live, setLive] = (0, import_react8.useState)(null);
-    const [tabs, setTabs] = (0, import_react8.useState)([]);
-    const tabsEpoch = (0, import_react8.useRef)(null);
-    const [notice, setNotice] = (0, import_react8.useState)(null);
-    const [visible, setVisible] = (0, import_react8.useState)(session.visible);
-    const heldRef = (0, import_react8.useRef)(held);
-    const historyRef = (0, import_react8.useRef)(history);
-    const [fence] = (0, import_react8.useState)(createRevisionFence);
-    const heldRevision = (0, import_react8.useRef)(-1);
-    const addressRef = (0, import_react8.useRef)(null);
-    const [contentElement, setContentElement] = (0, import_react8.useState)(null);
+    const [live, setLive] = (0, import_react9.useState)(null);
+    const [tabs, setTabs] = (0, import_react9.useState)([]);
+    const tabsEpoch = (0, import_react9.useRef)(null);
+    const [notice, setNotice] = (0, import_react9.useState)(null);
+    const [visible, setVisible] = (0, import_react9.useState)(session.visible);
+    const heldRef = (0, import_react9.useRef)(held);
+    const historyRef = (0, import_react9.useRef)(history);
+    const [fence] = (0, import_react9.useState)(createRevisionFence);
+    const heldRevision = (0, import_react9.useRef)(-1);
+    const addressRef = (0, import_react9.useRef)(null);
+    const [contentElement, setContentElement] = (0, import_react9.useState)(null);
     const contentSize = useElementSize(contentElement);
-    const [viewportPending, setViewportPending] = (0, import_react8.useState)(false);
-    const viewportCommitter = (0, import_react8.useRef)(null);
+    const [viewportPending, setViewportPending] = (0, import_react9.useState)(false);
+    const viewportCommitter = (0, import_react9.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
-    const profilesApi = (0, import_react8.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
-    const profiles = (0, import_react8.useMemo)(
+    const profilesApi = (0, import_react9.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
+    const profiles = (0, import_react9.useMemo)(
       () => createProfileListStore(profilesApi, session.signal),
       [profilesApi, session.signal]
     );
     const localServers = useLocalServers(host, session, visible && held === null);
-    const [projectHistoryState, setProjectHistoryState] = (0, import_react8.useState)({
+    const [projectHistoryState, setProjectHistoryState] = (0, import_react9.useState)({
       kind: "loading"
     });
-    const projectHistory = (0, import_react8.useMemo)(
+    const projectHistory = (0, import_react9.useMemo)(
       () => createProjectHistory(
         bindApi(browserHistoryApi, host, session.context),
         session.signal,
@@ -18190,17 +18445,17 @@ ${ind(d)}}`;
       ),
       [host, session]
     );
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (visible) projectHistory.refresh();
     }, [projectHistory, visible]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       historyRef.current = history;
     }, [history]);
-    (0, import_react8.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react9.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
@@ -18304,7 +18559,7 @@ ${ind(d)}}`;
       return () => controller.abort();
     }, [host, session]);
     const faviconCache = useFaviconCache();
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       resolveSessionFavicons(
         bindApi(browserSessionsApi, host, session.context),
         tabs,
@@ -18312,8 +18567,8 @@ ${ind(d)}}`;
       );
     }, [host, session, tabs]);
     const resolvedFaviconRefs = faviconCache.resolved;
-    (0, import_react8.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
+    (0, import_react9.useEffect)(() => {
       if (typeof session.setTabIndicators !== "function") return;
       const indicators = panelTabIndicators(faviconCache, live, tabs);
       try {
@@ -18335,8 +18590,8 @@ ${ind(d)}}`;
       cornerRadius: 8
     });
     const layers = floatingLayers(overlayZIndex);
-    const Popover = (0, import_react8.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
-    const floating = (0, import_react8.useMemo)(
+    const Popover = (0, import_react9.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
+    const floating = (0, import_react9.useMemo)(
       () => ({
         Popover,
         style: {
@@ -18354,7 +18609,7 @@ ${ind(d)}}`;
       session: held,
       enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended"
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
       viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
         const current = heldRef.current;
@@ -18535,7 +18790,7 @@ ${ind(d)}}`;
         })
       );
     };
-    const adopt = (0, import_react8.useCallback)(
+    const adopt = (0, import_react9.useCallback)(
       (tab) => {
         const serverEpoch = tabsEpoch.current;
         if (!serverEpoch) return;
@@ -18593,12 +18848,12 @@ ${ind(d)}}`;
         }
       );
     };
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
-    const pendingZoom = (0, import_react8.useRef)(null);
-    (0, import_react8.useEffect)(() => {
+    const pendingZoom = (0, import_react9.useRef)(null);
+    (0, import_react9.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
     }, [live?.zoomFactor]);
     const runPage = (verb, tab) => {
@@ -18648,9 +18903,9 @@ ${ind(d)}}`;
       else commit2(reload(state2));
       runPage({ method });
     };
-    const runViewCommand = (0, import_react8.useRef)(() => {
+    const runViewCommand = (0, import_react9.useRef)(() => {
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
@@ -18664,7 +18919,7 @@ ${ind(d)}}`;
         }
       };
     });
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -18684,8 +18939,8 @@ ${ind(d)}}`;
     const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
     const titledUrl = titled?.url ?? null;
     const titledTitle = titled?.title ?? null;
-    const lastTitled = (0, import_react8.useRef)(null);
-    (0, import_react8.useEffect)(() => {
+    const lastTitled = (0, import_react9.useRef)(null);
+    (0, import_react9.useEffect)(() => {
       if (titledUrl === null || titledTitle === null) return;
       if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
       const key = `${titledUrl}
@@ -18714,7 +18969,7 @@ ${titledTitle}`;
       // drops the hold; native drops it silently.
       leaseState.reason === "epoch-changed" ? null : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
     ) : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
-    return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
       "section",
       {
         "aria-label": "Browser",
@@ -18731,8 +18986,8 @@ ${titledTitle}`;
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("style", { children: `:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("style", { children: `:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
             "header",
             {
               style: {
@@ -18744,7 +18999,7 @@ ${titledTitle}`;
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
                     type: "button",
@@ -18755,7 +19010,7 @@ ${titledTitle}`;
                     children: "\u2190"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
                     type: "button",
@@ -18766,7 +19021,7 @@ ${titledTitle}`;
                     children: "\u2192"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
                     type: "button",
@@ -18777,7 +19032,7 @@ ${titledTitle}`;
                     children: "\u27F3"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
                     type: "button",
@@ -18797,7 +19052,7 @@ ${titledTitle}`;
                     children: "\u26F6"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   ScreenshotButton,
                   {
                     host,
@@ -18808,7 +19063,7 @@ ${titledTitle}`;
                     style: buttonStyle
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   AnnotateButton,
                   {
                     host,
@@ -18819,8 +19074,8 @@ ${titledTitle}`;
                     style: buttonStyle
                   }
                 ),
-                held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ProfileBadge, { host, session: live, profiles, visible }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                held && live && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(ProfileBadge, { host, session: live, profiles, visible }),
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   AddressInput,
                   {
                     inputRef: addressRef,
@@ -18844,7 +19099,7 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "button",
                   {
                     type: "button",
@@ -18864,7 +19119,18 @@ ${titledTitle}`;
                     children: "\u2197"
                   }
                 ) }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+                  MiniPlayerButton,
+                  {
+                    host,
+                    session,
+                    held,
+                    visible,
+                    style: buttonStyle,
+                    report: setNotice
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   PageMenu,
                   {
                     host,
@@ -18874,7 +19140,7 @@ ${titledTitle}`;
                     zoomStep,
                     floating,
                     visible,
-                    children: (close) => held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                    children: (close) => held && live && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                       ProfileSection,
                       {
                         session: live,
@@ -18891,7 +19157,7 @@ ${titledTitle}`;
               ]
             }
           ),
-          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+          tabs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
             "div",
             {
               role: "tablist",
@@ -18907,13 +19173,13 @@ ${titledTitle}`;
                 const tabUrl = tab.navigation.url ?? tab.requestedUrl ?? null;
                 const active = held?.tabId === tab.tabId;
                 const label = tabLabel(tab.navigation.title, tabUrl);
-                return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+                return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
                   "span",
                   {
                     role: "presentation",
                     style: { display: "inline-flex", alignItems: "center", gap: 2 },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
                         "button",
                         {
                           type: "button",
@@ -18932,12 +19198,12 @@ ${titledTitle}`;
                             ...active ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(BrowserFavicon, { url: tabUrl, faviconRef: tab.faviconRef }),
-                            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
+                            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(BrowserFavicon, { url: tabUrl, faviconRef: tab.faviconRef }),
+                            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }, children: label })
                           ]
                         }
                       ),
-                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                      tab.audible === true && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                         "button",
                         {
                           type: "button",
@@ -18956,7 +19222,7 @@ ${titledTitle}`;
               })
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
             "div",
             {
               role: "status",
@@ -18965,8 +19231,8 @@ ${titledTitle}`;
               children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
             }
           ),
-          held ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+          held ? /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
               "div",
               {
                 ref: surfaceSlotRef,
@@ -18974,7 +19240,7 @@ ${titledTitle}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
               "div",
               {
                 ref: remote.ref,
@@ -18982,7 +19248,7 @@ ${titledTitle}`;
                 style: { position: "absolute", inset: 0 }
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
               ZoomIndicator,
               {
                 zoomFactor: live?.zoomFactor ?? null,
@@ -18992,8 +19258,8 @@ ${titledTitle}`;
               },
               held.tabId
             ),
-            rails.displayed && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            rails.displayed && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                 BrowserViewportToolbar,
                 {
                   host,
@@ -19005,7 +19271,7 @@ ${titledTitle}`;
                   zIndex: layers.deviceChrome
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                 ViewportDeviceFrame,
                 {
                   slot: contentSize,
@@ -19015,7 +19281,7 @@ ${titledTitle}`;
                   zIndex: layers.deviceChrome
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                 ViewportResizeRails,
                 {
                   layout: deviceViewportLayout(viewportSlot, rails.displayed, pageZoom),
@@ -19025,7 +19291,7 @@ ${titledTitle}`;
                 }
               )
             ] }),
-            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            surfaceNotice && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
               "p",
               {
                 role: "note",
@@ -19041,7 +19307,7 @@ ${titledTitle}`;
                 children: surfaceNotice
               }
             )
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
             "div",
             {
               style: {
@@ -19055,9 +19321,9 @@ ${titledTitle}`;
                 justifyItems: "start"
               },
               children: [
-                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(NoPreview, { ...landing.noPreview }),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RecentlyUsedHeading, {}),
-                showRecents && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                landing.noPreview && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(NoPreview, { ...landing.noPreview }),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(RecentlyUsedHeading, {}),
+                showRecents && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "ul",
                   {
                     "aria-label": "Recently used",
@@ -19066,9 +19332,9 @@ ${titledTitle}`;
                       const parsed = new URL(entry.url);
                       const path3 = parsed.pathname === "/" ? "" : parsed.pathname;
                       const label = `${parsed.host}${path3}${parsed.search}${parsed.hash}`;
-                      return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
-                        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("li", { style: { display: "flex", gap: 6, alignItems: "center" }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(BrowserFavicon, { url: entry.url, size: 14 }),
+                        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                           "button",
                           {
                             type: "button",
@@ -19084,7 +19350,7 @@ ${titledTitle}`;
                             children: entry.title ? `${entry.title} \u2014 ${label}` : label
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                           "button",
                           {
                             type: "button",
@@ -19098,9 +19364,9 @@ ${titledTitle}`;
                     })
                   }
                 ),
-                projectHistoryState.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: projectHistoryState.message }),
-                projectHistoryState.kind === "ready" && projectHistoryState.truncated && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: "Project history truncated \u2014 showing the most recent entries that fit." }),
-                /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                projectHistoryState.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: projectHistoryState.message }),
+                projectHistoryState.kind === "ready" && projectHistoryState.truncated && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("p", { role: "note", style: { margin: 0, fontSize: 11, color: muted6 }, children: "Project history truncated \u2014 showing the most recent entries that fit." }),
+                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   LocalServersSection,
                   {
                     servers: landing.serverList,
@@ -19111,12 +19377,12 @@ ${titledTitle}`;
                     }
                   }
                 ),
-                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                recentTargets(state2).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                   "ul",
                   {
                     "aria-label": "Requested targets",
                     style: { listStyle: "none", margin: 0, padding: 0, fontSize: 12 },
-                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+                    children: recentTargets(state2).map((target) => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
                       "button",
                       {
                         type: "button",
@@ -19175,7 +19441,7 @@ ${titledTitle}`;
         stateVersion: 1,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(BrowserView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(BrowserView, { host, session }) };
         }
       }
     ]

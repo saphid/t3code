@@ -22,6 +22,7 @@ import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import {
   CLIENT_EXTERNAL_V11_RANGE,
+  CLIENT_PANELS_V11_RANGE,
   CLIENT_NAVIGATION_V11_RANGE,
   CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
@@ -948,9 +949,9 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     providerId: "host.ui.panels",
     definition: UI_PANELS_API,
     availability: ambient(deps, CLIENT_PANELS),
-    invoke(method, input, context, signal, metadata): Promise<Json> {
-      if (method === "getCapabilities")
-        return capabilities(
+    async invoke(method, input, context, signal, metadata): Promise<Json> {
+      if (method === "getCapabilities") {
+        const reported = await capabilities(
           deps,
           "host.ui.panels",
           {
@@ -960,9 +961,56 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             listSurfaces: CLIENT_PANELS,
             hideDock: CLIENT_PANELS,
             showDock: CLIENT_PANELS,
+            getBrowserMiniPlayer: CLIENT_PANELS,
+            setBrowserMiniPlayer: CLIENT_PANELS,
           },
           metadata,
         );
+        const report = reported as { operations: Record<string, boolean> };
+        const reachable =
+          report.operations.getBrowserMiniPlayer && context.resource.threadId !== undefined;
+        report.operations.getBrowserMiniPlayer = false;
+        report.operations.setBrowserMiniPlayer = false;
+        if (reachable) {
+          try {
+            const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+              signal,
+            });
+            const supported = await clientSupports(
+              connectionId,
+              CLIENT_PANELS,
+              CLIENT_PANELS_V11_RANGE,
+              signal,
+            );
+            const clientCapabilities = supported.ok
+              ? await Effect.runPromise(
+                  invokeClient(deps, {
+                    apiId: CLIENT_PANELS,
+                    method: "getCapabilities",
+                    input: {},
+                    context,
+                    metadata,
+                    signal,
+                    connectionId,
+                  }),
+                  { signal },
+                )
+              : null;
+            const available =
+              supported.ok &&
+              clientCapabilities !== null &&
+              typeof clientCapabilities === "object" &&
+              !Array.isArray(clientCapabilities) &&
+              "browserMiniPlayer" in clientCapabilities &&
+              clientCapabilities.browserMiniPlayer === true;
+            report.operations.getBrowserMiniPlayer = available;
+            report.operations.setBrowserMiniPlayer = available;
+          } catch (error) {
+            if (signal.aborted) throw error;
+          }
+        }
+        return reported;
+      }
       const clientMethod = (
         {
           openSurface: "openSurface",
@@ -971,6 +1019,8 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
           listSurfaces: "listSurfaces",
           hideDock: "hideDock",
           showDock: "showDock",
+          getBrowserMiniPlayer: "getBrowserMiniPlayer",
+          setBrowserMiniPlayer: "setBrowserMiniPlayer",
         } as Record<string, string>
       )[method];
       if (!clientMethod)
@@ -993,6 +1043,12 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             "client-target-denied",
             "Panel operations require a thread-scoped context.",
           );
+        const connectionId =
+          method === "getBrowserMiniPlayer" || method === "setBrowserMiniPlayer"
+            ? await Effect.runPromise(resolveConnectionId(deps, metadata), { signal })
+            : undefined;
+        if (connectionId !== undefined)
+          await requireClient(connectionId, CLIENT_PANELS, CLIENT_PANELS_V11_RANGE, method, signal);
         return Effect.runPromise(
           invokeClient(deps, {
             apiId: CLIENT_PANELS,
@@ -1001,6 +1057,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             context,
             metadata,
             signal,
+            ...(connectionId !== undefined ? { connectionId } : {}),
           }),
           { signal },
         );

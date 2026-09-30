@@ -23,6 +23,11 @@ import { textEditsApi, textEditsApiV1, validateEditableRelativePath } from "./te
 import { workspaceResourcesApi, WORKSPACE_RESOURCES } from "./workspaceResources.js";
 import { agentSessionsApi } from "./agentSessions.js";
 import {
+  browserMiniPlayerInputProperties,
+  browserMiniPlayerStateSchema,
+  composerPreviewAnnotationResultSchema,
+} from "./browserPresentation.js";
+import {
   themeProviderStateSchema,
   terminalAppearanceSchema,
   commandDescriptorSchema,
@@ -7590,7 +7595,7 @@ export interface BrowserFramesHost {
  * `desktop-required`.
  * --------------------------------------------------------------------- */
 export const BROWSER_CAPTURE = "t3.browser/capture";
-export const BROWSER_CAPTURE_VERSION = "1.1.0";
+export const BROWSER_CAPTURE_VERSION = "1.2.0";
 /** Both grants are required to capture. */
 export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE] as const;
 /**
@@ -7684,8 +7689,16 @@ export interface BrowserCaptureRequest {
 }
 
 export type BrowserCaptureResult =
-  | { readonly ok: true; readonly artifact: BrowserCaptureArtifact }
-  | { readonly ok: false; readonly failure: BrowserCaptureFailure };
+  | {
+      readonly ok: true;
+      readonly artifact: BrowserCaptureArtifact;
+      readonly annotationRef?: string;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: BrowserCaptureFailure;
+      readonly annotationRef?: string;
+    };
 
 /** 1.1.0: which artifact actions this client supports. Static for the host's lifetime. */
 export interface BrowserCaptureArtifactActions {
@@ -7733,7 +7746,7 @@ export type BrowserCaptureArtifactActionResult =
     };
 
 /**
- * The host side of `t3.browser/capture@1.1.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/capture@1.2.0`. Present on `ClientHost` as
  * `browserCapture`; absence means the host predates the contract (treat as
  * `host-unavailable`). The 1.1.0 members are absent on a 1.0.0 host.
  */
@@ -7828,6 +7841,16 @@ export type ComposerImageInsertResult = {
   readonly inserted: boolean;
   readonly target: string;
 };
+export type ComposerPreviewAnnotationInsertInput = {
+  readonly threadId?: string;
+  readonly annotationRef: string;
+};
+export type ComposerPreviewAnnotationInsertResult = {
+  readonly inserted: boolean;
+  readonly imageInserted: boolean;
+  readonly screenshotFailed: boolean;
+  readonly target: string;
+};
 export type ComposerCapabilities = {
   readonly adapter: string;
   readonly transport: "server" | "client" | "unavailable";
@@ -7838,6 +7861,7 @@ export type ComposerCapabilities = {
     readonly insertMention: boolean;
     readonly insertTerminalContext: boolean;
     readonly insertImage: boolean;
+    readonly insertPreviewAnnotation?: boolean;
   };
 };
 export type MessagesFileAnnotation = {
@@ -7938,6 +7962,7 @@ const composerContextRefSchema = {
     excerpt: { type: "string", maxLength: 512 },
   },
 } as const;
+
 const composerTransportOutput = (operations: readonly string[]) =>
   ({
     type: "object",
@@ -8042,183 +8067,209 @@ export const composerContextApi = defineApi<{
     output: ComposerTerminalContextInsertResult;
   };
   insertImage: { input: ComposerImageInsertInput; output: ComposerImageInsertResult };
-}>({
-  id: COMPOSER_CONTEXT,
-  version: "1.2.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      // Capability discovery is grant-free so callers can tell "no capability"
-      // apart from "no grant" — authority gates the mutations, not the report.
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: composerTransportOutput([
-        "insertContext",
-        "getDraftState",
-        "insertMention",
-        "insertTerminalContext",
-        "insertImage",
-      ]),
-    },
-    {
-      name: "insertContext",
-      effect: "write",
-      requiredGrants: [COMPOSER_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["refs"],
-        properties: {
-          threadId: composerThreadIdInput,
-          refs: {
-            type: "array",
-            minItems: 1,
-            maxItems: 8,
-            items: composerContextRefSchema,
+  insertPreviewAnnotation: {
+    input: ComposerPreviewAnnotationInsertInput;
+    output: ComposerPreviewAnnotationInsertResult;
+  };
+}>(
+  {
+    id: COMPOSER_CONTEXT,
+    version: "1.3.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        // Capability discovery is grant-free so callers can tell "no capability"
+        // apart from "no grant" — authority gates the mutations, not the report.
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: composerTransportOutput([
+          "insertContext",
+          "getDraftState",
+          "insertMention",
+          "insertTerminalContext",
+          "insertImage",
+          "insertPreviewAnnotation",
+        ]),
+      },
+      {
+        name: "insertPreviewAnnotation",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationRef"],
+          properties: {
+            threadId: composerThreadIdInput,
+            annotationRef: { type: "string", minLength: 1, maxLength: 128 },
+          },
+        },
+        outputSchema: composerPreviewAnnotationResultSchema,
+      },
+      {
+        name: "insertContext",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["refs"],
+          properties: {
+            threadId: composerThreadIdInput,
+            refs: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: composerContextRefSchema,
+            },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "integer", minimum: 0, maximum: 8 },
+            target: { type: "string", minLength: 1, maxLength: 256 },
           },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["inserted", "target"],
-        properties: {
-          inserted: { type: "integer", minimum: 0, maximum: 8 },
-          target: { type: "string", minLength: 1, maxLength: 256 },
+      {
+        name: "getDraftState",
+        effect: "read",
+        // Draft state carries the user's unsent words — it sits under the same
+        // write authority as the mutations on this contract.
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput },
         },
-      },
-    },
-    {
-      name: "getDraftState",
-      effect: "read",
-      // Draft state carries the user's unsent words — it sits under the same
-      // write authority as the mutations on this contract.
-      requiredGrants: [COMPOSER_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { threadId: composerThreadIdInput },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["draft"],
-        properties: {
-          draft: {
-            type: ["object", "null"],
-            additionalProperties: false,
-            required: ["prompt", "promptTruncated", "contextCounts"],
-            properties: {
-              // 10,000 chars worst-case encodes to 60,000 UTF-8 bytes
-              // (6/char for C0 escapes) — the response always fits the
-              // broker's 64 KiB copyJson envelope. Longer drafts are cut
-              // on a char boundary and disclosed via promptTruncated.
-              prompt: { type: "string", maxLength: 10000 },
-              promptTruncated: { type: "boolean" },
-              contextCounts: {
-                type: "object",
-                additionalProperties: false,
-                required: [
-                  "files",
-                  "images",
-                  "terminalContexts",
-                  "elementContexts",
-                  "previewAnnotations",
-                  "reviewComments",
-                ],
-                properties: {
-                  files: { type: "integer", minimum: 0, maximum: 10000 },
-                  images: { type: "integer", minimum: 0, maximum: 10000 },
-                  terminalContexts: { type: "integer", minimum: 0, maximum: 10000 },
-                  elementContexts: { type: "integer", minimum: 0, maximum: 10000 },
-                  previewAnnotations: { type: "integer", minimum: 0, maximum: 10000 },
-                  reviewComments: { type: "integer", minimum: 0, maximum: 10000 },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["draft"],
+          properties: {
+            draft: {
+              type: ["object", "null"],
+              additionalProperties: false,
+              required: ["prompt", "promptTruncated", "contextCounts"],
+              properties: {
+                // 10,000 chars worst-case encodes to 60,000 UTF-8 bytes
+                // (6/char for C0 escapes) — the response always fits the
+                // broker's 64 KiB copyJson envelope. Longer drafts are cut
+                // on a char boundary and disclosed via promptTruncated.
+                prompt: { type: "string", maxLength: 10000 },
+                promptTruncated: { type: "boolean" },
+                contextCounts: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "files",
+                    "images",
+                    "terminalContexts",
+                    "elementContexts",
+                    "previewAnnotations",
+                    "reviewComments",
+                  ],
+                  properties: {
+                    files: { type: "integer", minimum: 0, maximum: 10000 },
+                    images: { type: "integer", minimum: 0, maximum: 10000 },
+                    terminalContexts: { type: "integer", minimum: 0, maximum: 10000 },
+                    elementContexts: { type: "integer", minimum: 0, maximum: 10000 },
+                    previewAnnotations: { type: "integer", minimum: 0, maximum: 10000 },
+                    reviewComments: { type: "integer", minimum: 0, maximum: 10000 },
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-    {
-      name: "insertMention",
-      effect: "write",
-      requiredGrants: [COMPOSER_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["paths"],
-        properties: {
-          threadId: composerThreadIdInput,
-          paths: {
-            type: "array",
-            minItems: 1,
-            maxItems: 8,
-            items: { type: "string", minLength: 1, maxLength: 512 },
+      {
+        name: "insertMention",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["paths"],
+          properties: {
+            threadId: composerThreadIdInput,
+            paths: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: { type: "string", minLength: 1, maxLength: 512 },
+            },
+          },
+        },
+        outputSchema: composerInsertResultOutput,
+      },
+      {
+        name: "insertTerminalContext",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
+          properties: {
+            threadId: composerThreadIdInput,
+            terminalId: composerTerminalIdInput,
+            terminalLabel: composerTerminalIdInput,
+            lineStart: composerLineInput,
+            lineEnd: composerLineInput,
+            text: composerTerminalTextInput,
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            reason: { enum: ["duplicate"] },
+            target: { type: "string", minLength: 1, maxLength: 256 },
           },
         },
       },
-      outputSchema: composerInsertResultOutput,
-    },
-    {
-      name: "insertTerminalContext",
-      effect: "write",
-      requiredGrants: [COMPOSER_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["terminalId", "terminalLabel", "lineStart", "lineEnd", "text"],
-        properties: {
-          threadId: composerThreadIdInput,
-          terminalId: composerTerminalIdInput,
-          terminalLabel: composerTerminalIdInput,
-          lineStart: composerLineInput,
-          lineEnd: composerLineInput,
-          text: composerTerminalTextInput,
-        },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["inserted", "target"],
-        properties: {
-          inserted: { type: "boolean" },
-          reason: { enum: ["duplicate"] },
-          target: { type: "string", minLength: 1, maxLength: 256 },
-        },
-      },
-    },
-    {
-      name: "insertImage",
-      effect: "write",
-      requiredGrants: [COMPOSER_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["artifactRef"],
-        properties: {
-          threadId: composerThreadIdInput,
-          artifactRef: {
-            type: "string",
-            maxLength: 128,
-            pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN,
+      {
+        name: "insertImage",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["artifactRef"],
+          properties: {
+            threadId: composerThreadIdInput,
+            artifactRef: {
+              type: "string",
+              maxLength: 128,
+              pattern: BROWSER_CAPTURE_ARTIFACT_REF_PATTERN,
+            },
+            name: { type: "string", minLength: 1, maxLength: 128 },
           },
-          name: { type: "string", minLength: 1, maxLength: 128 },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["inserted", "target"],
+          properties: {
+            inserted: { type: "boolean" },
+            target: { type: "string", minLength: 1, maxLength: 256 },
+          },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["inserted", "target"],
-        properties: {
-          inserted: { type: "boolean" },
-          target: { type: "string", minLength: 1, maxLength: 256 },
-        },
-      },
-    },
-  ],
-});
+    ],
+  },
+  {
+    baseline: "1.2.0",
+    additions: [{ version: "1.3.0", method: "insertPreviewAnnotation" }],
+  },
+);
 
 type MessagesEnrichmentMethods = {
   getCapabilities: { input: Record<string, never>; output: MessagesEnrichmentCapabilities };
@@ -9125,155 +9176,194 @@ export const uiPanelsApi = defineApi<{
   };
   hideDock: { input: { threadId: string }; output: { applied: boolean } };
   showDock: { input: { threadId: string }; output: { applied: boolean } };
-}>({
-  id: "t3.ui/panels",
-  version: "1.0.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput([
-        "openSurface",
-        "activateSurface",
-        "closeSurface",
-        "listSurfaces",
-        "hideDock",
-        "showDock",
-      ]),
-    },
-    {
-      name: "openSurface",
-      effect: "write",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId"],
-        properties: {
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          title: { type: "string", minLength: 1, maxLength: 200 },
-          placement: { enum: ["side-panel", "bottom-dock"] },
-          threadId: { type: "string", maxLength: 128 },
+  getBrowserMiniPlayer: { input: { threadId?: string }; output: { tabId: string | null } };
+  setBrowserMiniPlayer: {
+    input: { threadId?: string; tabId: string; serverEpoch: string; open: boolean };
+    output: { tabId: string | null };
+  };
+}>(
+  {
+    id: "t3.ui/panels",
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "openSurface",
+          "activateSurface",
+          "closeSurface",
+          "listSurfaces",
+          "hideDock",
+          "showDock",
+          "getBrowserMiniPlayer",
+          "setBrowserMiniPlayer",
+        ]),
+      },
+      {
+        name: "getBrowserMiniPlayer",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput },
+        },
+        outputSchema: browserMiniPlayerStateSchema,
+      },
+      {
+        name: "setBrowserMiniPlayer",
+        effect: "write",
+        requiredGrants: [UI_PANELS, BROWSER_SESSIONS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "open"],
+          properties: { threadId: composerThreadIdInput, ...browserMiniPlayerInputProperties },
+        },
+        outputSchema: browserMiniPlayerStateSchema,
+      },
+      {
+        name: "openSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            title: { type: "string", minLength: 1, maxLength: 200 },
+            placement: { enum: ["side-panel", "bottom-dock"] },
+            threadId: { type: "string", maxLength: 128 },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: { surfaceId: { type: "string", maxLength: 160 } },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId"],
-        properties: { surfaceId: { type: "string", maxLength: 160 } },
-      },
-    },
-    {
-      name: "activateSurface",
-      effect: "write",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId"],
-        properties: {
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          threadId: { type: "string", maxLength: 128 },
+      {
+        name: "activateSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: { applied: { type: "boolean" } },
-      },
-    },
-    {
-      name: "closeSurface",
-      effect: "write",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaceId"],
-        properties: {
-          surfaceId: { type: "string", minLength: 1, maxLength: 160 },
-          threadId: { type: "string", maxLength: 128 },
+      {
+        name: "closeSurface",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaceId"],
+          properties: {
+            surfaceId: { type: "string", minLength: 1, maxLength: 160 },
+            threadId: { type: "string", maxLength: 128 },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: { applied: { type: "boolean" } },
-      },
-    },
-    {
-      name: "listSurfaces",
-      effect: "read",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["threadId"],
-        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["surfaces"],
-        properties: {
-          surfaces: {
-            type: "array",
-            maxItems: 64,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["id", "title", "placement", "active"],
-              properties: {
-                id: { type: "string", maxLength: 160 },
-                title: { type: "string", maxLength: 200 },
-                placement: { enum: ["side-panel", "bottom-dock"] },
-                active: { type: "boolean" },
+      {
+        name: "listSurfaces",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["surfaces"],
+          properties: {
+            surfaces: {
+              type: "array",
+              maxItems: 64,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "title", "placement", "active"],
+                properties: {
+                  id: { type: "string", maxLength: 160 },
+                  title: { type: "string", maxLength: 200 },
+                  placement: { enum: ["side-panel", "bottom-dock"] },
+                  active: { type: "boolean" },
+                },
               },
             },
           },
         },
       },
-    },
-    {
-      name: "hideDock",
-      effect: "write",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["threadId"],
-        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+      {
+        name: "hideDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } },
+        },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: { applied: { type: "boolean" } },
+      {
+        name: "showDock",
+        effect: "write",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["threadId"],
+          properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: { applied: { type: "boolean" } },
+        },
       },
-    },
-    {
-      name: "showDock",
-      effect: "write",
-      requiredGrants: [UI_PANELS],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["threadId"],
-        properties: { threadId: { type: "string", minLength: 1, maxLength: 128 } },
-      },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: { applied: { type: "boolean" } },
-      },
-    },
-  ],
-});
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "getBrowserMiniPlayer" },
+      { version: "1.1.0", method: "setBrowserMiniPlayer" },
+    ],
+  },
+);
 
 /** The client preferences a pack can read — see `clientPreferencesSchema`. */
 export type UiPreferences = {

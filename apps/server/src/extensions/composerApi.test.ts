@@ -175,6 +175,7 @@ it.effect("reports the transport gap honestly through getCapabilities", () =>
         insertMention: false,
         insertTerminalContext: false,
         insertImage: false,
+        insertPreviewAnnotation: false,
       },
     });
     const messageCaps = (await call(
@@ -230,6 +231,7 @@ it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep fl
       insertMention: false,
       insertTerminalContext: false,
       insertImage: false,
+      insertPreviewAnnotation: false,
     });
     const newCaps = (yield* Effect.promise(() =>
       dispatch(composer, "getCapabilities", {}, "conn-new"),
@@ -242,6 +244,7 @@ it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep fl
       insertMention: true,
       insertTerminalContext: true,
       insertImage: false,
+      insertPreviewAnnotation: false,
     });
 
     // The unchanged 1.0.0 file annotation still succeeds end to end.
@@ -333,6 +336,84 @@ it.effect("gates 1.1.0 shapes on the targeted connection while 1.0.0 ops keep fl
 
 const ARTIFACT_REF = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
 
+it.effect("forwards a preview annotation handle only to the targeted 1.4.0 composer", () =>
+  Effect.gen(function* () {
+    const broker = yield* ClientApiProviders;
+    const oldStream = yield* broker.connect(
+      {
+        connectionId: "annotation-old",
+        sessionId: "session",
+        announcedOrigin: { surface: "desktop" },
+      },
+      { providers: [{ id: "t3.client/composer", version: "1.3.0" }] },
+    );
+    const oldFrames = frameIterator(oldStream);
+    expect((yield* nextFrame(oldFrames))?.type).toBe("registered");
+    const stream = yield* broker.connect(
+      {
+        connectionId: "annotation-new",
+        sessionId: "session",
+        announcedOrigin: { surface: "desktop" },
+      },
+      { providers: [{ id: "t3.client/composer", version: "1.4.0" }] },
+    );
+    const frames = frameIterator(stream);
+    yield* nextFrame(frames);
+    const provider = createComposerApiProviders(resolverDeps, {
+      environmentId: "env",
+      clientApiProviders: broker,
+    }).find((entry) => entry.providerId === "host.composer")!;
+    const oldCaps = (yield* Effect.promise(() =>
+      dispatch(provider, "getCapabilities", {}, "annotation-old"),
+    )) as ComposerCapabilities;
+    expect(oldCaps.operations.insertPreviewAnnotation).toBe(false);
+    yield* Effect.promise(() =>
+      expectNamedError(
+        dispatch(
+          provider,
+          "insertPreviewAnnotation",
+          { annotationRef: "pick-ref" },
+          "annotation-old",
+        ),
+        "composer.context.insertPreviewAnnotation",
+        /unsupported-version/,
+      ),
+    );
+    const newCaps = (yield* Effect.promise(() =>
+      dispatch(provider, "getCapabilities", {}, "annotation-new"),
+    )) as ComposerCapabilities;
+    expect(newCaps.operations.insertPreviewAnnotation).toBe(true);
+    const insertion = yield* Effect.promise(() =>
+      dispatch(
+        provider,
+        "insertPreviewAnnotation",
+        { annotationRef: "pick-ref" },
+        "annotation-new",
+      ),
+    ).pipe(Effect.forkChild);
+    const frame = yield* nextFrame(frames);
+    if (frame?.type !== "invoke") throw new Error("expected annotation dispatch");
+    expect(frame.method).toBe("insertPreviewAnnotation");
+    expect(frame.input).toEqual({
+      target: { kind: "self" },
+      threadId: "thread",
+      annotationRef: "pick-ref",
+    });
+    const result = {
+      inserted: true,
+      imageInserted: true,
+      screenshotFailed: false,
+      target: "env:thread",
+    };
+    yield* broker.respond("annotation-new", {
+      requestId: frame.requestId,
+      ok: true,
+      value: result,
+    });
+    expect(yield* Fiber.join(insertion)).toEqual(result);
+  }).pipe(Effect.provide(brokerLayer)),
+);
+
 it.effect("forwards insertImage as an artifactRef only to a 1.2.0 composer", () =>
   Effect.gen(function* () {
     const broker = yield* ClientApiProviders;
@@ -356,7 +437,7 @@ it.effect("forwards insertImage as an artifactRef only to a 1.2.0 composer", () 
     const caps = (yield* Effect.promise(() =>
       dispatch(composer, "getCapabilities", {}, "conn-12"),
     )) as ComposerCapabilities;
-    expect(caps.detail).toBeNull();
+    expect(caps.detail).toContain("1.2.0");
     expect(caps.operations.insertImage).toBe(true);
 
     // A 1.1.0 client would drop the op; it is refused before any dispatch.

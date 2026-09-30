@@ -97,8 +97,19 @@ The panel renders through public contracts only:
   pack still requires only notifications `^1.0.0`: it probes the host's
   version, and offers the actions only for a capture the desktop saved;
   otherwise the plain toast goes out.
-  Unlike the native pick, the picked elements' text context is not added to
-  the draft yet — the composer contract has no preview-annotation insert.
+  On a 1.2.0 capture host, an element pick also returns a client-local
+  `annotationRef`. `t3.composer/context` 1.3.0 `insertPreviewAnnotation`
+  consumes that reference through the same client connection and adds the
+  native annotation chip and optional crop together. Elements, regions,
+  drawings, styles and comments stay on the host; even a failed crop keeps
+  the annotation. Older hosts keep the crop-only path.
+- `t3.ui/panels` 1.1.0 `getBrowserMiniPlayer` and `setBrowserMiniPlayer`
+  drive the native floating preview through the client-provider seam.
+  The header's “Float preview over chat” action opens the native player and
+  hides the rail, just like native; dragging, resizing, closing and returning
+  to the panel use the existing player. The mutation requires both
+  `t3.ui/panels` and `t3.browser/sessions`. Older clients report unsupported
+  instead of displaying a pack-owned imitation.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a

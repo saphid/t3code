@@ -36,6 +36,7 @@ function fakeBridge(options?: {
   resolveFailure?: ClientProvidersError;
   targets?: readonly unknown[];
   sessionConnections?: Record<string, readonly string[]>;
+  miniPlayerSupported?: boolean;
 }) {
   const correlations = new Map<string, CorrelationEntry>();
   const invoked: RecordedInvoke[] = [];
@@ -64,7 +65,12 @@ function fakeBridge(options?: {
           agentId: (request.input as { agentId: string }).agentId,
           opener: "desktop-shell",
         });
-      if (request.method === "getCapabilities") return Effect.succeed({ openFileInBrowser: true });
+      if (request.method === "getCapabilities")
+        return Effect.succeed(
+          request.apiId === "t3.client/panels"
+            ? { browserMiniPlayer: options?.miniPlayerSupported ?? true }
+            : { openFileInBrowser: true },
+        );
       if (request.method === "openFile")
         return Effect.succeed({
           status: "opened",
@@ -190,6 +196,113 @@ function makeProviders(
     navigation: byId("host.ui.navigation"),
   };
 }
+
+describe("browser mini-player client adapter", () => {
+  it("reports the targeted client's engine and version rather than a capable sibling", async () => {
+    const bridge = fakeBridge({
+      targets: [
+        { connectionId: "conn-1", providers: [{ id: "t3.client/panels", version: "1.0.0" }] },
+        { connectionId: "sibling", providers: [{ id: "t3.client/panels", version: "1.1.0" }] },
+      ],
+    });
+    const { panels } = makeProviders(bridge);
+    const caps = (await panels.invoke("getCapabilities", {}, context, signal, metadata())) as {
+      operations: Record<string, boolean>;
+    };
+    expect(caps.operations.setBrowserMiniPlayer).toBe(false);
+    await expect(
+      panels.invoke(
+        "setBrowserMiniPlayer",
+        { tabId: "tab-a", serverEpoch: "epoch-a", open: true },
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(bridge.invoked).toHaveLength(0);
+    const web = makeProviders(fakeBridge({ miniPlayerSupported: false }));
+    const webCaps = (await web.panels.invoke(
+      "getCapabilities",
+      {},
+      context,
+      signal,
+      metadata(),
+    )) as { operations: Record<string, boolean> };
+    expect(webCaps.operations.getBrowserMiniPlayer).toBe(false);
+    expect(webCaps.operations.setBrowserMiniPlayer).toBe(false);
+  });
+
+  it("pins mini-player requests to the caller's client and thread", async () => {
+    const bridge = fakeBridge();
+    const { panels } = makeProviders(bridge);
+    await panels.invoke(
+      "setBrowserMiniPlayer",
+      { tabId: "tab-a", serverEpoch: "epoch-a", open: true },
+      context,
+      signal,
+      metadata(),
+    );
+    expect(bridge.invoked).toEqual([
+      {
+        connectionId: "conn-1",
+        apiId: "t3.client/panels",
+        method: "setBrowserMiniPlayer",
+        input: {
+          target: { kind: "connection", connectionId: "conn-1" },
+          threadId: "thread-a",
+          tabId: "tab-a",
+          serverEpoch: "epoch-a",
+          open: true,
+        },
+      },
+    ]);
+    await expect(
+      panels.invoke(
+        "setBrowserMiniPlayer",
+        { threadId: "other", tabId: "tab-a", serverEpoch: "epoch-a", open: true },
+        context,
+        signal,
+        metadata(),
+      ),
+    ).rejects.toMatchObject({ code: "client-target-denied" });
+  });
+
+  it("does not advertise mini-player access to provider sessions or an unavailable target", async () => {
+    const bridge = fakeBridge();
+    const { panels } = makeProviders(bridge);
+    const caps = (await panels.invoke(
+      "getCapabilities",
+      {},
+      context,
+      signal,
+      metadata("ext.a", {
+        kind: "provider-session",
+        id: "provider-1",
+        environmentId: ENV,
+        scopes: [],
+      }),
+    )) as { operations: Record<string, boolean> };
+    expect(caps.operations.getBrowserMiniPlayer).toBe(false);
+    expect(caps.operations.setBrowserMiniPlayer).toBe(false);
+    expect(bridge.invoked).toHaveLength(0);
+    const unavailable = makeProviders(
+      fakeBridge({
+        resolveFailure: new ClientProvidersError({
+          code: "client-provider-unavailable",
+          detail: "No target",
+        }),
+      }),
+    );
+    const unavailableCaps = (await unavailable.panels.invoke(
+      "getCapabilities",
+      {},
+      context,
+      signal,
+      metadata(),
+    )) as { operations: Record<string, boolean> };
+    expect(unavailableCaps.operations.setBrowserMiniPlayer).toBe(false);
+  });
+});
 
 describe("preferences adapter", () => {
   it("forwards writes as the broker-verified writer's patch", async () => {

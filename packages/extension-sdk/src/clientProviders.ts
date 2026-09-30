@@ -1,4 +1,9 @@
 import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
+import {
+  browserMiniPlayerInputProperties,
+  browserMiniPlayerStateSchema,
+  composerPreviewAnnotationResultSchema,
+} from "./browserPresentation.js";
 
 /**
  * Private `t3.client/*` client-provider area definitions.
@@ -436,8 +441,39 @@ const panelThreadInput = {
 
 export const CLIENT_PANELS_API = validateApiDefinition({
   id: "t3.client/panels",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["browserMiniPlayer"],
+        properties: { browserMiniPlayer: { type: "boolean" } },
+      },
+    },
+    {
+      name: "getBrowserMiniPlayer",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+      outputSchema: browserMiniPlayerStateSchema,
+    },
+    {
+      name: "setBrowserMiniPlayer",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget({ ...panelThreadInput, ...browserMiniPlayerInputProperties }, [
+        "threadId",
+        "tabId",
+        "serverEpoch",
+        "open",
+      ]),
+      outputSchema: browserMiniPlayerStateSchema,
+    },
     {
       name: "openSurface",
       effect: "write",
@@ -645,8 +681,21 @@ export const listAnnotationsIncludeSchema = {
 
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: "1.3.0",
+  version: "1.4.0",
   methods: [
+    {
+      name: "insertPreviewAnnotation",
+      effect: "write",
+      requiredGrants: [],
+      inputSchema: withTarget(
+        {
+          ...composerThreadIdInput,
+          annotationRef: { type: "string", minLength: 1, maxLength: 128 },
+        },
+        ["threadId", "annotationRef"],
+      ),
+      outputSchema: composerPreviewAnnotationResultSchema,
+    },
     {
       name: "insertContext",
       effect: "write",
@@ -1485,3 +1534,5 @@ export const CLIENT_COMPOSER_V12_RANGE = "^1.2.0";
 
 /** The composer range that answers `listAnnotations` `include: ["text"]`. */
 export const CLIENT_COMPOSER_V13_RANGE = "^1.3.0";
+export const CLIENT_COMPOSER_V14_RANGE = "^1.4.0";
+export const CLIENT_PANELS_V11_RANGE = "^1.1.0";
