@@ -7773,12 +7773,28 @@ export interface BrowserFramesHost {
  * `revealArtifact`. They act on the copy the desktop app saved beside the
  * built-in browser's own screenshots, so the plugin never sees a filesystem
  * path. `artifactActions` says which ones work here; web clients report
- * `desktop-required`.
+ * `desktop-required`. 1.2.0 preserves those grants and adds native start/stop
+ * recording with `t3.browser/recording`. Starting requires live user activation.
+ * Recording phase subscriptions are client-local; a stop saves the video locally
+ * without uploading it or exposing bytes or local paths. `recordingArtifactActions`
+ * requires `t3.browser/artifact-actions` for reveal and copy path, not copy image.
+ * Recording refs are host-local, not pending uploads or composer attachments.
  * --------------------------------------------------------------------- */
 export const BROWSER_CAPTURE = "t3.browser/capture";
-export const BROWSER_CAPTURE_VERSION = "1.1.0";
+export const BROWSER_CAPTURE_VERSION = "1.2.0";
+export const BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
+export const BROWSER_RECORDING = "t3.browser/recording";
+export const BROWSER_RECORDING_MIN_VERSION = "1.2.0";
+export const HOST_CAPABILITY_GRANT_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  [BROWSER_RECORDING]: "Record the browser panel as video",
+  [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths",
+};
 /** Both grants are required to capture. */
 export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE] as const;
+export const BROWSER_RECORDING_REQUIRED_GRANTS = [
+  ...BROWSER_CAPTURE_REQUIRED_GRANTS,
+  BROWSER_RECORDING,
+] as const;
 /**
  * An artifactRef is the pending attachment id the environment minted for the
  * upload. The store sweeps pending uploads after 24 hours, so insert a capture
@@ -7874,13 +7890,21 @@ export type BrowserCaptureResult =
   | { readonly ok: false; readonly failure: BrowserCaptureFailure };
 
 /** 1.1.0: which artifact actions this client supports. Static for the host's lifetime. */
+export type BrowserCaptureActionSupport =
+  | BrowserSurfacePresentationSupport
+  | {
+      readonly supported: false;
+      readonly reason: "grant-denied";
+      readonly grant: string;
+    };
+
 export interface BrowserCaptureArtifactActions {
   /** Put the image itself on the system clipboard. */
-  readonly copyImage: BrowserSurfacePresentationSupport;
+  readonly copyImage: BrowserCaptureActionSupport;
   /** Put the saved file's path on the system clipboard. */
-  readonly copyPath: BrowserSurfacePresentationSupport;
+  readonly copyPath: BrowserCaptureActionSupport;
   /** Show the saved file in the OS file manager. */
-  readonly reveal: BrowserSurfacePresentationSupport;
+  readonly reveal: BrowserCaptureActionSupport;
   /** The platform's name for reveal, e.g. "Reveal in Finder". */
   readonly revealLabel: string;
 }
@@ -7902,7 +7926,7 @@ export type BrowserCaptureArtifactActionFailureReason =
 export interface BrowserCaptureArtifactActionRequest {
   /** The calling view's own context. */
   readonly context: ViewContext;
-  /** A ref this installation's `capture` returned for a page target. */
+  /** A saved ref this installation's page capture or recording stop returned. */
   readonly artifactRef: string;
 }
 
@@ -7918,8 +7942,37 @@ export type BrowserCaptureArtifactActionResult =
       };
     };
 
+export interface BrowserRecordingRequest {
+  readonly context: ViewContext;
+  readonly session: BrowserSurfaceSessionRef;
+  readonly signal?: AbortSignal;
+}
+
+export type BrowserRecordingPhase = "idle" | "starting" | "recording" | "stopping";
+export interface BrowserRecordingArtifact {
+  readonly artifactRef: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly createdAt: string;
+  readonly saved: boolean;
+}
+export interface BrowserRecordingFailure {
+  readonly reason: BrowserCaptureFailureReason | "recording-failed" | "user-activation-required";
+  readonly detail: string;
+  readonly grant?: string;
+}
+export type BrowserRecordingStartResult =
+  | { readonly ok: true; readonly startedAt: string }
+  | { readonly ok: false; readonly failure: BrowserRecordingFailure };
+export type BrowserRecordingStopResult =
+  | { readonly ok: true; readonly artifact: BrowserRecordingArtifact | null }
+  | { readonly ok: false; readonly failure: BrowserRecordingFailure };
+export type BrowserRecordingState =
+  | { readonly ok: true; readonly phase: BrowserRecordingPhase }
+  | { readonly ok: false; readonly failure: BrowserRecordingFailure };
+
 /**
- * The host side of `t3.browser/capture@1.1.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/capture@1.2.0`. Present on `ClientHost` as
  * `browserCapture`; absence means the host predates the contract (treat as
  * `host-unavailable`). The 1.1.0 members are absent on a 1.0.0 host.
  */
@@ -7939,6 +7992,49 @@ export interface BrowserCaptureHost {
   revealArtifact?(
     request: BrowserCaptureArtifactActionRequest,
   ): Promise<BrowserCaptureArtifactActionResult>;
+  readonly recordingSupport?: BrowserCaptureActionSupport;
+  readonly recordingArtifactActions?: Pick<
+    BrowserCaptureArtifactActions,
+    "copyPath" | "reveal" | "revealLabel"
+  >;
+  startRecording?(request: BrowserRecordingRequest): Promise<BrowserRecordingStartResult>;
+  stopRecording?(request: BrowserRecordingRequest): Promise<BrowserRecordingStopResult>;
+  subscribeRecording?(
+    request: BrowserRecordingRequest,
+    listener: (state: BrowserRecordingState) => void,
+  ): () => void;
+}
+
+export function resolveBrowserRecording(
+  capture: BrowserCaptureHost | undefined,
+):
+  | (BrowserCaptureHost &
+      Required<
+        Pick<
+          BrowserCaptureHost,
+          "startRecording" | "stopRecording" | "subscribeRecording" | "recordingSupport"
+        >
+      >)
+  | null {
+  const version = capture && parseVersion(capture.version);
+  const minimum = parseVersion(BROWSER_RECORDING_MIN_VERSION);
+  return capture &&
+    version &&
+    minimum &&
+    version[0] === minimum[0] &&
+    compareVersions(version, minimum) >= 0 &&
+    capture.startRecording &&
+    capture.stopRecording &&
+    capture.subscribeRecording &&
+    capture.recordingSupport
+    ? (capture as BrowserCaptureHost &
+        Required<
+          Pick<
+            BrowserCaptureHost,
+            "startRecording" | "stopRecording" | "subscribeRecording" | "recordingSupport"
+          >
+        >)
+    : null;
 }
 
 /**
@@ -7947,7 +8043,12 @@ export interface BrowserCaptureHost {
  * so they can be granted at install time. A grant id here is not an
  * invocable API id.
  */
-export const HOST_CAPABILITY_GRANTS: readonly string[] = [BROWSER_SURFACE, BROWSER_CAPTURE];
+export const HOST_CAPABILITY_GRANTS: readonly string[] = [
+  BROWSER_SURFACE,
+  BROWSER_CAPTURE,
+  BROWSER_CAPTURE_ARTIFACT_ACTIONS,
+  BROWSER_RECORDING,
+];
 
 export const COMPOSER_CONTEXT = "t3.composer/context";
 export const COMPOSER_WRITE = "t3.composer/write";
