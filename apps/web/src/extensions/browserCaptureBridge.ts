@@ -33,6 +33,7 @@ import {
   type BrowserRecordingFailure,
   type BrowserRecordingStartResult,
   type BrowserRecordingStopResult,
+  type BrowserRecordingState,
   type BrowserCaptureActionSupport,
   type BrowserCaptureArtifact,
   type BrowserCaptureArtifactActionFailureReason,
@@ -53,6 +54,7 @@ import {
 } from "~/browser/browserCaptureArtifacts";
 import {
   BrowserRecordingConflictError,
+  acquireBrowserRecordingControl,
   findActiveBrowserRecordingRuntimeTabId,
   isBrowserRecordingStartCancelledError,
   readBrowserRecordingPhase,
@@ -549,9 +551,14 @@ export function createBrowserCaptureBridge(
           unsubscribe();
           recordingOwned.delete(runtimeTabId);
         };
-        const unsubscribe = deps.recording.subscribe(() => {
+        const releaseControl = acquireBrowserRecordingControl(runtimeTabId);
+        const unsubscribeRecording = deps.recording.subscribe(() => {
           if (deps.recording.phase(runtimeTabId) === "idle") releaseOwnership();
         });
+        const unsubscribe = () => {
+          unsubscribeRecording();
+          releaseControl();
+        };
         recordingOwned.set(runtimeTabId, unsubscribe);
         const cancel = () => {
           void deps.recording.stop(runtimeTabId).catch(() => {});
@@ -616,14 +623,26 @@ export function createBrowserCaptureBridge(
           listener(authorized);
           return () => {};
         }
+        let previous: BrowserRecordingState | undefined;
+        const emit = (state: BrowserRecordingState) => {
+          if (
+            previous &&
+            (state.ok
+              ? previous.ok && previous.phase === state.phase
+              : !previous.ok && previous.failure.reason === state.failure.reason)
+          )
+            return;
+          previous = state;
+          listener(state);
+        };
         const publish = () => {
           const current = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, false);
           if (!current.ok) {
-            listener(current);
+            emit(current);
             return;
           }
           const runtimeTabId = deps.recording.find(current.threadRef, request.session.tabId);
-          listener({
+          emit({
             ok: true,
             phase: runtimeTabId === null ? "idle" : deps.recording.phase(runtimeTabId),
           });

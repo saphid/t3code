@@ -16,6 +16,7 @@
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import type {
   AgentsEvent,
   OrchestrationCapabilities,
@@ -38,10 +39,9 @@ import type {
 
 /* ---------------- paths ---------------- */
 
-/** Strip the renderer prefix git applies (`a/` `b/`); mirrors native resolveFileDiffPath. */
+/** Unquote parser paths without stripping real directories; mirrors native fileDiffPath. */
 export function resolveDiffPath(raw: string): string {
-  if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
-  return raw;
+  return unquoteGitPatchPath(raw);
 }
 
 /* ---------------- binary detection ---------------- */
@@ -49,9 +49,9 @@ export function resolveDiffPath(raw: string): string {
 const DIFF_GIT_BOUNDARY = /^diff --git /gm;
 const BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
 const GIT_BINARY_MARKER = /^GIT binary patch$/m;
-const BINARY_B_PATH = /^Binary files .+ and b\/(.+) differ$/m;
-const HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" "b\/(.*)"$/;
-const HEADER_B_PATH = /^diff --git a\/.* b\/(.*)$/;
+const BINARY_B_PATH = /^Binary files .+ and ("b\/.*"|b\/.+) differ$/m;
+const HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" ("b\/.*")$/;
+const HEADER_B_PATH = /^diff --git a\/.* (b\/.*)$/;
 
 /**
  * Paths the delivered patch marks binary. Git emits either
@@ -70,12 +70,12 @@ export function binaryPathsFromPatch(diff: string): ReadonlySet<string> {
     const section = diff.slice(start, end);
     if (BINARY_FILES_MARKER.test(section)) {
       const path = BINARY_B_PATH.exec(section)?.[1];
-      if (path !== undefined) paths.add(path);
+      if (path !== undefined) paths.add(resolveDiffPath(path).slice(2));
     } else if (GIT_BINARY_MARKER.test(section)) {
       const header = section.split("\n", 1)[0] ?? "";
       const path =
         HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-      if (path !== null) paths.add(path);
+      if (path !== null) paths.add(resolveDiffPath(path).slice(2));
     }
   }
   return paths;

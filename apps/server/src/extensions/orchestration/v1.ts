@@ -15,6 +15,7 @@ import {
   ORCHESTRATION_STATUS_API,
   ORCHESTRATION_CONTROL_API,
   WORKFLOW_NAME_PATTERN,
+  splitWorkspaceResourceChunks,
   type AgentsState,
   type OrchestrationReceipt,
 } from "@t3tools/extension-sdk/catalogue";
@@ -37,7 +38,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointDiffQuery } from "../../checkpointing/CheckpointDiffQuery.ts";
 import { readWorkflowScript } from "../../orchestration/workflowScriptQuery.ts";
 import { makeExtensionScopeResolver } from "../scope.ts";
-import { boundedPrefix, streamDiffPreview } from "../vcsDiffApi.ts";
+import { streamDiffPreview } from "../vcsDiffApi.ts";
 
 const fail = (detail: string) =>
   new ExtensionOperationError({ operation: "orchestration", detail });
@@ -60,8 +61,6 @@ const turnDiffInput = Schema.decodeUnknownSync(
 const queueCap = 64;
 const queueBytesCap = 1024 * 1024;
 const frameBytesCap = 60 * 1024;
-/** The contract caps getWorkflowScript contents at 8 192 units. */
-const workflowScriptUnitsCap = 8_192;
 const nativeTypes = {
   "turn.start": "thread.turn.start",
   "turn.interrupt": "thread.turn.interrupt",
@@ -175,10 +174,9 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
   ) => {
     signal.throwIfAborted();
     const scope = operate ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope;
-    if (
-      metadata.principal?.environmentId !== deps.environmentId ||
-      !metadata.principal.scopes.includes(scope)
-    )
+    if (metadata.principal?.environmentId !== deps.environmentId)
+      throw fail("OrchestrationEnvironmentMismatch");
+    if (!metadata.principal.scopes.includes(scope))
       throw fail(`OrchestrationAuthorityDenied: ${scope}`);
     if (!context.resource.threadId) throw fail("OrchestrationThreadScopeRequired");
     await Effect.runPromise(resolve(context), { signal });
@@ -203,6 +201,9 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"].includes(
         probe.value.info.driverKind,
       );
+    const hasWorkflowScript = projectAgents(state).agents.some(
+      (agent) => agent.kind === "workflow" && agent.runHandles?.scriptPath !== undefined,
+    );
     return {
       streamEpoch: epoch,
       revision: state.snapshotSequence,
@@ -211,9 +212,7 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         subscribeAgents: true,
         getTurnDiff: true,
         getThreadDiff: true,
-        getWorkflowScript: projectAgents(state).agents.some(
-          (agent) => agent.kind === "workflow" && agent.runHandles?.scriptPath !== undefined,
-        ),
+        readWorkflowScript: hasWorkflowScript,
         "turn.start": known,
         "turn.interrupt": known,
         "session.stop": known,
@@ -231,6 +230,28 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       },
     };
   });
+
+  const loadWorkflowScript = async (
+    input: Parameters<HostApiProvider["invoke"]>[1],
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ) => {
+    await guard(context, signal, metadata);
+    const safe = workflowInput(input);
+    const state = await Effect.runPromise(snapshot(context.resource.threadId!), { signal });
+    const workflow = projectAgents(state).agents.find(
+      (agent) => agent.id === safe.workflowId && agent.kind === "workflow",
+    );
+    if (!workflow?.runHandles?.scriptPath)
+      throw fail("OrchestrationUnsupported: readWorkflowScript");
+    const script = await Effect.runPromise(
+      deps.readScript({ scriptPath: workflow.runHandles.scriptPath }),
+      { signal },
+    );
+    await guard(context, signal, metadata);
+    return script;
+  };
   const control: HostApiProvider = {
     providerId: "t3.host-orchestration-control",
     definition: ORCHESTRATION_CONTROL_API,
@@ -391,27 +412,37 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         empty(input);
         return json(await Effect.runPromise(capabilities(state), { signal }));
       }
-      if (method !== "getWorkflowScript") throw fail(`OrchestrationUnsupported: ${method}`);
-      const safe = workflowInput(input);
-      const workflow = projectAgents(state).agents.find(
-        (agent) => agent.id === safe.workflowId && agent.kind === "workflow",
-      );
-      if (!workflow?.runHandles?.scriptPath)
-        throw fail("OrchestrationUnsupported: getWorkflowScript");
-      const script = await Effect.runPromise(
-        deps.readScript({ scriptPath: workflow.runHandles.scriptPath }),
-        { signal },
-      );
-      await guard(context, signal, metadata);
-      const contents = boundedPrefix(script.contents, workflowScriptUnitsCap);
-      return {
-        contents,
-        truncated: script.truncated || contents.length < script.contents.length,
-      };
+      throw fail(`OrchestrationUnsupported: ${method}`);
     },
     subscribe(name, input, context, signal, metadata, cursor) {
       if (cursor !== undefined)
         throw fail("OrchestrationUnsupported: resumeCursor; resubscribe for a snapshot");
+      if (name === "readWorkflowScript")
+        return (async function* (): AsyncIterable<ApiStreamEvent> {
+          const script = await loadWorkflowScript(input, context, signal, metadata);
+          const chunks = splitWorkspaceResourceChunks(script.contents);
+          yield {
+            type: "snapshot",
+            value: {
+              kind: "manifest",
+              chunkCount: chunks.length,
+              truncated: script.truncated,
+            },
+          };
+          for (const [chunkIndex, data] of chunks.entries()) {
+            if (signal.aborted) return;
+            await metadata.assertAuthority?.();
+            yield { type: "data", value: { kind: "chunk", chunkIndex, data } };
+          }
+          await guard(context, signal, metadata);
+          yield {
+            type: "closed",
+            value: {
+              kind: "complete",
+              sha256: NodeCrypto.createHash("sha256").update(script.contents, "utf8").digest("hex"),
+            },
+          };
+        })();
       if (name === "getTurnDiff" || name === "getThreadDiff")
         return (async function* () {
           await guard(context, signal, metadata);

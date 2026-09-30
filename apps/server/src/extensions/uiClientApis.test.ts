@@ -1,5 +1,6 @@
 import { ClientProvidersError } from "@t3tools/contracts";
 import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
+import { uiEditorApi } from "@t3tools/extension-sdk/catalogue";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
@@ -7,6 +8,7 @@ import type {
   HostApiProvider,
 } from "@t3tools/extension-runtime";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { Ajv } from "ajv";
 import * as Effect from "effect/Effect";
 import type { ClientApiProviders, CorrelationEntry } from "./ClientApiProviders.ts";
 import { createUiClientApiProviders } from "./uiClientApis.ts";
@@ -69,7 +71,19 @@ function fakeBridge(options?: {
         return Effect.succeed(
           request.apiId === "t3.client/panels"
             ? { browserMiniPlayer: options?.miniPlayerSupported ?? true }
-            : { openFileInBrowser: true },
+            : request.apiId === "t3.client/editor"
+              ? {
+                  adapter: "host.ui.editor",
+                  operations: { openPath: true },
+                  clients: [],
+                  editor: {
+                    visible: true,
+                    editors: [{ id: "vscode", label: "VS Code" }],
+                    preferredEditor: "vscode",
+                    remoteHint: null,
+                  },
+                }
+              : { openFileInBrowser: true },
         );
       if (request.method === "openFile")
         return Effect.succeed({
@@ -489,6 +503,75 @@ describe("1.1.0 openLink", () => {
 });
 
 describe("editor adapter", () => {
+  it("strictly validates legacy and workspace editor inputs on both API seams", () => {
+    const ajv = new Ajv({ strict: true });
+    const publicInput = uiEditorApi.definition.methods!.find(
+      ({ name }) => name === "openPath",
+    )!.inputSchema;
+    const privateInput = CLIENT_PROVIDER_APIS.get("t3.client/editor")!.methods![0]!.inputSchema;
+    for (const [schema, target] of [
+      [publicInput, {}],
+      [privateInput, { target: { kind: "self" } }],
+    ] as const) {
+      const validate = ajv.compile(schema);
+      expect(validate({ ...target, path: "src/a.ts", cwd: "/repo" })).toBe(true);
+      expect(validate({ ...target, path: "src/a.ts", workspace: true })).toBe(true);
+      expect(validate({ ...target, path: "src/a.ts", cwd: "/ignored", workspace: true })).toBe(
+        false,
+      );
+      expect(validate({ ...target, path: "src/a.ts" })).toBe(false);
+      expect(validate({ ...target, path: "src/a.ts", workspace: false })).toBe(false);
+    }
+  });
+
+  it("requires a remote-aware client before forwarding a workspace open", async () => {
+    const input = { path: "src/app.ts", workspace: true };
+    const old = fakeBridge({
+      targets: [
+        { connectionId: "conn-1", providers: [{ id: "t3.client/editor", version: "1.0.0" }] },
+      ],
+    });
+    await expect(
+      makeProviders(old).editor.invoke("openPath", input, context, signal, metadata()),
+    ).rejects.toMatchObject({ code: "provider-rejected" });
+    expect(old.invoked).toHaveLength(0);
+    const current = fakeBridge();
+    await makeProviders(current).editor.invoke("openPath", input, context, signal, metadata());
+    expect(current.invoked[0]).toMatchObject({
+      apiId: "t3.client/editor",
+      method: "openPath",
+      input: { path: "src/app.ts", workspace: true },
+    });
+  });
+  it("hides workspace editor controls from old clients", async () => {
+    const old = fakeBridge({
+      targets: [
+        { connectionId: "conn-1", providers: [{ id: "t3.client/editor", version: "1.0.0" }] },
+      ],
+    });
+    await expect(
+      makeProviders(old).editor.invoke("getCapabilities", {}, context, signal, metadata()),
+    ).resolves.toMatchObject({ operations: { openPath: false } });
+    expect(old.invoked).toHaveLength(0);
+  });
+  it("gets picker visibility and editor choices from the caller's own client", async () => {
+    const current = fakeBridge();
+    await expect(
+      makeProviders(current).editor.invoke("getCapabilities", {}, context, signal, metadata()),
+    ).resolves.toMatchObject({
+      operations: { openPath: true },
+      editor: {
+        visible: true,
+        preferredEditor: "vscode",
+        editors: [{ id: "vscode", label: "VS Code" }],
+      },
+    });
+    expect(current.invoked[0]).toMatchObject({
+      connectionId: "conn-1",
+      apiId: "t3.client/editor",
+      method: "getCapabilities",
+    });
+  });
   it("forwards openPath to the caller's own client", async () => {
     const bridge = fakeBridge();
     const { editor } = makeProviders(bridge);

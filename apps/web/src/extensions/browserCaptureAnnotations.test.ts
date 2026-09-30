@@ -61,7 +61,7 @@ describe("client-local browser annotation references", () => {
     expect(read(handle.annotationRef)).toBeNull();
   });
 
-  it("expires abandoned references without a background timer and bounds retention", () => {
+  it("expires abandoned references and bounds retention", () => {
     vi.useFakeTimers();
     const expired = retain();
     vi.advanceTimersByTime(5 * 60_000);

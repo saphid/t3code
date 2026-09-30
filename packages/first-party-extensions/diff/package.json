@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",
-    "@t3tools/extension-sdk": "workspace:*"
+    "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

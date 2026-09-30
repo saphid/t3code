@@ -53,20 +53,6 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
       publish("idle");
       return artifact;
     }),
-    stopForUpload: vi.fn(
-      async (
-        _tabId: string,
-        upload: (saved: DesktopPreviewRecordingArtifact, blob: Blob) => Promise<string>,
-      ) => {
-        publish("stopping");
-        publish("idle");
-        const uploadedAttachmentId = await upload(
-          artifact,
-          new Blob([new Uint8Array(12)], { type: artifact.mimeType }),
-        );
-        return { ...artifact, uploadedAttachmentId };
-      },
-    ),
     find: vi.fn(() => (phase === "idle" ? null : runtimeTabId)),
     phase: vi.fn(() => phase),
     subscribe: vi.fn((callback: () => void) => {
@@ -76,7 +62,6 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
       };
     }),
   };
-  const uploadRecording = vi.fn(async () => artifactRef);
   const writeClipboardText = vi.fn(async () => {});
   const showSavedRecording = vi.fn();
   const lifetime = new AbortController();
@@ -86,7 +71,6 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
     serverEpoch: () => "epoch-1",
     presented: () => true,
     recording,
-    uploadRecording,
     writeClipboardText,
     platform: () => "MacIntel",
     userActivation: () => true,
@@ -103,7 +87,6 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
     host,
     bind,
     recording,
-    uploadRecording,
     preview,
     writeClipboardText,
     lifetime,
@@ -116,7 +99,6 @@ describe("browser recording capture", () => {
   it("saves and reveals a recording over 50 MiB without attempting a transfer", async () => {
     const fixture = harness();
     fixture.recording.stop.mockResolvedValue({ ...artifact, sizeBytes: 51 * 1024 * 1024 });
-    fixture.uploadRecording.mockRejectedValue(new Error("Transfer unavailable"));
     await fixture.host.startRecording!({ context, session });
     const result = await fixture.host.stopRecording!({ context, session });
     expect(result).toMatchObject({
@@ -128,8 +110,6 @@ describe("browser recording capture", () => {
       await fixture.host.revealArtifact!({ context, artifactRef: result.artifact.artifactRef }),
     ).toEqual({ ok: true });
     expect(fixture.preview.revealArtifact).toHaveBeenCalledWith(artifact.path);
-    expect(fixture.uploadRecording).not.toHaveBeenCalled();
-    expect(fixture.recording.stopForUpload).not.toHaveBeenCalled();
   });
 
   it("requires live user activation before starting native recording", async () => {
@@ -179,6 +159,36 @@ describe("browser recording capture", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it("does not republish unchanged recording state on unrelated shell or recorder updates", () => {
+    let authoritative = true;
+    let shellChanged = () => {};
+    const fixture = harness({
+      resolveThreadScope: () => ({ projectId: "project-a", authoritative }),
+      subscribeThread: (_threadRef, listener) => {
+        shellChanged = listener;
+        return () => {};
+      },
+    });
+    const listener = vi.fn();
+    const unsubscribe = fixture.host.subscribeRecording!({ context, session }, listener);
+    shellChanged();
+    fixture.publish("idle");
+    expect(listener).toHaveBeenCalledTimes(1);
+    fixture.publish("recording");
+    shellChanged();
+    fixture.publish("recording");
+    expect(listener).toHaveBeenCalledTimes(2);
+    authoritative = false;
+    shellChanged();
+    shellChanged();
+    expect(listener).toHaveBeenCalledTimes(3);
+    authoritative = true;
+    shellChanged();
+    expect(listener).toHaveBeenCalledTimes(4);
+    expect(listener).toHaveBeenLastCalledWith({ ok: true, phase: "recording" });
+    unsubscribe();
+  });
+
   it("both callers joining a native stop receive a saved and revealable recording", async () => {
     const fixture = harness();
     let finishStop!: (saved: DesktopPreviewRecordingArtifact) => void;
@@ -197,7 +207,6 @@ describe("browser recording capture", () => {
         await fixture.host.revealArtifact!({ context, artifactRef: result.artifact.artifactRef }),
       ).toEqual({ ok: true });
     }
-    expect(fixture.uploadRecording).not.toHaveBeenCalled();
   });
 
   it("starts the native scoped session, saves locally, and exposes only an artifact ref", async () => {
@@ -223,7 +232,6 @@ describe("browser recording capture", () => {
       },
     });
     expect(fixture.recording.stop).toHaveBeenCalledTimes(1);
-    expect(fixture.uploadRecording).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(artifact.path);
     expect(await fixture.host.revealArtifact!({ context, artifactRef })).toEqual({ ok: true });
     expect(await fixture.host.copyArtifactPath!({ context, artifactRef })).toEqual({ ok: true });
@@ -250,7 +258,6 @@ describe("browser recording capture", () => {
       failure: { reason: "grant-denied" },
     });
     expect(fixture.recording.start).not.toHaveBeenCalled();
-    expect(fixture.recording.stopForUpload).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -312,7 +319,6 @@ describe("browser recording capture", () => {
     await fixture.host.startRecording!({ context, session });
     fixture.lifetime.abort();
     expect(fixture.recording.stop).toHaveBeenCalledWith(runtimeTabId);
-    expect(fixture.uploadRecording).not.toHaveBeenCalled();
   });
 
   it("does not let another installation act on a saved recording", async () => {
@@ -334,16 +340,6 @@ describe("browser recording capture", () => {
     fixture.recording.start.mockRejectedValue(new Error(artifact.path));
     const result = await fixture.host.startRecording!({ context, session });
     expect(result).toMatchObject({ ok: false, failure: { reason: "recording-failed" } });
-    expect(JSON.stringify(result)).not.toContain(artifact.path);
-  });
-
-  it("does not let a failed transfer hide a saved local artifact", async () => {
-    const fixture = harness();
-    await fixture.host.startRecording!({ context, session });
-    fixture.uploadRecording.mockRejectedValue(new Error(artifact.path));
-    const result = await fixture.host.stopRecording!({ context, session });
-    expect(result).toMatchObject({ ok: true, artifact: { saved: true } });
-    expect(fixture.uploadRecording).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(artifact.path);
   });
 

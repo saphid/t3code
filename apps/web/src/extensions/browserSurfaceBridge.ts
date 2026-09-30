@@ -30,6 +30,7 @@ import {
 import { resourceKey, validateContext, type ViewContext } from "@t3tools/extension-sdk/contracts";
 
 import { isElectron } from "~/env";
+import { isHostedEngineClaimPending, useBrowserEngineHostStore } from "~/browser/browserEngineHost";
 import {
   acquireBrowserSurface,
   useBrowserSurfaceStore,
@@ -38,6 +39,7 @@ import {
   type BrowserExtensionTarget,
 } from "~/browser/browserSurfaceStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
   mountPreviewSessionSync,
   refreshPreviewSessionList,
@@ -65,6 +67,8 @@ export interface BrowserSurfaceBinding {
 /** Seams the tests substitute; production defaults hit the real stores. */
 export interface BrowserSurfaceBridgeDeps {
   readonly composites: () => boolean;
+  readonly readEngineClaimPending: (runtimeTabId?: string, serverEpoch?: string) => boolean;
+  readonly subscribeEngineClaims: (listener: () => void) => () => void;
   /** Frame coalescer — returns a cancel for the pending flush. */
   readonly schedule: (flush: () => void) => () => void;
   readonly mountSessionSync: (threadRef: ScopedThreadRef) => () => void;
@@ -135,6 +139,17 @@ export function createBrowserSurfaceBridge(
 ): (binding: BrowserSurfaceBinding) => BrowserSurfaceHost {
   const deps: BrowserSurfaceBridgeDeps = {
     composites: () => isElectron,
+    readEngineClaimPending: (runtimeTabId, serverEpoch) =>
+      appAtomRegistry.get(primaryEnvironmentIdAtom) === environmentId &&
+      isHostedEngineClaimPending(environmentId, runtimeTabId, serverEpoch),
+    subscribeEngineClaims: (listener) => {
+      const unsubscribeHost = useBrowserEngineHostStore.subscribe(listener);
+      const unsubscribePrimary = appAtomRegistry.subscribe(primaryEnvironmentIdAtom, listener);
+      return () => {
+        unsubscribeHost();
+        unsubscribePrimary();
+      };
+    },
     schedule: defaultSchedule,
     mountSessionSync: mountPreviewSessionSync,
     readSessions: readThreadPreviewState,
@@ -189,6 +204,9 @@ export function createBrowserSurfaceBridge(
       id: BROWSER_SURFACE,
       version: BROWSER_SURFACE_VERSION,
       presentation,
+      get engineClaimPending() {
+        return presentation.supported && deps.readEngineClaimPending();
+      },
       async acquire(request): Promise<BrowserSurfaceAcquireResult> {
         if (binding.lifetime.aborted)
           return deny("host-unavailable", "the installation's client lifetime has already ended.");
@@ -331,7 +349,11 @@ export function createBrowserSurfaceBridge(
         // the subscription arrives as an event.
         const baseline = deps.readSessions(threadRef);
 
-        let state: BrowserSurfaceLeaseState = { kind: "active", presentation };
+        let state: BrowserSurfaceLeaseState = {
+          kind: "active",
+          presentation,
+          engineClaimPending: composite && deps.readEngineClaimPending(runtimeTabId, serverEpoch),
+        };
         const listeners = new Set<(next: BrowserSurfaceLeaseState) => void>();
         let pending: {
           rect: BrowserSurfaceRect;
@@ -343,6 +365,7 @@ export function createBrowserSurfaceBridge(
         let cancelVerifyDeadline: (() => void) | null = null;
         let unsubscribeSessions: () => void = () => {};
         let unsubscribeStore: () => void = () => {};
+        let unsubscribeEngineClaims: () => void = () => {};
         let unsubscribeThread: () => void = () => {};
         let detachSignals: () => void = () => {};
         // Session-close honesty needs a baseline: a tab reported closed is one
@@ -375,6 +398,7 @@ export function createBrowserSurfaceBridge(
           }
           unsubscribeSessions();
           unsubscribeStore();
+          unsubscribeEngineClaims();
           unsubscribeThread();
           detachSignals();
           if (pluginOwners.get(runtimeTabId) === entry) pluginOwners.delete(runtimeTabId);
@@ -442,6 +466,19 @@ export function createBrowserSurfaceBridge(
           }, VERIFY_TIMEOUT_MS);
         }
         if (composite) {
+          unsubscribeEngineClaims = deps.subscribeEngineClaims(() => {
+            if (state.kind === "ended") return;
+            const engineClaimPending = deps.readEngineClaimPending(runtimeTabId, serverEpoch);
+            if (state.engineClaimPending === engineClaimPending) return;
+            state = { ...state, engineClaimPending };
+            for (const listener of listeners) {
+              try {
+                listener(state);
+              } catch {
+                /* A failing plugin listener must not break the transition. */
+              }
+            }
+          });
           unsubscribeStore = deps.subscribeStore((storeState) => {
             if (state.kind === "ended") return;
             if ((storeState.byTabId[runtimeTabId]?.owner ?? null) !== nativeOwner)

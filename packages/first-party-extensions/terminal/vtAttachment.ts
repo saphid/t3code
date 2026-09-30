@@ -664,7 +664,9 @@ export class TerminalVtAttachment {
       this.#emit({
         status: ended ? "exited" : running.status,
         statusText: ended
-          ? `Terminal is ${value.status}.`
+          ? value.status === "error"
+            ? "Terminal failed to start."
+            : `Terminal is ${value.status}.`
           : this.#sinkFailure !== null
             ? this.#sinkFailure
             : caughtUp

@@ -203,7 +203,7 @@ function render(View, nodeMock) {
 
 NodeTest.test("t3.browser/surface contract surface is named, versioned and grant-scoped", () => {
   NodeAssert.equal(BROWSER_SURFACE, "t3.browser/surface");
-  NodeAssert.equal(BROWSER_SURFACE_VERSION, "2.0.0");
+  NodeAssert.equal(BROWSER_SURFACE_VERSION, "2.1.0");
   NodeAssert.deepEqual(BROWSER_SURFACE_REQUIRED_GRANTS, [
     "t3.browser/sessions",
     "t3.browser/surface",

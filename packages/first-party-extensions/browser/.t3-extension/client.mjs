@@ -599,10 +599,11 @@ var __t3Client = (() => {
       }
     ]
   });
+  var WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
   function defineOrchestrationStatusApi(diffEventSchema) {
     return defineStreamApi({
       id: ORCHESTRATION_STATUS,
-      version: "1.0.0",
+      version: "1.1.0",
       methods: [
         {
           name: "getCapabilities",
@@ -614,16 +615,32 @@ var __t3Client = (() => {
             streamEpoch: id,
             revision: num
           })
-        },
-        {
-          name: "getWorkflowScript",
-          effect: "read",
-          requiredGrants: [ORCHESTRATION_READ],
-          inputSchema: obj({ workflowId: id }),
-          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool })
         }
       ],
       streams: [
+        {
+          name: "readWorkflowScript",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          eventSchema: {
+            oneOf: [
+              obj({
+                kind: { const: "manifest" },
+                chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
+                truncated: bool
+              }),
+              obj({
+                kind: { const: "chunk" },
+                chunkIndex: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS - 1 },
+                data: { type: "string", maxLength: 8192 }
+              }),
+              obj({
+                kind: { const: "complete" },
+                sha256: { type: "string", pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }
+              })
+            ]
+          }
+        },
         {
           name: "subscribeAgents",
           requiredGrants: [ORCHESTRATION_READ],
@@ -643,7 +660,7 @@ var __t3Client = (() => {
           eventSchema: diffEventSchema
         }
       ]
-    });
+    }, { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "readWorkflowScript" }] });
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
   var logSource = { enum: ["output"] };
@@ -2235,16 +2252,92 @@ var __t3Client = (() => {
     path: { type: "string", minLength: 1, maxLength: 4096 },
     cwd: { type: "string", minLength: 1, maxLength: 4096 }
   };
+  var uiEditorOpenReceiptV11Schema = {
+    oneOf: [
+      {
+        ...uiEditorOpenReceiptSchema.oneOf[0],
+        properties: {
+          ...uiEditorOpenReceiptSchema.oneOf[0].properties,
+          url: { type: "string", minLength: 1, maxLength: 16384 }
+        }
+      },
+      uiEditorOpenReceiptSchema.oneOf[1]
+    ]
+  };
+  var editorWorkspaceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      ...editorPathInput,
+      workspace: { const: true },
+      editor: { type: "string", minLength: 1, maxLength: 64 },
+      hintShown: { const: true }
+    },
+    oneOf: [
+      { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
+      { required: ["workspace"], properties: { workspace: { const: true } } }
+    ]
+  };
+  var editorOptionsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["visible", "editors", "preferredEditor", "remoteHint"],
+    properties: {
+      visible: { type: "boolean" },
+      editors: {
+        type: "array",
+        maxItems: 32,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "label"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            label: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      },
+      preferredEditor: { type: ["string", "null"], maxLength: 64 },
+      remoteHint: { type: ["string", "null"], maxLength: 1024 }
+    }
+  };
+  var editorCapabilitiesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string" },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openPath"],
+        properties: { openPath: { type: "boolean" } }
+      },
+      clients: { type: "array", maxItems: 0 },
+      editor: editorOptionsSchema
+    }
+  };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "openPath",
         effect: "write",
         requiredGrants: [],
-        inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
-        outputSchema: uiEditorOpenReceiptSchema
+        inputSchema: {
+          ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
+          oneOf: editorWorkspaceInputSchema.oneOf
+        },
+        outputSchema: uiEditorOpenReceiptV11Schema
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}, []),
+        outputSchema: editorCapabilitiesSchema
       }
     ]
   });
@@ -4950,12 +5043,53 @@ var __t3Client = (() => {
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1_1 = {
     ...prsDetailSchemaV1,
     properties: {
       ...prsDetailSchemaV1.properties,
       preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
       observedAt: prsObservedAtField
+    }
+  };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1_1,
+    properties: {
+      ...prsDetailSchemaV1_1.properties,
+      capabilities: {
+        ...prsCapabilitiesSchema,
+        properties: {
+          ...prsCapabilitiesSchema.properties,
+          viewedFiles: { enum: ["host", "environment"] }
+        }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5527,14 +5661,61 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
-      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
+  var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
   var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
@@ -6107,7 +6288,7 @@ var __t3Client = (() => {
       body: prsWriteBodySchema
     }
   };
-  var prsWriteApi = defineApi({
+  var prsWriteApiV1 = defineApi({
     id: PRS_WRITE,
     version: "1.0.0",
     methods: [
@@ -6319,6 +6500,60 @@ var __t3Client = (() => {
         outputSchema: prsEmptyOutputSchema
       }
     ]
+  });
+  var prsWriteApi = defineApi({
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsWriteCapabilitiesResultSchema,
+          properties: {
+            ...prsWriteCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsWriteOperationsSupportSchema,
+              properties: {
+                ...prsWriteOperationsSupportSchema.properties,
+                "prs.setFilesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
+                  viewed: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
@@ -8390,7 +8625,7 @@ var __t3Client = (() => {
   });
   var UI_EDITOR = "t3.ui/editor";
   var UI_EDITOR_OPEN = "t3.ui/editor.open";
-  var uiEditorApi = defineApi({
+  var uiEditorApiV1 = defineApi({
     id: UI_EDITOR,
     version: "1.0.0",
     methods: [
@@ -8416,6 +8651,36 @@ var __t3Client = (() => {
         },
         outputSchema: uiEditorOpenReceiptSchema
       }
+    ]
+  });
+  var uiEditorApi = defineApi({
+    ...uiEditorApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      {
+        ...uiEditorApiV1.definition.methods[0],
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema
+          }
+        }
+      },
+      {
+        ...uiEditorApiV1.definition.methods[1],
+        inputSchema: editorWorkspaceInputSchema,
+        outputSchema: uiEditorOpenReceiptV11Schema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openPath", input: "workspace" },
+      { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" }
     ]
   });
   var UI_NAVIGATION = "t3.ui/navigation";
@@ -8581,8 +8846,10 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1_1.definition,
     prsReadApiV1.definition,
     prsWriteApi.definition,
+    prsWriteApiV1.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
     messagesEnrichmentApiV1_1.definition,
@@ -8596,6 +8863,7 @@ var __t3Client = (() => {
     uiExternalApi.definition,
     uiExternalApiV1.definition,
     uiEditorApi.definition,
+    uiEditorApiV1.definition,
     uiNavigationApi.definition,
     uiNavigationApiV1_1.definition,
     uiNavigationApiV1.definition,
@@ -16606,8 +16874,10 @@ ${ind(d)}}`;
   }
 
   // pageControls.ts
-  function pageControlsBlock(session) {
+  function pageControlsBlock(session, engineClaimPending = false) {
     if (session === null) return "Waiting for the browser session to report its state.";
+    if (awaitingEngineClaim(session, engineClaimPending))
+      return "Waiting for the browser engine to attach.";
     const { engine } = session;
     switch (engine.state) {
       case "ready":
@@ -16624,9 +16894,12 @@ ${ind(d)}}`;
   function isRecoveryExhausted(session) {
     return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
   }
-  function engineStatusLabel(session) {
+  function awaitingEngineClaim(session, engineClaimPending) {
+    return engineClaimPending && session.engine.state === "unavailable" && session.engine.generation === null && session.engine.reason === "desktop-required";
+  }
+  function engineStatusLabel(session, engineClaimPending = false) {
     const { engine, navigation } = session;
-    const engineText = engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
+    const engineText = awaitingEngineClaim(session, engineClaimPending) ? "engine pending" : engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
     const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
     return `${engineText}, navigation ${navigation.kind}${failure}`;
   }
@@ -16693,8 +16966,8 @@ ${ind(d)}}`;
         return `${label}: the browser engine did not answer (unknown). The page state will catch up from the session.`;
     }
   }
-  async function runPageCommand(api, target, session, verb, signal) {
-    const block = pageControlsBlock(session);
+  async function runPageCommand(api, target, session, verb, signal, engineClaimPending = false) {
+    const block = pageControlsBlock(session, engineClaimPending);
     if (block !== null) return { kind: "blocked", message: block };
     if (verb.method === "zoom" && !isLadderFactor(verb.zoomFactor))
       return {
@@ -19144,6 +19417,8 @@ ${ind(d)}}`;
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
+    const leaseState = surfaceLease?.state;
+    const engineClaimPending = host.browserSurface?.presentation.supported === true && surfaceDenial === null && (leaseState === void 0 ? host.browserSurface.engineClaimPending === true : leaseState.kind === "active" && leaseState.presentation.supported && leaseState.engineClaimPending === true);
     const pendingZoom = (0, import_react10.useRef)(null);
     (0, import_react10.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
@@ -19152,32 +19427,37 @@ ${ind(d)}}`;
       const epoch = tabsEpoch.current;
       const target = tab ? epoch ? { tabId: tab.tabId, serverEpoch: epoch, engineGeneration: tab.engine.generation } : null : heldRef.current;
       if (!target) return;
+      const targetPage = tab ?? live;
+      const claimPending = (!tab || tab.tabId === held?.tabId) && engineClaimPending;
       if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
       const api = bindApi(browserSessionsApi, host, session.context);
-      void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
-        if (session.signal.aborted) return;
-        if (outcome.kind !== "accepted") {
-          if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-          setNotice(outcome.message);
-          return;
+      void runPageCommand(api, target, targetPage, verb, session.signal, claimPending).then(
+        (outcome) => {
+          if (session.signal.aborted) return;
+          if (outcome.kind !== "accepted") {
+            if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+            if (outcome.kind !== "blocked" || targetPage === null || !awaitingEngineClaim(targetPage, claimPending))
+              setNotice(outcome.message);
+            return;
+          }
+          setNotice(null);
+          const { receipt: receipt2 } = outcome;
+          const current = heldRef.current;
+          if (!current || receipt2.session.tabId !== current.tabId) return;
+          if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
+          heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
+          const next = { ...current, engineGeneration: receipt2.session.engine.generation };
+          heldRef.current = next;
+          setHeld(next);
+          setLive(receipt2.session);
         }
-        setNotice(null);
-        const { receipt: receipt2 } = outcome;
-        const current = heldRef.current;
-        if (!current || receipt2.session.tabId !== current.tabId) return;
-        if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
-        heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
-        const next = { ...current, engineGeneration: receipt2.session.engine.generation };
-        heldRef.current = next;
-        setHeld(next);
-        setLive(receipt2.session);
-      });
+      );
     };
     const zoomStep = (direction) => runPage({
       method: "zoom",
       zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction)
     });
-    const pageBlock = held ? pageControlsBlock(live) : null;
+    const pageBlock = held ? pageControlsBlock(live, engineClaimPending) : null;
     const command = (method) => {
       if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
       if (!held) return;
@@ -19187,7 +19467,7 @@ ${ind(d)}}`;
         return;
       }
       if (pageBlock !== null) {
-        setNotice(pageBlock);
+        if (live === null || !awaitingEngineClaim(live, engineClaimPending)) setNotice(pageBlock);
         return;
       }
       if (method === "back") commit2(goBack(state2));
@@ -19251,7 +19531,6 @@ ${titledTitle}`;
       recentCount: showRecents ? recents.length : 0,
       localServers
     });
-    const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
@@ -19486,7 +19765,7 @@ ${titledTitle}`;
                           type: "button",
                           "aria-label": tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`,
                           "aria-pressed": tab.audioMuted === true,
-                          disabled: pageControlsBlock(tab) !== null,
+                          disabled: pageControlsBlock(tab, tab.tabId === held?.tabId && engineClaimPending) !== null,
                           onClick: () => runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab),
                           style: { ...buttonStyle, border: "none", padding: "0 2px" },
                           children: tab.audioMuted ? "\u{1F507}" : "\u{1F50A}"
@@ -19505,7 +19784,7 @@ ${titledTitle}`;
               role: "status",
               "aria-label": "Browser status",
               style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
-              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live, engineClaimPending)}` : describeStatus(state2))
             }
           ),
           held ? /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [

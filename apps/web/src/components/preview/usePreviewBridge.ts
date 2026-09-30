@@ -176,9 +176,15 @@ export function usePreviewBridge(input: {
             engineGeneration: desired.generation,
           },
         });
-        // Another host owns the guest; reports would only be refused.
+        // A refused claim cannot imply progress or authorize page reports.
         if (AsyncResult.isFailure(result) && current.claimed === desired) {
           current.claimed = null;
+          useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, {
+            hostConnectionId: desired.hostConnectionId,
+            serverEpoch,
+          });
+        } else if (AsyncResult.isSuccess(result) && current.claimed === desired) {
+          useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, null);
         }
       });
     }

@@ -43,6 +43,39 @@ const unavailable = session(
     pictureInPicture: null,
   },
 );
+NodeTest.test(
+  "attach status keeps an unclaimed engine pending only while its owner is claiming",
+  () => {
+    const pending = {
+      ...unavailable,
+      navigation: { kind: "pending", url: unavailable.requestedUrl, title: "" },
+    };
+    NodeAssert.equal(engineStatusLabel(pending, true), "engine pending, navigation pending");
+    NodeAssert.equal(
+      engineStatusLabel(pending, false),
+      "engine unavailable (desktop-required), navigation pending",
+    );
+    NodeAssert.equal(
+      engineStatusLabel({ ...pending, engine: { ...pending.engine, generation: "wc-7" } }, true),
+      "engine unavailable (desktop-required), navigation pending",
+    );
+    NodeAssert.equal(
+      engineStatusLabel(
+        { ...pending, engine: { ...pending.engine, reason: "host-unavailable" } },
+        true,
+      ),
+      "engine unavailable (host-unavailable), navigation pending",
+    );
+    NodeAssert.equal(
+      engineStatusLabel({ ...pending, engine: { state: "starting", generation: "wc-7" } }, true),
+      "engine starting, navigation pending",
+    );
+    NodeAssert.equal(engineStatusLabel(ready, true), "engine ready, navigation loaded");
+    NodeAssert.notEqual(pageControlsBlock(pending), null);
+    NodeAssert.equal(pageControlsBlock(pending, true), "Waiting for the browser engine to attach.");
+  },
+);
+
 const recovering = session({ state: "recovering", generation: "wc-7" });
 const crashed = session(
   { state: "crashed", generation: "wc-7" },
@@ -91,6 +124,16 @@ function fakeApi(answer) {
 }
 
 const signal = new AbortController().signal;
+
+NodeTest.test("attach-time engine verbs stay local without desktop-required wording", async () => {
+  const api = fakeApi(receipt("accepted"));
+  const result = await runPageCommand(api, target, unavailable, { method: "reload" }, signal, true);
+  NodeAssert.deepEqual(result, {
+    kind: "blocked",
+    message: "Waiting for the browser engine to attach.",
+  });
+  NodeAssert.equal(api.calls.length, 0);
+});
 
 NodeTest.describe("engine gate", () => {
   NodeTest.it("allows a claimed guest, ready or still starting", () => {

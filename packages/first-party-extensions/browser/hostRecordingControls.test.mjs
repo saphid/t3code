@@ -25,7 +25,7 @@ const mocks = {
   "~/components/ui/tooltip":
     "import React from 'react'; export const Tooltip = ({children}) => children; export const TooltipPopup = () => null; export const TooltipTrigger = ({render,children}) => React.cloneElement(render,{},children);",
   "./browserRecording": `import {useSyncExternalStore} from 'react';
-    export const useActiveBrowserRecordingTabIds = () => useSyncExternalStore(globalThis.hostRecordingFixture.subscribe, () => globalThis.hostRecordingFixture.tabIds);
+    export const useBridgeBrowserRecordingTabIds = () => useSyncExternalStore(globalThis.hostRecordingFixture.subscribe, () => globalThis.hostRecordingFixture.tabIds);
     export const stopBrowserRecording = (tabId) => globalThis.hostRecordingFixture.stop(tabId);`,
   "./browserRecordingToast":
     "export const showBrowserRecordingSavedToast = artifact => globalThis.hostRecordingFixture.saved.push(artifact);",
@@ -77,7 +77,7 @@ NodeTest.before(async () => {
 });
 
 NodeTest.test(
-  "the host always shows native stop controls even with no rendered pack or session",
+  "the host shows bridge-owned stop controls even with no rendered pack or session",
   async () => {
     const listeners = new Set();
     const stops = [];

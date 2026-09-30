@@ -3,6 +3,7 @@ import type { DesktopPreviewRecordingArtifact, ScopedThreadRef } from "@t3tools/
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
+import { useSyncExternalStore } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
@@ -146,6 +147,32 @@ const activeBrowserRecordingTabIdsAtom = Atom.make<ActiveBrowserRecordingIndex>(
 
 export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
   return useAtomValue(activeBrowserRecordingTabIdsAtom).tabIds;
+}
+
+let bridgeRecordingTabIds: ReadonlySet<string> = new Set();
+const bridgeRecordingListeners = new Set<() => void>();
+const readBridgeRecordingTabIds = () => bridgeRecordingTabIds;
+const subscribeBridgeRecordingTabIds = (listener: () => void) => {
+  bridgeRecordingListeners.add(listener);
+  return () => {
+    bridgeRecordingListeners.delete(listener);
+  };
+};
+
+export function useBridgeBrowserRecordingTabIds(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeBridgeRecordingTabIds, readBridgeRecordingTabIds);
+}
+
+export function acquireBrowserRecordingControl(tabId: string): () => void {
+  bridgeRecordingTabIds = new Set([...bridgeRecordingTabIds, tabId]);
+  for (const listener of bridgeRecordingListeners) listener();
+  return () => {
+    if (!bridgeRecordingTabIds.has(tabId)) return;
+    const remaining = new Set(bridgeRecordingTabIds);
+    remaining.delete(tabId);
+    bridgeRecordingTabIds = remaining;
+    for (const listener of bridgeRecordingListeners) listener();
+  };
 }
 
 export function readBrowserRecordingPhase(

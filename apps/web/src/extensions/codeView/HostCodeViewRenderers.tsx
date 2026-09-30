@@ -1,15 +1,30 @@
-import type { CodeViewItem, FileDiffContentsLoader } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { CodeViewDiffProps, CodeViewFileProps } from "@t3tools/extension-sdk/environment";
+import type {
+  CodeViewItem,
+  FileDiffContentsLoader,
+  FileContents,
+  SelectedLineRange,
+} from "@pierre/diffs";
+import { useStableCallback, type CodeViewHandle } from "@pierre/diffs/react";
+import type {
+  CodeViewDiffProps,
+  CodeViewFileProps,
+  CodeViewEditorProps,
+} from "@t3tools/extension-sdk/environment";
+import { Editor } from "@pierre/diffs/editor";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { StyledDiffCodeView } from "~/components/diffs/StyledDiffCodeView";
 import { useCodeViewFileReveal } from "~/components/diffs/useCodeViewFileReveal";
 import ReadOnlySourcePreview from "~/components/files/ReadOnlySourcePreview";
+import { EditableSourcePreview } from "~/components/files/EditableSourcePreview";
+import { projectFileEditorCacheKey } from "~/components/files/fileContentRevision";
+import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
+import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrome";
 import { useFileLineReveal } from "~/components/files/useFileLineReveal";
 import { Button } from "~/components/ui/button";
 import { useTheme } from "~/hooks/useTheme";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   buildContentCacheKey,
   buildPatchCacheKey,
@@ -191,6 +206,134 @@ export function HostCodeFile(props: CodeViewFileProps) {
         cacheKey={cacheKey}
         onPostRender={onPostRender}
         {...(props.wordWrap === undefined ? {} : { wordWrap: props.wordWrap })}
+      />
+    </div>
+  );
+}
+
+export function HostCodeEditor(props: CodeViewEditorProps) {
+  const { resolvedTheme } = useTheme();
+  return <EditableDocument key={`${props.documentId}:${props.path}:${resolvedTheme}`} {...props} />;
+}
+
+function EditableDocument(props: CodeViewEditorProps) {
+  const { resolvedTheme } = useTheme();
+  const preferredWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const wordWrap = props.wordWrap ?? preferredWordWrap;
+  const [selectedLines, setSelectedLines] = useState<SelectedLineRange | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const lastSelection =
+    useRef<Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]>(null);
+  const reportSelection = useStableCallback(
+    (range: Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]) => {
+      if (
+        lastSelection.current?.startLine === range?.startLine &&
+        lastSelection.current?.endLine === range?.endLine
+      )
+        return;
+      lastSelection.current = range;
+      props.onSelectionChange?.(range);
+    },
+  );
+  const onChange = useStableCallback((file: FileContents) => {
+    setSelectedLines(null);
+    reportSelection(null);
+    props.onChange(file.contents);
+  });
+  const editor = useMemo(
+    () =>
+      new Editor({
+        persistState: true,
+        persistStateStorage: "inMemory",
+        onChange,
+      }),
+    [onChange],
+  );
+  useEffect(() => () => editor.cleanUp(), [editor]);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return;
+    return installFileEditorDismissal({
+      root,
+      editor,
+      isBlocked: () => false,
+      onDismiss: (reason) => {
+        setSelectedLines(null);
+        if (reason === "escape") reportSelection(null);
+      },
+    });
+  }, [editor, reportSelection]);
+  const onPostRender = useFileLineReveal(
+    props.path,
+    props.reveal?.line ?? null,
+    props.reveal?.requestId ?? 0,
+  );
+  const reportTextSelection = () => {
+    const selection = editor.getState().selections?.[0];
+    if (selection === undefined) return;
+    const forward =
+      selection.start.line < selection.end.line ||
+      (selection.start.line === selection.end.line &&
+        selection.start.character <= selection.end.character);
+    const start = forward ? selection.start : selection.end;
+    const end = forward ? selection.end : selection.start;
+    const startLine = start.line + 1;
+    const endLine = end.line > start.line && end.character === 0 ? end.line : end.line + 1;
+    const empty =
+      selection.start.line === selection.end.line &&
+      selection.start.character === selection.end.character;
+    if (empty && selectedLines !== null) return;
+    reportSelection(empty ? null : { startLine, endLine });
+  };
+  const reportLineSelection = (range: SelectedLineRange | null) => {
+    setSelectedLines(range);
+    reportSelection(
+      range === null
+        ? null
+        : {
+            startLine: Math.min(range.start, range.end),
+            endLine: Math.max(range.start, range.end),
+          },
+    );
+  };
+  return (
+    <div
+      ref={rootRef}
+      role="group"
+      aria-label="File editor"
+      className={cn("flex min-h-0 flex-1", props.className)}
+      onPointerUp={reportTextSelection}
+      onKeyUp={reportTextSelection}
+    >
+      <EditableSourcePreview
+        editor={editor}
+        fileProps={{
+          selectedLines,
+          file: {
+            name: props.path,
+            contents: props.contents,
+            cacheKey: projectFileEditorCacheKey(
+              props.documentId,
+              "",
+              props.path,
+              props.contents,
+              editor.getFile(),
+            ),
+          },
+          options: {
+            disableFileHeader: true,
+            enableLineSelection: true,
+            enableGutterUtility: true,
+            onLineSelectionChange: reportLineSelection,
+            onGutterUtilityClick: reportLineSelection,
+            overflow: wordWrap ? "wrap" : "scroll",
+            theme: resolveDiffThemeName(resolvedTheme),
+            preferredHighlighter: PREFERRED_HIGHLIGHTER,
+            themeType: resolvedTheme,
+            unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+            onPostRender,
+          },
+        }}
       />
     </div>
   );
