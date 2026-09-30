@@ -129,6 +129,22 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
 }
 
 describe("browser capture bridge", () => {
+  it("refuses annotation without composer access before opening the picker", async () => {
+    const h = harness();
+    const result = await h
+      .host({}, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result).toMatchObject({ ok: false, failure: { reason: "grant-denied" } });
+    expect(h.preview.pickElement).not.toHaveBeenCalled();
+  });
+  it("does not retain an annotation handle for ordinary element screenshots", async () => {
+    const h = harness();
+    const result = await h.host({}, "ext.a").capture({ context, session, target: "element" });
+    expect(result.ok).toBe(true);
+    expect(result.annotationRef).toBeUndefined();
+    expect(h.uploads).toHaveLength(1);
+    h.lifetime.abort();
+  });
   it("retains annotation crops locally without waiting for an unused upload", async () => {
     const fixture = harness();
     const host = fixture.host(
@@ -148,8 +164,10 @@ describe("browser capture bridge", () => {
       ...pick({ screenshot: null, regions }),
       screenshotFailed: true,
     });
-    const result = await h.host({}, "ext.a").capture({ context, session, target: "element" });
-    expect(result.ok).toBe(false);
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
     expect(result.annotationRef).toMatch(/^preview-annotation-/);
     const retained = readBrowserCaptureAnnotation(
       "env-a",
@@ -168,9 +186,11 @@ describe("browser capture bridge", () => {
     ).toBeNull();
   });
 
-  it("retains the crop locally and associates its pending upload with the annotation reference", async () => {
+  it("retains the crop locally without an uploaded artifact", async () => {
     const h = harness();
-    const result = await h.host({}, "ext.a").capture({ context, session, target: "element" });
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
     expect(result.ok).toBe(true);
     const retained = readBrowserCaptureAnnotation(
       "env-a",
@@ -179,15 +199,18 @@ describe("browser capture bridge", () => {
       result.annotationRef!,
     );
     expect(retained?.file?.size).toBe(PNG.byteLength);
-    expect(retained?.artifactRef).toBe(ARTIFACT_REF);
+    expect(retained?.artifactRef).toBeNull();
+    expect(h.uploads).toHaveLength(0);
     expect(retained?.screenshotFailed).toBe(false);
     h.lifetime.abort();
   });
   it("drops a leftover crop when the native picker reports screenshot failure", async () => {
     const h = harness();
     h.preview.pickElement.mockResolvedValue({ ...pick(), screenshotFailed: true });
-    const result = await h.host({}, "ext.a").capture({ context, session, target: "element" });
-    expect(result.ok).toBe(false);
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
     const retained = readBrowserCaptureAnnotation(
       "env-a",
       "thread-a",

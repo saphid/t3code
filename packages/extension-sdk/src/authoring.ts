@@ -609,9 +609,9 @@ function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
  * release cycle for a plugin-rendered slot element. Geometry is observed with
  * ResizeObserver + window resize + capture-phase scroll, clipped to the slot's
  * visible region, and forwarded through the lease's frame-coalesced
- * `present`. There is no automatic re-acquire — a `superseded` end is
- * terminal for the lease; the caller must remount the slot element or change
- * the session identity (clear it and open a fresh session) to acquire again.
+ * `present`. When a superseded slot becomes visible again, it automatically
+ * re-acquires the same session so returning from the floating player preserves
+ * the browser tab.
  * Acquisition may wait for the host's bounded session synchronization. A
  * denied acquisition or a lease that ends `session-unverified` can be tried
  * again by remount or identity change once the host recovers.

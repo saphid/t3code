@@ -106,9 +106,11 @@ export function shouldRenderPreviewMiniPlayer(
       | Pick<BrowserSurfacePresentation, "owner" | "extensionResourceKey">
       | undefined;
   },
+  browserPreviewSupported = true,
 ): boolean {
   if (source === null) return false;
   if (source.kind === "browser") {
+    if (!browserPreviewSupported) return false;
     if (
       renderedRightPanelSurface?.kind === "extension" &&
       extensionPresentation?.extensionPanelOpen &&

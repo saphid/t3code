@@ -130,7 +130,7 @@ export function MiniPlayerButton(props: {
               },
             )
             .finally(() => {
-              if (!signal.aborted) setPendingIdentity(null);
+              setPendingIdentity((current) => (current === identity ? null : current));
             });
         }}
       >

@@ -8,7 +8,6 @@ import {
   bindApi,
   defineApi,
   defineStreamApi,
-  type ApiAddition,
   type ApiClient,
   type ApiDefinition,
   type ApiMethod,
@@ -7796,11 +7795,6 @@ export interface BrowserFramesHost {
 export const BROWSER_CAPTURE = "t3.browser/capture";
 export const BROWSER_CAPTURE_VERSION = "1.3.0";
 export const BROWSER_ANNOTATION_MIN_VERSION = "1.3.0";
-/** Host-local capture additions; annotation callers gate on the same minimum. */
-export const BROWSER_CAPTURE_ADDITIONS = [
-  { version: BROWSER_ANNOTATION_MIN_VERSION, method: "capture", input: "annotation" },
-  { version: BROWSER_ANNOTATION_MIN_VERSION, method: "capture", output: "annotationRef" },
-] as const satisfies readonly ApiAddition[];
 export const BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
 export const BROWSER_RECORDING = "t3.browser/recording";
 export const BROWSER_RECORDING_MIN_VERSION = "1.2.0";

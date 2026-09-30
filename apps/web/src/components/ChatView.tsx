@@ -1573,6 +1573,7 @@ export default function ChatView(props: ChatViewProps) {
       browserSurface: miniPlayerBrowserSurface,
       requestedTabId: miniPlayerBrowserSurface.requestedTabId,
     },
+    isPreviewSupportedInRuntime(),
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =

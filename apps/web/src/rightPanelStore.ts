@@ -30,6 +30,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
+import { isPreviewSupportedInRuntime } from "./previewStateStore";
 import { useBrowserSurfaceStore } from "./browser/browserSurfaceStore";
 import {
   browserMiniPlayerSource,
@@ -51,7 +52,7 @@ const RIGHT_PANEL_KINDS = [
 ] as const;
 
 function floatExtensionBrowserPanel(ref: ScopedThreadRef, panel: ThreadRightPanelState) {
-  if (!panel.isOpen) return;
+  if (!isPreviewSupportedInRuntime() || !panel.isOpen) return;
   const surface = panel.surfaces.find((item) => item.id === panel.activeSurfaceId);
   if (surface?.kind !== "extension") return;
   const target =

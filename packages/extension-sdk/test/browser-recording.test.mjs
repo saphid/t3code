@@ -3,18 +3,10 @@ import * as NodeTest from "node:test";
 import * as catalogue from "../dist/catalogue.js";
 
 NodeTest.test("host-local capture does not advertise a phantom brokered recording stream", () => {
-  NodeAssert.equal(
-    catalogue.BROWSER_CAPTURE_ADDITIONS?.some((addition) => addition.stream === "recording") ??
-      false,
-    false,
-  );
+  NodeAssert.equal(catalogue.BROWSER_CAPTURE_ADDITIONS, undefined);
 });
 
-NodeTest.test("annotation capture input and output are registered at the version gate", () => {
-  NodeAssert.deepEqual(catalogue.BROWSER_CAPTURE_ADDITIONS, [
-    { version: "1.3.0", method: "capture", input: "annotation" },
-    { version: "1.3.0", method: "capture", output: "annotationRef" },
-  ]);
+NodeTest.test("annotation capture uses an independent minimum version", () => {
   NodeAssert.equal(catalogue.BROWSER_ANNOTATION_MIN_VERSION, "1.3.0");
 });
 

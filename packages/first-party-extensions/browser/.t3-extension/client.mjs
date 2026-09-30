@@ -17346,7 +17346,7 @@ ${ind(d)}}`;
               if (!signal.aborted) report("Floating preview unavailable. Try again.");
             }
           ).finally(() => {
-            if (!signal.aborted) setPendingIdentity(null);
+            setPendingIdentity((current) => current === identity2 ? null : current);
           });
         },
         children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(

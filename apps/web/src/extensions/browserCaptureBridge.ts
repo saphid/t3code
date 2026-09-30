@@ -673,6 +673,16 @@ export function createBrowserCaptureBridge(
         const { threadRef, runtimeTabId, projectId, preview } = authorized;
         if (request.target !== "page" && request.target !== "element")
           return fail("session-invalid", 'target must be "page" or "element".');
+        if (
+          request.target === "element" &&
+          request.annotation &&
+          !binding.grants.capabilities.includes("t3.composer/write")
+        )
+          return fail(
+            "grant-denied",
+            "Adding annotations requires composer access.",
+            "t3.composer/write",
+          );
         if (inFlight.has(runtimeTabId))
           return fail("busy", "Another capture of this session is still running.");
 
@@ -737,13 +747,7 @@ export function createBrowserCaptureBridge(
             if (!picked || request.signal?.aborted || binding.lifetime.aborted)
               return fail("cancelled", "The element pick was dismissed.");
             const { annotation } = picked;
-            if (request.annotation && !binding.grants.capabilities.includes("t3.composer/write"))
-              return fail(
-                "grant-denied",
-                "Adding annotations requires composer access.",
-                "t3.composer/write",
-              );
-            if (binding.installationId) {
+            if (request.annotation && binding.installationId) {
               const capture = capturePreviewAnnotationScreenshot(annotation);
               const file =
                 !picked.screenshotFailed &&

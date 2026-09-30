@@ -271,7 +271,7 @@ export function createBrowserSurfaceBridge(
             "session identity must come from t3.browser/sessions (tabId + serverEpoch).",
           );
         if (request.signal?.aborted)
-          return deny("scope-invalid", "the calling view’s lifetime has already ended.");
+          return deny("scope-invalid", "the calling view's lifetime has already ended.");
         const key = resourceKey(context.resource);
         const requestedRuntimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
         const target = {

@@ -263,3 +263,26 @@ NodeTest.test(
     await view.close();
   },
 );
+
+NodeTest.test(
+  "an aborted toggle clears pending state when its tab becomes active again",
+  async () => {
+    let complete;
+    const fixture = hostFixture({
+      toggle: () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    });
+    const view = await mount(fixture.host);
+    await view.click();
+    NodeAssert.equal(view.button().props.disabled, true);
+    await view.update({ held: { ...held, tabId: "tab-b" } });
+    await act(async () => {
+      complete({ tabId: held.tabId });
+    });
+    await view.update({ held });
+    NodeAssert.equal(view.button().props.disabled, false);
+    await view.close();
+  },
+);

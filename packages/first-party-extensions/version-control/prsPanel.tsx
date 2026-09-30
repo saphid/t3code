@@ -59,6 +59,8 @@ import {
 } from "react";
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
+import { PrsMetadataPicker } from "./prsMetadataPickers.js";
+import { border, muted } from "./prsPresentation.js";
 import { usePrsFilesViewed } from "./usePrsFilesViewed.js";
 import {
   PRS_INVOLVEMENTS,
@@ -141,8 +143,6 @@ import {
 // Theme-backed values chain a `--t3-version-control-*` hop (published on the
 // view root from `t3.ui/theme` tokens) ahead of the legacy host vars; an
 // unserved hop never resolves and the legacy chain renders.
-const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
-const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
 const hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
 
 const control = {
@@ -3379,10 +3379,37 @@ export function PullRequestsPanel(props: {
                         metaRow("Merged", formatRelativeTime(detail.mergedAt))}
                       {detail.closedAt !== null &&
                         metaRow("Closed", formatRelativeTime(detail.closedAt))}
-                      {detail.reviewers.length > 0 &&
-                        metaRow("Reviewers", detail.reviewers.map(prsActorLabel).join(", "))}
-                      {detail.labels.length > 0 &&
-                        metaRow("Labels", detail.labels.map((label) => label.name).join(", "))}
+                      {selected !== null &&
+                        metaRow(
+                          "Reviewers",
+                          <PrsMetadataPicker
+                            key={`${selectedKey}:reviewers`}
+                            kind="reviewers"
+                            host={host}
+                            session={session}
+                            reference={selected}
+                            detail={detail}
+                            readOperations={ops}
+                            writeOperations={writeOps}
+                            report={toasts.report}
+                          />,
+                        )}
+                      {selected !== null &&
+                        (detail.labels.length > 0 || detail.capabilities.labels === true) &&
+                        metaRow(
+                          "Labels",
+                          <PrsMetadataPicker
+                            key={`${selectedKey}:labels`}
+                            kind="labels"
+                            host={host}
+                            session={session}
+                            reference={selected}
+                            detail={detail}
+                            readOperations={ops}
+                            writeOperations={writeOps}
+                            report={toasts.report}
+                          />,
+                        )}
                     </div>
                     {detail.body !== "" && (
                       <pre
