@@ -21,6 +21,7 @@ export interface BrowserSurfacePresentation {
    * render their own viewport controls, so host chrome would double them.
    */
   readonly hostViewportControls: boolean;
+  readonly extensionResourceKey: string | null;
   readonly updatedAt: number;
   readonly owner: symbol | null;
 }
@@ -44,6 +45,7 @@ interface BrowserSurfaceStoreState {
     owner: symbol,
     fitSourceContent: boolean,
     hostViewportControls?: boolean,
+    extensionResourceKey?: string | null,
   ) => void;
   readonly present: (
     tabId: string,
@@ -65,6 +67,17 @@ export interface BrowserSurfaceLease {
     zIndex?: number,
   ) => boolean;
   readonly release: () => void;
+}
+
+export function isExtensionPresented(
+  presentation: Pick<BrowserSurfacePresentation, "owner" | "extensionResourceKey"> | undefined,
+  resourceKey?: string,
+): boolean {
+  return (
+    presentation?.owner != null &&
+    presentation.extensionResourceKey != null &&
+    (resourceKey === undefined || presentation.extensionResourceKey === resourceKey)
+  );
 }
 
 export function resolveBrowserSurfacePanelRect(
@@ -105,7 +118,13 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
       });
     };
   },
-  claim: (tabId, owner, fitSourceContent, hostViewportControls = true) =>
+  claim: (
+    tabId,
+    owner,
+    fitSourceContent,
+    hostViewportControls = true,
+    extensionResourceKey = null,
+  ) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner === owner) return state;
@@ -121,6 +140,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             fitSourceContent,
             cornerRadius: current?.cornerRadius ?? 0,
             hostViewportControls,
+            extensionResourceKey,
             updatedAt: Date.now(),
             owner,
           },
@@ -163,6 +183,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               fitSourceContent: false,
               cornerRadius: 0,
               hostViewportControls: true,
+              extensionResourceKey: null,
               updatedAt: Date.now(),
               owner: null,
             },
@@ -228,10 +249,13 @@ export function acquireBrowserSurface(
   tabId: string,
   fitSourceContent = false,
   hostViewportControls = true,
+  extensionResourceKey: string | null = null,
 ): BrowserSurfaceLease {
   const owner = Symbol(`browser-surface:${tabId}`);
   let released = false;
-  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent, hostViewportControls);
+  useBrowserSurfaceStore
+    .getState()
+    .claim(tabId, owner, fitSourceContent, hostViewportControls, extensionResourceKey);
 
   return {
     present: (rect, visible, cornerRadius = 0, zIndex = 30) => {

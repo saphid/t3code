@@ -88,7 +88,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       // The cached list can predate an automation-created tab. Keep the local
       // snapshot visible until an authoritative refresh arrives instead of
       // reconciling against a stale empty result when the panel first mounts.
-      get.refresh(sessionsAtom);
+      const current = get.once(sessionsAtom);
+      if (!AsyncResult.isInitial(current) && !current.waiting) get.refresh(sessionsAtom);
       if (eventsVersion === 0) applyLatestEvent(initialEvent);
     });
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`preview:session-sync:${threadKey}`));
@@ -108,15 +109,15 @@ export function mountPreviewSessionSync(threadRef: ScopedThreadRef): () => void 
 }
 
 /**
- * Force a fresh authoritative preview.list for the thread. Surface leases use
- * it to arbitrate absent sessions: a list that lands after this call proves a
- * missing tab is gone rather than merely unobserved.
+ * Request a fresh authoritative preview.list, reusing an in-flight request.
+ * Surface leases use its completed response to arbitrate absent sessions:
+ * a missing tab is gone rather than merely unobserved.
  */
 export function refreshPreviewSessionList(threadRef: ScopedThreadRef): void {
-  appAtomRegistry.refresh(
-    previewEnvironment.list({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId },
-    }),
-  );
+  const atom = previewEnvironment.list({
+    environmentId: threadRef.environmentId,
+    input: { threadId: threadRef.threadId },
+  });
+  const current = appAtomRegistry.get(atom);
+  if (!AsyncResult.isInitial(current) && !current.waiting) appAtomRegistry.refresh(atom);
 }

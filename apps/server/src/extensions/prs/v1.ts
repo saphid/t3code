@@ -14,8 +14,6 @@ import {
   PRS_READ_API,
   type PrsActivity,
   type PrsCapabilitiesResult,
-  type PrsComment,
-  type PrsCommit,
   type PrsDetail,
   type PrsDiffStreamEvent,
   type PrsLabelCandidateList,
@@ -24,7 +22,6 @@ import {
   type PrsListStatsResult,
   type PrsOperationsSupport,
   type PrsRefreshedEvent,
-  type PrsReviewThread,
   type PrsReviewerCandidateList,
   type PrsStack,
   type PrsSummary,
@@ -41,6 +38,7 @@ import type {
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -235,6 +233,32 @@ const byteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 
 const capBody = (body: string, bound = MAX_COMMENT_BODY_CHARS) =>
   body.length <= bound ? { body, cut: false } : { body: body.slice(0, bound), cut: true };
 
+const readOutputSchemas = new Map(
+  PRS_READ_API.methods?.map((method) => [method.name, method.outputSchema]),
+);
+const projectDeclaredOutput = (value: unknown, schema: unknown): unknown => {
+  if (!Predicate.isObject(schema)) return value;
+  if (Array.isArray(value)) {
+    return value.map((member) => projectDeclaredOutput(member, schema.items));
+  }
+  if (!Predicate.isObject(value)) return value;
+  const properties = Predicate.isObject(schema.properties) ? schema.properties : {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([key, member]) =>
+          member !== undefined &&
+          (schema.additionalProperties !== false || Object.hasOwn(properties, key)),
+      )
+      .map(([key, member]) => [
+        key,
+        projectDeclaredOutput(member, properties[key] ?? schema.additionalProperties),
+      ]),
+  );
+};
+const projectReadOutput = <Output>(method: string, value: unknown): Output =>
+  projectDeclaredOutput(value, readOutputSchemas.get(method)) as Output;
+
 /** Same surrogate-safe splitting the vcs diff streams use. */
 const splitStreamChunks = (data: string): string[] => {
   const chunks: string[] = [];
@@ -371,22 +395,6 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   const shrink = <T>(items: ReadonlyArray<T>): T[] => items.slice(0, Math.floor(items.length / 2));
 
   /**
-   * JSON.stringify silently drops `undefined` members but the broker's
-   * copyJson rejects them; strip them up front so a native result carrying
-   * an explicitly-undefined optional field is delivered, not refused.
-   */
-  const stripUndefinedMembers = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(stripUndefinedMembers);
-    if (value !== null && typeof value === "object")
-      return Object.fromEntries(
-        Object.entries(value)
-          .filter(([, member]) => member !== undefined)
-          .map(([key, member]) => [key, stripUndefinedMembers(member)]),
-      );
-    return value;
-  };
-
-  /**
    * Delivered results must fit the invoke envelope. Collections are cut from
    * the tail — strict halving, never `max(1, …)` — until the serialized
    * answer fits, and every loss is disclosed on the `truncated` flag.
@@ -399,8 +407,9 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
    * than handing the broker a frame it must reject.
    */
   const boundList = (result: NativePullRequestListResult): PrsListResult => {
-    let entries = result.entries.slice(0, MAX_LIST_ENTRIES);
-    const assembled = () => ({ ...result, entries });
+    const projected = projectReadOutput<PrsListResult>("list", result);
+    let entries = projected.entries.slice(0, MAX_LIST_ENTRIES);
+    const assembled = () => ({ ...projected, entries });
     while (entries.length > 0 && byteLength(assembled()) > MAX_RESULT_BYTES) {
       entries = shrink(entries);
     }
@@ -408,26 +417,25 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
     return {
       ...assembled(),
       ...(cut ? { truncated: true, nextCursors: {} } : {}),
-    } as PrsListResult;
+    };
   };
 
-  const boundActivity = (result: NativePullRequestActivity): PrsActivity => {
+  const boundActivity = (native: NativePullRequestActivity): PrsActivity => {
+    const result = projectReadOutput<PrsActivity>("activity", native);
     let truncated = false;
     const capComment = <T extends { readonly body: string }>(comment: T): T => {
       const { body, cut } = capBody(comment.body);
       if (cut) truncated = true;
       return cut ? { ...comment, body } : comment;
     };
-    let comments = result.comments
-      .slice(0, MAX_ACTIVITY_COMMENTS)
-      .map(capComment) as readonly PrsComment[];
+    let comments = result.comments.slice(0, MAX_ACTIVITY_COMMENTS).map(capComment);
     let commentsTruncated = result.commentsTruncated || comments.length < result.comments.length;
     if (commentsTruncated) truncated = true;
     let reviewThreads = result.reviewThreads.slice(0, MAX_ACTIVITY_THREADS).map((thread) => ({
       ...thread,
       comments: thread.comments.map(capComment),
-    })) as readonly PrsReviewThread[];
-    let commits = result.commits.slice(0, MAX_ACTIVITY_COMMITS) as readonly PrsCommit[];
+    }));
+    let commits = result.commits.slice(0, MAX_ACTIVITY_COMMITS);
     let reviewers = result.reviewers;
     let reactions = result.reactions;
     if (
@@ -435,18 +443,17 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       commits.length < result.commits.length
     )
       truncated = true;
-    const assembled = (): PrsActivity =>
-      ({
-        ...(result.author === undefined ? {} : { author: result.author }),
-        ...(reviewers === undefined ? {} : { reviewers }),
-        comments,
-        commentCount: result.commentCount,
-        commentsTruncated,
-        reviewThreads,
-        commits,
-        ...(reactions === undefined ? {} : { reactions }),
-        truncated,
-      }) as PrsActivity;
+    const assembled = (): PrsActivity => ({
+      ...(result.author === undefined ? {} : { author: result.author }),
+      ...(reviewers === undefined ? {} : { reviewers }),
+      comments,
+      commentCount: result.commentCount,
+      commentsTruncated,
+      reviewThreads,
+      commits,
+      ...(reactions === undefined ? {} : { reactions }),
+      truncated,
+    });
     const tooBig = () => byteLength(assembled()) > MAX_RESULT_BYTES;
     // Least-informative collections empty first; each pass strictly halves,
     // so every while reaches zero and the sequence always terminates.
@@ -475,8 +482,9 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
   };
 
   const boundDetail = (detail: NativePullRequestDetail): PrsDetail => {
-    const { body, cut } = capBody(detail.body, MAX_DETAIL_BODY_CHARS);
-    return (cut ? { ...detail, body, bodyTruncated: true } : detail) as PrsDetail;
+    const projected = projectReadOutput<PrsDetail>("detail", detail);
+    const { body, cut } = capBody(projected.body, MAX_DETAIL_BODY_CHARS);
+    return cut ? { ...projected, body, bodyTruncated: true } : projected;
   };
 
   const boundThreadComments = <
@@ -576,7 +584,8 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
       // entry larger than the envelope — fails the operation by name rather
       // than surfacing a broker rejection.
       const delivered = yield* Effect.try({
-        try: () => copyJson(stripUndefinedMembers(result), MAX_RESULT_BYTES) as Output,
+        try: () =>
+          copyJson(projectReadOutput<Output>(args.operation.slice(4), result), MAX_RESULT_BYTES),
         catch: (cause) =>
           failure(
             args.operation,
@@ -809,7 +818,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
             Effect.flatMap((ref) => dependencies.pullRequests.summary(ref)),
-            Effect.map((result): PrsSummary => result as PrsSummary),
+            Effect.map((result) => projectReadOutput<PrsSummary>("summary", result)),
           ),
       }),
       detail: runMethod({
@@ -850,9 +859,10 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
                 cursor: safe.cursor,
               }),
             ),
-            Effect.map(
-              (result): PrsThreadCommentsResult =>
-                boundThreadComments(result) as PrsThreadCommentsResult,
+            Effect.map((result) =>
+              boundThreadComments(
+                projectReadOutput<PrsThreadCommentsResult>("threadComments", result),
+              ),
             ),
           ),
       }),
@@ -873,7 +883,7 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
           const ref = yield* boundRef(bound, safe);
           return yield* dependencies.pullRequests
             .stack(ref)
-            .pipe(Effect.map((result): PrsStack | null => result as PrsStack | null));
+            .pipe(Effect.map((result) => projectReadOutput<PrsStack | null>("stack", result)));
         }),
       }),
       linkedThreads: runMethod({
@@ -933,9 +943,11 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
             Effect.flatMap((ref) => dependencies.pullRequests.reviewerCandidates(ref)),
-            Effect.map(
-              (result): PrsReviewerCandidateList =>
-                boundCandidates(result, MAX_CANDIDATES) as PrsReviewerCandidateList,
+            Effect.map((result) =>
+              boundCandidates(
+                projectReadOutput<PrsReviewerCandidateList>("reviewerCandidates", result),
+                MAX_CANDIDATES,
+              ),
             ),
           ),
       }),
@@ -945,9 +957,11 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
             Effect.flatMap((ref) => dependencies.pullRequests.labelCandidates(ref)),
-            Effect.map(
-              (result): PrsLabelCandidateList =>
-                boundCandidates(result, MAX_LABEL_CANDIDATES) as PrsLabelCandidateList,
+            Effect.map((result) =>
+              boundCandidates(
+                projectReadOutput<PrsLabelCandidateList>("labelCandidates", result),
+                MAX_LABEL_CANDIDATES,
+              ),
             ),
           ),
       }),

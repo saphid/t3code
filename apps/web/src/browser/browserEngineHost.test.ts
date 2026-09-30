@@ -246,6 +246,30 @@ describe("setDevToolsOpen", () => {
 });
 
 describe("toEnginePageStatus", () => {
+  it("does not report per-action controller or remote activity transitions", () => {
+    const first = nextEnginePageReport(null, tabState());
+    expect(first).not.toBeNull();
+    expect(first!.status).not.toHaveProperty("controller");
+    expect(first!.status).not.toHaveProperty("remoteLive");
+    for (let actionIndex = 0; actionIndex < 200; actionIndex += 1) {
+      for (const controller of ["agent", "none", "human", "none"] as const) {
+        expect(
+          nextEnginePageReport(
+            first!.statusKey,
+            tabState({
+              controller,
+              remoteLive: controller === "agent",
+              updatedAt: `${actionIndex}`,
+            }),
+          ),
+        ).toBeNull();
+      }
+    }
+    expect(decode({ ...first!.status, controller: "agent", remoteLive: true })).toEqual(
+      first!.status,
+    );
+  });
+
   const decode = Schema.decodeUnknownSync(BrowserEnginePageStatus);
 
   it("produces a report the server contract accepts", () => {
