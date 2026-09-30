@@ -1585,6 +1585,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
   // on the active session, so rows stay single-line labels at any width.
   const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
   const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
+  const activeOutputStatus =
+    activeTab?.exitBanner ??
+    (output && activeTab
+      ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream), activeTab)
+      : "Connecting…");
   // Native's toolbar close names the action, not the tab it acts on.
   const closeLabel = terminalActionLabel("Close Terminal", closeShortcutLabel);
   const sessionActions = activeTab !== null && (
@@ -1958,16 +1963,10 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                 aria-label="Output status"
                 style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
               >
-                {activeId}:{" "}
-                {activeTab.exitBanner ??
-                  (output
-                    ? paneStatusText(
-                        output,
-                        isPaneReattaching(activeTab, snapshot.stream),
-                        activeTab,
-                      )
-                    : "Connecting…")}
-                {activeTab.error ? ` — ${activeTab.error}` : ""}
+                {activeId}: {activeOutputStatus}
+                {activeTab.error && activeTab.error !== activeOutputStatus
+                  ? ` — ${activeTab.error}`
+                  : ""}
               </output>
               <pre
                 ref={outputRef}

@@ -2714,7 +2714,7 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
             } else if (outcome === "ack-error-r2") {
               NodeAssert.match(statusText(), /PTY spawn failed: shell not found/);
             } else if (outcome === "ack-error-snapshot") {
-              NodeAssert.equal(statusText(), "term-1: Terminal is error.");
+              NodeAssert.equal(statusText(), "term-1: Terminal failed to start.");
               NodeAssert.equal(subscriptions, 3);
               for (const commit of commits)
                 NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
@@ -2726,10 +2726,12 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
             } else if (outcome.includes("hang")) {
               NodeAssert.equal(
                 statusText(),
-                `term-1: Terminal is ${outcome.startsWith("ack-error") ? "error" : "exited"}.`,
+                outcome.startsWith("ack-error")
+                  ? "term-1: Terminal failed to start."
+                  : "term-1: Terminal is exited.",
               );
             } else if (outcome === "start-failed") {
-              NodeAssert.match(statusText(), /spawn failed/);
+              NodeAssert.equal(statusText(), "term-1: spawn failed");
               for (const commit of commits)
                 NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
             } else {
