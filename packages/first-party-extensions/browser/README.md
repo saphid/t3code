@@ -90,7 +90,8 @@ The panel renders through public contracts only:
   thread's draft; pixels never ride an API payload. Capturing needs the
   session shown on a desktop client; elsewhere the buttons stay disabled.
   A page capture's "Screenshot saved" toast offers native's Copy path,
-  Reveal and Copy image through the capability's 1.1.0 artifact actions,
+  Reveal and Copy image through the capability's artifact actions
+  with the original sessions and capture grants,
   which act on the copy the desktop saved beside native screenshots; the
   toast stays open and a copy reads "Copied!" briefly
   (`t3.ui/notifications` 1.1.0 `keepOpen` actions and `flashAction`). The
@@ -110,6 +111,18 @@ The panel renders through public contracts only:
   to the panel use the existing player. The mutation requires both
   `t3.ui/panels` and `t3.browser/sessions`. Older clients report unsupported
   instead of displaying a pack-owned imitation.
+  On a capture 1.2.0 desktop host, Shift-click starts the native recorder
+  (`t3.browser/recording` grant and a live user click). Click again to stop
+  and save the video locally, with no upload or attachment size limit.
+  The recording indicator follows the native recorder, including recordings
+  started outside the pack. The desktop host also owns an always-visible native
+  recording control, independent of what the pack renders; stopping stays available
+  when the page is hidden. Unloading an installation saves and shows the native toast.
+  The "Recording saved" toast offers Reveal as its primary action and Copy path
+  with the recording artifact-actions grant. Recording refs are host-local, not
+  pending composer attachments. The native toolbar has no recording-upload action,
+  so the SDK offers none; native automation's explicit transfer remains separate.
+  Older hosts and web clients do not offer recording.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a

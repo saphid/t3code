@@ -7169,7 +7169,24 @@ var __t3Client = (() => {
   var BROWSER_SURFACE_Z_INDEX = 30;
   var BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
+  var BROWSER_RECORDING = "t3.browser/recording";
+  var BROWSER_RECORDING_MIN_VERSION = "1.2.0";
+  var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    [BROWSER_RECORDING]: "Record the browser panel as video",
+    [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
+  };
+  var BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE];
+  var BROWSER_RECORDING_REQUIRED_GRANTS = [
+    ...BROWSER_CAPTURE_REQUIRED_GRANTS,
+    BROWSER_RECORDING
+  ];
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+  function resolveBrowserRecording(capture) {
+    const version2 = capture && parseVersion(capture.version);
+    const minimum = parseVersion(BROWSER_RECORDING_MIN_VERSION);
+    return capture && version2 && minimum && version2[0] === minimum[0] && compareVersions(version2, minimum) >= 0 && capture.startRecording && capture.stopRecording && capture.subscribeRecording && capture.recordingSupport ? capture : null;
+  }
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
   var MESSAGES_ENRICHMENT = "t3.messages/enrichment";
@@ -8931,18 +8948,18 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef5, useState: useState9 } = host.React;
-    const [element, setElement] = useState9(null);
-    const [result2, setResult] = useState9(null);
-    const [shown, setShown] = useState9(false);
-    const [, setLeaseVersion] = useState9(0);
+    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef6, useState: useState10 } = host.React;
+    const [element, setElement] = useState10(null);
+    const [result2, setResult] = useState10(null);
+    const [shown, setShown] = useState10(false);
+    const [, setLeaseVersion] = useState10(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
-    const presentationRef = useRef5({
+    const presentationRef = useRef6({
       visible: options.visible,
       cornerRadius: options.cornerRadius ?? 0,
       zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
     });
-    const updateRef = useRef5(null);
+    const updateRef = useRef6(null);
     const ref = useCallback2((node) => setElement(node), []);
     useLayoutEffect(() => {
       presentationRef.current = {
@@ -9085,20 +9102,20 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect8, useRef: useRef5, useState: useState9 } = host.React;
-    const [element, setElement] = useState9(null);
-    const [status, setStatus] = useState9({ kind: "idle" });
-    const [view, setView] = useState9({
+    const { useCallback: useCallback2, useEffect: useEffect9, useRef: useRef6, useState: useState10 } = host.React;
+    const [element, setElement] = useState10(null);
+    const [status, setStatus] = useState10({ kind: "idle" });
+    const [view, setView] = useState10({
       status: "connecting",
       inputConnected: false,
       droppedFrames: 0,
       rejectedInput: 0
     });
-    const sessionRef = useRef5(options.session);
+    const sessionRef = useRef6(options.session);
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
     const ref = useCallback2((node) => setElement(node), []);
-    useEffect8(() => {
+    useEffect9(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
       if (!element || !options.enabled || !options.session)
@@ -9273,7 +9290,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react9 = __toESM(require_react(), 1);
+  var import_react10 = __toESM(require_react(), 1);
 
   // addressInput.tsx
   var import_react = __toESM(require_react(), 1);
@@ -9551,26 +9568,29 @@ var __t3Client = (() => {
         };
     }
   }
-  function copyFailureBody(reason) {
+  function copyFailureBody(reason, kind) {
     switch (reason) {
       case "artifact-not-found":
-        return "This screenshot is no longer available to copy.";
+        return kind === "recording" ? "This recording is no longer available to copy." : "This screenshot is no longer available to copy.";
       case "desktop-required":
-        return "Saved screenshots live in the T3 Code desktop app.";
+        return kind === "recording" ? "Saved recordings live in the T3 Code desktop app." : "Saved screenshots live in the T3 Code desktop app.";
       case "grant-denied":
       case "scope-invalid":
       case "host-unavailable":
-        return "This panel can no longer reach the saved screenshot.";
+        return kind === "recording" ? "This panel can no longer reach the saved recording." : "This panel can no longer reach the saved screenshot.";
       case "action-failed":
-        return "The saved screenshot could not be copied.";
+        return kind === "recording" ? "The saved recording could not be copied." : "The saved screenshot could not be copied.";
     }
   }
-  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal) {
+  async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal, kind = "screenshot") {
     if (actionId === "reveal") {
       await capture.revealArtifact?.(request);
       return;
     }
-    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" } : null;
+    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? {
+      run: capture.copyArtifactPath,
+      failTitle: kind === "recording" ? "Unable to copy recording path" : "Unable to copy screenshot path"
+    } : null;
     if (!copy?.run) return;
     const result2 = await copy.run(request);
     if (signal.aborted) return;
@@ -9579,19 +9599,19 @@ var __t3Client = (() => {
       result2.ok ? {
         notificationId,
         severity: "success",
-        title: "Screenshot saved",
+        title: kind === "recording" ? "Recording saved" : "Screenshot saved",
         body: "",
         flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS }
       } : {
         notificationId,
         severity: "error",
         title: copy.failTitle,
-        body: copyFailureBody(result2.failure.reason)
+        body: copyFailureBody(result2.failure.reason, kind)
       },
       signal
     );
   }
-  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal) {
+  async function serveCaptureToastActions(notifications, capture, request, notificationId, signal, kind = "screenshot") {
     while (!signal.aborted) {
       let outcome;
       try {
@@ -9606,7 +9626,8 @@ var __t3Client = (() => {
         request,
         notificationId,
         outcome.actionId,
-        signal
+        signal,
+        kind
       ).catch(() => {
       });
     }
@@ -9736,8 +9757,198 @@ var __t3Client = (() => {
     return { blockReason, state: state2, picking, capture };
   }
 
+  // recording.ts
+  var import_react3 = __toESM(require_react(), 1);
+  function recordingUnavailableReason(host, held, page) {
+    const capture = resolveBrowserRecording(host.browserCapture);
+    if (!capture) return "This host cannot record browser sessions.";
+    if (!capture.recordingSupport.supported)
+      return capture.recordingSupport.reason === "grant-denied" ? grantDenialMessage(capture.recordingSupport.grant) : "Record from the T3 Code desktop app.";
+    if (!held) return "Open a page before recording.";
+    if (page !== "shown") return "The page must be shown here before recording.";
+    return null;
+  }
+  function recordingToastActions(capture) {
+    const support = capture.recordingArtifactActions ?? capture.artifactActions;
+    if (!support) return [];
+    const actions = [];
+    if (support.reveal.supported && capture.revealArtifact)
+      actions.push({ id: "reveal", label: support.revealLabel, variant: "primary", keepOpen: true });
+    if (support.copyPath.supported && capture.copyArtifactPath)
+      actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+    return actions;
+  }
+  async function runBrowserRecording(host, session, held, stopping) {
+    const capture = resolveBrowserRecording(host.browserCapture);
+    if (!capture) return "This host cannot record browser sessions.";
+    let toast;
+    let artifactRef = null;
+    try {
+      const request = { context: session.context, session: held, signal: session.signal };
+      const result2 = stopping ? await capture.stopRecording(request) : await capture.startRecording(request);
+      if (session.signal.aborted) return null;
+      if (!result2.ok) {
+        if (result2.failure.reason === "cancelled") return null;
+        toast = {
+          severity: "error",
+          title: stopping ? "Unable to stop recording" : "Unable to start recording",
+          body: result2.failure.grant ? grantDenialMessage(result2.failure.grant) : result2.failure.detail,
+          durationMs: CAPTURE_TOAST_DURATION_MS
+        };
+      } else {
+        if (!("artifact" in result2) || !result2.artifact) return null;
+        artifactRef = result2.artifact.artifactRef;
+        toast = {
+          severity: "success",
+          title: "Recording saved",
+          durationMs: CAPTURE_TOAST_DURATION_MS,
+          ...result2.artifact.saved ? { actions: recordingToastActions(capture) } : {}
+        };
+      }
+    } catch {
+      if (session.signal.aborted) return null;
+      toast = {
+        severity: "error",
+        title: stopping ? "Unable to stop recording" : "Unable to start recording",
+        body: "The desktop recording operation failed.",
+        durationMs: CAPTURE_TOAST_DURATION_MS
+      };
+    }
+    const signal = AbortSignal.any([session.signal, AbortSignal.timeout(NOTIFY_ACK_TIMEOUT_MS)]);
+    const { actions, ...plain } = toast;
+    const input = {
+      ...plain,
+      threadId: session.context.resource.threadId,
+      anchor: "thread"
+    };
+    let notifications = bindApi(uiNotificationsApi, host, session.context);
+    try {
+      let withActions = false;
+      if (actions?.length) {
+        try {
+          const selected = (await host.discoverApis(session.context, signal)).find(
+            (api) => api.id === uiNotificationsApi.definition.id && api.selected
+          );
+          withActions = selected !== void 0 && satisfiesSemverRange(selected.version, "^1.1.0");
+        } catch {
+        }
+      }
+      if (withActions) notifications = bindApi(uiNotificationsApi, host, session.context, "^1.1.0");
+      const notify = (offeredActions) => notifications.invoke(
+        "notify",
+        { ...input, ...offeredActions ? { actions: offeredActions } : {} },
+        signal
+      );
+      const { notificationId } = await (withActions ? notify(actions).catch(() => {
+        if (signal.aborted) throw new Error("Notification delivery ended.");
+        withActions = false;
+        return notify();
+      }) : notify());
+      if (withActions && artifactRef)
+        void serveCaptureToastActions(
+          notifications,
+          capture,
+          { context: session.context, artifactRef },
+          notificationId,
+          session.signal,
+          "recording"
+        );
+      return null;
+    } catch {
+      return signal.aborted ? null : toast.body ?? toast.title;
+    }
+  }
+  function useBrowserRecording(host, session, held, page, onStatus) {
+    const [state2, setState] = (0, import_react3.useState)(null);
+    const current = (0, import_react3.useRef)(null);
+    const operation = (0, import_react3.useRef)(null);
+    const capture = resolveBrowserRecording(host.browserCapture);
+    const tabId = held?.tabId;
+    const serverEpoch = held?.serverEpoch;
+    const context2 = session.context;
+    const phase = state2?.context === context2 && state2.tabId === tabId && state2.serverEpoch === serverEpoch ? state2.phase : "idle";
+    (0, import_react3.useEffect)(() => {
+      operation.current = null;
+      const controller = new AbortController();
+      current.current = controller;
+      if (!capture || !tabId || !serverEpoch) return () => controller.abort();
+      const signal = AbortSignal.any([session.signal, controller.signal]);
+      const unsubscribe = capture.subscribeRecording(
+        { context: context2, session: { tabId, serverEpoch }, signal },
+        (state3) => {
+          if (!signal.aborted && state3.ok)
+            setState({ context: context2, tabId, serverEpoch, phase: state3.phase });
+        }
+      );
+      return () => {
+        controller.abort();
+        unsubscribe();
+      };
+    }, [capture, tabId, serverEpoch, context2, session.signal]);
+    const blockReason = recordingUnavailableReason(host, held, page);
+    const toggle = async () => {
+      const stopping = phase !== "idle";
+      if (!held || !capture || operation.current === "stop" || !stopping && operation.current)
+        return;
+      if (!stopping && blockReason) {
+        onStatus?.(blockReason);
+        return;
+      }
+      const controller = current.current;
+      if (!controller || controller.signal.aborted) return;
+      const action = stopping ? "stop" : "start";
+      operation.current = action;
+      onStatus?.(null);
+      const message = await runBrowserRecording(
+        host,
+        { context: session.context, signal: AbortSignal.any([session.signal, controller.signal]) },
+        held,
+        stopping
+      );
+      if (current.current !== controller || controller.signal.aborted) return;
+      if (operation.current === action) operation.current = null;
+      if (message) onStatus?.(message);
+    };
+    return { phase, blockReason, available: capture?.recordingSupport.supported === true, toggle };
+  }
+
   // annotateButton.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  function BrowserCaptureButtons(props) {
+    const { host, session, held, page, onStatus, style } = props;
+    const capture = useBrowserCapture(host, session, held, page, onStatus);
+    const recording = useBrowserRecording(host, session, held, page, onStatus);
+    const capturing = capture.state.kind === "capturing" ? capture.state.target : null;
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+        ScreenshotButton,
+        {
+          host,
+          blockReason: capture.blockReason,
+          capturing,
+          pageFailed: page === "failed",
+          recording: recording.phase !== "idle",
+          recordingAvailable: recording.available,
+          onCapture: (record2) => {
+            if (record2 || recording.phase !== "idle") void recording.toggle();
+            else capture.capture("page");
+          },
+          style
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+        AnnotateButton,
+        {
+          host,
+          blockReason: capture.blockReason,
+          capturing,
+          pageFailed: page === "failed",
+          onPick: () => capture.capture("element"),
+          style
+        }
+      )
+    ] });
+  }
   function AnnotateButton(props) {
     const { host, blockReason, onPick, style } = props;
     const annotate2 = annotationControl(props);
@@ -9756,19 +9967,57 @@ var __t3Client = (() => {
     ) });
   }
   function ScreenshotButton(props) {
-    const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-      "button",
+    const {
+      host,
+      blockReason,
+      capturing,
+      pageFailed,
+      onCapture,
+      style,
+      recording = false,
+      recordingAvailable = false
+    } = props;
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+      Tooltip,
       {
-        type: "button",
-        "aria-label": "Capture screenshot",
-        "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
-        disabled: blockReason !== null || capturing !== null,
-        onClick: onCapture,
-        style,
-        children: "\u25A3"
+        host,
+        label: recording ? "Stop recording" : recordingAvailable ? "Screenshot \xB7 Shift-click to record" : "Screenshot",
+        children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+          "button",
+          {
+            type: "button",
+            "aria-label": recording ? "Stop recording" : "Capture screenshot",
+            "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
+            disabled: !recording && blockReason !== null || capturing !== null,
+            onClick: (event) => onCapture(event.shiftKey),
+            style: {
+              ...style,
+              position: "relative",
+              ...recording ? { color: "var(--destructive, #dc2626)", background: "var(--secondary, #f1f1f1)" } : {}
+            },
+            children: [
+              "\u25A3",
+              recording && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                "span",
+                {
+                  "aria-hidden": true,
+                  className: "animate-status-pulse",
+                  style: {
+                    position: "absolute",
+                    right: 2,
+                    top: 2,
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: "var(--destructive, #dc2626)"
+                  }
+                }
+              )
+            ]
+          }
+        )
       }
-    ) });
+    );
   }
 
   // node_modules/effect/dist/Pipeable.js
@@ -15547,7 +15796,7 @@ ${ind(d)}}`;
   }
 
   // favicon.tsx
-  var import_react3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
 
   // faviconReads.ts
   var SETTLED_REFS_MAX = 4096;
@@ -15916,7 +16165,7 @@ ${ind(d)}}`;
     if (rendered === cache.resolved) commit(applyResolvedFaviconRefs(cache, sessions, Date.now()));
   }
   function useFaviconCache() {
-    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react4.useSyncExternalStore)(subscribe, () => version);
     return cache;
   }
   function subscribe(listener) {
@@ -15926,8 +16175,8 @@ ${ind(d)}}`;
     };
   }
   function useFaviconResolution(url, ref) {
-    (0, import_react3.useSyncExternalStore)(subscribe, () => version);
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useSyncExternalStore)(subscribe, () => version);
+    (0, import_react4.useEffect)(() => {
       commit(expireStaleFaviconFailure(cache, url, Date.now()));
     }, [url]);
     return resolveFavicon(cache, url, ref);
@@ -16075,7 +16324,7 @@ ${ind(d)}}`;
   }
 
   // landing.tsx
-  var import_react4 = __toESM(require_react(), 1);
+  var import_react5 = __toESM(require_react(), 1);
 
   // localServers.ts
   var LOCAL_SERVERS_HINT = "Select a live local server to open it in this browser tab.";
@@ -16171,13 +16420,13 @@ ${ind(d)}}`;
   var muted2 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var headingStyle = { margin: 0, fontSize: 12, fontWeight: 500, color: muted2 };
   function useLocalServers(host, session, active) {
-    const [state2, setState] = (0, import_react4.useState)(LOADING);
-    const [run2, setRun] = (0, import_react4.useState)({ host, session, active });
+    const [state2, setState] = (0, import_react5.useState)(LOADING);
+    const [run2, setRun] = (0, import_react5.useState)({ host, session, active });
     if (run2.host !== host || run2.session !== session || run2.active !== active) {
       setRun({ host, session, active });
       setState(LOADING);
     }
-    (0, import_react4.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       if (!active) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -16459,7 +16708,7 @@ ${ind(d)}}`;
   var floatingOverPage = { [BROWSER_SURFACE_OVERLAY_ATTRIBUTE]: "" };
 
   // pageMenu.tsx
-  var import_react5 = __toESM(require_react(), 1);
+  var import_react6 = __toESM(require_react(), 1);
   var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
   var muted3 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -16480,9 +16729,9 @@ ${ind(d)}}`;
   var ZOOM_INDICATOR_MS = 1500;
   function ZoomIndicator(props) {
     const { zoomFactor, zIndex, style, visible } = props;
-    const [shown, setShown] = (0, import_react5.useState)(null);
-    const last = (0, import_react5.useRef)(zoomFactor);
-    (0, import_react5.useEffect)(() => {
+    const [shown, setShown] = (0, import_react6.useState)(null);
+    const last = (0, import_react6.useRef)(zoomFactor);
+    (0, import_react6.useEffect)(() => {
       if (zoomFactor === null || last.current === zoomFactor) {
         last.current = zoomFactor;
         return;
@@ -16521,12 +16770,12 @@ ${ind(d)}}`;
   }
   function PageMenu(props) {
     const { host, session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
-    const [open, setOpen] = (0, import_react5.useState)(false);
+    const [open, setOpen] = (0, import_react6.useState)(false);
     if (open && !visible) setOpen(false);
-    const [trigger, setTrigger] = (0, import_react5.useState)(null);
-    const root = (0, import_react5.useRef)(null);
-    const menu = (0, import_react5.useRef)(null);
-    (0, import_react5.useEffect)(() => {
+    const [trigger, setTrigger] = (0, import_react6.useState)(null);
+    const root = (0, import_react6.useRef)(null);
+    const menu = (0, import_react6.useRef)(null);
+    (0, import_react6.useEffect)(() => {
       if (!open) return;
       const onPointer = (event) => {
         const target = event.target;
@@ -16718,7 +16967,7 @@ ${ind(d)}}`;
   }
 
   // miniPlayer.tsx
-  var import_react6 = __toESM(require_react(), 1);
+  var import_react7 = __toESM(require_react(), 1);
   var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
   async function readBrowserMiniPlayer(host, session, signal) {
     const apis = await host.discoverApis(session.context, signal);
@@ -16749,11 +16998,11 @@ ${ind(d)}}`;
       tabId,
       serverEpoch
     ]);
-    const lifetime = (0, import_react6.useRef)(null);
-    const [state2, setState] = (0, import_react6.useState)(null);
-    const [pendingSignal, setPendingSignal] = (0, import_react6.useState)(null);
+    const lifetime = (0, import_react7.useRef)(null);
+    const [state2, setState] = (0, import_react7.useState)(null);
+    const [pendingSignal, setPendingSignal] = (0, import_react7.useState)(null);
     const pending = pendingSignal !== null && !pendingSignal.aborted;
-    (0, import_react6.useEffect)(() => {
+    (0, import_react7.useEffect)(() => {
       if (!visible || !tabId || !serverEpoch) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([session.signal, controller.signal]);
@@ -16857,7 +17106,7 @@ ${ind(d)}}`;
   }
 
   // profileMenu.tsx
-  var import_react7 = __toESM(require_react(), 1);
+  var import_react8 = __toESM(require_react(), 1);
 
   // profiles.ts
   var DEFAULT_PROFILE_ID = "default";
@@ -17029,7 +17278,7 @@ ${ind(d)}}`;
       })();
     }
   });
-  var useProfileList = (profiles) => (0, import_react7.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
+  var useProfileList = (profiles) => (0, import_react8.useSyncExternalStore)(profiles.subscribe, profiles.getSnapshot);
   var muted4 = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
   var border2 = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
   var control2 = {
@@ -17051,7 +17300,7 @@ ${ind(d)}}`;
     const { host, session, profiles, visible } = props;
     const profileId = sessionProfileId(session);
     const { list } = useProfileList(profiles);
-    (0, import_react7.useEffect)(() => {
+    (0, import_react8.useEffect)(() => {
       if (visible) profiles.refresh();
     }, [profiles, profileId, visible]);
     const name = profileBadgeName(list, profileId);
@@ -17081,8 +17330,8 @@ ${ind(d)}}`;
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
-    const [importer, setImporter] = (0, import_react7.useState)({ kind: "closed" });
-    (0, import_react7.useEffect)(() => profiles.refresh(), [profiles]);
+    const [importer, setImporter] = (0, import_react8.useState)({ kind: "closed" });
+    (0, import_react8.useEffect)(() => profiles.refresh(), [profiles]);
     const name = profileLabel(list, profileId);
     const choose = (action) => {
       onChosen();
@@ -17236,7 +17485,7 @@ ${ind(d)}}`;
   }
 
   // viewportToolbar.tsx
-  var import_react8 = __toESM(require_react(), 1);
+  var import_react9 = __toESM(require_react(), 1);
 
   // viewport.ts
   var PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
@@ -17685,10 +17934,10 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useElementSize(element) {
-    const [size, setSize] = (0, import_react8.useState)(
+    const [size, setSize] = (0, import_react9.useState)(
       null
     );
-    (0, import_react8.useEffect)(() => {
+    (0, import_react9.useEffect)(() => {
       if (!element) return;
       const observer = new ResizeObserver((entries) => {
         const box = entries[0]?.contentRect;
@@ -17725,7 +17974,7 @@ ${ind(d)}}`;
     );
   }
   function useAspectLocks(tabs, held) {
-    const [locks, setLocks] = (0, import_react8.useState)(() => /* @__PURE__ */ new Map());
+    const [locks, setLocks] = (0, import_react9.useState)(() => /* @__PURE__ */ new Map());
     const live = (tabId) => held?.tabId === tabId || tabs.some((tab) => tab.tabId === tabId);
     return {
       isLocked: (tab) => tab !== null && locks.get(tab.tabId) === tab.serverEpoch && live(tab.tabId),
@@ -17740,7 +17989,7 @@ ${ind(d)}}`;
   function BrowserViewportToolbar(props) {
     const { host, setting, pending, onCommit, aspectLocked, onAspectLockedChange, zIndex } = props;
     const aspectRatio = lockedAspectRatio(setting, aspectLocked);
-    const [edit, setEdit] = (0, import_react8.useState)(null);
+    const [edit, setEdit] = (0, import_react9.useState)(null);
     const committedKey = viewportSettingKey(setting);
     const customSize = edit !== null && edit.key === committedKey ? { width: edit.width, height: edit.height } : null;
     const presentedSize = customSize ?? {
@@ -18004,12 +18253,12 @@ ${ind(d)}}`;
   }
   function useViewportRails(options) {
     const { setting, target, slot, zoomFactor, aspectRatio, commit: commit2 } = options;
-    const [preview, setPreview] = (0, import_react8.useState)(null);
-    const [gestures] = (0, import_react8.useState)(() => createRailGestures(setPreview));
-    (0, import_react8.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
+    const [preview, setPreview] = (0, import_react9.useState)(null);
+    const [gestures] = (0, import_react9.useState)(() => createRailGestures(setPreview));
+    (0, import_react9.useEffect)(() => gestures.bindCommit(commit2), [gestures, commit2]);
     const committedKey = setting === null ? null : viewportSettingKey(setting);
-    (0, import_react8.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
-    (0, import_react8.useEffect)(() => () => gestures.dispose(), [gestures]);
+    (0, import_react9.useEffect)(() => gestures.observe(target, committedKey), [gestures, target, committedKey]);
+    (0, import_react9.useEffect)(() => () => gestures.dispose(), [gestures]);
     const displayed = setting === null ? null : preview === null ? setting : { _tag: "freeform", width: preview.width, height: preview.height };
     const onPointerDown = (direction, event) => {
       if (displayed === null || setting === null || target === null) return;
@@ -18345,8 +18594,8 @@ ${ind(d)}}`;
     color: "inherit"
   };
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react9.useState)(null);
-    (0, import_react9.useEffect)(() => {
+    const [vars, setVars] = (0, import_react10.useState)(null);
+    (0, import_react10.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       watchThemeVars(
@@ -18395,59 +18644,59 @@ ${ind(d)}}`;
   function BrowserView(props) {
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
-    const [state2, setState] = (0, import_react9.useState)(
+    const [state2, setState] = (0, import_react10.useState)(
       () => restored?.url ? submitAddress(initialNavigationState, restored.url) : initialNavigationState
     );
-    const [fileSource, setFileSource] = (0, import_react9.useState)(
+    const [fileSource, setFileSource] = (0, import_react10.useState)(
       restored?.url ? null : restored?.relativePath ?? null
     );
-    const fileSourceRef = (0, import_react9.useRef)(fileSource);
-    const fileLeaseUrl = (0, import_react9.useRef)(null);
-    const fileRun = (0, import_react9.useRef)(null);
-    const [address, setAddress] = (0, import_react9.useState)(restored?.url ?? restored?.relativePath ?? "");
-    const [history, setHistory] = (0, import_react9.useState)(
+    const fileSourceRef = (0, import_react10.useRef)(fileSource);
+    const fileLeaseUrl = (0, import_react10.useRef)(null);
+    const fileRun = (0, import_react10.useRef)(null);
+    const [address, setAddress] = (0, import_react10.useState)(restored?.url ?? restored?.relativePath ?? "");
+    const [history, setHistory] = (0, import_react10.useState)(
       () => sanitizeHistoryEntries(restored?.history)
     );
-    const [held, setHeld] = (0, import_react9.useState)(
+    const [held, setHeld] = (0, import_react10.useState)(
       () => restored?.tabId && restored?.serverEpoch ? {
         tabId: restored.tabId,
         serverEpoch: restored.serverEpoch,
         engineGeneration: null
       } : null
     );
-    const [live, setLive] = (0, import_react9.useState)(null);
-    const [tabs, setTabs] = (0, import_react9.useState)([]);
-    const tabsEpoch = (0, import_react9.useRef)(null);
-    const [notice, setNotice] = (0, import_react9.useState)(null);
-    const [visible, setVisible] = (0, import_react9.useState)(session.visible);
-    const [surfaceAttempt, setSurfaceAttempt] = (0, import_react9.useState)(0);
-    const surfaceUnavailableRef = (0, import_react9.useRef)(false);
-    const heldRef = (0, import_react9.useRef)(held);
-    const historyRef = (0, import_react9.useRef)(history);
-    const dropHeldSession = (0, import_react9.useCallback)(() => {
+    const [live, setLive] = (0, import_react10.useState)(null);
+    const [tabs, setTabs] = (0, import_react10.useState)([]);
+    const tabsEpoch = (0, import_react10.useRef)(null);
+    const [notice, setNotice] = (0, import_react10.useState)(null);
+    const [visible, setVisible] = (0, import_react10.useState)(session.visible);
+    const [surfaceAttempt, setSurfaceAttempt] = (0, import_react10.useState)(0);
+    const surfaceUnavailableRef = (0, import_react10.useRef)(false);
+    const heldRef = (0, import_react10.useRef)(held);
+    const historyRef = (0, import_react10.useRef)(history);
+    const dropHeldSession = (0, import_react10.useCallback)(() => {
       heldRef.current = null;
       setHeld(null);
       setLive(null);
       setNotice(null);
     }, [setHeld, setLive, setNotice]);
-    const [fence] = (0, import_react9.useState)(createRevisionFence);
-    const heldRevision = (0, import_react9.useRef)(-1);
-    const addressRef = (0, import_react9.useRef)(null);
-    const [contentElement, setContentElement] = (0, import_react9.useState)(null);
+    const [fence] = (0, import_react10.useState)(createRevisionFence);
+    const heldRevision = (0, import_react10.useRef)(-1);
+    const addressRef = (0, import_react10.useRef)(null);
+    const [contentElement, setContentElement] = (0, import_react10.useState)(null);
     const contentSize = useElementSize(contentElement);
-    const [viewportPending, setViewportPending] = (0, import_react9.useState)(false);
-    const viewportCommitter = (0, import_react9.useRef)(null);
+    const [viewportPending, setViewportPending] = (0, import_react10.useState)(false);
+    const viewportCommitter = (0, import_react10.useRef)(null);
     const themeVars = useThemeVars(host, session, visible);
-    const profilesApi = (0, import_react9.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
-    const profiles = (0, import_react9.useMemo)(
+    const profilesApi = (0, import_react10.useMemo)(() => bindProfilesApi(host, session.context), [host, session]);
+    const profiles = (0, import_react10.useMemo)(
       () => createProfileListStore(profilesApi, session.signal),
       [profilesApi, session.signal]
     );
     const localServers = useLocalServers(host, session, visible && held === null);
-    const [projectHistoryState, setProjectHistoryState] = (0, import_react9.useState)({
+    const [projectHistoryState, setProjectHistoryState] = (0, import_react10.useState)({
       kind: "loading"
     });
-    const projectHistory = (0, import_react9.useMemo)(
+    const projectHistory = (0, import_react10.useMemo)(
       () => createProjectHistory(
         bindApi(browserHistoryApi, host, session.context),
         session.signal,
@@ -18455,17 +18704,17 @@ ${ind(d)}}`;
       ),
       [host, session]
     );
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       if (visible) projectHistory.refresh();
     }, [projectHistory, visible]);
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       heldRef.current = held;
     }, [held]);
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       historyRef.current = history;
     }, [history]);
-    (0, import_react9.useEffect)(() => session.onVisibility(setVisible), [session]);
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => session.onVisibility(setVisible), [session]);
+    (0, import_react10.useEffect)(() => {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const resumable = resolveResumableStreams(host, "t3.browser/sessions#events");
@@ -18564,7 +18813,7 @@ ${ind(d)}}`;
       return () => controller.abort();
     }, [host, session]);
     const faviconCache = useFaviconCache();
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       resolveSessionFavicons(
         bindApi(browserSessionsApi, host, session.context),
         tabs,
@@ -18572,8 +18821,8 @@ ${ind(d)}}`;
       );
     }, [host, session, tabs]);
     const resolvedFaviconRefs = faviconCache.resolved;
-    (0, import_react9.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => applySessionFavicons(resolvedFaviconRefs, tabs), [resolvedFaviconRefs, tabs]);
+    (0, import_react10.useEffect)(() => {
       if (typeof session.setTabIndicators !== "function") return;
       const indicators = panelTabIndicators(faviconCache, live, tabs);
       try {
@@ -18594,16 +18843,16 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       surfaceUnavailableRef.current = surfaceDenial?.reason === "host-unavailable";
     }, [surfaceDenial?.reason]);
     const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null) || surfaceDenial?.reason === "epoch-changed";
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       if (epochChangedPresentation) dropHeldSession();
     }, [epochChangedPresentation, dropHeldSession]);
     const layers = floatingLayers(overlayZIndex);
-    const Popover = (0, import_react9.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
-    const floating = (0, import_react9.useMemo)(
+    const Popover = (0, import_react10.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
+    const floating = (0, import_react10.useMemo)(
       () => ({
         Popover,
         style: {
@@ -18621,7 +18870,7 @@ ${ind(d)}}`;
       session: held,
       enabled: visible && remoteEligible && surfaceLease?.state.kind !== "ended"
     });
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       const api = bindApi(browserSessionsApi, host, session.context);
       viewportCommitter.current = createViewportCommitter((viewport, signal, target) => {
         const current = heldRef.current;
@@ -18805,7 +19054,7 @@ ${ind(d)}}`;
         })
       );
     };
-    const adopt = (0, import_react9.useCallback)(
+    const adopt = (0, import_react10.useCallback)(
       (tab) => {
         const serverEpoch = tabsEpoch.current;
         if (!serverEpoch) return;
@@ -18863,12 +19112,12 @@ ${ind(d)}}`;
         }
       );
     };
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
-    const pendingZoom = (0, import_react9.useRef)(null);
-    (0, import_react9.useEffect)(() => {
+    const pendingZoom = (0, import_react10.useRef)(null);
+    (0, import_react10.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
     }, [live?.zoomFactor]);
     const runPage = (verb, tab) => {
@@ -18918,9 +19167,9 @@ ${ind(d)}}`;
       else commit2(reload(state2));
       runPage({ method });
     };
-    const runViewCommand = (0, import_react9.useRef)(() => {
+    const runViewCommand = (0, import_react10.useRef)(() => {
     });
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       runViewCommand.current = (commandId) => {
         if (commandId === "reload") {
           if (held || fileSourceRef.current) command("reload");
@@ -18934,7 +19183,7 @@ ${ind(d)}}`;
         }
       };
     });
-    (0, import_react9.useEffect)(() => {
+    (0, import_react10.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -18954,8 +19203,8 @@ ${ind(d)}}`;
     const titled = titleUpdate(live?.navigation ?? null, fileSource !== null, isLeaseUrl);
     const titledUrl = titled?.url ?? null;
     const titledTitle = titled?.title ?? null;
-    const lastTitled = (0, import_react9.useRef)(null);
-    (0, import_react9.useEffect)(() => {
+    const lastTitled = (0, import_react10.useRef)(null);
+    (0, import_react10.useEffect)(() => {
       if (titledUrl === null || titledTitle === null) return;
       if (projectHistoryState.kind !== "ready" || projectHistoryState.entries.length === 0) return;
       const key = `${titledUrl}
@@ -18977,7 +19226,6 @@ ${titledTitle}`;
     const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-    const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
     const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
@@ -19064,24 +19312,13 @@ ${titledTitle}`;
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  ScreenshotButton,
+                  BrowserCaptureButtons,
                   {
                     host,
-                    blockReason: capture.blockReason,
-                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
-                    pageFailed: capturePage === "failed",
-                    onCapture: () => capture.capture("page"),
-                    style: buttonStyle
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-                  AnnotateButton,
-                  {
-                    host,
-                    blockReason: capture.blockReason,
-                    capturing: capture.state.kind === "capturing" ? capture.state.target : null,
-                    pageFailed: capturePage === "failed",
-                    onPick: () => capture.capture("element"),
+                    session,
+                    held,
+                    page: capturePage,
+                    onStatus: setNotice,
                     style: buttonStyle
                   }
                 ),

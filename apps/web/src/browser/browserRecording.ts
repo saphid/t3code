@@ -148,7 +148,30 @@ export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
   return useAtomValue(activeBrowserRecordingTabIdsAtom).tabIds;
 }
 
+export function readBrowserRecordingPhase(
+  tabId: string,
+): "idle" | "starting" | "recording" | "stopping" {
+  return activeRecordings.get(tabId)?.lifecycle.phase ?? "idle";
+}
+
+export function subscribeBrowserRecording(listener: () => void): () => void {
+  recordingListeners.add(listener);
+  return () => {
+    recordingListeners.delete(listener);
+  };
+}
+
 const activeRecordings = new Map<string, ActiveRecording>();
+const recordingListeners = new Set<() => void>();
+const publishBrowserRecordingPhase = () => {
+  for (const listener of recordingListeners) {
+    try {
+      listener();
+    } catch {
+      console.warn("Browser recording state listener failed.");
+    }
+  }
+};
 let displayMediaGrantTail = Promise.resolve();
 let displayMediaGrantQueueDepth = 0;
 
@@ -201,6 +224,7 @@ const publishActiveRecordingTabIds = (): void => {
   appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
     tabIds: new Set(activeRecordings.keys()),
   });
+  publishBrowserRecordingPhase();
 };
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
@@ -672,6 +696,7 @@ export async function startBrowserRecording(
     }
     if (recording.lifecycle.phase === "starting") {
       recording.lifecycle = { phase: "recording" };
+      publishBrowserRecordingPhase();
     }
     return startedAt;
   } finally {
@@ -836,6 +861,7 @@ export function stopBrowserRecording(
       throw error;
     });
   recording.lifecycle = { phase: "stopping", stopPromise };
+  publishBrowserRecordingPhase();
   return stopPromise;
 }
 

@@ -7046,6 +7046,17 @@ var __t3Client = (() => {
   var BROWSER_FRAMES_API = browserFramesApi.definition;
   var BROWSER_SURFACE = "t3.browser/surface";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
+  var BROWSER_RECORDING = "t3.browser/recording";
+  var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    [BROWSER_RECORDING]: "Record the browser panel as video",
+    [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
+  };
+  var BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE];
+  var BROWSER_RECORDING_REQUIRED_GRANTS = [
+    ...BROWSER_CAPTURE_REQUIRED_GRANTS,
+    BROWSER_RECORDING
+  ];
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";

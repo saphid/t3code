@@ -14,6 +14,7 @@ const {
   registrySet,
   requestDisplayMediaCapture,
   save,
+  revealArtifact,
   startScreencast,
   stopScreencast,
 } = vi.hoisted(() => {
@@ -28,23 +29,25 @@ const {
         value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
       );
     }),
-    save: vi.fn(async (tabId: string) => ({
+    save: vi.fn(async (tabId: string, _mimeType: string, data: Uint8Array) => ({
       id: "recording-test",
       tabId,
       path: "/tmp/recording-test.webm",
       mimeType: "video/webm" as const,
-      sizeBytes: 0,
+      sizeBytes: data.byteLength,
       createdAt: "2026-06-26T00:00:00.000Z",
     })),
     startScreencast: vi.fn(async (_tabId: string) => {
       events.push("start-screencast");
     }),
     stopScreencast: vi.fn(async () => undefined),
+    revealArtifact: vi.fn(async (_path: string) => {}),
   };
 });
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
+    revealArtifact,
     recording: {
       onFrame: vi.fn(),
       save,
@@ -76,10 +79,13 @@ import {
   findActiveBrowserRecordingRuntimeTabId,
   readActiveBrowserRecordingTabIds,
   readActiveBrowserRecordingTargets,
+  readBrowserRecordingPhase,
   startBrowserRecording,
   stopBrowserRecording,
   stopBrowserRecordingForUpload,
+  subscribeBrowserRecording,
 } from "./browserRecording";
+import { createBrowserCaptureBridge } from "~/extensions/browserCaptureBridge";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
@@ -114,6 +120,14 @@ class FakeMediaRecorder {
 
   start(): void {
     this.state = "recording";
+  }
+
+  emitData(data: Blob): void {
+    const event = Object.assign(new Event("dataavailable"), { data });
+    for (const listener of this.listeners.get("dataavailable") ?? []) {
+      if (typeof listener === "function") listener(event);
+      else listener.handleEvent(event);
+    }
   }
 
   stop(): void {
@@ -171,6 +185,75 @@ describe("browser recording", () => {
 
     await stopBrowserRecording("recording-tab");
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
+  });
+
+  it("saves and reveals SDK recordings over 50 MiB through the native recorder, joining both stop callers", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("sdk-env"),
+      threadId: ThreadId.make("sdk-thread"),
+    };
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", "sdk-tab");
+    const context = {
+      client: "desktop",
+      resource: {
+        namespace: "test.browser",
+        id: "view",
+        environmentId: threadRef.environmentId,
+        projectId: "sdk-project",
+        threadId: threadRef.threadId,
+      },
+    };
+    const lifetime = new AbortController();
+    const host = createBrowserCaptureBridge(threadRef.environmentId, {
+      resolveThreadScope: () => ({ projectId: "sdk-project", authoritative: true }),
+      serverEpoch: () => "epoch-1",
+      presented: () => true,
+      userActivation: () => true,
+      platform: () => "MacIntel",
+    })({
+      grants: {
+        capabilities: [
+          "t3.browser/sessions",
+          "t3.browser/capture",
+          "t3.browser/recording",
+          "t3.browser/artifact-actions",
+        ],
+        projectIds: ["sdk-project"],
+      },
+      lifetime: lifetime.signal,
+    });
+    const phases = [readBrowserRecordingPhase(runtimeTabId)];
+    const unsubscribe = subscribeBrowserRecording(() =>
+      phases.push(readBrowserRecordingPhase(runtimeTabId)),
+    );
+    const request = { context, session: { tabId: "sdk-tab", serverEpoch: "epoch-1" } };
+    expect(await host.startRecording!(request)).toMatchObject({ ok: true });
+    expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    FakeMediaRecorder.instances[0]!.emitData(
+      new Blob([new Uint8Array(51 * 1024 * 1024)], { type: "video/webm" }),
+    );
+    const [first, second] = await Promise.all([
+      host.stopRecording!(request),
+      host.stopRecording!(request),
+    ]);
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactRef: "recording-recording-test",
+        saved: true,
+        sizeBytes: 51 * 1024 * 1024,
+      },
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(
+      await host.revealArtifact!({ context, artifactRef: "recording-recording-test" }),
+    ).toEqual({ ok: true });
+    expect(revealArtifact).toHaveBeenCalledWith("/tmp/recording-test.webm");
+    expect(phases).toEqual(["idle", "starting", "recording", "stopping", "idle"]);
+    expect(JSON.stringify(first)).not.toContain("/tmp/");
+    unsubscribe();
+    lifetime.abort();
   });
 
   it("routes gesture-free starts through the desktop capture trigger", async () => {

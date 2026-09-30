@@ -1,5 +1,5 @@
 /**
- * Host bridge for `t3.browser/capture@1.1.0`. `installedController` invokes the
+ * Host bridge for `t3.browser/capture@1.2.0`. `installedController` invokes the
  * returned factory once per installed client, so each
  * `ClientHost.browserCapture` checks that installation's grants and lifetime.
  *
@@ -17,14 +17,23 @@
 import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type DesktopPreviewBridge,
+  type DesktopPreviewRecordingArtifact,
   type EnvironmentId,
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   BROWSER_CAPTURE,
+  BROWSER_CAPTURE_ARTIFACT_ACTIONS,
   BROWSER_CAPTURE_REQUIRED_GRANTS,
   BROWSER_CAPTURE_VERSION,
+  BROWSER_RECORDING_REQUIRED_GRANTS,
+  type BrowserCaptureFailure,
+  type BrowserRecordingRequest,
+  type BrowserRecordingFailure,
+  type BrowserRecordingStartResult,
+  type BrowserRecordingStopResult,
+  type BrowserCaptureActionSupport,
   type BrowserCaptureArtifact,
   type BrowserCaptureArtifactActionFailureReason,
   type BrowserCaptureArtifactActionRequest,
@@ -35,9 +44,20 @@ import {
   type BrowserCaptureResult,
 } from "@t3tools/extension-sdk/catalogue";
 import { validateContext } from "@t3tools/extension-sdk/contracts";
+import * as Schema from "effect/Schema";
 
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { uploadBrowserCapture } from "~/browser/browserCaptureArtifacts";
+import {
+  BrowserRecordingConflictError,
+  findActiveBrowserRecordingRuntimeTabId,
+  isBrowserRecordingStartCancelledError,
+  readBrowserRecordingPhase,
+  startBrowserRecording,
+  stopBrowserRecording,
+  subscribeBrowserRecording,
+} from "~/browser/browserRecording";
+import { showBrowserRecordingSavedToast } from "~/browser/browserRecordingToast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { revealInFileExplorerLabel } from "~/components/preview/fileExplorerLabel";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -72,6 +92,9 @@ export interface BrowserCaptureBridgeDeps {
   > | null;
   readonly writeClipboardText: (text: string) => Promise<void>;
   readonly platform: () => string;
+  readonly userActivation: () => boolean;
+  readonly showSavedRecording: (artifact: DesktopPreviewRecordingArtifact) => void;
+  readonly subscribeThread: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
   /** Thread → project, trusted only from a live shell (see the surface bridge). */
   readonly resolveThreadScope: (threadRef: ScopedThreadRef) => {
     readonly projectId: string | null;
@@ -84,9 +107,17 @@ export interface BrowserCaptureBridgeDeps {
    */
   readonly presented: (runtimeTabId: string) => boolean;
   readonly upload: (environmentId: EnvironmentId, png: Blob, name: string) => Promise<string>;
+  readonly recording: {
+    readonly start: typeof startBrowserRecording;
+    readonly stop: typeof stopBrowserRecording;
+    readonly find: typeof findActiveBrowserRecordingRuntimeTabId;
+    readonly phase: typeof readBrowserRecordingPhase;
+    readonly subscribe: typeof subscribeBrowserRecording;
+  };
 }
 
 const PICKED_ELEMENTS_MAX = 16;
+const isRecordingConflict = Schema.is(BrowserRecordingConflictError);
 /** Saved page captures each installation can still act on; the oldest drops first. */
 const SAVED_CAPTURES_MAX = 32;
 const clamp = (value: string, max: number) => (value.length <= max ? value : value.slice(0, max));
@@ -149,6 +180,17 @@ export function createBrowserCaptureBridge(
     presented: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible === true,
     upload: uploadBrowserCapture,
+    recording: {
+      start: startBrowserRecording,
+      stop: stopBrowserRecording,
+      find: findActiveBrowserRecordingRuntimeTabId,
+      phase: readBrowserRecordingPhase,
+      subscribe: subscribeBrowserRecording,
+    },
+    userActivation: () => navigator.userActivation?.isActive === true,
+    showSavedRecording: showBrowserRecordingSavedToast,
+    subscribeThread: (threadRef, listener) =>
+      appAtomRegistry.subscribe(environmentShell.stateValueAtom(threadRef.environmentId), listener),
     writeClipboardText: async (text) => {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable.");
       await navigator.clipboard.writeText(text);
@@ -166,14 +208,197 @@ export function createBrowserCaptureBridge(
       : ({ supported: false, reason: "desktop-required" } as const);
     /**
      * artifactRef → the saved file and the project it was captured in, for
-     * this installation's page captures only.
+     * this installation's page captures and recordings only.
      */
-    const saved = new Map<string, { readonly path: string; readonly projectId: string }>();
+    const saved = new Map<
+      string,
+      { readonly path: string; readonly projectId: string; readonly image: boolean }
+    >();
+    const remember = (artifactRef: string, path: string, projectId: string, image: boolean) => {
+      saved.set(artifactRef, { path, projectId, image });
+      for (const oldest of saved.keys()) {
+        if (saved.size <= SAVED_CAPTURES_MAX) break;
+        saved.delete(oldest);
+      }
+    };
+    const recordingOwned = new Map<string, () => void>();
+    const stops = new Map<string, Promise<DesktopPreviewRecordingArtifact | null>>();
+    const stop = (runtimeTabId: string) => {
+      const existing = stops.get(runtimeTabId);
+      if (existing) return existing;
+      const pending = deps.recording
+        .stop(runtimeTabId)
+        .then((artifact) => {
+          if (artifact && binding.lifetime.aborted) deps.showSavedRecording(artifact);
+          return artifact;
+        })
+        .finally(() => stops.delete(runtimeTabId));
+      stops.set(runtimeTabId, pending);
+      return pending;
+    };
+    binding.lifetime.addEventListener(
+      "abort",
+      () => {
+        for (const [runtimeTabId, unsubscribe] of recordingOwned) {
+          unsubscribe();
+          void stop(runtimeTabId).catch(() => {});
+        }
+        recordingOwned.clear();
+        saved.clear();
+      },
+      { once: true },
+    );
+
+    const authorizeSession = (
+      request: BrowserRecordingRequest,
+      requiredGrants: readonly string[],
+      starting: boolean,
+    ):
+      | {
+          readonly ok: true;
+          readonly runtimeTabId: string;
+          readonly threadRef: ScopedThreadRef;
+          readonly projectId: string;
+          readonly preview: NonNullable<ReturnType<BrowserCaptureBridgeDeps["preview"]>>;
+        }
+      | { readonly ok: false; readonly failure: BrowserCaptureFailure } => {
+      if (binding.lifetime.aborted)
+        return {
+          ok: false,
+          failure: {
+            reason: "host-unavailable",
+            detail: "The installation's client lifetime has ended.",
+          },
+        };
+      for (const grant of requiredGrants) {
+        if (!binding.grants.capabilities.includes(grant))
+          return {
+            ok: false,
+            failure: {
+              reason: "grant-denied",
+              detail: `This operation requires the ${grant} installation grant.`,
+              grant,
+            },
+          };
+      }
+      let resource;
+      try {
+        resource = validateContext(request.context).resource;
+      } catch {
+        return { ok: false, failure: { reason: "scope-invalid", detail: "Invalid view context." } };
+      }
+      if (
+        resource.environmentId !== environmentId ||
+        !resource.threadId ||
+        !resource.projectId ||
+        !binding.grants.projectIds.includes(resource.projectId)
+      )
+        return {
+          ok: false,
+          failure: {
+            reason: "scope-invalid",
+            detail: "Capture requires a thread in a granted project in this environment.",
+          },
+        };
+      const threadRef = {
+        environmentId: resource.environmentId,
+        threadId: resource.threadId,
+      } as ScopedThreadRef;
+      const scope = deps.resolveThreadScope(threadRef);
+      if (!scope.authoritative)
+        return {
+          ok: false,
+          failure: {
+            reason: "host-unavailable",
+            detail: "The thread's project cannot be verified until synchronization completes.",
+          },
+        };
+      if (scope.projectId !== resource.projectId)
+        return {
+          ok: false,
+          failure: {
+            reason: "scope-invalid",
+            detail: "The supplied project does not own this thread.",
+          },
+        };
+      const { tabId, serverEpoch } = request.session ?? {};
+      if (
+        typeof tabId !== "string" ||
+        !tabId ||
+        tabId.length > 128 ||
+        typeof serverEpoch !== "string" ||
+        !serverEpoch ||
+        serverEpoch.length > 128
+      )
+        return {
+          ok: false,
+          failure: {
+            reason: "session-invalid",
+            detail: "Session identity must come from t3.browser/sessions.",
+          },
+        };
+      const preview = deps.preview();
+      if (!preview)
+        return {
+          ok: false,
+          failure: {
+            reason: "desktop-required",
+            detail: "Capture requires the T3 Code desktop app.",
+          },
+        };
+      const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
+      if (starting) {
+        const syncedEpoch = deps.serverEpoch(threadRef);
+        if (syncedEpoch !== null && syncedEpoch !== serverEpoch)
+          return {
+            ok: false,
+            failure: {
+              reason: "epoch-changed",
+              detail: "Re-list sessions after the server epoch changes.",
+            },
+          };
+        if (!deps.presented(runtimeTabId))
+          return {
+            ok: false,
+            failure: { reason: "not-presented", detail: "Present this session before capturing." },
+          };
+      }
+      if (request.signal?.aborted)
+        return {
+          ok: false,
+          failure: { reason: "cancelled", detail: "The operation was cancelled." },
+        };
+      return { ok: true, threadRef, runtimeTabId, projectId: resource.projectId, preview };
+    };
+
+    const recordingFail = (
+      reason: BrowserRecordingFailure["reason"],
+      detail: string,
+    ): { readonly ok: false; readonly failure: BrowserRecordingFailure } => ({
+      ok: false,
+      failure: { reason, detail },
+    });
+    const actionSupport = support;
+    const missingRecordingGrant = BROWSER_RECORDING_REQUIRED_GRANTS.find(
+      (grant) => !binding.grants.capabilities.includes(grant),
+    );
+    const recordingSupport: BrowserCaptureActionSupport = !support.supported
+      ? support
+      : missingRecordingGrant
+        ? { supported: false, reason: "grant-denied", grant: missingRecordingGrant }
+        : support;
+    const recordingActionSupport: BrowserCaptureActionSupport = !recordingSupport.supported
+      ? recordingSupport
+      : binding.grants.capabilities.includes(BROWSER_CAPTURE_ARTIFACT_ACTIONS)
+        ? support
+        : { supported: false, reason: "grant-denied", grant: BROWSER_CAPTURE_ARTIFACT_ACTIONS };
 
     /** Authorizes one artifact action and resolves the file it acts on. */
     const savedCapture = (
       request: BrowserCaptureArtifactActionRequest,
-    ): { readonly path: string } | { readonly failure: BrowserCaptureArtifactActionResult } => {
+    ):
+      | { readonly path: string; readonly image: boolean }
+      | { readonly failure: BrowserCaptureArtifactActionResult } => {
       if (binding.lifetime.aborted)
         return {
           failure: actionFail(
@@ -228,7 +453,22 @@ export function createBrowserCaptureBridge(
             "No page capture this installation saved in this project on this client has that artifactRef.",
           ),
         };
-      return { path: entry.path };
+      if (!entry.image) {
+        for (const grant of [
+          ...BROWSER_RECORDING_REQUIRED_GRANTS,
+          BROWSER_CAPTURE_ARTIFACT_ACTIONS,
+        ]) {
+          if (!binding.grants.capabilities.includes(grant))
+            return {
+              failure: actionFail(
+                "grant-denied",
+                "Saved recording actions require an installation grant.",
+                grant,
+              ),
+            };
+        }
+      }
+      return { path: entry.path, image: entry.image };
     };
 
     /**
@@ -239,9 +479,12 @@ export function createBrowserCaptureBridge(
       request: BrowserCaptureArtifactActionRequest,
       failedDetail: string,
       action: (path: string) => Promise<void>,
+      imageOnly = false,
     ): Promise<BrowserCaptureArtifactActionResult> => {
       const resolved = savedCapture(request);
       if ("failure" in resolved) return resolved.failure;
+      if (imageOnly && !resolved.image)
+        return actionFail("action-failed", "Recordings cannot be copied as images.");
       try {
         await action(resolved.path);
         return { ok: true };
@@ -256,14 +499,17 @@ export function createBrowserCaptureBridge(
       version: BROWSER_CAPTURE_VERSION,
       support,
       artifactActions: {
-        copyImage: support,
-        copyPath: support,
-        reveal: support,
+        copyImage: actionSupport,
+        copyPath: actionSupport,
+        reveal: actionSupport,
         revealLabel: revealInFileExplorerLabel(deps.platform()),
       },
       copyArtifactToClipboard: (request) =>
-        runAction(request, "The saved screenshot could not be copied to the clipboard.", (path) =>
-          deps.preview()!.copyArtifactToClipboard(path),
+        runAction(
+          request,
+          "The saved screenshot could not be copied to the clipboard.",
+          (path) => deps.preview()!.copyArtifactToClipboard(path),
+          true,
         ),
       copyArtifactPath: (request) =>
         runAction(
@@ -275,85 +521,136 @@ export function createBrowserCaptureBridge(
         runAction(request, "The saved screenshot could not be shown in the file manager.", (path) =>
           deps.preview()!.revealArtifact(path),
         ),
-      async capture(request): Promise<BrowserCaptureResult> {
-        if (binding.lifetime.aborted)
-          return fail("host-unavailable", "the installation's client lifetime has already ended.");
-        for (const grant of BROWSER_CAPTURE_REQUIRED_GRANTS)
-          if (!binding.grants.capabilities.includes(grant))
-            return fail(
-              "grant-denied",
-              `${BROWSER_CAPTURE} requires the ${grant} installation grant.`,
-              grant,
-            );
-        let context;
+      recordingSupport,
+      recordingArtifactActions: {
+        copyPath: recordingActionSupport,
+        reveal: recordingActionSupport,
+        revealLabel: revealInFileExplorerLabel(deps.platform()),
+      },
+      async startRecording(request): Promise<BrowserRecordingStartResult> {
+        const authorized = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, true);
+        if (!authorized.ok) return authorized;
+        if (!deps.userActivation())
+          return recordingFail(
+            "user-activation-required",
+            "Click a recording control to start recording the browser panel.",
+          );
+        const { runtimeTabId, threadRef } = authorized;
+        if (
+          recordingOwned.has(runtimeTabId) ||
+          deps.recording.find(threadRef, request.session.tabId) !== null
+        )
+          return recordingFail("busy", "This session is already being recorded.");
+        const releaseOwnership = () => {
+          if (recordingOwned.get(runtimeTabId) !== unsubscribe) return;
+          unsubscribe();
+          recordingOwned.delete(runtimeTabId);
+        };
+        const unsubscribe = deps.recording.subscribe(() => {
+          if (deps.recording.phase(runtimeTabId) === "idle") releaseOwnership();
+        });
+        recordingOwned.set(runtimeTabId, unsubscribe);
+        const cancel = () => {
+          void deps.recording.stop(runtimeTabId).catch(() => {});
+        };
+        request.signal?.addEventListener("abort", cancel, { once: true });
         try {
-          context = validateContext(request.context);
+          const startedAt = await deps.recording.start(
+            runtimeTabId,
+            threadRef,
+            request.session.tabId,
+          );
+          if (binding.lifetime.aborted || request.signal?.aborted) {
+            await deps.recording.stop(runtimeTabId).catch(() => {});
+            releaseOwnership();
+            return recordingFail("cancelled", "Recording startup was cancelled.");
+          }
+          return { ok: true, startedAt };
         } catch (error) {
-          return fail(
-            "scope-invalid",
-            error instanceof Error ? error.message : "Invalid view context.",
-          );
+          releaseOwnership();
+          return isBrowserRecordingStartCancelledError(error)
+            ? recordingFail("cancelled", "Recording startup was cancelled.")
+            : isRecordingConflict(error)
+              ? recordingFail("busy", "This session is already being recorded.")
+              : recordingFail("recording-failed", "The desktop could not start recording.");
+        } finally {
+          request.signal?.removeEventListener("abort", cancel);
         }
-        const resource = context.resource;
-        if (resource.environmentId !== environmentId || !resource.threadId || !resource.projectId)
-          return fail(
-            "scope-invalid",
-            `${BROWSER_CAPTURE} requires a thread-scoped context in this environment and a granted project.`,
-          );
-        const threadRef = {
-          environmentId: resource.environmentId,
-          threadId: resource.threadId,
-        } as ScopedThreadRef;
-        const threadScope = deps.resolveThreadScope(threadRef);
-        if (!threadScope.authoritative)
-          return fail(
-            "host-unavailable",
-            `${BROWSER_CAPTURE} cannot verify the thread's project until this environment's data is live; retry once synchronization completes.`,
-          );
+      },
+      async stopRecording(request): Promise<BrowserRecordingStopResult> {
+        const authorized = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, false);
+        if (!authorized.ok) return authorized;
+        const runtimeTabId = deps.recording.find(authorized.threadRef, request.session.tabId);
+        if (runtimeTabId === null) return { ok: true, artifact: null };
+        try {
+          const artifact = await stop(runtimeTabId);
+          if (!artifact) return { ok: true, artifact: null };
+          const artifactRef = `recording-${artifact.id}`;
+          if (!binding.lifetime.aborted)
+            remember(artifactRef, artifact.path, authorized.projectId, false);
+          return {
+            ok: true,
+            artifact: {
+              artifactRef,
+              mimeType: artifact.mimeType,
+              sizeBytes: artifact.sizeBytes,
+              createdAt: artifact.createdAt,
+              saved: true,
+            },
+          };
+        } catch {
+          return recordingFail("recording-failed", "The desktop could not save the recording.");
+        }
+      },
+      subscribeRecording(request, listener) {
+        const authorized = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, false);
         if (
-          threadScope.projectId === null ||
-          threadScope.projectId !== resource.projectId ||
-          !binding.grants.projectIds.includes(threadScope.projectId)
-        )
-          return fail(
-            "scope-invalid",
-            `${BROWSER_CAPTURE} requires a thread inside a granted project; the supplied project does not own this thread.`,
-          );
-        const tabId = request.session?.tabId;
-        const serverEpoch = request.session?.serverEpoch;
-        if (
-          typeof tabId !== "string" ||
-          !tabId ||
-          tabId.length > 128 ||
-          typeof serverEpoch !== "string" ||
-          !serverEpoch ||
-          serverEpoch.length > 128
-        )
-          return fail(
-            "session-invalid",
-            "session identity must come from t3.browser/sessions (tabId + serverEpoch).",
-          );
+          !authorized.ok &&
+          (authorized.failure.reason !== "host-unavailable" ||
+            binding.lifetime.aborted ||
+            request.signal?.aborted)
+        ) {
+          listener(authorized);
+          return () => {};
+        }
+        const publish = () => {
+          const current = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, false);
+          if (!current.ok) {
+            listener(current);
+            return;
+          }
+          const runtimeTabId = deps.recording.find(current.threadRef, request.session.tabId);
+          listener({
+            ok: true,
+            phase: runtimeTabId === null ? "idle" : deps.recording.phase(runtimeTabId),
+          });
+        };
+        const unsubscribe = deps.recording.subscribe(publish);
+        const resource = validateContext(request.context).resource;
+        const unsubscribeThread = deps.subscribeThread(
+          { environmentId: resource.environmentId, threadId: resource.threadId } as ScopedThreadRef,
+          publish,
+        );
+        let disposed = false;
+        const dispose = () => {
+          if (disposed) return;
+          disposed = true;
+          unsubscribe();
+          unsubscribeThread();
+          binding.lifetime.removeEventListener("abort", dispose);
+          request.signal?.removeEventListener("abort", dispose);
+        };
+        binding.lifetime.addEventListener("abort", dispose, { once: true });
+        request.signal?.addEventListener("abort", dispose, { once: true });
+        publish();
+        return dispose;
+      },
+      async capture(request): Promise<BrowserCaptureResult> {
+        const authorized = authorizeSession(request, BROWSER_CAPTURE_REQUIRED_GRANTS, true);
+        if (!authorized.ok) return authorized;
+        const { threadRef, runtimeTabId, projectId, preview } = authorized;
         if (request.target !== "page" && request.target !== "element")
           return fail("session-invalid", 'target must be "page" or "element".');
-        const syncedEpoch = deps.serverEpoch(threadRef);
-        if (syncedEpoch !== null && syncedEpoch !== serverEpoch)
-          return fail(
-            "epoch-changed",
-            "the synced server epoch has moved past this session's epoch; re-list sessions and capture again.",
-          );
-        const preview = deps.preview();
-        if (!preview)
-          return fail(
-            "desktop-required",
-            "This client has no browser engine; capture from the T3 Code desktop app.",
-          );
-        const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
-        if (!deps.presented(runtimeTabId))
-          return fail(
-            "not-presented",
-            "The session is not shown on this client; present it before capturing.",
-          );
-        if (request.signal?.aborted) return fail("cancelled", "The capture was cancelled.");
         if (inFlight.has(runtimeTabId))
           return fail("busy", "Another capture of this session is still running.");
 
@@ -481,11 +778,7 @@ export function createBrowserCaptureBridge(
             return fail("cancelled", "The capture was cancelled.");
           retainedAnnotation?.setArtifact(artifactRef);
           if (savedPath !== null) {
-            saved.set(artifactRef, { path: savedPath, projectId: resource.projectId });
-            for (const oldest of saved.keys()) {
-              if (saved.size <= SAVED_CAPTURES_MAX) break;
-              saved.delete(oldest);
-            }
+            remember(artifactRef, savedPath, projectId, true);
           }
           return {
             ok: true,
