@@ -40,6 +40,7 @@ function fakeGlab(input: {
   >;
   readonly defaultHost?: string;
   readonly repositoryHost?: string;
+  readonly repositoryVisibility?: "public" | "private";
 }) {
   const requests: Array<{ readonly profile: string; readonly apiHost: string }> = [];
   const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -51,22 +52,27 @@ function fakeGlab(input: {
     }
     expect(call.command).toBe("glab");
     expect(call.args).toEqual(["api", "projects/alex%2Frepo"]);
+    const defaultHost = call.env?.GITLAB_HOST ?? input.defaultHost ?? "gitlab.com";
     const profile =
-      call.env?.GITLAB_HOST ??
-      (input.repositoryHost && input.repositoryHost in input.profiles
+      input.repositoryHost &&
+      input.repositoryHost in input.profiles &&
+      (defaultHost === "gitlab.com" || input.repositoryHost === defaultHost)
         ? input.repositoryHost
-        : (input.defaultHost ?? "gitlab.com"));
+        : defaultHost;
     const apiHost = input.profiles[profile]?.apiHost ?? profile;
     requests.push({ profile, apiHost });
-    if (!(profile in input.profiles) || input.profiles[profile]?.authenticated === false) {
+    if (
+      (!(profile in input.profiles) || input.profiles[profile]?.authenticated === false) &&
+      input.repositoryVisibility !== "public"
+    ) {
       return Effect.fail(
         new VcsProcessExitError({
           operation: call.operation,
           command: call.command,
           cwd: call.cwd,
           exitCode: 1,
-          detail: "GitLab CLI is not authenticated for this host. Run glab auth login.",
-          failureKind: "authentication",
+          detail: "Merge request not found.",
+          failureKind: "not-found",
         }),
       );
     }
@@ -84,11 +90,18 @@ function fakeGlab(input: {
   return requests;
 }
 
-function repositoryContext(host: string): SourceControlProviderContext {
+function repositoryContext(host: string, sshPort?: number): SourceControlProviderContext {
   return {
-    provider: { kind: "gitlab", name: "GitLab", baseUrl: `https://${host}` },
+    provider: {
+      kind: "gitlab",
+      name: "GitLab",
+      baseUrl: `https://${host}${sshPort === undefined ? "" : `:${sshPort}`}`,
+    },
     remoteName: "origin",
-    remoteUrl: `git@${host}:team/repo.git`,
+    remoteUrl:
+      sshPort === undefined
+        ? `git@${host}:team/repo.git`
+        : `ssh://git@${host}:${sshPort}/team/repo.git`,
   };
 }
 
@@ -300,7 +313,7 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each(["gitlab.com", "gitlab-b.example"])(
-    "selects the %s fork profile instead of glab's default host",
+    "selects the %s fork profile when no known Git remote matches",
     (host) =>
       Effect.gen(function* () {
         const requests = fakeGlab({
@@ -321,9 +334,38 @@ layer("GitLabCli.layer", (it) => {
       }),
   );
 
-  it.effect.each([false, true])(
-    "preserves the Git hostname's authenticated API-host profile (web login present: %s)",
-    (webLoginPresent) =>
+  it.effect("retains glab's known-remote resolution for a gitlab.com override", () =>
+    Effect.gen(function* () {
+      const profile = "gitlab.corp.example";
+      const requests = fakeGlab({
+        profiles: { [profile]: {}, "gitlab.com": {} },
+        repositoryHost: profile,
+      });
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        host: "gitlab.com",
+        context: repositoryContext(profile),
+        repository: "alex/repo",
+      });
+
+      expect(result.url).toBe(`https://${profile}/alex/repo`);
+      expect(requests).toEqual([{ profile, apiHost: profile }]);
+      expect(mockedRun.mock.calls.map(([call]) => call.env)).toEqual([
+        undefined,
+        { GITLAB_HOST: "gitlab.com" },
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { webLoginPresent: false, sshPort: undefined },
+    { webLoginPresent: true, sshPort: undefined },
+    { webLoginPresent: false, sshPort: 2222 },
+    { webLoginPresent: true, sshPort: 2222 },
+  ])(
+    "preserves the Git hostname's authenticated API-host profile (web login: $webLoginPresent, SSH port: $sshPort)",
+    ({ webLoginPresent, sshPort }) =>
       Effect.gen(function* () {
         const profile = "ssh.gitlab.corp.example";
         const host = "gitlab.corp.example";
@@ -338,7 +380,7 @@ layer("GitLabCli.layer", (it) => {
         const lookup: Parameters<SourceControlProvider["Service"]["getRepositoryCloneUrls"]>[0] = {
           cwd: "/repo",
           host,
-          context: repositoryContext(profile),
+          context: repositoryContext(profile, sshPort),
           repository: "alex/repo",
         };
         const glab = yield* GitLabCli.GitLabCli;
@@ -380,7 +422,7 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each([false, true])(
-    "reports a missing host credential without falling back (host configured: %s)",
+    "reports an anonymous private-fork 404 without falling back (host configured: %s)",
     (hostConfigured) =>
       Effect.gen(function* () {
         const host = "gitlab-missing.example";
@@ -398,11 +440,38 @@ layer("GitLabCli.layer", (it) => {
         const glab = yield* GitLabCli.GitLabCli;
         const error = yield* glab.getRepositoryCloneUrls(lookup).pipe(Effect.flip);
 
-        expect(error._tag).toBe("GitLabCliAuthenticationError");
+        expect(error._tag).toBe("GitLabCliCommandError");
+        expect(error.cause).toMatchObject({
+          _tag: "VcsProcessExitError",
+          exitCode: 1,
+          failureKind: "not-found",
+          detail: "Merge request not found.",
+        });
         expect(requests).toEqual([{ profile: host, apiHost: host }]);
         expect(mockedRun.mock.calls).toHaveLength(1);
         expect(mockedRun.mock.calls[0]?.[0].env).toEqual({ GITLAB_HOST: host });
       }),
+  );
+
+  it.effect("allows an anonymous public-fork lookup on a host with no profile", () =>
+    Effect.gen(function* () {
+      const host = "gitlab-public.example";
+      const requests = fakeGlab({
+        profiles: { "gitlab.com": {} },
+        repositoryVisibility: "public",
+      });
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        host,
+        repository: "alex/repo",
+      });
+
+      expect(result.url).toBe(`https://${host}/alex/repo`);
+      expect(requests).toEqual([{ profile: host, apiHost: host }]);
+      expect(mockedRun.mock.calls).toHaveLength(1);
+      expect(mockedRun.mock.calls[0]?.[0].env).toEqual({ GITLAB_HOST: host });
+    }),
   );
 
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>

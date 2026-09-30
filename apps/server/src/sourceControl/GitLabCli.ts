@@ -533,9 +533,12 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         let host = input.host?.trim().toLowerCase() ?? "";
         const qualifyHost = host.length > 0 && !/:\d+$/u.test(host);
+        // glab keys profiles by hostname, including split SSH/API hosts.
+        // --hostname replaces the Git profile; GITLAB_API_HOST only redirects its API.
+        // Probe api_host before selecting GITLAB_HOST; ported targets keep glab's path.
         if (qualifyHost) {
           const baseUrl = input.context?.provider.baseUrl;
-          const profile = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).host : undefined;
+          const profile = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).hostname : undefined;
           if (profile && profile !== host) {
             const apiHost = yield* execute({
               cwd: input.cwd,

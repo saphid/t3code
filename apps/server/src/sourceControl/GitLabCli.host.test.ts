@@ -15,7 +15,7 @@ const decodeCalls = Schema.decodeUnknownSync(
     Schema.Array(
       Schema.Struct({
         args: Schema.Array(Schema.String),
-        host: Schema.String,
+        host: Schema.NullOr(Schema.String),
       }),
     ),
   ),
@@ -34,10 +34,10 @@ it.effect.each(["gitlab.com", "gitlab-b.example", "gitlab-missing.example"])(
         executable,
         `import fs from "node:fs";
 const args = process.argv.slice(2);
-const host = process.env.GITLAB_HOST;
+const host = process.env.GITLAB_HOST ?? null;
 fs.writeFileSync(process.env.FAKE_GLAB_RECORDING, JSON.stringify([{ args, host }]));
 if (host === "gitlab-missing.example") {
-  process.stderr.write("Not authenticated for this host. Run glab auth login.\\n");
+  process.stderr.write("404 Project Not Found\\n");
   process.exitCode = 1;
 } else {
   process.stdout.write(JSON.stringify({
@@ -62,7 +62,6 @@ if (host === "gitlab-missing.example") {
                 args: [executable, ...input.args],
                 env: {
                   ...input.env,
-                  GITLAB_HOST: input.env?.GITLAB_HOST ?? "gitlab.com",
                   FAKE_GLAB_RECORDING: recording,
                 },
               });
@@ -79,8 +78,13 @@ if (host === "gitlab-missing.example") {
 
       if (host === "gitlab-missing.example") {
         const error = yield* lookup.pipe(Effect.flip);
-        expect(error._tag).toBe("GitLabCliAuthenticationError");
-        expect(error.cause).toMatchObject({ _tag: "VcsProcessExitError", exitCode: 1 });
+        expect(error._tag).toBe("GitLabCliCommandError");
+        expect(error.cause).toMatchObject({
+          _tag: "VcsProcessExitError",
+          exitCode: 1,
+          failureKind: "not-found",
+          detail: "Merge request not found.",
+        });
       } else {
         const result = yield* lookup;
         expect(result.url).toBe(`https://${host}/alex/repo`);
