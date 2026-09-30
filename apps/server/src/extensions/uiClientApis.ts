@@ -22,6 +22,7 @@ import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import {
   CLIENT_EXTERNAL_V11_RANGE,
+  CLIENT_EDITOR_V11_RANGE,
   CLIENT_NAVIGATION_V11_RANGE,
   CLIENT_NAVIGATION_V12_RANGE,
   CLIENT_NOTIFICATIONS_V11_RANGE,
@@ -1157,12 +1158,71 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     availability: ambient(deps, CLIENT_EDITOR),
     invoke(method, input, context, signal, metadata): Promise<Json> {
       if (method === "getCapabilities")
-        return capabilities(deps, "host.ui.editor", { openPath: CLIENT_EDITOR }, metadata);
+        return (async () => {
+          const base = (await capabilities(
+            deps,
+            "host.ui.editor",
+            { openPath: CLIENT_EDITOR },
+            metadata,
+          )) as { adapter: string; operations: Record<string, boolean>; clients: Json[] };
+          if (metadata.principal?.kind === "provider-session") return base;
+          const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+            signal,
+          });
+          const { ok } = await clientSupports(
+            connectionId,
+            CLIENT_EDITOR,
+            CLIENT_EDITOR_V11_RANGE,
+            signal,
+          );
+          if (!ok) return { ...base, operations: { openPath: false } };
+          const answer = (await Effect.runPromise(
+            invokeClient(deps, {
+              apiId: CLIENT_EDITOR,
+              method,
+              input: {},
+              context,
+              signal,
+              metadata,
+              connectionId,
+            }),
+            { signal },
+          )) as { editor?: Json; operations?: Json };
+          return {
+            ...base,
+            operations: answer.operations ?? { openPath: false },
+            ...(answer.editor === undefined ? {} : { editor: answer.editor }),
+          };
+        })();
       if (method !== "openPath")
         return Promise.reject(
           providerError("client-provider-unavailable", `Unknown editor op: ${method}`),
         );
-      return forward(deps, CLIENT_EDITOR, "openPath")(method, input, context, signal, metadata);
+      return (async () => {
+        const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+          signal,
+        });
+        if ((input as { workspace?: unknown }).workspace === true)
+          await requireClient(
+            connectionId,
+            CLIENT_EDITOR,
+            CLIENT_EDITOR_V11_RANGE,
+            "workspace openPath",
+            signal,
+          );
+        return Effect.runPromise(
+          invokeClient(deps, {
+            apiId: CLIENT_EDITOR,
+            method: "openPath",
+            input,
+            context,
+            signal,
+            metadata,
+            connectionId,
+          }),
+          { signal },
+        );
+      })();
     },
   };
 

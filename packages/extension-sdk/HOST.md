@@ -63,14 +63,16 @@ The frozen v1 component/prop list is:
 | `MenuRow`                                      | Standard div props; string `label`, `disabled`; child controls stay in an open menu                                                                              |
 | `MenuNote`                                     | Standard div props; `numeric` for a compact numeric display                                                                                                      |
 | `MenuRadioGroup`                               | String `value`, `onValueChange`, `children`                                                                                                                      |
-| `MenuRadioItem`                                | String `value`, `disabled`, `children`                                                                                                                           |
+| `MenuRadioItem`                                | String `value`, `disabled`, `closeOnClick`, `children`                                                                                                           |
 | `TreeRow`                                      | Standard button props except `children`; `path`, `depth`, `directory`, `expanded`, `selected`, optional display `label`; positional ARIA attributes pass through |
-| `Icon`                                         | `name`: `back`, `forward`, `refresh`, `more`, `external`, `camera`, `annotate`, `viewport`, `minus`, `plus`, `reset`; `refreshing`, `className`                  |
+| `Icon`                                         | `name`: `back`, `forward`, `refresh`, `more`, `external`, `camera`, `annotate`, `viewport`, `minus`, `plus`, `reset`; `refreshing`, `active`                     |
 
 Generic input groups and menus do not assume Browser sizing or popup placement;
 packs choose their documented props. Menu portals carry the browser-surface
 overlay marker. `ExtensionSurface` supplies visibility to host menus: hiding a
 retained view closes its portals, and showing it does not reopen them.
+`SurfaceVisibilityContext` is host-only plumbing in the `./host` entry; packs
+use the view session's visibility callbacks instead of a bundled context.
 
 Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native needs a native renderer and bridge; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The SDK package does not itself serve endpoints. The application environment runtime supplies authenticated installation and API transports; domain support must still be discovered and verified. Broader orchestration operations, structured attachments, asynchronous context resolution and untrusted isolation remain later phases.
 

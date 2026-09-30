@@ -8,6 +8,7 @@ export function FileTreeRow({
   const { path, depth, directory, expanded, selected, style, label, ...attributes } = props;
   return (
     <button
+      data-t3-files-fallback-control
       type="button"
       role="treeitem"
       aria-level={depth + 1}

@@ -8,6 +8,7 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiEditorApi,
   uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
@@ -61,13 +62,9 @@ import {
   usePostedComments,
 } from "./commentSession.js";
 import { useAddToChat } from "./composerBridge.js";
+import { useExternalEditor } from "./editorBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
-import { ReadOnlyFileBody } from "./codeView.js";
-import {
-  FILE_SAVE_DEBOUNCE_MS,
-  FileEditCoordinator,
-  type EditorSaveState,
-} from "./saveCoordinator.js";
+import { EditableFileBody, ReadOnlyFileBody } from "./codeView.js";
 import { useFileEditor } from "./editorSession.js";
 import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
 import { useWorkspaceTree } from "./workspaceTree.js";
@@ -632,6 +629,7 @@ function MarkdownInlineNode(props: {
         const anchor = links === undefined ? null : resolveWorkspaceLink(node.href, "");
         return links !== undefined && anchor?.kind === "anchor" && anchor.line !== undefined ? (
           <button
+            data-t3-files-fallback-control
             type="button"
             style={linkButtonStyle}
             onClick={() => links.revealLine(anchor.line ?? 0)}
@@ -656,6 +654,7 @@ function MarkdownInlineNode(props: {
       const target = links === undefined ? null : resolveWorkspaceLink(node.href, links.baseDir);
       return links !== undefined && target?.kind === "workspace" ? (
         <button
+          data-t3-files-fallback-control
           type="button"
           style={linkButtonStyle}
           onClick={() => links.openPath(target.path, target.line)}
@@ -773,6 +772,7 @@ function MarkdownBlockNode(props: {
             <li key={key} style={{ marginBottom: 4 }}>
               {item.task !== undefined && (
                 <input
+                  data-t3-files-fallback-control
                   type="checkbox"
                   checked={item.task.checked}
                   disabled
@@ -946,6 +946,7 @@ function FileBreadcrumbBar(props: {
               {menuable ? (
                 <Tooltip host={host} side="top" label={fileBreadcrumbTooltip(crumb)}>
                   <button
+                    data-t3-files-fallback-control
                     type="button"
                     aria-label={`Browse ${crumb.label}`}
                     aria-haspopup="menu"
@@ -1089,6 +1090,7 @@ function CrumbMenu(props: {
   return (
     <>
       <button
+        data-t3-files-fallback-control
         type="button"
         aria-label="Close directory menu"
         onClick={onClose}
@@ -1123,6 +1125,7 @@ function CrumbMenu(props: {
       >
         {menuDir !== rootPath && parent !== null && (
           <button
+            data-t3-files-fallback-control
             type="button"
             role="menuitem"
             onClick={() => onNavigate(parent)}
@@ -1134,6 +1137,7 @@ function CrumbMenu(props: {
         {children.map((child) => (
           <Tooltip key={child.path} host={host} side="right" label={child.path}>
             <button
+              data-t3-files-fallback-control
               type="button"
               role="menuitem"
               aria-current={child.path === selected ? "true" : undefined}
@@ -1187,6 +1191,10 @@ const toolbarControl = {
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const kit = resolveUiKit(props.host);
+  const ActionButton = kit?.Button ?? "button";
+  const actionProps = kit
+    ? ({ variant: "outline", size: "xs" } as const)
+    : { "data-t3-files-fallback-control": "", style: toolbarControl };
   const { host, session } = props;
   const [visible, setVisible] = useState(session.visible);
   useEffect(() => session.onVisibility(setVisible), [session]);
@@ -1199,6 +1207,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
+  const externalEditor = useExternalEditor(host, session);
   const wordWrap = preferences.wordWrap;
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
@@ -1241,7 +1250,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     return path !== null && line !== null ? { path, line, id: 1 } : null;
   });
   const handledRevealRef = useRef<{ path: string; line: number; id: number } | null>(null);
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const readOnlyRef = useRef<HTMLPreElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   // HTML renders by default; a pending line reveal shows the source it
@@ -1303,10 +1311,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   // the viewport mount, so an expanded tree of any size stays cheap. The
   // focused row stays mounted so keyboard focus survives scrolling.
   const [focusedRow, setFocusedRow] = useState<string | null>(null);
+  const tabStopPath =
+    focusedRow ?? (selected && rowIndex.has(selected) ? selected : rows[0]?.entry.path);
   const tree = useWindowedRows(host, {
     count: rows.length,
     rowHeight: TREE_ROW_HEIGHT,
-    ...(focusedRow !== null && rowIndex.has(focusedRow) ? { keep: rowIndex.get(focusedRow) } : {}),
+    ...(tabStopPath !== undefined ? { keep: rowIndex.get(tabStopPath) } : {}),
   });
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const focusTarget = useRef<string | null>(null);
@@ -1350,6 +1360,13 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     setFocusedRow(path);
     if (path !== null) revealFocusRow(next);
   }, [focusedRow, rowIndex, rows, kindByPath, revealFocusRow]);
+  const toggleTreeFolder = (row: (typeof rows)[number]) =>
+    setFolders((previous) => {
+      const next = toggleFolder(previous, row.entry.path);
+      // Flattened intermediates open with their visible row, so a new sibling
+      // can split the chain without hiding the branch the user opened.
+      return expanded.has(row.entry.path) ? next : openFolders(next, row.directoryPaths ?? []);
+    });
   // Tree keys, as native's: up/down/home/end move; right opens a folder or
   // enters it; left closes it or moves to its parent.
   const onTreeKeyDown = (event: KeyboardEvent) => {
@@ -1374,7 +1391,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       next = open ? undefined : parentIndex === -1 ? index : parentIndex;
     } else return;
     event.preventDefault();
-    if (next === undefined) setFolders((previous) => toggleFolder(previous, row.entry.path));
+    if (next === undefined) toggleTreeFolder(row);
     else focusRow(next);
   };
   // A file selected from anywhere — a link, search, the breadcrumb — scrolls
@@ -1465,7 +1482,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
     if (session.save(state)) savedViewStateRef.current = serialized;
   }, [session, selected, folders, renderMarkdown, renderHtml, explorerOpen, revealLine]);
 
-  // Row 14: review comments on file lines. The textarea's character selection
+  // Row 14: review comments on file lines. The host editor's line selection
   // expands to full lines; submit lands a real composer draft review comment
   // through the grant-gated `t3.messages/enrichment.attachAnnotation` seam.
   // The draft form captures its range + excerpt pinned to the live buffer
@@ -1895,26 +1912,25 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         };
 
   // Centered line reveal. Waits for the selected file's content
-  // surface — the editable textarea or the bounded read-only <pre> — then
+  // fallback surface — the bounded read-only <pre> — then
   // scrolls the target line into the viewport center and marks the request
-  // handled. The read-only pre's text node gives exact rendered geometry via
-  // a Range rect; the textarea falls back to line-height estimation and gets
-  // the caret on the line. A request that can't run yet (read in flight,
+  // handled. Its text node gives exact rendered geometry via a Range rect;
+  // host code views handle their own reveal. A request that can't run yet (read in flight,
   // rendered-markdown view) stays pending until the surface appears or a
   // plain selection replaces it.
   useEffect(() => {
     const reveal = revealRequest;
     if (reveal === null || reveal === handledRevealRef.current) return;
     if (reveal.path !== selected || selectedKind !== "text" || markdownBlocks !== null) return;
-    const editable = editorSurface?.open.editable === true;
-    const text = editable ? editorSurface.contents : currentRead?.contents;
-    const element = editable ? editorRef.current : readOnlyRef.current;
+    const text =
+      editorSurface?.open.editable === true ? editorSurface.contents : currentRead?.contents;
+    const element = readOnlyRef.current;
     if (text === undefined || element === null) return;
     const style = getComputedStyle(element);
     const paddingTop = Number.parseFloat(style.paddingTop) || 0;
     const lineHeight = Number.parseFloat(style.lineHeight) || 16;
     let renderedLine: { top: number; height: number } | undefined;
-    if (!editable) {
+    {
       const node = element.firstChild;
       if (node !== null && node.nodeType === Node.TEXT_NODE) {
         const offset = Math.min(lineStartOffset(text, reveal.line), node.textContent?.length ?? 0);
@@ -1935,11 +1951,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       estimatedLine: { top: (reveal.line - 1) * lineHeight, height: lineHeight },
       ...(renderedLine !== undefined ? { renderedLine } : {}),
     });
-    if (editable && element instanceof HTMLTextAreaElement) {
-      const offset = lineStartOffset(text, reveal.line);
-      element.focus({ preventScroll: true });
-      element.setSelectionRange(offset, offset);
-    }
     handledRevealRef.current = reveal;
   }, [revealRequest, selected, selectedKind, markdownBlocks, editorSurface, currentRead]);
 
@@ -1962,7 +1973,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {/* Native focus treatment: the host's 2px accent ring with a 1px canvas
           gap on focus-visible (same rule as the other first-party panels). */}
       <style>
-        {`[data-t3-files-panel] :is(button,input,select,textarea):not([data-slot]):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`[data-t3-files-fallback-control]:focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       {showExplorer && (
         <header
@@ -1977,6 +1988,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
         >
           <Tooltip host={host} label={pending ? "Refreshing…" : "Refresh files"}>
             <button
+              data-t3-files-fallback-control
               type="button"
               aria-label="Refresh workspace files"
               onClick={refresh}
@@ -1986,6 +1998,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             </button>
           </Tooltip>
           <select
+            data-t3-files-fallback-control
             aria-label="Search mode"
             value={searchMode}
             onChange={(event) => setSearchMode(event.target.value as "names" | "contents")}
@@ -1995,6 +2008,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             <option value="contents">File contents</option>
           </select>
           <input
+            data-t3-files-fallback-control
             ref={searchRef}
             type="search"
             aria-label="Search workspace files"
@@ -2010,6 +2024,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             style={{ ...toolbarControl, cursor: "auto", flex: 1, minWidth: 0 }}
           />
           <select
+            data-t3-files-fallback-control
             aria-label={
               searchMode === "contents"
                 ? "Search kind — not used for contents search"
@@ -2027,6 +2042,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           {directories.length > 0 && (
             <Tooltip host={host} label={expandAllLabel}>
               <button
+                data-t3-files-fallback-control
                 type="button"
                 aria-label={expandAllLabel}
                 onClick={toggleAllDirectories}
@@ -2063,6 +2079,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 ).map(({ item: match, key }) => (
                   <li key={key}>
                     <button
+                      data-t3-files-fallback-control
                       type="button"
                       aria-current={match.path === selected ? "true" : undefined}
                       draggable
@@ -2136,6 +2153,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 ).map((entry) => (
                   <li key={entry.path}>
                     <button
+                      data-t3-files-fallback-control
                       type="button"
                       aria-current={entry.path === selected ? "true" : undefined}
                       draggable
@@ -2201,13 +2219,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                         directory={row.expandable}
                         expanded={expanded.has(row.entry.path)}
                         selected={row.entry.path === selected}
-                        tabIndex={
-                          row.entry.path ===
-                          (focusedRow ??
-                            (selected && rowIndex.has(selected) ? selected : rows[0]?.entry.path))
-                            ? 0
-                            : -1
-                        }
+                        tabIndex={row.entry.path === tabStopPath ? 0 : -1}
                         ref={(button) => {
                           if (button === null) rowButtons.current.delete(row.entry.path);
                           else rowButtons.current.set(row.entry.path, button);
@@ -2227,7 +2239,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                             select(row.entry.path);
                             return;
                           }
-                          setFolders((previous) => toggleFolder(previous, row.entry.path));
+                          toggleTreeFolder(row);
                         }}
                       />
                     </li>
@@ -2298,16 +2310,60 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
             flexShrink: 0,
           }}
         >
-          <button type="button" onClick={openInPanel}>
+          <ActionButton {...actionProps} type="button" onClick={openInPanel}>
             Open in panel
-          </button>
+          </ActionButton>
+          {externalEditor.visible && (
+            <>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                disabled={
+                  externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                }
+                onClick={() => externalEditor.openInEditor(selected)}
+              >
+                Open in{" "}
+                {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
+                  ?.label ?? "editor"}
+              </ActionButton>
+              <details
+                style={{ position: "relative" }}
+                onToggle={(event) => {
+                  if (event.currentTarget.open) externalEditor.markHintShown();
+                }}
+              >
+                <summary style={toolbarControl}>Choose editor</summary>
+                {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
+                {externalEditor.editors.map((editor) => (
+                  <ActionButton
+                    {...actionProps}
+                    key={editor.id}
+                    type="button"
+                    disabled={
+                      externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                    }
+                    onClick={() => externalEditor.openInEditor(selected, editor.id)}
+                  >
+                    {editor.label}
+                  </ActionButton>
+                ))}
+              </details>
+            </>
+          )}
+          {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (
+            <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
+              {externalEditor.state.message}
+            </span>
+          )}
           {browserPreview && opensInPreviewBrowser(selected) && (
-            <button type="button" onClick={() => openSelected("browser")}>
+            <ActionButton {...actionProps} type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
-            </button>
+            </ActionButton>
           )}
           {addChat.blockReason === null ? (
-            <button
+            <ActionButton
+              {...actionProps}
               type="button"
               disabled={addChat.state.kind === "adding"}
               onClick={() => {
@@ -2315,7 +2371,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               Add to chat
-            </button>
+            </ActionButton>
           ) : (
             <span style={{ color: muted, fontSize: 11 }}>
               Add to chat unavailable — {addChat.blockReason}
@@ -2341,21 +2397,36 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               host={host}
               label={markdownRendered ? "Show markdown source" : "Show rendered markdown"}
             >
-              <button type="button" aria-pressed={markdownRendered} onClick={toggleMarkdown}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={markdownRendered}
+                onClick={toggleMarkdown}
+              >
                 {markdownRendered ? "Show markdown source" : "Show rendered markdown"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {leasePreviewMode(selected) === "html" && (
-            <button type="button" aria-pressed={selectedKind === "html"} onClick={toggleHtml}>
+            <ActionButton
+              {...actionProps}
+              type="button"
+              aria-pressed={selectedKind === "html"}
+              onClick={toggleHtml}
+            >
               {selectedKind === "html" ? "Show HTML source" : "Show rendered page"}
-            </button>
+            </ActionButton>
           )}
           {selectedKind === "text" && markdownBlocks === null && wordWrap.value !== null && (
             <Tooltip host={host} label={wordWrap.value ? "Disable word wrap" : "Enable word wrap"}>
-              <button type="button" aria-pressed={wordWrap.value} onClick={wordWrap.toggle}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={wordWrap.value}
+                onClick={wordWrap.toggle}
+              >
                 {wordWrap.value ? "Disable word wrap" : "Enable word wrap"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {wordWrap.writeError !== null && (
@@ -2365,9 +2436,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           )}
           {presentationPath(selected) !== null && (
             <Tooltip host={host} label={explorerOpen ? "Hide file explorer" : "Show file explorer"}>
-              <button type="button" aria-pressed={explorerOpen} onClick={toggleExplorer}>
+              <ActionButton
+                {...actionProps}
+                type="button"
+                aria-pressed={explorerOpen}
+                onClick={toggleExplorer}
+              >
                 {explorerOpen ? "Hide file explorer" : "Show file explorer"}
-              </button>
+              </ActionButton>
             </Tooltip>
           )}
           {fileOpen !== null && fileOpen.path === selected && fileOpen.state.status !== "idle" && (
@@ -2419,6 +2495,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     </span>
                   )}
                   <textarea
+                    data-t3-files-fallback-control
                     aria-label="Comment text"
                     value={commentBody}
                     onChange={(event) => setCommentBody(event.target.value)}
@@ -2442,7 +2519,8 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     </span>
                   )}
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button
+                    <ActionButton
+                      {...actionProps}
                       type="button"
                       disabled={
                         commentDraftStale || commentBody.trim() === "" || commentSubmit.busy
@@ -2450,10 +2528,15 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       onClick={submitCommentDraft}
                     >
                       {commentSubmit.busy ? "Submitting…" : "Submit comment"}
-                    </button>
-                    <button type="button" disabled={commentSubmit.busy} onClick={closeCommentDraft}>
+                    </ActionButton>
+                    <ActionButton
+                      {...actionProps}
+                      type="button"
+                      disabled={commentSubmit.busy}
+                      onClick={closeCommentDraft}
+                    >
                       Cancel
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               ) : selectionRange !== null ? (
@@ -2471,10 +2554,14 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   }}
                 >
                   {commentBlockReason === null ? (
-                    <button type="button" onClick={() => openCommentDraft(selectionRange)}>
+                    <ActionButton
+                      {...actionProps}
+                      type="button"
+                      onClick={() => openCommentDraft(selectionRange)}
+                    >
                       Comment on{" "}
                       {formatCommentRangeLabel(selectionRange.startLine, selectionRange.endLine)}
-                    </button>
+                    </ActionButton>
                   ) : (
                     <span style={{ color: muted }}>
                       Commenting unavailable — {commentBlockReason}
@@ -2482,36 +2569,34 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   )}
                 </div>
               ) : null}
-              <textarea
-                ref={editorRef}
-                aria-label="File editor"
-                value={editorSurface.contents}
-                onChange={(event) => editor.change(event.target.value)}
-                onSelect={(event) => {
-                  if (selected !== null)
+              <EditableFileBody
+                host={host}
+                documentId={`${session.context.resource.environmentId}:${session.context.resource.projectId}:${selected}`}
+                path={selected}
+                contents={editorSurface.contents}
+                wordWrap={wordWrap.value}
+                reveal={
+                  revealRequest?.path === selected
+                    ? { line: revealRequest.line, requestId: revealRequest.id }
+                    : null
+                }
+                onChange={editor.change}
+                onSelectionChange={(range) => {
+                  if (range === null) clearEditorSelection();
+                  else
                     setEditorSelection({
                       path: selected,
-                      start: event.currentTarget.selectionStart,
-                      end: event.currentTarget.selectionEnd,
+                      ...range,
                     });
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") event.currentTarget.blur();
-                }}
-                spellCheck={false}
-                wrap={wordWrap.value === false ? "off" : "soft"}
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  resize: "none",
-                  border: "none",
-                  outline: "none",
-                  padding: 12,
-                  color: "inherit",
-                  background: "transparent",
-                  fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace)",
-                  fontSize: 12,
-                }}
+                renderFallback={() => (
+                  <pre
+                    ref={readOnlyRef}
+                    style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 0, padding: 12 }}
+                  >
+                    {editorSurface.contents}
+                  </pre>
+                )}
               />
             </>
           )}
@@ -2541,22 +2626,24 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                       {comment.text !== null ? ` — ${comment.text}` : ""}
                     </span>
                     {comment.truncated === true && (
-                      <button
+                      <ActionButton
+                        {...actionProps}
                         type="button"
                         aria-label={`Show the whole comment on ${comment.rangeLabel}`}
                         onClick={() => posted.readFull(comment.annotationId)}
                       >
                         Show all
-                      </button>
+                      </ActionButton>
                     )}
                     {posted.removable && (
-                      <button
+                      <ActionButton
+                        {...actionProps}
                         type="button"
                         aria-label={`Remove comment on ${comment.rangeLabel}`}
                         onClick={() => posted.remove(comment.annotationId)}
                       >
                         Remove
-                      </button>
+                      </ActionButton>
                     )}
                   </span>
                 ))}
@@ -2587,12 +2674,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               File changed on disk — your edits are kept.
-              <button type="button" onClick={editor.reload}>
+              <ActionButton {...actionProps} type="button" onClick={editor.reload}>
                 Reload file
-              </button>
-              <button type="button" onClick={editor.keepMine}>
+              </ActionButton>
+              <ActionButton {...actionProps} type="button" onClick={editor.keepMine}>
                 Keep my version
-              </button>
+              </ActionButton>
             </div>
           )}
           {editorSurface.saveState.kind === "error" && (
@@ -2609,9 +2696,9 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               }}
             >
               {describeSaveState(editorSurface.saveState)}
-              <button type="button" onClick={editor.retry}>
+              <ActionButton {...actionProps} type="button" onClick={editor.retry}>
                 Retry save
-              </button>
+              </ActionButton>
             </div>
           )}
         </div>
@@ -2707,7 +2794,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.9.0",
+  version: "0.11.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
   requires: [
@@ -2723,6 +2810,7 @@ export default defineExtension({
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(uiNavigationApi),
+    requireApi(uiEditorApi, "^1.1.0"),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

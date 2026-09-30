@@ -26,6 +26,21 @@ type PageMenuProps = {
   children?: (close: () => void) => React.ReactNode;
 };
 
+type ProfileSectionProps = {
+  host: Pick<ClientHost, "uiKit">;
+  session: BrowserSession;
+  api: { invoke: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown> };
+  profiles: {
+    subscribe: (listener: () => void) => () => void;
+    getSnapshot: () => { list: null; error: null };
+    refresh: () => void;
+  };
+  signal: AbortSignal;
+  onOpenInProfile: (profileId: string) => void;
+  report: (message: string) => void;
+  onChosen: () => void;
+};
+
 async function loadPageMenu() {
   const menuPath = "../../../../packages/first-party-extensions/browser/pageMenu.tsx";
   const module: { PageMenu: React.ComponentType<PageMenuProps> } = await import(
@@ -255,6 +270,7 @@ it("preserves native address focus, submission and cancellation", async () => {
   );
   const input = inputRef.current!;
   await act(async () => input.focus());
+  expect(input.getAttribute("spellcheck")).toBe("false");
   expect(input.selectionStart).toBe(0);
   expect(input.selectionEnd).toBe(input.value.length);
   await act(async () =>
@@ -296,20 +312,7 @@ it("opens the real held-session profile menu and clears its current profile", as
   const {
     ProfileSection,
   }: {
-    ProfileSection: React.ComponentType<{
-      host: Pick<ClientHost, "uiKit">;
-      session: BrowserSession;
-      api: { invoke: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown> };
-      profiles: {
-        subscribe: (listener: () => void) => () => void;
-        getSnapshot: () => { list: null; error: null };
-        refresh: () => void;
-      };
-      signal: AbortSignal;
-      onOpenInProfile: (profileId: string) => void;
-      report: (message: string) => void;
-      onChosen: () => void;
-    }>;
+    ProfileSection: React.ComponentType<ProfileSectionProps>;
   } = await import(new URL(profilePath, import.meta.url).pathname);
   const invoke = vi.fn().mockResolvedValue({ cleared: true });
   const snapshot = { list: null, error: null };
@@ -338,6 +341,18 @@ it("opens the real held-session profile menu and clears its current profile", as
   await openPageMenu();
   const menu = document.querySelector('[role="menu"]')!;
   expect(menu.textContent).toContain("Profile: Default");
+  expect(menu.querySelector<HTMLElement>('[title="Profile: Default"]')?.style.maxWidth).toBe(
+    "256px",
+  );
+  expect(
+    Array.from(menu.querySelectorAll('[role="note"]'))
+      .find((note) => note.textContent === "Loading profiles…")!
+      .classList.contains("px-2"),
+  ).toBe(true);
+  const mute = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent === "Mute page",
+  )!;
+  expect(mute.previousElementSibling?.getAttribute("role")).toBe("separator");
   const clear = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
     (item) => item.textContent === "Clear cookies",
   )!;
@@ -552,6 +567,7 @@ it("keeps the native external-address addon reachable until editing starts", asy
   expect(button.parentElement!.classList.contains("group-hover/extension-input:opacity-100")).toBe(
     true,
   );
+  expect(button.parentElement!.classList.contains("transition-opacity")).toBe(true);
   await act(async () => button.click());
   expect(opened).toHaveBeenCalledOnce();
   await act(async () => input.focus());
@@ -592,6 +608,7 @@ it("shows native pressed chrome while annotation is active and can cancel", asyn
   const button = container.querySelector<HTMLButtonElement>('[aria-label="Cancel annotation"]')!;
   expect(button.getAttribute("aria-pressed")).toBe("true");
   expect(button.classList.contains("bg-secondary")).toBe(true);
+  expect(button.querySelector("svg")!.classList.contains("text-primary")).toBe(true);
   await act(async () => button.click());
   expect(cancel).toHaveBeenCalledOnce();
 });
@@ -680,9 +697,132 @@ it("renders the real Browser chrome in native order without changing the older-h
         container.querySelector('[aria-label="Navigation"]')!.classList.contains("gap-0.5"),
       ).toBe(true);
     }
+    const back = chrome.querySelector<HTMLButtonElement>('[aria-label="Back"]')!;
+    back.removeAttribute("data-slot");
+    const rule = container.querySelector("style")!.sheet!.cssRules[0] as CSSStyleRule;
+    expect(back.matches(rule.selectorText.replace(":focus-visible", ""))).toBe(!native);
     await act(async () => {
       root.render(null);
       await extensionHost.close(viewId);
     });
   }
+});
+
+it("uses kit destructive recording chrome and allows stopping after the page fails", async () => {
+  const path = "../../../../packages/first-party-extensions/browser/annotateButton.tsx";
+  const {
+    ScreenshotButton,
+  }: {
+    ScreenshotButton: React.ComponentType<{
+      host: ClientHost;
+      blockReason: string | null;
+      capturing: null;
+      pageFailed: boolean;
+      recording: boolean;
+      onCapture: (record: boolean) => void;
+      style: React.CSSProperties;
+    }>;
+  } = await import(new URL(path, import.meta.url).pathname);
+  const stop = vi.fn();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <ScreenshotButton
+          host={pageMenuProps().host as ClientHost}
+          blockReason="Page failed"
+          capturing={null}
+          pageFailed
+          recording
+          onCapture={stop}
+          style={{}}
+        />
+      </TooltipProvider>,
+    ),
+  );
+  const button = container.querySelector<HTMLButtonElement>('[aria-label="Stop recording"]')!;
+  expect(button.classList.contains("bg-destructive")).toBe(true);
+  expect(button.disabled).toBe(false);
+  await act(async () => button.click());
+  expect(stop).toHaveBeenCalledExactlyOnceWith(false);
+});
+
+it("chooses cookie import sources and profiles with native menu keys", async () => {
+  const PageMenu = await loadPageMenu();
+  const path = "../../../../packages/first-party-extensions/browser/profileMenu.tsx";
+  const { ProfileSection }: { ProfileSection: React.ComponentType<ProfileSectionProps> } =
+    await import(new URL(path, import.meta.url).pathname);
+  const sources = [
+    { id: "chrome", name: "Chrome", profiles: [{ handle: "default", name: "Personal" }] },
+    {
+      id: "firefox",
+      name: "Firefox",
+      profiles: [
+        { handle: "work", name: "Work" },
+        { handle: "personal", name: "Personal" },
+      ],
+    },
+  ];
+  const invoke = vi.fn().mockResolvedValue({ sources });
+  const snapshot = { list: null, error: null };
+  const profiles = { subscribe: () => () => {}, getSnapshot: () => snapshot, refresh: vi.fn() };
+  const props = pageMenuProps();
+  await act(async () =>
+    root.render(
+      <TooltipProvider delay={0}>
+        <PageMenu {...props}>
+          {(close) => (
+            <ProfileSection
+              host={props.host}
+              session={props.session!}
+              api={{ invoke }}
+              profiles={profiles}
+              signal={new AbortController().signal}
+              onOpenInProfile={vi.fn()}
+              report={vi.fn()}
+              onChosen={close}
+            />
+          )}
+        </PageMenu>
+      </TooltipProvider>,
+    ),
+  );
+  await openPageMenu();
+  const importer = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent === "Import cookies…",
+  )!;
+  await act(async () => importer.click());
+  expect(document.querySelector('[role="menu"] select')).toBeNull();
+  const radios = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
+  const firefox = radios().find((item) => item.textContent === "Firefox")!;
+  expect(firefox).toBeDefined();
+  const chrome = radios().find((item) => item.textContent === "Chrome")!;
+  await act(async () => {
+    chrome.focus();
+    chrome.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  expect(document.activeElement).toBe(firefox);
+  await act(async () =>
+    firefox.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+  );
+  expect(
+    radios()
+      .find((item) => item.textContent === "Firefox")
+      ?.getAttribute("aria-checked"),
+  ).toBe("true");
+  expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  const personal = radios().find((item) => item.textContent === "Personal")!;
+  await act(async () => {
+    personal.focus();
+    personal.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  const run = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+    (item) => item.textContent === "Import into Default",
+  )!;
+  invoke.mockClear();
+  await act(async () => run.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "importCookies",
+    { profileId: "default", sourceId: "firefox", sourceProfile: "personal" },
+    expect.any(AbortSignal),
+  );
 });

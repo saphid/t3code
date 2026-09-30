@@ -35,6 +35,7 @@ export interface TreeRow {
   readonly depth: number;
   readonly expandable: boolean;
   readonly label?: string;
+  readonly directoryPaths?: readonly string[];
 }
 
 export function parentPath(path: string): string | null {
@@ -169,17 +170,20 @@ export function visibleRows(
       const next = pending.pop()!;
       let entry = next.entry;
       const labels = [entry.path.split("/").at(-1)!];
+      const directoryPaths = entry.kind === "directory" ? [entry.path] : [];
       while (entry.kind === "directory") {
         const nested = children.get(entry.path) ?? [];
         if (nested.length !== 1 || nested[0]!.kind !== "directory") break;
         entry = nested[0]!;
         labels.push(entry.path.split("/").at(-1)!);
+        directoryPaths.push(entry.path);
       }
       rows.push({
         entry,
         depth: next.depth,
         expandable: entry.kind === "directory",
         label: labels.join("/"),
+        directoryPaths,
       });
       if (entry.kind === "directory" && expanded.has(entry.path))
         for (const child of (children.get(entry.path) ?? []).toReversed())

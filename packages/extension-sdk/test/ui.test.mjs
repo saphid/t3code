@@ -1,6 +1,9 @@
+import * as NodeChildProcess from "node:child_process";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import React from "react";
+import * as UiEntry from "../dist/ui.js";
+import * as HostEntry from "../dist/host.js";
 import { resolveUiKit } from "../dist/ui.js";
 import { uiThemeApi } from "../dist/catalogue.js";
 
@@ -54,4 +57,29 @@ NodeTest.describe("host UI kit negotiation", () => {
     NodeAssert.deepEqual(method.requiredGrants, ["t3.ui/theme.read"]);
     NodeAssert.equal(method.outputSchema.properties.uiKitVersion, undefined);
   });
+});
+
+NodeTest.it("keeps surface visibility in the host entry, outside the pack UI contract", () => {
+  NodeAssert.equal("SurfaceVisibilityContext" in UiEntry, false);
+  NodeAssert.equal(typeof HostEntry.SurfaceVisibilityContext?.Provider, "object");
+});
+
+NodeTest.it("supports semantic active icons and rejects pack class strings", () => {
+  const compile = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      "node_modules/typescript/bin/tsc",
+      "--ignoreConfig",
+      "--noEmit",
+      "--strict",
+      "--skipLibCheck",
+      "--module",
+      "nodenext",
+      "--moduleResolution",
+      "nodenext",
+      "test/fixtures/ui-icon-contract.ts",
+    ],
+    { encoding: "utf8" },
+  );
+  NodeAssert.equal(compile.status, 0, compile.stdout + compile.stderr);
 });

@@ -15,6 +15,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { filePresentationApi, uiNavigationApi } from "@t3tools/extension-sdk/catalogue";
 import type { ApiInvocation, ApiStreamInvocation } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import type { ClientCodeView, CodeViewEditorProps } from "@t3tools/extension-sdk/environment";
+import type { ClientUiKit, UiButtonProps, UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
@@ -51,6 +53,8 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 type Frame = { readonly type: string; readonly value: unknown };
 type PackHost = {
   readonly React: typeof React;
+  readonly uiKit?: ClientUiKit;
+  readonly codeView: ClientCodeView;
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<unknown>;
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<Frame>;
   discoverApis(): Promise<readonly unknown[]>;
@@ -101,29 +105,66 @@ const pending = (signal: AbortSignal) =>
     else signal.addEventListener("abort", () => resolve(), { once: true });
   });
 
-/** A textarea stand-in that records where a line reveal puts the caret. */
-class FakeTextArea {
-  scrollTop = 0;
-  scrollHeight = 2000;
-  clientHeight = 200;
-  readonly carets: number[] = [];
-  focus() {}
-  setSelectionRange(start: number) {
-    this.carets.push(start);
-  }
-  getBoundingClientRect() {
-    return { top: 0, height: 200 };
-  }
-}
-
 /** The tree's scrolling element, `height` tall; a fresh one each time it mounts. */
 class FakeViewport {
   scrollTop = 0;
   constructor(readonly clientHeight: number) {}
 }
 
+function KitButton({ variant, size: _size, ...props }: UiButtonProps) {
+  return <button data-kit-variant={variant} {...props} />;
+}
+function KitTreeRow({
+  path,
+  depth,
+  directory,
+  expanded,
+  selected,
+  label,
+  ...props
+}: UiTreeRowProps) {
+  return (
+    <button
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={directory ? expanded : undefined}
+      aria-selected={selected}
+      {...props}
+    >
+      {label ?? path.split("/").at(-1)}
+    </button>
+  );
+}
+const nullControl = () => null;
+const alternateKit: ClientUiKit = {
+  version: 1,
+  Button: KitButton,
+  TreeRow: KitTreeRow,
+  Input: ({ controlSize: _controlSize, ...props }) => <input {...props} />,
+  InputGroup: ({ controlSize: _controlSize, variant: _variant, ...props }) => <div {...props} />,
+  InputGroupAddon: nullControl,
+  Toolbar: ({ variant: _variant, ...props }) => <div {...props} />,
+  Menu: nullControl,
+  MenuTrigger: nullControl,
+  MenuPopup: nullControl,
+  MenuSub: nullControl,
+  MenuSubTrigger: nullControl,
+  MenuSubPopup: nullControl,
+  MenuGroup: nullControl,
+  MenuRow: nullControl,
+  MenuNote: nullControl,
+  MenuItem: nullControl,
+  MenuSeparator: nullControl,
+  MenuGroupLabel: nullControl,
+  MenuRadioGroup: nullControl,
+  MenuRadioItem: nullControl,
+  Icon: nullControl,
+};
+
 interface Disk {
   readonly files: Record<string, string>;
+  readonly uiKit?: ClientUiKit;
+  readonly externalEditor?: boolean;
   /** Directory entries the tree snapshot lists next to the files. */
   readonly directories?: readonly string[];
   /** The selected presentation provider's version; the pack's own by default. */
@@ -174,10 +215,21 @@ const preferenceFrame = (disk: Disk) =>
     value: { wordWrap: false, renderBrowserFile: true },
   });
 
+function PackEditor(props: CodeViewEditorProps & { "aria-label": string }) {
+  return <div>{props.contents}</div>;
+}
+
 function packHost(disk: Disk, calls: Calls) {
   const navigationVersion = disk.navigationVersion ?? uiNavigationApi.definition.version;
   const host: PackHost = {
     React,
+    ...(disk.uiKit ? { uiKit: disk.uiKit } : {}),
+    codeView: {
+      version: 1,
+      File: () => null,
+      Diff: () => null,
+      Editor: (props: CodeViewEditorProps) => <PackEditor aria-label="File editor" {...props} />,
+    },
     async discoverApis() {
       return [
         {
@@ -208,6 +260,28 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (disk.externalEditor && request.id === "t3.ui/editor")
+        return request.method === "getCapabilities"
+          ? {
+              adapter: "host.ui.editor",
+              operations: { openPath: true },
+              clients: [],
+              editor: {
+                visible: true,
+                preferredEditor: "vscode",
+                remoteHint: "Remote workspace",
+                editors: [
+                  { id: "vscode", label: "VS Code" },
+                  { id: "cursor", label: "Cursor" },
+                ],
+              },
+            }
+          : {
+              status: "opened",
+              path: "/fixture/a.txt",
+              editor: "cursor",
+              url: "cursor://file/fixture/a.txt",
+            };
       if (request.id === "t3.ui/notifications" && request.method === "notify") {
         calls.notifications.push(request.input);
         return { id: "toast" };
@@ -378,7 +452,6 @@ async function mountPanel(disk: Disk) {
       />
     ) : null;
   }
-  const textarea = new FakeTextArea();
   const viewports: FakeViewport[] = [];
   /** Tree rows that were given DOM focus, by name. */
   const focused: string[] = [];
@@ -386,7 +459,6 @@ async function mountPanel(disk: Disk) {
   await act(async () => {
     root = create(<App />, {
       createNodeMock: (element) => {
-        if (element.type === "textarea") return textarea;
         if (disk.viewportHeight === undefined) return null;
         const props = element.props as { "aria-label"?: string; children?: unknown };
         if (element.type === "ul" && props["aria-label"] === "Workspace files") {
@@ -405,7 +477,6 @@ async function mountPanel(disk: Disk) {
   const tree = root!;
   return {
     calls,
-    textarea,
     focused,
     /** The tree's current scrolling element. */
     viewport: () => viewports.at(-1)!,
@@ -461,7 +532,7 @@ type Panel = Awaited<ReturnType<typeof mountPanel>>;
 /** Edits the open file and lets autosave land on a conflict. */
 async function conflictedEdit(panel: Panel, contents: string) {
   await act(async () => {
-    panel.editor().props.onChange({ target: { value: contents } });
+    panel.editor().props.onChange(contents);
   });
   await act(async () => {
     await vi.advanceTimersByTimeAsync(500);
@@ -471,7 +542,7 @@ async function conflictedEdit(panel: Panel, contents: string) {
 }
 
 const editorState = (panel: Panel) => ({
-  contents: panel.editor().props.value as string,
+  contents: panel.editor().props.contents as string,
   conflict: panel.text().includes("Keep my version"),
   saves: panel.calls.saves,
 });
@@ -486,15 +557,13 @@ describe("reopening a file that is already open", () => {
 
   const open = async (path: string) => {
     vi.useFakeTimers();
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
     const panel = await mountPanel({
       files: { [path]: "disk copy" },
       save: () => ({ kind: "conflict" }),
     });
     try {
       await act(async () => useRightPanelStore.getState().openFile(ref, path));
-      expect(panel.editor().props.value).toBe("disk copy");
+      expect(panel.editor().props.contents).toBe("disk copy");
       await conflictedEdit(panel, USER_EDIT);
     } catch (error) {
       await panel.unmount();
@@ -532,7 +601,7 @@ describe("reopening a file that is already open", () => {
       await act(async () => panel.navigation({ relativePath: "line.txt", line: 2 }));
       expect(editorState(panel)).toEqual({ contents: USER_EDIT, conflict: true, saves: 1 });
       // Line 2 starts after "one\n".
-      expect(panel.textarea.carets.at(-1)).toBe(4);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 2 });
       // A later link without a line focuses the same view: nothing re-reads.
       const reads = panel.calls.reads;
       await act(async () => panel.navigation({ relativePath: "line.txt" }));
@@ -548,11 +617,6 @@ describe("reopening a file that is already open", () => {
 // already showing goes to that view in place. Its editor, and whatever it has
 // not saved yet, stays; a different file is selected in it.
 describe("a file link to the open file view", () => {
-  const lineReveal = () => {
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
-  };
-
   it.each([
     { outcome: { kind: "conflict" }, conflict: true },
     { outcome: { kind: "error", message: "disk full" }, conflict: false },
@@ -560,7 +624,6 @@ describe("a file link to the open file view", () => {
     "keeps edits whose save is still pending, settling as $outcome.kind",
     async ({ outcome, conflict }) => {
       vi.useFakeTimers();
-      lineReveal();
       let finishSave!: (outcome: unknown) => void;
       const panel = await mountPanel({
         files: { "pending.txt": "disk copy" },
@@ -572,14 +635,14 @@ describe("a file link to the open file view", () => {
       try {
         await act(async () => panel.navigation({ relativePath: "pending.txt" }));
         // Dirty: the autosave debounce has not fired yet.
-        await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo" } }));
+        await act(async () => panel.editor().props.onChange("one\ntwo"));
         await act(async () => panel.navigation({ relativePath: "pending.txt", line: 2 }));
         expect(editorState(panel)).toEqual({ contents: "one\ntwo", conflict: false, saves: 0 });
         // Saving: the flushed save is in flight when the next link lands.
         await act(async () => {
           await vi.advanceTimersByTimeAsync(500);
         });
-        await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo\n3" } }));
+        await act(async () => panel.editor().props.onChange("one\ntwo\n3"));
         await act(async () => panel.navigation({ relativePath: "pending.txt", line: 3 }));
         await act(async () => finishSave(outcome));
         expect(editorState(panel)).toEqual({ contents: "one\ntwo\n3", conflict, saves: 1 });
@@ -592,14 +655,17 @@ describe("a file link to the open file view", () => {
   );
 
   it("reveals each requested line, repeats included, in the same editor", async () => {
-    lineReveal();
     const panel = await mountPanel({ files: { "lines.txt": "one\ntwo\nthree" } });
     try {
       await act(async () => panel.navigation({ relativePath: "lines.txt" }));
-      for (const line of [2, 3, 2, 2])
+      const reveals: { line: number; requestId: number }[] = [];
+      for (const line of [2, 3, 2, 2]) {
         await act(async () => panel.navigation({ relativePath: "lines.txt", line }));
+        reveals.push(panel.editor().props.reveal);
+      }
       // Lines 2 and 3 start at offsets 4 and 8.
-      expect(panel.textarea.carets).toEqual([4, 8, 4, 4]);
+      expect(reveals.map((reveal) => reveal.line)).toEqual([2, 3, 2, 2]);
+      expect(new Set(reveals.map((reveal) => reveal.requestId)).size).toBe(4);
       expect(panel.calls.reads).toBe(1);
     } finally {
       await panel.unmount();
@@ -611,9 +677,9 @@ describe("a file link to the open file view", () => {
     try {
       await act(async () => panel.navigation({ relativePath: "a.txt" }));
       await act(async () => panel.button("b.txt")!.props.onClick());
-      expect(panel.editor().props.value).toBe("file B");
+      expect(panel.editor().props.contents).toBe("file B");
       await act(async () => panel.navigation({ relativePath: "a.txt" }));
-      expect(panel.editor().props.value).toBe("file A");
+      expect(panel.editor().props.contents).toBe("file A");
     } finally {
       await panel.unmount();
     }
@@ -665,14 +731,14 @@ describe("a file link the presentation provider rejects", () => {
     try {
       await link("a.txt");
       await act(async () => panel.button("b.txt")!.props.onClick());
-      await act(async () => panel.editor().props.onChange({ target: { value: "unsaved B" } }));
+      await act(async () => panel.editor().props.onChange("unsaved B"));
       outage.on = true;
       await link("a.txt", 2);
-      expect(panel.editor().props.value).toBe("unsaved B");
+      expect(panel.editor().props.contents).toBe("unsaved B");
       expect(panel.text()).toContain("provider offline");
       outage.on = false;
       await link("b.txt");
-      expect(panel.editor().props.value).toBe("unsaved B");
+      expect(panel.editor().props.contents).toBe("unsaved B");
       expect(panel.text()).not.toContain("provider offline");
     } finally {
       await panel.unmount();
@@ -681,13 +747,11 @@ describe("a file link the presentation provider rejects", () => {
 
   it("reports a failed repeated line reveal and keeps the pending edit", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
     const { outage, disk } = failing({ "lines.txt": "one\ntwo\nthree" });
     const panel = await mountPanel(disk);
     try {
       await link("lines.txt", 2);
-      await act(async () => panel.editor().props.onChange({ target: { value: "one\ntwo!" } }));
+      await act(async () => panel.editor().props.onChange("one\ntwo!"));
       outage.on = true;
       await link("lines.txt", 2);
       expect(editorState(panel)).toEqual({ contents: "one\ntwo!", conflict: false, saves: 0 });
@@ -845,8 +909,6 @@ describe("an HTML file whose preference stream stays silent", () => {
 // source at that line — without changing the shared rendered preference.
 describe("a file link with a line", () => {
   it("opens an HTML file's source at the line in the selected Files presentation", async () => {
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
     const panel = await mountPanel({
       files: { "index.html": "<p>1</p>\n<p>2</p>\n<p>3</p>" },
     });
@@ -857,8 +919,8 @@ describe("a file link with a line", () => {
         frames: 0,
         editors: 1,
       });
-      expect(panel.editor().props.value).toBe("<p>1</p>\n<p>2</p>\n<p>3</p>");
-      expect(panel.textarea.carets.at(-1)).toBe(18);
+      expect(panel.editor().props.contents).toBe("<p>1</p>\n<p>2</p>\n<p>3</p>");
+      expect(panel.editor().props.reveal).toMatchObject({ line: 3 });
       expect(panel.calls.log.filter(([, method]) => method === "setPreferences")).toEqual([]);
     } finally {
       await panel.unmount();
@@ -920,7 +982,7 @@ describe("the first frame of an HTML file", () => {
     return {
       shown: () => ({
         frames: tree.root.findAllByType("iframe").length,
-        source: tree.root.findAllByType("textarea").length,
+        source: tree.root.findAllByProps({ "aria-label": "File editor" }).length,
       }),
       mints: () =>
         calls.log.filter(
@@ -1216,14 +1278,14 @@ describe("opening a file in the panel", () => {
     try {
       await act(async () => panel.navigation({ relativePath: "a.txt" }));
       expect(panel.calls.presentations).toHaveLength(1);
-      expect(panel.editor().props.value).toBe("file A");
+      expect(panel.editor().props.contents).toBe("file A");
       await act(async () => useRightPanelStore.getState().open(ref, "files"));
       await act(async () => panel.button("app.ts")!.props.onClick());
       const before = panel.calls.presentations.length;
       // The Files pack's own open, with its own view context.
       await act(async () => panel.button("Open in panel")!.props.onClick());
       expect(panel.calls.presentations).toHaveLength(before + 1);
-      expect(panel.editor().props.value).toBe("app");
+      expect(panel.editor().props.contents).toBe("app");
     } finally {
       await panel.unmount();
     }
@@ -1276,7 +1338,7 @@ describe("already-open file tabs after presentation grant changes", () => {
     });
     try {
       await act(async () => useRightPanelStore.getState().openFile(ref, "app.ts"));
-      expect(panel.editor().props.value).toBe("original contents");
+      expect(panel.editor().props.contents).toBe("original contents");
       expect(panel.calls.reads).toBe(1);
 
       denied.on = true;
@@ -1291,7 +1353,7 @@ describe("already-open file tabs after presentation grant changes", () => {
       disk["app.ts"] = "updated after permission returns";
       denied.on = false;
       await act(async () => panel.refreshPresentationProvider());
-      expect(panel.editor().props.value).toBe("updated after permission returns");
+      expect(panel.editor().props.contents).toBe("updated after permission returns");
       expect(panel.calls.reads).toBe(2);
       expect(panel.calls.presentations).toHaveLength(3);
       expect(panel.text()).not.toContain("Needs permission");
@@ -1425,16 +1487,14 @@ describe("a client without a preview browser", () => {
 // revealed, as native's persisted `revealLine` does, not the view's first one.
 describe("a line revealed after the view opened", () => {
   it("is the line a reload reveals", async () => {
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
     const panel = await mountPanel({ files: { "reveal.txt": "one\ntwo\nthree" } });
     try {
       await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 2 }));
-      expect(panel.textarea.carets.at(-1)).toBe(4);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 2 });
       await act(async () => panel.navigation({ relativePath: "reveal.txt", line: 3 }));
-      expect(panel.textarea.carets.at(-1)).toBe(8);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 3 });
       await panel.reload();
-      expect(panel.textarea.carets.at(-1)).toBe(8);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 3 });
     } finally {
       await panel.unmount();
     }
@@ -1446,8 +1506,6 @@ describe("a line revealed after the view opened", () => {
 // chooses the rendered view again.
 describe("a markdown file reopened at a revealed line", () => {
   it("shows the source at that line, then renders when asked", async () => {
-    vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
-    vi.stubGlobal("getComputedStyle", () => ({ paddingTop: "0px", lineHeight: "16px" }));
     const panel = await mountPanel({ files: { "notes.md": "# one\ntwo\nthree" } });
     const mode = () => ({
       rendered: !!panel.button("Show markdown source"),
@@ -1455,13 +1513,12 @@ describe("a markdown file reopened at a revealed line", () => {
     });
     try {
       await act(async () => panel.navigation({ relativePath: "notes.md", line: 3 }));
-      expect(panel.textarea.carets.at(-1)).toBe(10);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 3 });
       await act(async () => panel.button("Show rendered markdown")!.props.onClick());
       expect(mode()).toEqual({ rendered: true, editor: 0 });
-      panel.textarea.carets.length = 0;
       await panel.reload();
       expect(mode()).toEqual({ rendered: false, editor: 1 });
-      expect(panel.textarea.carets).toEqual([10]);
+      expect(panel.editor().props.reveal).toMatchObject({ line: 3 });
       await act(async () => panel.button("Show rendered markdown")!.props.onClick());
       expect(mode()).toEqual({ rendered: true, editor: 0 });
     } finally {
@@ -1617,4 +1674,111 @@ describe("a tree whose focused row goes away", () => {
       await panel.unmount();
     }
   });
+});
+
+describe("round 3 Files kit regressions", () => {
+  it.each([false, true])(
+    "keeps exactly one reachable tab stop after scrolling and blur (kit=%s)",
+    async (kit) => {
+      const panel = await mountPanel({
+        directories: Array.from({ length: 200 }, (_, i) => `folder${String(i).padStart(3, "0")}`),
+        files: { "open.txt": "open" },
+        viewportHeight: 240,
+        ...(kit ? { uiKit: alternateKit } : {}),
+      });
+      try {
+        await act(async () => useRightPanelStore.getState().openFile(ref, "open.txt"));
+        const list = () => panel.labelled("Workspace files")!;
+        const stops = () =>
+          list()
+            .findAllByType("button")
+            .filter((row) => row.props.tabIndex === 0);
+        await act(async () => stops()[0]!.props.onFocus());
+        for (let i = 0; i < 80; i++)
+          await act(async () => list().props.onKeyDown({ key: "ArrowDown", preventDefault() {} }));
+        expect(stops()).toHaveLength(1);
+        await act(async () => stops()[0]!.props.onBlur({ currentTarget: { isConnected: true } }));
+        expect(stops()).toHaveLength(1);
+        panel.viewport().scrollTop = 180 * 24;
+        await act(async () => list().props.onScroll({ currentTarget: panel.viewport() }));
+        expect(stops()).toHaveLength(1);
+        expect(list().findAllByType("button").length).toBeLessThan(100);
+      } finally {
+        await panel.unmount();
+      }
+    },
+  );
+
+  it("opens every part of a flattened chain and preserves it when a sibling appears", async () => {
+    const directories = ["src", "src/lib"];
+    const panel = await mountPanel({
+      files: { "open.txt": "open" },
+      directories,
+      uiKit: alternateKit,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "open.txt"));
+      const row = panel
+        .labelled("Workspace files")!
+        .findAllByType("button")
+        .find((row) => row.children.join("") === "src/lib")!;
+      await act(async () => row.props.onClick());
+      expect(panel.labelled("Collapse all folders")).toBeDefined();
+      directories.push("src/other");
+      await act(async () => panel.labelled("Refresh workspace files")!.props.onClick());
+      const src = panel
+        .labelled("Workspace files")!
+        .findAllByType("button")
+        .find((row) => row.children.join("") === "src")!;
+      expect(src.props["aria-expanded"]).toBe(true);
+      expect(panel.rows()).toContain("lib");
+    } finally {
+      await panel.unmount();
+    }
+  });
+
+  it("uses the kit for file actions and save-conflict controls while preserving edits", async () => {
+    vi.useFakeTimers();
+    const panel = await mountPanel({
+      files: { "a.txt": "disk" },
+      uiKit: alternateKit,
+      save: () => ({ kind: "conflict" }),
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.button("Open in panel")!.props["data-kit-variant"]).toBe("outline");
+      await conflictedEdit(panel, "my edit");
+      expect(panel.button("Keep my version")!.props["data-kit-variant"]).toBe("outline");
+      expect(panel.button("Reload file")!.props["data-kit-variant"]).toBe("outline");
+      expect(panel.editor().props.contents).toBe("my edit");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+it("uses kit editor controls and still opens the chosen remote editor", async () => {
+  const panel = await mountPanel({
+    files: { "a.txt": "file" },
+    externalEditor: true,
+    uiKit: alternateKit,
+  });
+  try {
+    await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+    const controls = panel.labelled("File actions")!.findAllByType("button");
+    const main = controls.find((button) => button.children.join("") === "Open in VS Code")!;
+    expect(main.props["data-kit-variant"]).toBe("outline");
+    const cursor = controls.find((button) => button.children.join("") === "Cursor")!;
+    expect(cursor.props["data-kit-variant"]).toBe("outline");
+    await act(async () => cursor.props.onClick());
+    expect(panel.calls.log).toContainEqual(["t3.ui/editor", "openPath"]);
+    expect(
+      panel
+        .labelled("File actions")!
+        .findAllByType("button")
+        .some((button) => button.children.join("") === "Open in Cursor"),
+    ).toBe(true);
+  } finally {
+    await panel.unmount();
+  }
 });

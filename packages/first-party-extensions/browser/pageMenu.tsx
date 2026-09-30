@@ -19,7 +19,7 @@ import {
   type PageVerb,
 } from "./pageControls.js";
 import type { PanelFloating } from "./popover.js";
-import { resolveUiKit } from "@t3tools/extension-sdk/ui";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -110,6 +110,7 @@ export function ZoomIndicator(props: {
  */
 export function PageMenu(props: {
   host: Pick<ClientHost, "React" | "tooltip" | "uiKit">;
+  kit?: ClientUiKit | null;
   session: BrowserSession | null;
   blockReason: string | null;
   run: (verb: PageVerb) => void;
@@ -130,7 +131,7 @@ export function PageMenu(props: {
   deviceDisabled?: boolean;
   onToggleDeviceToolbar?: () => void;
 }) {
-  const kit = resolveUiKit(props.host);
+  const kit = props.kit === undefined ? resolveUiKit(props.host) : props.kit;
   return kit ? <NativePageMenu {...props} kit={kit} /> : <LegacyPageMenu {...props} />;
 }
 
@@ -263,6 +264,7 @@ function NativePageMenu({
         </MenuRow>
         <MenuSeparator />
         {children?.(() => setOpen(false))}
+        <MenuSeparator />
         <MenuItem
           disabled={disabled || session?.audioMuted == null}
           closeOnClick={false}
@@ -312,6 +314,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
     <div ref={root} style={{ position: "relative" }}>
       <Tooltip host={host} label="More">
         <button
+          data-t3-browser-fallback-control
           ref={setTrigger}
           type="button"
           aria-label="Preview menu"
@@ -352,6 +355,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
             </p>
           )}
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitem"
             disabled={disabled}
@@ -366,6 +370,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
           <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
             <span>Appearance</span>
             <select
+              data-t3-browser-fallback-control
               aria-label="Appearance"
               disabled={disabled}
               // Unreported appearance renders blank rather than a guessed default.
@@ -386,6 +391,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ flex: 1 }}>Zoom</span>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Zoom out"
               disabled={disabled}
@@ -395,6 +401,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
               −
             </button>
             <select
+              data-t3-browser-fallback-control
               aria-label="Zoom level"
               disabled={disabled}
               value={zoom === null ? "" : String(zoom)}
@@ -409,6 +416,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
               ))}
             </select>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Zoom in"
               disabled={disabled}
@@ -418,6 +426,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
               +
             </button>
             <button
+              data-t3-browser-fallback-control
               type="button"
               aria-label="Reset zoom"
               disabled={disabled || zoom === DEFAULT_ZOOM_FACTOR}
@@ -428,6 +437,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
             </button>
           </div>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={audioMuted === true}
@@ -438,6 +448,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
             {audioMuted ? "Unmute page" : "Mute page"}
           </button>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={devToolsOpen === true}
@@ -451,6 +462,7 @@ function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
             {devToolsOpen ? "Close DevTools" : "Open DevTools"}
           </button>
           <button
+            data-t3-browser-fallback-control
             type="button"
             role="menuitemcheckbox"
             aria-checked={pictureInPicture === true}

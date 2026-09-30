@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type Ref, type ReactNode } from "react";
-import { resolveUiKit } from "@t3tools/extension-sdk/ui";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 
 /**
@@ -25,6 +25,7 @@ export function committedAddress(input: {
  */
 export function AddressInput(props: {
   readonly host?: Pick<ClientHost, "uiKit">;
+  readonly kit?: ClientUiKit | null;
   readonly value: string;
   readonly committed: string;
   readonly onValueChange: (value: string) => void;
@@ -35,7 +36,7 @@ export function AddressInput(props: {
 }) {
   const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
   const [focused, setFocused] = useState(false);
-  const kit = resolveUiKit(props.host ?? {});
+  const kit = props.kit === undefined ? resolveUiKit(props.host ?? {}) : props.kit;
   const Input = kit?.Input ?? "input";
   const InputGroup = kit?.InputGroup ?? "div";
   return (
@@ -45,7 +46,9 @@ export function AddressInput(props: {
     >
       <Input
         {...(kit ? ({ controlSize: "sm" } as const) : {})}
+        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
         type="text"
+        spellCheck={false}
         aria-label="Address"
         placeholder="Search or enter URL"
         ref={inputRef}

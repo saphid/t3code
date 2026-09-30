@@ -1,8 +1,5 @@
-import {
-  SurfaceVisibilityContext,
-  type ClientUiKit,
-  type UiTreeRowProps,
-} from "@t3tools/extension-sdk/ui";
+import { SurfaceVisibilityContext } from "@t3tools/extension-sdk/host";
+import { type ClientUiKit, type UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalogue";
 import {
   ArrowLeft,
@@ -51,11 +48,15 @@ const icons = {
   reset: RotateCcw,
 };
 
-function Icon({ name, className, refreshing }: React.ComponentProps<ClientUiKit["Icon"]>) {
+function Icon({ name, active, refreshing }: React.ComponentProps<ClientUiKit["Icon"]>) {
   if (!Object.hasOwn(icons, name)) return null;
   const Component = icons[name];
   return (
-    <Component aria-hidden className={className} {...(name === "refresh" ? { refreshing } : {})} />
+    <Component
+      aria-hidden
+      className={active ? "text-primary" : undefined}
+      {...(name === "refresh" ? { refreshing } : {})}
+    />
   );
 }
 
@@ -131,7 +132,7 @@ export const hostUiKit: ClientUiKit = {
       <span
         className={
           revealOnHover
-            ? "pointer-events-none flex opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/extension-input:pointer-events-auto group-hover/extension-input:opacity-100"
+            ? "pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/extension-input:pointer-events-auto group-hover/extension-input:opacity-100"
             : undefined
         }
       >

@@ -140,6 +140,8 @@ function restartingBackend() {
   let nextSurfaceDenial = null;
   let surfaceSyncDelayMs = 0;
   let navigateGate = null;
+  let nextOpenEngine = null;
+  let engineClaimPending = true;
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
 
@@ -212,6 +214,11 @@ function restartingBackend() {
         server.revision += 1;
         const tabId = opens.length === 1 ? "tab-b" : `tab-b-${opens.length}`;
         const session = browserSession(tabId, request.input.url, "Page B");
+        if (nextOpenEngine) {
+          session.engine = nextOpenEngine;
+          session.navigation = { kind: "pending", url: request.input.url, title: "" };
+          nextOpenEngine = null;
+        }
         server.sessions.push(session);
         for (const subscriber of subscribers) {
           subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
@@ -274,6 +281,9 @@ function restartingBackend() {
       id: "t3.browser/surface",
       version: "2.0.0",
       presentation: { supported: true },
+      get engineClaimPending() {
+        return engineClaimPending;
+      },
       acquire(request) {
         acquires.push({ tabId: request.session.tabId, serverEpoch: request.session.serverEpoch });
         if (nextSurfaceDenial) {
@@ -304,7 +314,7 @@ function restartingBackend() {
           const listeners = new Set();
           const lease = {
             session: request.session,
-            state: { kind: "active", presentation: { supported: true } },
+            state: { kind: "active", presentation: { supported: true }, engineClaimPending },
             onDidChangeState(listener) {
               listeners.add(listener);
               return () => listeners.delete(listener);
@@ -332,6 +342,10 @@ function restartingBackend() {
           const watch = (reason) => {
             if (reason) end(reason);
             else if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
+            else if (lease.state.engineClaimPending !== engineClaimPending) {
+              lease.state = { ...lease.state, engineClaimPending };
+              for (const listener of listeners) listener(lease.state);
+            }
           };
           surfaceWatchers.add(watch);
           return { ok: true, lease };
@@ -346,6 +360,22 @@ function restartingBackend() {
     presents,
     surfaceRefreshes,
     serverSessions: () => server.sessions,
+    reportSession(session) {
+      server.revision += 1;
+      const index = server.sessions.findIndex((current) => current.tabId === session.tabId);
+      server.sessions[index] = session;
+      for (const subscriber of subscribers) {
+        subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
+        subscriber.wake?.();
+      }
+    },
+    setNextOpenEngine(engine) {
+      nextOpenEngine = engine;
+    },
+    setEngineClaimPending(pending) {
+      engineClaimPending = pending;
+      for (const watch of surfaceWatchers) watch();
+    },
     denyNextSurface(reason) {
       nextSurfaceDenial = reason;
     },
@@ -445,21 +475,34 @@ async function settle() {
 }
 
 /** Mounts the real view on `backend`; `run` drives it, and the view unmounts after. */
-async function withView(backend, run) {
+async function withView(
+  backend,
+  run,
+  { initialStatus = "Page A — engine ready, navigation loaded" } = {},
+) {
   const view = viewSession();
   let renderer;
-  await act(async () => {
-    renderer = create(
-      React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
-      { createNodeMock: nodeMock },
-    );
-  });
+  const remoteElement = nodeMock();
+  const statusCommits = [];
   const status = () =>
     textOf(
       renderer.root.find(
         (node) => node.type === "div" && node.props["aria-label"] === "Browser status",
       ),
     );
+  await act(async () => {
+    renderer = create(
+      React.createElement(
+        React.Profiler,
+        { id: "Browser status", onRender: () => statusCommits.push(status()) },
+        React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
+      ),
+      {
+        createNodeMock: (node) =>
+          node.props["aria-label"] === "Remote browser surface" ? remoteElement : nodeMock(),
+      },
+    );
+  });
   const hasSurface = () =>
     renderer.root.findAll(
       (node) => node.type === "div" && node.props["aria-label"] === "Browser surface",
@@ -483,18 +526,28 @@ async function withView(backend, run) {
   };
   try {
     await settle();
-    NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
-    NodeAssert.deepEqual(backend.presents.at(-1), {
-      tabId: "tab-a",
-      serverEpoch: "epoch-a",
-      visible: true,
-    });
+    if (initialStatus !== null) {
+      NodeAssert.equal(status(), initialStatus);
+      NodeAssert.deepEqual(backend.presents.at(-1), {
+        tabId: "tab-a",
+        serverEpoch: "epoch-a",
+        visible: true,
+      });
+    }
     await run({
       status,
+      statusCommits,
       hasSurface,
       enter,
       address: () => addressInput().props.value,
       text: () => textOf(renderer.toJSON()),
+      refresh: async () => {
+        await act(async () => {
+          renderer.root
+            .find((node) => node.type === "button" && node.props["aria-label"] === "Stop")
+            .props.onClick();
+        });
+      },
     });
   } finally {
     await act(async () => {
@@ -502,6 +555,190 @@ async function withView(backend, run) {
       renderer.unmount();
     });
   }
+}
+
+const unreportedEngine = {
+  state: "unavailable",
+  generation: null,
+  reason: "desktop-required",
+};
+
+function unreportedSession(backend) {
+  const session = backend.serverSessions()[0];
+  return {
+    ...session,
+    engine: unreportedEngine,
+    navigation: { kind: "pending", url: session.requestedUrl, title: "" },
+  };
+}
+
+NodeTest.test(
+  "surface-capable attach and re-attach never commit unavailable engine status before a claim",
+  async () => {
+    const backend = restartingBackend();
+    backend.reportSession(unreportedSession(backend));
+    await withView(
+      backend,
+      async ({ status, statusCommits, enter }) => {
+        NodeAssert.ok(statusCommits.length > 0);
+        NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+        NodeAssert.equal(status(), "https://a.test/ — engine pending, navigation pending");
+
+        backend.reportSession({
+          ...backend.serverSessions()[0],
+          engine: { state: "starting", generation: "gen-tab-a" },
+        });
+        await settle();
+        NodeAssert.equal(status(), "https://a.test/ — engine starting, navigation pending");
+        backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+        await settle();
+        NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
+
+        backend.drop();
+        await settle();
+        backend.reportSession(unreportedSession(backend));
+        backend.resume();
+        await settle();
+        NodeAssert.equal(status(), "https://a.test/ — engine pending, navigation pending");
+        NodeAssert.equal(backend.opens().length, 0);
+        backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+        await settle();
+
+        backend.drop();
+        await settle();
+        backend.restart();
+        await settle();
+        backend.setNextOpenEngine(unreportedEngine);
+        await enter("https://b.test/");
+        await settle();
+        NodeAssert.equal(status(), "https://b.test/ — engine pending, navigation pending");
+        NodeAssert.equal(backend.opens().length, 1);
+        backend.reportSession(browserSession("tab-b", "https://b.test/", "Page B"));
+        await settle();
+        NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+        NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+      },
+      { initialStatus: null },
+    );
+  },
+);
+
+NodeTest.test("remote-environment desktop does not wait for a claim it cannot make", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  backend.setEngineClaimPending(false);
+  await withView(
+    backend,
+    async ({ status, statusCommits }) => {
+      NodeAssert.equal(
+        status(),
+        "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+      );
+      NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine pending/);
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test("a failed primary claim promptly ends the pending status", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  await withView(
+    backend,
+    async ({ status }) => {
+      NodeAssert.match(status(), /engine pending/);
+      backend.setEngineClaimPending(false);
+      await settle();
+      NodeAssert.equal(
+        status(),
+        "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+      );
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test("attach-time page verbs never name an unavailable engine", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  await withView(
+    backend,
+    async ({ refresh, text, statusCommits }) => {
+      await refresh();
+      NodeAssert.match(text(), /engine pending, navigation pending/);
+      NodeAssert.doesNotMatch(text(), /engine unavailable|desktop-required/);
+      backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+      await settle();
+      NodeAssert.match(text(), /engine ready, navigation loaded/);
+      NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test(
+  "a failed claim after an attach-time verb does not leave a pending notice",
+  async () => {
+    const backend = restartingBackend();
+    backend.reportSession(unreportedSession(backend));
+    await withView(
+      backend,
+      async ({ refresh, status }) => {
+        await refresh();
+        backend.setEngineClaimPending(false);
+        await settle();
+        NodeAssert.equal(
+          status(),
+          "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+        );
+      },
+      { initialStatus: null },
+    );
+  },
+);
+
+for (const surface of [
+  "absent",
+  "unsupported",
+  "lease-unsupported",
+  "denied",
+  "reported-unavailable",
+]) {
+  NodeTest.test(`${surface} host retains honest unavailable engine status`, async () => {
+    const backend = restartingBackend();
+    const session = unreportedSession(backend);
+    if (surface === "absent" || surface === "unsupported")
+      backend.host.browserFrames = { id: "t3.browser/frames", version: "1.0.0" };
+    if (surface === "absent") delete backend.host.browserSurface;
+    if (surface === "unsupported")
+      backend.host.browserSurface.presentation = { supported: false, reason: "desktop-required" };
+    if (surface === "lease-unsupported") {
+      const acquire = backend.host.browserSurface.acquire;
+      backend.host.browserSurface.acquire = (request) => {
+        const acquired = acquire(request);
+        acquired.lease.state.presentation = { supported: false, reason: "desktop-required" };
+        return acquired;
+      };
+    }
+    if (surface === "denied")
+      backend.host.browserSurface.acquire = () => ({
+        ok: false,
+        denial: { reason: "host-unavailable", detail: "offline" },
+      });
+    if (surface === "reported-unavailable")
+      session.engine = { ...unreportedEngine, generation: "gen-tab-a" };
+    backend.reportSession(session);
+    await withView(
+      backend,
+      async ({ status }) => {
+        NodeAssert.equal(
+          status(),
+          "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+        );
+      },
+      { initialStatus: null },
+    );
+  });
 }
 
 const presentingB = (backend, status) => {

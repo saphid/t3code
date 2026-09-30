@@ -1,6 +1,5 @@
 import type * as React from "react";
 import { isComponentType } from "./componentType.js";
-export { SurfaceVisibilityContext } from "./surfaceVisibility.js";
 
 export interface UiButtonProps extends React.ComponentPropsWithRef<"button"> {
   readonly variant?: "default" | "ghost" | "ghost-muted" | "outline" | "destructive" | "secondary";
@@ -105,12 +104,13 @@ export interface ClientUiKit {
   readonly MenuRadioItem: React.ComponentType<{
     readonly value: string;
     readonly disabled?: boolean;
+    readonly closeOnClick?: boolean;
     readonly children: React.ReactNode;
   }>;
   readonly TreeRow: React.ComponentType<UiTreeRowProps>;
   readonly Icon: React.ComponentType<{
     readonly name: UiIconName;
-    readonly className?: string;
+    readonly active?: boolean;
     readonly refreshing?: boolean;
   }>;
 }

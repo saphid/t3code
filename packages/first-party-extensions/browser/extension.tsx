@@ -37,8 +37,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddressInput, committedAddress } from "./addressInput.js";
 import { resolveUiKit } from "@t3tools/extension-sdk/ui";
-import { AnnotateButton, ScreenshotButton } from "./annotateButton.js";
-import { capturePageView, useBrowserCapture } from "./capture.js";
+import { BrowserCaptureButtons } from "./annotateButton.js";
+import { capturePageView } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
   BrowserFavicon,
@@ -75,6 +75,7 @@ import {
   isRecoveryExhausted,
   nextZoomFactor,
   pageControlsBlock,
+  awaitingEngineClaim,
   runPageCommand,
   type PageTarget,
   type PageVerb,
@@ -257,7 +258,9 @@ function restoreState(value: unknown): value is PersistedViewState | null {
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const kit = resolveUiKit(props.host);
   const ChromeButton = kit?.Button ?? "button";
-  const chromeProps = kit ? { variant: "ghost" as const, size: "icon-xs" as const } : {};
+  const chromeProps = kit
+    ? { variant: "ghost" as const, size: "icon-xs" as const }
+    : { "data-t3-browser-fallback-control": "" };
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
   const [state, setState] = useState<NavigationState>(() =>
@@ -905,6 +908,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
    * name. `tab` targets another session in the strip (its mute toggle)
    * without adopting it.
    */
+  const leaseState = surfaceLease?.state;
+  const engineClaimPending =
+    host.browserSurface?.presentation.supported === true &&
+    surfaceDenial === null &&
+    (leaseState === undefined
+      ? host.browserSurface.engineClaimPending === true
+      : leaseState.kind === "active" &&
+        leaseState.presentation.supported &&
+        leaseState.engineClaimPending === true);
   const pendingZoom = useRef<number | null>(null);
   useEffect(() => {
     if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
@@ -917,26 +929,35 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         : null
       : heldRef.current;
     if (!target) return;
+    const targetPage = tab ?? live;
+    const claimPending = (!tab || tab.tabId === held?.tabId) && engineClaimPending;
     if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
     const api = bindApi(browserSessionsApi, host, session.context);
-    void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
-      if (session.signal.aborted) return;
-      if (outcome.kind !== "accepted") {
-        if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-        setNotice(outcome.message);
-        return;
-      }
-      setNotice(null);
-      const { receipt } = outcome;
-      const current = heldRef.current;
-      if (!current || receipt.session.tabId !== current.tabId) return;
-      if (!advanceRevision(fence, receipt.serverEpoch, receipt.revision)) return;
-      heldRevision.current = Math.max(heldRevision.current, receipt.revision);
-      const next = { ...current, engineGeneration: receipt.session.engine.generation };
-      heldRef.current = next;
-      setHeld(next);
-      setLive(receipt.session);
-    });
+    void runPageCommand(api, target, targetPage, verb, session.signal, claimPending).then(
+      (outcome) => {
+        if (session.signal.aborted) return;
+        if (outcome.kind !== "accepted") {
+          if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+          if (
+            outcome.kind !== "blocked" ||
+            targetPage === null ||
+            !awaitingEngineClaim(targetPage, claimPending)
+          )
+            setNotice(outcome.message);
+          return;
+        }
+        setNotice(null);
+        const { receipt } = outcome;
+        const current = heldRef.current;
+        if (!current || receipt.session.tabId !== current.tabId) return;
+        if (!advanceRevision(fence, receipt.serverEpoch, receipt.revision)) return;
+        heldRevision.current = Math.max(heldRevision.current, receipt.revision);
+        const next = { ...current, engineGeneration: receipt.session.engine.generation };
+        heldRef.current = next;
+        setHeld(next);
+        setLive(receipt.session);
+      },
+    );
   };
 
   /** One ladder step from the last requested factor, so quick presses compound. */
@@ -946,7 +967,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction),
     });
 
-  const pageBlock = held ? pageControlsBlock(live) : null;
+  const pageBlock = held ? pageControlsBlock(live, engineClaimPending) : null;
 
   const command = (method: "back" | "forward" | "reload") => {
     if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
@@ -958,7 +979,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       return;
     }
     if (pageBlock !== null) {
-      setNotice(pageBlock);
+      if (live === null || !awaitingEngineClaim(live, engineClaimPending)) setNotice(pageBlock);
       return;
     }
     if (method === "back") commit(goBack(state));
@@ -1035,7 +1056,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     localServers,
   });
 
-  const leaseState = surfaceLease?.state;
   const remoteNotice =
     remote.status.kind === "connecting"
       ? "Connecting remote browser frames…"
@@ -1046,7 +1066,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           : null;
   // Native disables capture until the page is on screen here and while it failed to load.
   const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-  const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const ChromeToolbar = kit?.Toolbar ?? "header";
@@ -1057,23 +1076,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       viewportSetting._tag !== "fill" ? { _tag: "fill" } : responsiveViewportForToggle(contentSize),
     );
   };
-  const screenshotButton = (
-    <ScreenshotButton
+  const captureButtons = (
+    <BrowserCaptureButtons
+      kit={kit}
       host={host}
-      blockReason={capture.blockReason}
-      capturing={capture.state.kind === "capturing" ? capture.state.target : null}
-      pageFailed={capturePage === "failed"}
-      onCapture={() => capture.capture("page")}
-      style={buttonStyle}
-    />
-  );
-  const annotateButton = (
-    <AnnotateButton
-      host={host}
-      blockReason={capture.blockReason}
-      capturing={capture.state.kind === "capturing" ? capture.state.target : null}
-      pageFailed={capturePage === "failed"}
-      onPick={() => capture.capture("element")}
+      session={session}
+      held={held}
+      page={capturePage}
+      onStatus={setNotice}
       style={buttonStyle}
     />
   );
@@ -1133,7 +1143,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           with a 1px canvas gap on focus-visible, matching the native address
           wrapper instead of the browser default 1px auto outline. */}
       <style>
-        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):not([data-slot]):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`[data-t3-browser-fallback-control]:focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       <ChromeToolbar
         style={
@@ -1202,33 +1212,29 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         </NavigationGroup>
         {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
         {!kit && (
-          <ChromeButton
-            {...chromeProps}
+          <button
+            data-t3-browser-fallback-control
             type="button"
             aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
             aria-pressed={deviceMode}
             disabled={!held || viewportPending}
             onClick={toggleDeviceToolbar}
             style={{
-              ...(kit ? {} : buttonStyle),
+              ...buttonStyle,
               ...(deviceMode
                 ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
                 : {}),
             }}
           >
             ⛶
-          </ChromeButton>
+          </button>
         )}
-        {!kit && (
-          <>
-            {screenshotButton}
-            {annotateButton}
-          </>
-        )}
+        {!kit && captureButtons}
         {held && live && (
           <ProfileBadge host={host} session={live} profiles={profiles} visible={visible} />
         )}
         <AddressInput
+          kit={kit}
           addon={externalButton}
           host={host}
           inputRef={addressRef}
@@ -1251,16 +1257,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             padding: "0 4px",
           }}
         />
-        {kit ? (
-          <>
-            {annotateButton}
-            {screenshotButton}
-          </>
-        ) : (
-          externalButton
-        )}
+        {kit ? captureButtons : externalButton}
 
         <PageMenu
+          kit={kit}
           host={host}
           session={held ? live : null}
           blockReason={pageBlock}
@@ -1276,6 +1276,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             held &&
             live && (
               <ProfileSection
+                kit={kit}
                 host={host}
                 session={live}
                 api={profilesApi}
@@ -1312,6 +1313,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 style={{ display: "inline-flex", alignItems: "center", gap: 2 }}
               >
                 <button
+                  data-t3-browser-fallback-control
                   type="button"
                   role="tab"
                   aria-selected={active}
@@ -1339,10 +1341,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   audio, and reflects the engine-reported mute state. */}
                 {tab.audible === true && (
                   <button
+                    data-t3-browser-fallback-control
                     type="button"
                     aria-label={tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`}
                     aria-pressed={tab.audioMuted === true}
-                    disabled={pageControlsBlock(tab) !== null}
+                    disabled={
+                      pageControlsBlock(tab, tab.tabId === held?.tabId && engineClaimPending) !==
+                      null
+                    }
                     onClick={() =>
                       runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab)
                     }
@@ -1363,7 +1369,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       >
         {notice ??
           (held && live
-            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live)}`
+            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live, engineClaimPending)}`
             : describeStatus(state))}
       </div>
       {held ? (
@@ -1469,6 +1475,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                   <li key={entry.url} style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <BrowserFavicon url={entry.url} size={14} />
                     <button
+                      data-t3-browser-fallback-control
                       type="button"
                       onClick={() => submit(entry.url)}
                       style={{
@@ -1483,6 +1490,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                       {entry.title ? `${entry.title} — ${label}` : label}
                     </button>
                     <button
+                      data-t3-browser-fallback-control
                       type="button"
                       aria-label={`Remove ${label} from history`}
                       onClick={() => removeRecent(entry.url)}
@@ -1521,6 +1529,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               {recentTargets(state).map((target) => (
                 <li key={target.url}>
                   <button
+                    data-t3-browser-fallback-control
                     type="button"
                     aria-current={target.index === state.index}
                     onClick={() => submit(target.url)}

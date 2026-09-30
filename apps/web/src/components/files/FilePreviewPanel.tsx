@@ -14,8 +14,6 @@ import {
 } from "@t3tools/shared/filePreview";
 import type { SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
-import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -67,10 +65,10 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import { EditableSourcePreview } from "./EditableSourcePreview";
 import {
   FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
-  SOURCE_PREVIEW_VIRTUALIZER_CONFIG,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
@@ -557,61 +555,55 @@ function EditableFileSurface({
   );
 
   return (
-    <EditProvider editor={editor}>
-      <div ref={surfaceRef} className="flex min-h-0 flex-1">
-        <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-          config={SOURCE_PREVIEW_VIRTUALIZER_CONFIG}
-        >
-          <File<FileCommentAnnotationGroup>
-            file={{
-              name: relativePath,
+    <div ref={surfaceRef} className="flex min-h-0 flex-1">
+      <EditableSourcePreview<FileCommentAnnotationGroup>
+        editor={editor}
+        fileProps={{
+          file: {
+            name: relativePath,
+            contents,
+            cacheKey: projectFileEditorCacheKey(
+              environmentId,
+              cwd,
+              relativePath,
               contents,
-              cacheKey: projectFileEditorCacheKey(
-                environmentId,
-                cwd,
-                relativePath,
-                contents,
-                editor.getFile(),
-              ),
-            }}
-            options={{
-              disableFileHeader: true,
-              enableGutterUtility: !hasOpenCommentForm,
-              enableLineSelection: !hasOpenCommentForm,
-              onGutterUtilityClick: setSelectedRange,
-              onLineSelectionChange: setSelectedRange,
-              onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              preferredHighlighter: PREFERRED_HIGHLIGHTER,
-              themeType: resolvedTheme,
-              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-              onPostRender: handlePostRender,
-            }}
-            selectedLines={selectedRange}
-            lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
-            className="min-h-full"
-            contentEditable
-          />
-        </Virtualizer>
-      </div>
-    </EditProvider>
+              editor.getFile(),
+            ),
+          },
+          options: {
+            disableFileHeader: true,
+            enableGutterUtility: !hasOpenCommentForm,
+            enableLineSelection: !hasOpenCommentForm,
+            onGutterUtilityClick: setSelectedRange,
+            onLineSelectionChange: setSelectedRange,
+            onLineSelectionEnd: handleLineSelectionEnd,
+            overflow: wordWrap ? "wrap" : "scroll",
+            theme: resolveDiffThemeName(resolvedTheme),
+            preferredHighlighter: PREFERRED_HIGHLIGHTER,
+            themeType: resolvedTheme,
+            unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+            onPostRender: handlePostRender,
+          },
+          selectedLines: selectedRange,
+          lineAnnotations,
+          renderAnnotation: (annotation) => (
+            <div className="py-1">
+              {annotation.metadata.entries.map((entry) => (
+                <DiffCommentAnnotation
+                  key={entry.id}
+                  kind={entry.kind}
+                  rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                  text={entry.text}
+                  onCancel={() => removeAnnotationEntry(entry.id)}
+                  onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                  onDelete={() => removeAnnotationEntry(entry.id)}
+                />
+              ))}
+            </div>
+          ),
+        }}
+      />
+    </div>
   );
 }
 
@@ -1044,21 +1036,19 @@ export default function FilePreviewPanel({
                 onPostRender={onFilePostRender}
               />
             ) : (
-              <DiffWorkerPoolProvider>
-                <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
-                  environmentId={environmentId}
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  composerDraftTarget={composerDraftTarget}
-                  contents={file.data.contents}
-                  resolvedTheme={resolvedTheme}
-                  revealRequestId={revealRequestId}
-                  wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
-                  onPendingChange={onPendingChange}
-                />
-              </DiffWorkerPoolProvider>
+              <EditableFileSurface
+                key={`${relativePath}:${resolvedTheme}`}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                composerDraftTarget={composerDraftTarget}
+                contents={file.data.contents}
+                resolvedTheme={resolvedTheme}
+                revealRequestId={revealRequestId}
+                wordWrap={wordWrap}
+                onPostRender={onFilePostRender}
+                onPendingChange={onPendingChange}
+              />
             )
           ) : null}
         </div>

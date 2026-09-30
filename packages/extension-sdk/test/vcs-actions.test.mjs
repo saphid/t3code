@@ -10,8 +10,11 @@ import {
   VCS_MUTATE,
   VCS_READ,
   prsWriteApi,
+  prsWriteApiV1,
   vcsActionsApi,
 } from "../dist/catalogue.js";
+import { bindApi } from "../dist/capabilities.js";
+import { requireApi } from "../dist/authoring.js";
 
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
@@ -32,15 +35,52 @@ NodeTest.test("t3.vcs/actions is a 1.1.0 catalogue entry registered once", () =>
   );
 });
 
-NodeTest.test("t3.prs/write is a frozen 1.0.0 catalogue entry registered once", () => {
+NodeTest.test("t3.prs/write 1.1.0 retains its frozen 1.0.0 catalogue entry", () => {
   NodeAssert.equal(PRS_WRITE_API.id, PRS_WRITE);
-  NodeAssert.equal(PRS_WRITE_API.version, "1.0.0");
+  NodeAssert.equal(PRS_WRITE_API.version, "1.1.0");
   NodeAssert.equal(prsWriteApi.definition, PRS_WRITE_API);
+  NodeAssert.equal(
+    prsWriteApi.additions.some((addition) => addition.output === "operations"),
+    false,
+  );
+  NodeAssert.equal(
+    prsMethods.setFilesViewed.inputSchema.properties.files.items.properties.path.maxLength,
+    4096,
+  );
   NodeAssert.deepEqual(
     GENERIC_API_CATALOGUE.filter((d) => d.id === PRS_WRITE),
-    [PRS_WRITE_API],
+    [PRS_WRITE_API, prsWriteApiV1.definition],
   );
 });
+
+NodeTest.test(
+  "viewed writes negotiate the new minor while old writes keep their baseline",
+  async () => {
+    NodeAssert.equal(
+      prsWriteApiV1.definition.methods.some((method) => method.name === "setFilesViewed"),
+      false,
+    );
+    NodeAssert.deepEqual(requireApi(prsWriteApi), { id: PRS_WRITE, versionRange: "^1.0.0" });
+    const calls = [];
+    const client = {
+      invokeApi: async (request) => {
+        calls.push(request);
+        return {};
+      },
+    };
+    const context = { resource: { namespace: "test", id: "test", projectId: "p" }, client: "web" };
+    const input = { repository: "o/r", number: 3, files: [{ path: "a.ts", viewed: true }] };
+    const signal = new AbortController().signal;
+    await NodeAssert.rejects(
+      bindApi(prsWriteApi, client, context).invoke("setFilesViewed", input, signal),
+      /needs \^1\.1\.0/,
+    );
+    NodeAssert.equal(calls.length, 0);
+    await bindApi(prsWriteApi, client, context, "^1.1.0").invoke("setFilesViewed", input, signal);
+    NodeAssert.equal(calls[0].versionRange, "^1.1.0");
+    NodeAssert.deepEqual(calls[0].input, input);
+  },
+);
 
 NodeTest.test("vcs mutations ride t3.vcs/mutate; progress rides t3.vcs/read", () => {
   NodeAssert.deepEqual(Object.keys(vcsMethods).sort(), [
@@ -113,6 +153,7 @@ NodeTest.test("every prs write op is write-effected and rides t3.prs/write alone
     "replyToThread",
     "requestReviewers",
     "runAction",
+    "setFilesViewed",
     "setLabels",
     "setReaction",
     "setThreadResolution",

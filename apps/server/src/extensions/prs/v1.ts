@@ -16,6 +16,7 @@ import {
   type PrsCapabilitiesResult,
   type PrsDetail,
   type PrsDiffStreamEvent,
+  type PrsFilesViewedResult,
   type PrsLabelCandidateList,
   type PrsLinkedThreadsResult,
   type PrsListResult,
@@ -96,6 +97,12 @@ const decode = <A, I>(schema: Schema.Codec<A, I>) =>
   Schema.decodeUnknownSync(schema, { onExcessProperty: "error" });
 const emptyInput = decode(Schema.Struct({}));
 const refInput = decode(Schema.Struct(refFields));
+const filesViewedInput = decode(
+  Schema.Struct({
+    ...refFields,
+    cursor: Schema.optional(Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,2}$/))),
+  }),
+);
 const listInput = decode(
   Schema.Struct({
     state: Schema.Literals(["all", "open", "closed", "merged"]),
@@ -153,7 +160,10 @@ const threadCommentsInput = decode(
   }),
 );
 const invalidateInput = decode(
-  Schema.Struct({ reference: Schema.optional(Schema.Struct(refFields)) }),
+  Schema.Struct({
+    reference: Schema.optional(Schema.Struct(refFields)),
+    filesViewedOnly: Schema.optional(Schema.Boolean),
+  }),
 );
 const diffInput = decode(
   Schema.Struct({
@@ -229,6 +239,7 @@ const providerFailure =
       : new PullRequestOperationError({ operation, detail: error.detail, cause: error });
 
 const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const byteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const capBody = (body: string, bound = MAX_COMMENT_BODY_CHARS) =>
   body.length <= bound ? { body, cut: false } : { body: body.slice(0, bound), cut: true };
@@ -294,6 +305,7 @@ const assertStreamFrameFits = (operation: string, value: object) => {
 };
 
 const NO_PR_OPERATIONS: PrsOperationsSupport = {
+  "prs.filesViewed": false,
   "prs.list": false,
   "prs.listStats": false,
   "prs.summary": false,
@@ -328,6 +340,9 @@ const operationsSupport = (api: PullRequestProviderApi | null): PrsOperationsSup
     "prs.listStats": api.listChangeRequestStats !== undefined,
     "prs.summary": true,
     "prs.detail": true,
+    "prs.filesViewed":
+      api.capabilities.viewedFiles === "environment" ||
+      (api.capabilities.viewedFiles === "host" && api.getFilesViewed !== undefined),
     "prs.activity": true,
     "prs.threadComments": api.getReviewThreadComments !== undefined,
     "prs.stack": api.getChangeRequestStack !== undefined,
@@ -354,6 +369,7 @@ interface PrsApiDependencies extends ScopeDependencies {
     | "summary"
     | "stack"
     | "detail"
+    | "filesViewed"
     | "activity"
     | "threadComments"
     | "diff"
@@ -826,17 +842,47 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         decode: refInput,
         run: (safe, scope) =>
           bindRef(scope, safe).pipe(
-            Effect.flatMap((ref) =>
-              Effect.all([
-                dependencies.pullRequests.detail(ref),
-                dependencies.projectMergeMethod?.(ref.projectId) ?? Effect.succeed(null),
-              ]),
+            Effect.flatMap(
+              Effect.fn("PrsApi.detail")(function* (ref) {
+                const [detail, preferredMergeMethod] = yield* Effect.all([
+                  dependencies.pullRequests.detail(ref),
+                  dependencies.projectMergeMethod?.(ref.projectId) ?? Effect.succeed(null),
+                ]);
+                const bounded = boundDetail(detail);
+                const result =
+                  preferredMergeMethod === null ? bounded : { ...bounded, preferredMergeMethod };
+                return result;
+              }),
             ),
-            Effect.map(([detail, preferredMergeMethod]) => {
-              const bounded = boundDetail(detail);
-              return preferredMergeMethod === null ? bounded : { ...bounded, preferredMergeMethod };
-            }),
           ),
+      }),
+      filesViewed: runMethod({
+        operation: "prs.filesViewed",
+        decode: filesViewedInput,
+        run: Effect.fn("PrsApi.filesViewed")(function* (safe, scope) {
+          const ref = yield* bindRef(scope, safe);
+          const result = yield* dependencies.pullRequests.filesViewed(ref);
+          const allFiles = result.files.slice(0, 500).map(({ path, state }) => ({ path, state }));
+          const truncated = result.truncated || result.files.length > allFiles.length;
+          const snapshot = sha256(encodeJson({ files: allFiles, truncated }));
+          const start = safe.cursor === undefined ? 0 : Number(safe.cursor);
+          const files: PrsFilesViewedResult["files"][number][] = [];
+          let bytes = 256;
+          for (const file of allFiles.slice(start)) {
+            const projected = { path: file.path, state: file.state };
+            const size = byteLength(projected) + 1;
+            if (bytes + size > MAX_RESULT_BYTES) break;
+            files.push(projected);
+            bytes += size;
+          }
+          const end = start + files.length;
+          return {
+            files,
+            truncated,
+            nextCursor: end < allFiles.length ? String(end) : null,
+            snapshot,
+          } satisfies PrsFilesViewedResult;
+        }),
       }),
       activity: runMethod({
         operation: "prs.activity",
@@ -970,11 +1016,18 @@ export function createPrsApiProvider(dependencies: PrsApiDependencies): HostApiP
         decode: invalidateInput,
         run: Effect.fn("prs.invalidate")(function* (safe, scope) {
           if (safe.reference === undefined) {
-            yield* dependencies.pullRequests.invalidate({});
+            yield* dependencies.pullRequests.invalidate(
+              safe.filesViewedOnly === undefined ? {} : { filesViewedOnly: safe.filesViewedOnly },
+            );
             return {};
           }
           const ref = yield* bindRef(scope, safe.reference);
-          yield* dependencies.pullRequests.invalidate({ reference: ref });
+          yield* dependencies.pullRequests.invalidate({
+            reference: ref,
+            ...(safe.filesViewedOnly === undefined
+              ? {}
+              : { filesViewedOnly: safe.filesViewedOnly }),
+          });
           return {};
         }),
       }),
