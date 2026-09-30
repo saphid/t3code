@@ -121,6 +121,7 @@ import {
   goBack,
   goForward,
   initialNavigationState,
+  isEpochChangedPresentation,
   isLeaseUrl,
   recentTargets,
   reload,
@@ -296,8 +297,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   // back to the session line, so an older message never resurfaces.
   const [notice, setNotice] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(0);
+  const surfaceUnavailableRef = useRef(false);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
+  const dropHeldSession = useCallback(() => {
+    heldRef.current = null;
+    setHeld(null);
+    setLive(null);
+    setNotice(null);
+  }, [setHeld, setLive, setNotice]);
   // Every stream frame and command receipt applies only through this fence.
   const [fence] = useState(createRevisionFence);
   /**
@@ -405,9 +414,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
               ) {
                 const found = pending?.find((item) => item.tabId === current.tabId);
                 if (value.serverEpoch !== current.serverEpoch || !found) {
-                  heldRef.current = null;
-                  setHeld(null);
-                  setLive(null);
+                  dropHeldSession();
                   // Like native's re-list, a restarted server's missing tab
                   // just drops back to the empty Browser.
                   if (value.serverEpoch === current.serverEpoch)
@@ -415,6 +422,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 } else {
                   setLive(found);
                   heldRevision.current = value.revision;
+                  if (surfaceUnavailableRef.current) setSurfaceAttempt((attempt) => attempt + 1);
                 }
               }
               pending = null;
@@ -447,17 +455,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             case "session-removed":
               setTabs((currentTabs) => currentTabs.filter((item) => item.tabId !== value.tabId));
               if (current && value.tabId === current.tabId) {
-                heldRef.current = null;
-                setHeld(null);
-                setLive(null);
+                dropHeldSession();
                 setNotice(`Session ended (session-closed: ${value.reason})`);
               }
               break;
             case "closed":
               if (current) {
-                heldRef.current = null;
-                setHeld(null);
-                setLive(null);
+                dropHeldSession();
               }
               tabsEpoch.current = null;
               setTabs([]);
@@ -522,6 +526,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     visible: visible && held !== null,
     cornerRadius: 8,
   });
+  useEffect(() => {
+    surfaceUnavailableRef.current = surfaceDenial?.reason === "host-unavailable";
+  }, [surfaceDenial?.reason]);
+  const epochChangedPresentation =
+    isEpochChangedPresentation(surfaceLease?.state ?? null) ||
+    surfaceDenial?.reason === "epoch-changed";
+  useEffect(() => {
+    if (epochChangedPresentation) dropHeldSession();
+  }, [epochChangedPresentation, dropHeldSession]);
   const layers = floatingLayers(overlayZIndex);
   const Popover = useMemo(() => panelPopover(host, layers.transient), [host, layers.transient]);
   const floating = useMemo<PanelFloating>(
@@ -709,7 +722,13 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     signal: session.signal,
     fence,
     refuse: (outcome) => setNotice(`Browser command ${outcome}`),
-    fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
+    fail: (error) => {
+      if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch")) {
+        if (held && heldRef.current?.serverEpoch === held.serverEpoch) dropHeldSession();
+        return;
+      }
+      setNotice(error instanceof Error ? error.message : "Browser command failed");
+    },
     adopt: (receipt) => {
       heldRevision.current = receipt.revision;
       const next = {
@@ -750,6 +769,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const go = (url: string, onAccepted?: () => void) => {
+    if (surfaceDenial?.reason === "host-unavailable") setSurfaceAttempt((attempt) => attempt + 1);
     const api = bindApi(browserSessionsApi, host, session.context);
     // An ended lease means the held session is suspect, and a guest whose
     // recovery gave up stays dead — open fresh rather than navigate either.
@@ -763,25 +783,16 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     dispatch(
       (signal) =>
         usable
-          ? api
-              .invoke(
-                "navigate",
-                {
-                  tabId: usable.tabId,
-                  serverEpoch: usable.serverEpoch,
-                  url,
-                  expectedEngineGeneration: usable.engineGeneration,
-                },
-                signal,
-              )
-              .catch((error: unknown) => {
-                // The server restarted before this view heard. Like native, a
-                // failed navigation is not retried: the address stays in the
-                // bar, and once the restart is synced Enter opens it fresh.
-                if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
-                  throw new Error("The browser restarted. Press Enter to open this address again.");
-                throw error;
-              })
+          ? api.invoke(
+              "navigate",
+              {
+                tabId: usable.tabId,
+                serverEpoch: usable.serverEpoch,
+                url,
+                expectedEngineGeneration: usable.engineGeneration,
+              },
+              signal,
+            )
           : reopen?.api === "profiles"
             ? profilesApi.invoke("open", reopen.input, signal).catch((error: unknown) => {
                 throw new Error(profileFailureMessage("open", error));
@@ -1039,19 +1050,17 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
-    leaseState?.kind === "ended"
-      ? // A restarted server ends the lease before the resumed snapshot
-        // drops the hold; native drops it silently.
-        leaseState.reason === "epoch-changed"
-        ? null
-        : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
-      : remoteEligible
-        ? remoteNotice
-        : surfaceDenial
-          ? surfaceDenial.grant
-            ? `Native presentation is unavailable — ${grantDenialMessage(surfaceDenial.grant)}`
-            : `Native presentation is unavailable — ${surfaceDenial.reason}: ${surfaceDenial.detail}`
-          : null;
+    epochChangedPresentation || surfaceDenial?.reason === "host-unavailable"
+      ? null
+      : leaseState?.kind === "ended"
+        ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
+        : remoteEligible
+          ? remoteNotice
+          : surfaceDenial
+            ? surfaceDenial.grant
+              ? `Native presentation is unavailable — ${grantDenialMessage(surfaceDenial.grant)}`
+              : `Native presentation is unavailable — ${surfaceDenial.reason}: ${surfaceDenial.detail}`
+            : null;
 
   return (
     <section
@@ -1332,6 +1341,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       {held ? (
         <div ref={setContentElement} style={{ position: "relative", flex: 1, minHeight: 0 }}>
           <div
+            key={surfaceAttempt}
             ref={surfaceSlotRef}
             aria-label="Browser surface"
             style={{ position: "absolute", inset: 0 }}

@@ -7277,7 +7277,7 @@ export const BROWSER_FRAMES_API = browserFramesApi.definition;
  * ends presentation only — it never closes the browser session.
  * --------------------------------------------------------------------- */
 export const BROWSER_SURFACE = "t3.browser/surface";
-export const BROWSER_SURFACE_VERSION = "1.0.0";
+export const BROWSER_SURFACE_VERSION = "2.0.0";
 /** Both grants are required to acquire a presentation lease. */
 export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
 /**
@@ -7338,8 +7338,8 @@ export type BrowserSurfaceDenialReason =
   /**
    * The host could not verify the lease scope right now — the thread's
    * shell state is still synchronizing, or the calling client's install
-   * lifetime ended. Transient for a live installation; SDK callers retry
-   * with bounded backoff before treating the slot as dead.
+   * lifetime ended. A caller can remount the slot to try again once the
+   * host is connected.
    */
   | "host-unavailable";
 
@@ -7429,7 +7429,7 @@ export type BrowserSurfaceAcquireResult =
   | { readonly ok: false; readonly denial: BrowserSurfaceDenial };
 
 /**
- * The host side of `t3.browser/surface@1.0.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/surface@2.0.0`. Present on `ClientHost` as
  * `browserSurface`; absence means the host predates the contract (treat as
  * `host-unavailable`).
  */
@@ -7438,7 +7438,9 @@ export interface BrowserSurfaceHost {
   readonly version: string;
   /** Static for the host's lifetime — compositing cannot appear mid-session. */
   readonly presentation: BrowserSurfacePresentationSupport;
-  acquire(request: BrowserSurfaceAcquireRequest): BrowserSurfaceAcquireResult;
+  acquire(
+    request: BrowserSurfaceAcquireRequest,
+  ): BrowserSurfaceAcquireResult | Promise<BrowserSurfaceAcquireResult>;
 }
 
 /* ------------------------------------------------------------------------

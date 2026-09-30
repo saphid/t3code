@@ -11,7 +11,8 @@ import {
   type PullRequestListResult as NativePullRequestListResult,
   type PullRequestRef as NativePullRequestRef,
 } from "@t3tools/contracts";
-import type { PrsDiffStreamEvent } from "@t3tools/extension-sdk/catalogue";
+import { PRS_READ_API, type PrsDiffStreamEvent } from "@t3tools/extension-sdk/catalogue";
+import { Ajv } from "ajv";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import { it, expect } from "@effect/vitest";
@@ -441,6 +442,170 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       };
       expect(gotActivity.comments[0]!.body).toBe("looks good");
       expect(gotActivity.truncated).toBe(false);
+    }),
+  );
+
+  it.effect("projects native detail additions onto the SDK output schema", () =>
+    Effect.gen(function* () {
+      const nativeDetail = {
+        ...detail,
+        capabilities: {
+          ...detail.capabilities,
+          viewedFiles: "host" as const,
+          futureCapability: true,
+          review: { ...detail.capabilities.review, futureReviewCapability: true },
+        },
+        viewerPermissions: { ...detail.viewerPermissions, futurePermission: true },
+        author: { ...detail.author, nativeId: 123 },
+        checks: [
+          { name: "CI", status: "success" as const, description: null, url: null, nativeId: 1 },
+        ],
+        mergeCapabilities: { ...detail.mergeCapabilities, futureMergeMethod: true },
+      };
+      const provider = createPrsApiProvider(
+        makeDeps({ detail: () => Effect.succeed(nativeDetail) }),
+      );
+      const result = yield* invoke(provider, "detail", REF, makeContext());
+      const validate = new Ajv({ strict: true, addUsedSchema: false }).compile(
+        PRS_READ_API.methods!.find((method) => method.name === "detail")!.outputSchema,
+      );
+      expect(
+        validate(result),
+        validate.errors?.map((error) => `${error.instancePath} ${error.message}`).join("\n"),
+      ).toBe(true);
+      expect(result).toMatchObject({ title: detail.title, capabilities: detail.capabilities });
+      expect(result).not.toHaveProperty("nativeOnly");
+      expect(result).not.toHaveProperty("capabilities.viewedFiles");
+      expect(nativeDetail.capabilities.viewedFiles).toBe("host");
+      expect(nativeDetail.author.nativeId).toBe(123);
+    }),
+  );
+
+  it.effect("projects native additions in other PR reads without dropping SDK data", () =>
+    Effect.gen(function* () {
+      const nativeList = {
+        ...listResult,
+        nativeOnly: true,
+        providers: listResult.providers.map((provider) => ({ ...provider, nativeOnly: true })),
+        entries: [
+          {
+            ...listEntry,
+            nativeOnly: "x".repeat(200_000),
+            author: { ...listEntry.author, nativeId: 123 },
+          },
+        ],
+        viewers: { "github.com": "octocat" },
+        nextCursors: { "github.com": "next-page" },
+      };
+      const nativeActivity = {
+        ...activity,
+        nativeOnly: true,
+        comments: activity.comments.map((comment) => ({ ...comment, nativeOnly: true })),
+        commits: activity.commits.map((commit) => ({ ...commit, nativeOnly: true })),
+      };
+      const nativeStack = {
+        id: "stack",
+        number: 1,
+        url: "https://github.com/owner/repo/stack/1",
+        base: "main",
+        nativeOnly: true,
+        layers: [{ number: 42, headBranch: "feature", state: "open" as const, nativeOnly: true }],
+      };
+      const nativeThreadComments = {
+        comments: [
+          {
+            id: "tc1",
+            author: detail.author,
+            body: "A reply",
+            createdAt: NOW,
+            url: null,
+            nativeOnly: true,
+          },
+        ],
+        nextCursor: "next-comments",
+        nativeOnly: true,
+      };
+      const nativeReviewerCandidates = {
+        candidates: [
+          {
+            ...detail.author,
+            id: "octocat",
+            kind: "user" as const,
+            isRequested: false,
+            nativeOnly: true,
+          },
+        ],
+        truncated: false,
+        nativeOnly: true,
+      };
+      const nativeLabelCandidates = {
+        candidates: [
+          { name: "bug", color: "abc123", description: null, isApplied: false, nativeOnly: true },
+        ],
+        truncated: false,
+        nativeOnly: true,
+      };
+      const provider = createPrsApiProvider(
+        makeDeps(
+          {
+            list: () => Effect.succeed(nativeList),
+            summary: () => Effect.succeed({ ...detail, nativeOnly: true }),
+            activity: () => Effect.succeed(nativeActivity),
+            stack: () => Effect.succeed(nativeStack),
+            threadComments: () => Effect.succeed(nativeThreadComments),
+            reviewerCandidates: () => Effect.succeed(nativeReviewerCandidates),
+            labelCandidates: () => Effect.succeed(nativeLabelCandidates),
+          },
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                {},
+                {
+                  getChangeRequestStack: () => Effect.succeed(nativeStack),
+                },
+              ),
+            ]),
+          },
+        ),
+      );
+      const ajv = new Ajv({ strict: true, addUsedSchema: false });
+      for (const method of [
+        "list",
+        "summary",
+        "activity",
+        "stack",
+        "threadComments",
+        "reviewerCandidates",
+        "labelCandidates",
+      ]) {
+        const result = yield* invoke(
+          provider,
+          method,
+          method === "list"
+            ? { state: "open" }
+            : method === "threadComments"
+              ? { ...REF, threadId: "review-thread", cursor: "comments" }
+              : REF,
+          makeContext(),
+        );
+        const validate = ajv.compile(
+          PRS_READ_API.methods!.find((definition) => definition.name === method)!.outputSchema,
+        );
+        expect(
+          validate(result),
+          `${method}: ${validate.errors?.map((error) => `${error.instancePath} ${error.message}`).join("\n")}`,
+        ).toBe(true);
+        expect(result).not.toHaveProperty("nativeOnly");
+        if (method === "list")
+          expect(result).toMatchObject({
+            viewers: nativeList.viewers,
+            nextCursors: nativeList.nextCursors,
+            truncated: false,
+          });
+        if (method === "activity")
+          expect(result).toMatchObject({ comments: activity.comments, commits: activity.commits });
+      }
+      expect(nativeList.entries[0]!.nativeOnly).toHaveLength(200_000);
     }),
   );
 

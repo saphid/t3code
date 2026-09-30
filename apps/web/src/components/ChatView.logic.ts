@@ -54,6 +54,11 @@ import type { TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
+import {
+  isExtensionPresented,
+  type BrowserSurfacePresentation,
+} from "../browser/browserSurfaceStore";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   resolveSelectableProviderInstanceEntry,
@@ -94,9 +99,24 @@ export function agentControlledBrowserCloseConfirmation(
 export function shouldRenderPreviewMiniPlayer(
   source: PreviewMiniPlayerSource | null,
   renderedRightPanelSurface: RightPanelSurface | null,
+  extensionPresentation?: {
+    readonly extensionPanelOpen: boolean;
+    readonly browserSurface:
+      | Pick<BrowserSurfacePresentation, "owner" | "extensionResourceKey">
+      | undefined;
+  },
 ): boolean {
   if (source === null) return false;
   if (source.kind === "browser") {
+    if (
+      renderedRightPanelSurface?.kind === "extension" &&
+      extensionPresentation?.extensionPanelOpen &&
+      isExtensionPresented(
+        extensionPresentation.browserSurface,
+        resourceKey(renderedRightPanelSurface.record.context.resource),
+      )
+    )
+      return false;
     return !(
       renderedRightPanelSurface?.kind === "preview" &&
       renderedRightPanelSurface.resourceId === source.tabId

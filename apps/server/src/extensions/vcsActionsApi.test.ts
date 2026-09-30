@@ -2,6 +2,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  CodexSettings,
   ExtensionOperationError,
   GitManagerError,
   ProjectId,
@@ -24,6 +25,8 @@ import { vi } from "vite-plus/test";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -42,6 +45,11 @@ import {
 } from "@t3tools/extension-runtime";
 import type { GitActionProgressReporter } from "../git/GitManager.ts";
 import type { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import * as ServerConfig from "../config.ts";
+import { makeCodexTextGeneration } from "../textGeneration/CodexTextGeneration.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { writeFakeCli } from "../testUtils/fakeCli.ts";
+import { createModelSelection } from "@t3tools/shared/model";
 import type { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import type { VcsDriverHandle, VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import { createVcsActionsApiProvider } from "./vcsActionsApi.ts";
@@ -56,6 +64,7 @@ const VCS_ACTIONS_SUGGESTED = [
 ];
 
 const isOperationError = Schema.is(ExtensionOperationError);
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const READ_AND_OPERATE = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope] as const;
 const signal = new AbortController().signal;
 
@@ -658,6 +667,92 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       expect(yield* Deferred.await(t.refreshed)).toBe(ROOT);
     }),
   );
+
+  for (const action of ["create_pr", "commit_push_pr"] as const) {
+    it.effect(`provides a Scope for detached ${action} text generation`, () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-actions-scope-",
+        });
+        const binaryPath = yield* Effect.sync(() =>
+          writeFakeCli({
+            directory,
+            name: "codex",
+            source: [
+              'import { readFileSync, writeFileSync } from "node:fs";',
+              "const args = process.argv.slice(2);",
+              'const schema = JSON.parse(readFileSync(args[args.indexOf("--output-schema") + 1], "utf8"));',
+              'const output = "subject" in schema.properties ? { subject: "Generated commit", body: "Commit body" } : { title: "Generated PR", body: "PR body" };',
+              "for await (const chunk of process.stdin) {}",
+              'writeFileSync(args[args.indexOf("--output-last-message") + 1], JSON.stringify(output));',
+            ].join("\n"),
+          }),
+        );
+        const textGeneration = yield* makeCodexTextGeneration(
+          decodeCodexSettings({ binaryPath }),
+          undefined,
+          Effect.succeed([]),
+        );
+        const generationLayer = Layer.succeed(TextGeneration.TextGeneration, textGeneration);
+        const modelSelection = createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "scope-test-model",
+        );
+        const test = makeProvider({
+          grants: VCS_ACTIONS_SUGGESTED,
+          runStackedAction: (input, options) =>
+            Effect.gen(function* () {
+              const generation = yield* TextGeneration.TextGeneration;
+              const result = stackedResult({ action: input.action });
+              if (input.action === "commit_push_pr") {
+                const commit = yield* generation.generateCommitMessage({
+                  cwd: directory,
+                  branch: "feature",
+                  stagedSummary: "1 file changed",
+                  stagedPatch: "",
+                  modelSelection,
+                });
+                expect(commit.subject).toBe("Generated commit");
+              }
+              const pr = yield* generation.generatePrContent({
+                cwd: directory,
+                baseBranch: "main",
+                headBranch: "feature",
+                commitSummary: "A commit",
+                diffSummary: "1 file changed",
+                diffPatch: "",
+                modelSelection,
+              });
+              expect(pr).toEqual({ title: "Generated PR", body: "PR body" });
+              yield* options!.progressReporter!.publish({
+                actionId: input.actionId,
+                cwd: input.cwd,
+                action: input.action,
+                kind: "action_finished",
+                result,
+              });
+              return result;
+            }).pipe(Effect.provide(generationLayer)),
+        });
+        const started = (yield* invoke(test.provider, "run", { action })) as { actionId: string };
+        const events = yield* collectProgress(test.provider, started.actionId);
+        expect(events).toHaveLength(1);
+        expect(events[0]!.value).toMatchObject({ kind: "action_finished" });
+        expect(test.dispatched.some((command) => command.type === "thread.pull-request.link")).toBe(
+          true,
+        );
+        expect(yield* Deferred.await(test.refreshed)).toBe(ROOT);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-vcs-actions-scope-config-",
+          }),
+        ),
+      ),
+    );
+  }
 
   it.effect("marks blank commit messages as generated provenance", () =>
     Effect.gen(function* () {
