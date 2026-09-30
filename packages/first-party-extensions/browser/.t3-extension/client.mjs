@@ -17759,7 +17759,11 @@ ${ind(d)}}`;
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       Button,
       {
-        ...kit ? { variant: open ? "secondary" : "ghost", size: "icon-xs" } : { "data-t3-browser-fallback-control": "" },
+        ...kit ? {
+          variant: open ? "secondary" : "ghost",
+          size: "icon-xs",
+          iconTone: open ? "primary" : void 0
+        } : { "data-t3-browser-fallback-control": "" },
         type: "button",
         "aria-label": label,
         "aria-pressed": open,

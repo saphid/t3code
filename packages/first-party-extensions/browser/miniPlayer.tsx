@@ -108,7 +108,11 @@ export function MiniPlayerButton(props: {
     <Tooltip host={host} label={label}>
       <Button
         {...(kit
-          ? ({ variant: open ? "secondary" : "ghost", size: "icon-xs" } as const)
+          ? ({
+              variant: open ? "secondary" : "ghost",
+              size: "icon-xs",
+              iconTone: open ? "primary" : undefined,
+            } as const)
           : { "data-t3-browser-fallback-control": "" })}
         type="button"
         aria-label={label}
