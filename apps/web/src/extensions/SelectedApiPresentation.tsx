@@ -1,3 +1,4 @@
+import { describeGrantDenial } from "@t3tools/extension-sdk/capabilities";
 import type { Json, ViewContext, ViewRecord } from "@t3tools/extension-sdk/contracts";
 import {
   useCallback,
@@ -228,7 +229,8 @@ export function SelectedApiPresentation(props: {
       } catch (error) {
         if (controller.signal.aborted) return;
         const message =
-          error instanceof Error ? error.message : "Selected presentation unavailable";
+          describeGrantDenial(error)?.message ??
+          (error instanceof Error ? error.message : "Selected presentation unavailable");
         // A failed navigation keeps the mounted view and its edits, and says
         // the open failed.
         setState((previous) =>
