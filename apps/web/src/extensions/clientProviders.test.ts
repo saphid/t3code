@@ -31,6 +31,7 @@ import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../composerDraftStore";
 import { retainBrowserCaptureAnnotation } from "./browserCaptureAnnotations";
 import {
+  CLIENT_PROVIDER_DESCRIPTORS,
   createClientProviders,
   createComposerClientProvider,
   createEditorClientProvider,
@@ -41,6 +42,7 @@ import {
   createThemeClientProvider,
   type ClientProviderDeps,
 } from "./clientProviders";
+import { CLIENT_PROVIDER_APIS } from "@t3tools/extension-sdk/clientProviders";
 import { ClientProviderOpError, type ClientProviderInvokeCall } from "./clientProviderTypes";
 import {
   configureExtensionCommandEnvironment,
@@ -2619,4 +2621,14 @@ it("persisted preferences preserve the native editor paint", () => {
     effectiveTheme: { kind: "external-preview" },
     sessionOverlay: null,
   });
+});
+
+it("registers every implemented client API at its shared SDK version", () => {
+  const providers = createClientProviders(makeDeps([]), async () => {}, unusedPrHandoff);
+  expect(CLIENT_PROVIDER_DESCRIPTORS.map(({ id }) => id).sort()).toEqual(
+    [...providers.keys()].sort(),
+  );
+  expect(CLIENT_PROVIDER_DESCRIPTORS).toEqual(
+    [...CLIENT_PROVIDER_APIS.values()].map(({ id, version }) => ({ id, version })),
+  );
 });
