@@ -7375,6 +7375,8 @@ export type BrowserSurfaceLeaseState =
   | {
       readonly kind: "active";
       readonly presentation: BrowserSurfacePresentationSupport;
+      /** Whether an unreported engine should await this client's owner claim. */
+      readonly engineClaimPending?: boolean;
     }
   | { readonly kind: "ended"; readonly reason: BrowserSurfaceEndReason };
 
@@ -7438,6 +7440,8 @@ export interface BrowserSurfaceHost {
   readonly version: string;
   /** Static for the host's lifetime — compositing cannot appear mid-session. */
   readonly presentation: BrowserSurfacePresentationSupport;
+  /** Whether this client can claim this environment's engine before a lease exists. */
+  readonly engineClaimPending?: boolean;
   acquire(
     request: BrowserSurfaceAcquireRequest,
   ): BrowserSurfaceAcquireResult | Promise<BrowserSurfaceAcquireResult>;

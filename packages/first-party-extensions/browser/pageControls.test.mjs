@@ -44,7 +44,7 @@ const unavailable = session(
   },
 );
 NodeTest.test(
-  "attach status keeps an unclaimed engine pending only on a surface-capable host",
+  "attach status keeps an unclaimed engine pending only while its owner is claiming",
   () => {
     const pending = {
       ...unavailable,
@@ -72,6 +72,7 @@ NodeTest.test(
     );
     NodeAssert.equal(engineStatusLabel(ready, true), "engine ready, navigation loaded");
     NodeAssert.notEqual(pageControlsBlock(pending), null);
+    NodeAssert.equal(pageControlsBlock(pending, true), "Waiting for the browser engine to attach.");
   },
 );
 
@@ -123,6 +124,16 @@ function fakeApi(answer) {
 }
 
 const signal = new AbortController().signal;
+
+NodeTest.test("attach-time engine verbs stay local without desktop-required wording", async () => {
+  const api = fakeApi(receipt("accepted"));
+  const result = await runPageCommand(api, target, unavailable, { method: "reload" }, signal, true);
+  NodeAssert.deepEqual(result, {
+    kind: "blocked",
+    message: "Waiting for the browser engine to attach.",
+  });
+  NodeAssert.equal(api.calls.length, 0);
+});
 
 NodeTest.describe("engine gate", () => {
   NodeTest.it("allows a claimed guest, ready or still starting", () => {

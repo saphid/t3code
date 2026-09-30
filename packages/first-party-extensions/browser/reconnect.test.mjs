@@ -141,6 +141,7 @@ function restartingBackend() {
   let surfaceSyncDelayMs = 0;
   let navigateGate = null;
   let nextOpenEngine = null;
+  let engineClaimPending = true;
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
 
@@ -280,6 +281,9 @@ function restartingBackend() {
       id: "t3.browser/surface",
       version: "2.0.0",
       presentation: { supported: true },
+      get engineClaimPending() {
+        return engineClaimPending;
+      },
       acquire(request) {
         acquires.push({ tabId: request.session.tabId, serverEpoch: request.session.serverEpoch });
         if (nextSurfaceDenial) {
@@ -310,7 +314,7 @@ function restartingBackend() {
           const listeners = new Set();
           const lease = {
             session: request.session,
-            state: { kind: "active", presentation: { supported: true } },
+            state: { kind: "active", presentation: { supported: true }, engineClaimPending },
             onDidChangeState(listener) {
               listeners.add(listener);
               return () => listeners.delete(listener);
@@ -338,6 +342,10 @@ function restartingBackend() {
           const watch = (reason) => {
             if (reason) end(reason);
             else if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
+            else if (lease.state.engineClaimPending !== engineClaimPending) {
+              lease.state = { ...lease.state, engineClaimPending };
+              for (const listener of listeners) listener(lease.state);
+            }
           };
           surfaceWatchers.add(watch);
           return { ok: true, lease };
@@ -363,6 +371,10 @@ function restartingBackend() {
     },
     setNextOpenEngine(engine) {
       nextOpenEngine = engine;
+    },
+    setEngineClaimPending(pending) {
+      engineClaimPending = pending;
+      for (const watch of surfaceWatchers) watch();
     },
     denyNextSurface(reason) {
       nextSurfaceDenial = reason;
@@ -529,6 +541,13 @@ async function withView(
       enter,
       address: () => addressInput().props.value,
       text: () => textOf(renderer.toJSON()),
+      refresh: async () => {
+        await act(async () => {
+          renderer.root
+            .find((node) => node.type === "button" && node.props["aria-label"] === "Stop")
+            .props.onClick();
+        });
+      },
     });
   } finally {
     await act(async () => {
@@ -598,6 +617,80 @@ NodeTest.test(
         await settle();
         NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
         NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+      },
+      { initialStatus: null },
+    );
+  },
+);
+
+NodeTest.test("remote-environment desktop does not wait for a claim it cannot make", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  backend.setEngineClaimPending(false);
+  await withView(
+    backend,
+    async ({ status, statusCommits }) => {
+      NodeAssert.equal(
+        status(),
+        "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+      );
+      NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine pending/);
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test("a failed primary claim promptly ends the pending status", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  await withView(
+    backend,
+    async ({ status }) => {
+      NodeAssert.match(status(), /engine pending/);
+      backend.setEngineClaimPending(false);
+      await settle();
+      NodeAssert.equal(
+        status(),
+        "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+      );
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test("attach-time page verbs never name an unavailable engine", async () => {
+  const backend = restartingBackend();
+  backend.reportSession(unreportedSession(backend));
+  await withView(
+    backend,
+    async ({ refresh, text, statusCommits }) => {
+      await refresh();
+      NodeAssert.match(text(), /engine pending, navigation pending/);
+      NodeAssert.doesNotMatch(text(), /engine unavailable|desktop-required/);
+      backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+      await settle();
+      NodeAssert.match(text(), /engine ready, navigation loaded/);
+      NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+    },
+    { initialStatus: null },
+  );
+});
+
+NodeTest.test(
+  "a failed claim after an attach-time verb does not leave a pending notice",
+  async () => {
+    const backend = restartingBackend();
+    backend.reportSession(unreportedSession(backend));
+    await withView(
+      backend,
+      async ({ refresh, status }) => {
+        await refresh();
+        backend.setEngineClaimPending(false);
+        await settle();
+        NodeAssert.equal(
+          status(),
+          "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+        );
       },
       { initialStatus: null },
     );

@@ -74,6 +74,7 @@ import {
   isRecoveryExhausted,
   nextZoomFactor,
   pageControlsBlock,
+  awaitingEngineClaim,
   runPageCommand,
   type PageTarget,
   type PageVerb,
@@ -901,6 +902,15 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
    * name. `tab` targets another session in the strip (its mute toggle)
    * without adopting it.
    */
+  const leaseState = surfaceLease?.state;
+  const engineClaimPending =
+    host.browserSurface?.presentation.supported === true &&
+    surfaceDenial === null &&
+    (leaseState === undefined
+      ? host.browserSurface.engineClaimPending === true
+      : leaseState.kind === "active" &&
+        leaseState.presentation.supported &&
+        leaseState.engineClaimPending === true);
   const pendingZoom = useRef<number | null>(null);
   useEffect(() => {
     if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
@@ -913,26 +923,35 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         : null
       : heldRef.current;
     if (!target) return;
+    const targetPage = tab ?? live;
+    const claimPending = (!tab || tab.tabId === held?.tabId) && engineClaimPending;
     if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
     const api = bindApi(browserSessionsApi, host, session.context);
-    void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
-      if (session.signal.aborted) return;
-      if (outcome.kind !== "accepted") {
-        if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-        setNotice(outcome.message);
-        return;
-      }
-      setNotice(null);
-      const { receipt } = outcome;
-      const current = heldRef.current;
-      if (!current || receipt.session.tabId !== current.tabId) return;
-      if (!advanceRevision(fence, receipt.serverEpoch, receipt.revision)) return;
-      heldRevision.current = Math.max(heldRevision.current, receipt.revision);
-      const next = { ...current, engineGeneration: receipt.session.engine.generation };
-      heldRef.current = next;
-      setHeld(next);
-      setLive(receipt.session);
-    });
+    void runPageCommand(api, target, targetPage, verb, session.signal, claimPending).then(
+      (outcome) => {
+        if (session.signal.aborted) return;
+        if (outcome.kind !== "accepted") {
+          if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+          if (
+            outcome.kind !== "blocked" ||
+            targetPage === null ||
+            !awaitingEngineClaim(targetPage, claimPending)
+          )
+            setNotice(outcome.message);
+          return;
+        }
+        setNotice(null);
+        const { receipt } = outcome;
+        const current = heldRef.current;
+        if (!current || receipt.session.tabId !== current.tabId) return;
+        if (!advanceRevision(fence, receipt.serverEpoch, receipt.revision)) return;
+        heldRevision.current = Math.max(heldRevision.current, receipt.revision);
+        const next = { ...current, engineGeneration: receipt.session.engine.generation };
+        heldRef.current = next;
+        setHeld(next);
+        setLive(receipt.session);
+      },
+    );
   };
 
   /** One ladder step from the last requested factor, so quick presses compound. */
@@ -942,7 +961,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction),
     });
 
-  const pageBlock = held ? pageControlsBlock(live) : null;
+  const pageBlock = held ? pageControlsBlock(live, engineClaimPending) : null;
 
   const command = (method: "back" | "forward" | "reload") => {
     if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
@@ -954,7 +973,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       return;
     }
     if (pageBlock !== null) {
-      setNotice(pageBlock);
+      if (live === null || !awaitingEngineClaim(live, engineClaimPending)) setNotice(pageBlock);
       return;
     }
     if (method === "back") commit(goBack(state));
@@ -1031,12 +1050,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     localServers,
   });
 
-  const leaseState = surfaceLease?.state;
-  const surfaceCanAttach =
-    host.browserSurface?.presentation.supported === true &&
-    surfaceDenial === null &&
-    (leaseState === undefined ||
-      (leaseState.kind === "active" && leaseState.presentation.supported));
   const remoteNotice =
     remote.status.kind === "connecting"
       ? "Connecting remote browser frames…"
@@ -1299,7 +1312,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                     type="button"
                     aria-label={tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`}
                     aria-pressed={tab.audioMuted === true}
-                    disabled={pageControlsBlock(tab) !== null}
+                    disabled={
+                      pageControlsBlock(tab, tab.tabId === held?.tabId && engineClaimPending) !==
+                      null
+                    }
                     onClick={() =>
                       runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab)
                     }
@@ -1320,7 +1336,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       >
         {notice ??
           (held && live
-            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live, surfaceCanAttach)}`
+            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live, engineClaimPending)}`
             : describeStatus(state))}
       </div>
       {held ? (

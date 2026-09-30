@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vite-plus/test";
+import { describe, it, expect, vi } from "vite-plus/test";
 import {
   BROWSER_SESSIONS,
   BROWSER_SURFACE,
@@ -40,7 +40,13 @@ interface NativeLease {
   stolen(): void;
 }
 
-function harness({ composites = true }: { composites?: boolean } = {}) {
+function harness({
+  composites = true,
+  engineClaimPending = true,
+}: {
+  composites?: boolean;
+  engineClaimPending?: boolean;
+} = {}) {
   let previewState = {
     serverEpoch: "epoch-1" as string | null,
     sessions: { "tab-1": {} } as Record<string, unknown>,
@@ -50,6 +56,7 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
   let threadProjects: Record<string, string | null> = { "thread-a": "project-a" };
   let shellLive = true;
   const threadListeners = new Set<() => void>();
+  const engineClaimListeners = new Set<() => void>();
   const sessionRefreshes: string[] = [];
   const deferred: { fn: () => void; ms: number; canceled: boolean }[] = [];
   const sessionListeners = new Set<() => void>();
@@ -64,6 +71,11 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
 
   const deps: BrowserSurfaceBridgeDeps = {
     composites: () => composites,
+    readEngineClaimPending: () => engineClaimPending,
+    subscribeEngineClaims: (listener) => {
+      engineClaimListeners.add(listener);
+      return () => engineClaimListeners.delete(listener);
+    },
     schedule: (flush) => {
       scheduled.add(flush);
       return () => scheduled.delete(flush);
@@ -142,6 +154,11 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
   return {
     host,
     lifetime,
+    engineClaimListeners,
+    setEngineClaimPending: (pending: boolean) => {
+      engineClaimPending = pending;
+      for (const listener of engineClaimListeners) listener();
+    },
     deps,
     scheduled,
     flush: () => {
@@ -179,6 +196,40 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
 }
 
 describe("browserSurfaceBridge", () => {
+  it("does not claim progress for a compositing desktop on a remote environment", async () => {
+    const h = harness({ engineClaimPending: false });
+    const host = h.host();
+    expect(host.presentation.supported).toBe(true);
+    expect(host.engineClaimPending).toBe(false);
+    const acquired = await host.acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    expect(acquired.lease.state).toMatchObject({ kind: "active", engineClaimPending: false });
+  });
+
+  it("reports failed claims on the active lease without reacquiring or ending presentation", async () => {
+    const h = harness();
+    const host = h.host();
+    expect(host.engineClaimPending).toBe(true);
+    const acquired = await host.acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected lease");
+    expect(acquired.lease.state).toMatchObject({ kind: "active", engineClaimPending: true });
+    const changed = vi.fn();
+    acquired.lease.onDidChangeState(changed);
+    h.setEngineClaimPending(false);
+    expect(acquired.lease.state).toMatchObject({
+      kind: "active",
+      presentation: { supported: true },
+      engineClaimPending: false,
+    });
+    expect(changed).toHaveBeenCalledExactlyOnceWith(acquired.lease.state);
+    expect(h.syncMounts).toEqual(["env-a/thread-a"]);
+    expect(h.sessionRefreshes).toEqual([]);
+    h.setEngineClaimPending(false);
+    expect(changed).toHaveBeenCalledTimes(1);
+    acquired.lease.release();
+    expect(h.engineClaimListeners.size).toBe(0);
+  });
+
   it("denies by name when a required grant is missing", async () => {
     const h = harness();
     const noSurface = h.host({ capabilities: [BROWSER_SESSIONS] });
@@ -261,14 +312,14 @@ describe("browserSurfaceBridge", () => {
     // Losing shell authority mid-lease is not evidence the thread moved.
     h.setShellLive(false);
     h.fireThreads();
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
     // Returning live with the same project keeps the claim…
     h.setShellLive(true);
     h.fireThreads();
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
@@ -427,7 +478,7 @@ describe("browserSurfaceBridge", () => {
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
     const lease = acquired.lease;
-    expect(lease.state).toEqual({ kind: "active", presentation: { supported: true } });
+    expect(lease.state).toMatchObject({ kind: "active", presentation: { supported: true } });
 
     expect(lease.present({ x: 0, y: 0, width: 10, height: 10 }, true)).toBe("accepted");
     expect(lease.present({ x: 5, y: 5, width: 20, height: 20 }, false, 4, 7)).toBe("accepted");
@@ -482,7 +533,7 @@ describe("browserSurfaceBridge", () => {
     expect(first.ok && second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
     expect(first.lease.state).toEqual({ kind: "ended", reason: "superseded" });
-    expect(second.lease.state).toEqual({ kind: "active", presentation: { supported: true } });
+    expect(second.lease.state).toMatchObject({ kind: "active", presentation: { supported: true } });
     // The native lease stolen by the second acquire is also released.
     expect(h.nativeLeases[0]?.released).toBe(true);
   });
@@ -524,7 +575,7 @@ describe("browserSurfaceBridge", () => {
     expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
     // An unrelated event must not count as authority — the list seq is.
     h.fireSessions();
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
@@ -551,7 +602,7 @@ describe("browserSurfaceBridge", () => {
       listFailures: 0,
     });
     h.fireSessions();
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
@@ -574,7 +625,7 @@ describe("browserSurfaceBridge", () => {
         listFailures: failures,
       });
       h.fireSessions();
-      expect(acquired.lease.state).toEqual({
+      expect(acquired.lease.state).toMatchObject({
         kind: "active",
         presentation: { supported: true },
       });
@@ -584,7 +635,7 @@ describe("browserSurfaceBridge", () => {
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 3 });
     h.fireSessions();
     expect(h.sessionRefreshes).toHaveLength(3);
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
@@ -616,7 +667,7 @@ describe("browserSurfaceBridge", () => {
     h.fireSessions();
     expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
     h.fireDeferred();
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: true },
     });
@@ -656,7 +707,7 @@ describe("browserSurfaceBridge", () => {
     const acquired = await host.acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
-    expect(acquired.lease.state).toEqual({
+    expect(acquired.lease.state).toMatchObject({
       kind: "active",
       presentation: { supported: false, reason: "desktop-required" },
     });
