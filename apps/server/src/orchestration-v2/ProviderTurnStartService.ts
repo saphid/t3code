@@ -289,7 +289,7 @@ export const layer: Layer.Layer<
       }
       // Settles a run that never reached the provider: one signal turn item plus
       // terminal run, attempt and root node, written only while the run is still
-      // the current starting attempt.
+      // the current attempt in the status this start began from.
       const settleRunBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.settleBeforeStart")(
         function* (input: {
           readonly signal: string;
@@ -312,7 +312,11 @@ export const layer: Layer.Layer<
           readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
         }) {
           const { now, status } = input;
-          const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
+          // A recovered run already started; its original start time is kept.
+          const started =
+            input.startedAt === undefined || run.startedAt !== null
+              ? {}
+              : { startedAt: input.startedAt };
           const item: OrchestrationV2TurnItem = {
             id: idAllocator.derive.runSignalTurnItem({ runId, signal: input.signal }),
             threadId: projection.thread.id,
@@ -372,7 +376,7 @@ export const layer: Layer.Layer<
             threadId: projection.thread.id,
             runId,
             activeAttemptId: attempt.id,
-            expectedStatus: "starting",
+            expectedStatus: expectedRunStatus,
             events,
           });
         },
@@ -552,9 +556,9 @@ export const layer: Layer.Layer<
         }),
       );
       // The last start attempt fails the run with the provider's own reason
-      // instead of leaving it `starting` after the effect gives up. A run that
-      // already left `starting` is not overwritten, and a failed write returns
-      // its error to the effect worker.
+      // instead of leaving it unsettled after the effect gives up. A run that
+      // moved on since this start began is not overwritten, and a failed write
+      // returns its error to the effect worker.
       const settleStartFailure = (failed: {
         readonly signal: string;
         readonly title: string;
@@ -562,10 +566,22 @@ export const layer: Layer.Layer<
       }) =>
         Effect.gen(function* () {
           const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
+          const now = yield* DateTime.now;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
-            now: yield* DateTime.now,
+            now,
+            // An earlier attempt of a recovered run may have marked the thread
+            // active without ever creating a provider turn.
+            ...(expectedRunStatus === "running" && providerThread.status === "active"
+              ? {
+                  providerThreadUpdate: {
+                    ...providerThread,
+                    status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+                    updatedAt: now,
+                  },
+                }
+              : {}),
             providerInstanceId: run.providerInstanceId,
             itemProviderThreadId: providerThread.id,
             item: {
