@@ -1623,6 +1623,10 @@ export function createEditorClientProvider(
 ): ClientLocalProvider {
   return {
     async invoke(call) {
+      if (call.method === "getCodeViewCapabilities") {
+        authorizeCaller(deps, call.caller, call.context, []);
+        return { editable: true };
+      }
       authorizeCaller(deps, call.caller, call.context, [UI_EDITOR_OPEN]);
       if (call.method !== "openPath")
         throw new ClientProviderOpError(

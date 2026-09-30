@@ -2146,8 +2146,20 @@ var __t3Client = (() => {
   };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
+      {
+        name: "getCodeViewCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}, []),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["editable"],
+          properties: { editable: { type: "boolean" } }
+        }
+      },
       {
         name: "openPath",
         effect: "write",
@@ -8221,14 +8233,26 @@ var __t3Client = (() => {
   var UI_EDITOR_OPEN = "t3.ui/editor.open";
   var uiEditorApi = defineApi({
     id: UI_EDITOR,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
         effect: "read",
         requiredGrants: [],
         inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["openPath"])
+        outputSchema: uiCapabilitiesOutput(["openPath", "getCodeViewCapabilities"])
+      },
+      {
+        name: "getCodeViewCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["editable"],
+          properties: { editable: { type: "boolean" } }
+        }
       },
       {
         name: "openPath",
@@ -8246,6 +8270,9 @@ var __t3Client = (() => {
         outputSchema: uiEditorOpenReceiptSchema
       }
     ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "getCodeViewCapabilities" }]
   });
   var UI_NAVIGATION = "t3.ui/navigation";
   var UI_NAVIGATION_OPEN = "t3.ui/navigation.open";

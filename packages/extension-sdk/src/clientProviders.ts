@@ -1092,8 +1092,20 @@ const editorPathInput = {
 /** Backs `t3.ui/editor`: the client owns the preferred editor and opens through its environment. */
 export const CLIENT_EDITOR_API = validateApiDefinition({
   id: "t3.client/editor",
-  version: "1.0.0",
+  version: "1.1.0",
   methods: [
+    {
+      name: "getCodeViewCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}, []),
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["editable"],
+        properties: { editable: { type: "boolean" } },
+      },
+    },
     {
       name: "openPath",
       effect: "write",

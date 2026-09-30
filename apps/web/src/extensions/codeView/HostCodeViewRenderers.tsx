@@ -1,15 +1,30 @@
-import type { CodeViewItem, FileDiffContentsLoader } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { CodeViewDiffProps, CodeViewFileProps } from "@t3tools/extension-sdk/environment";
+import type {
+  CodeViewItem,
+  FileDiffContentsLoader,
+  FileContents,
+  SelectedLineRange,
+} from "@pierre/diffs";
+import { useStableCallback, type CodeViewHandle } from "@pierre/diffs/react";
+import type {
+  CodeViewDiffProps,
+  CodeViewFileProps,
+  CodeViewEditorProps,
+} from "@t3tools/extension-sdk/environment";
+import { Editor } from "@pierre/diffs/editor";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { StyledDiffCodeView } from "~/components/diffs/StyledDiffCodeView";
 import { useCodeViewFileReveal } from "~/components/diffs/useCodeViewFileReveal";
 import ReadOnlySourcePreview from "~/components/files/ReadOnlySourcePreview";
+import { EditableSourcePreview } from "~/components/files/EditableSourcePreview";
+import { projectFileEditorCacheKey } from "~/components/files/fileContentRevision";
+import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrome";
+import type { KeyboardEvent } from "react";
 import { useFileLineReveal } from "~/components/files/useFileLineReveal";
 import { Button } from "~/components/ui/button";
 import { useTheme } from "~/hooks/useTheme";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   buildContentCacheKey,
   buildPatchCacheKey,
@@ -191,6 +206,112 @@ export function HostCodeFile(props: CodeViewFileProps) {
         cacheKey={cacheKey}
         onPostRender={onPostRender}
         {...(props.wordWrap === undefined ? {} : { wordWrap: props.wordWrap })}
+      />
+    </div>
+  );
+}
+
+export function HostCodeEditor(props: CodeViewEditorProps) {
+  return <EditableDocument key={`${props.documentId}:${props.path}`} {...props} />;
+}
+
+function EditableDocument(props: CodeViewEditorProps) {
+  const { resolvedTheme } = useTheme();
+  const preferredWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const wordWrap = props.wordWrap ?? preferredWordWrap;
+  const onChange = useStableCallback((file: FileContents) => props.onChange(file.contents));
+  const hasLineSelection = useRef(false);
+  const editor = useMemo(
+    () =>
+      new Editor({
+        persistState: true,
+        persistStateStorage: "inMemory",
+        onChange,
+      }),
+    [onChange],
+  );
+  useEffect(() => () => editor.cleanUp(), [editor]);
+  const onPostRender = useFileLineReveal(
+    props.path,
+    props.reveal?.line ?? null,
+    props.reveal?.requestId ?? 0,
+  );
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key.toLowerCase() === "s" && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      props.onSave();
+    } else if (event.key === "Escape") {
+      editor.setSelections([]);
+      editor.blur();
+      hasLineSelection.current = false;
+      props.onSelectionChange?.(null);
+    }
+  };
+  const reportTextSelection = () => {
+    const selection = editor.getState().selections?.[0];
+    if (selection === undefined) return;
+    const forward =
+      selection.start.line < selection.end.line ||
+      (selection.start.line === selection.end.line &&
+        selection.start.character <= selection.end.character);
+    const start = forward ? selection.start : selection.end;
+    const end = forward ? selection.end : selection.start;
+    const startLine = start.line + 1;
+    const endLine = end.line > start.line && end.character === 0 ? end.line : end.line + 1;
+    const empty =
+      selection.start.line === selection.end.line &&
+      selection.start.character === selection.end.character;
+    if (empty && hasLineSelection.current) return;
+    props.onSelectionChange?.(empty ? null : { startLine, endLine });
+  };
+  const reportLineSelection = (range: SelectedLineRange | null) => {
+    hasLineSelection.current = range !== null;
+    props.onSelectionChange?.(
+      range === null
+        ? null
+        : {
+            startLine: Math.min(range.start, range.end),
+            endLine: Math.max(range.start, range.end),
+          },
+    );
+  };
+  return (
+    <div
+      aria-label="File editor"
+      className={cn("flex min-h-0 flex-1", props.className)}
+      onKeyDown={onKeyDown}
+      onPointerUp={reportTextSelection}
+      onKeyUp={reportTextSelection}
+    >
+      <EditableSourcePreview
+        editor={editor}
+        fileProps={{
+          file: {
+            name: props.path,
+            contents: props.contents,
+            cacheKey: projectFileEditorCacheKey(
+              props.documentId,
+              "",
+              props.path,
+              props.contents,
+              editor.getFile(),
+            ),
+          },
+          options: {
+            disableFileHeader: true,
+            enableLineSelection: true,
+            enableGutterUtility: true,
+            onLineSelectionChange: reportLineSelection,
+            onGutterUtilityClick: reportLineSelection,
+            overflow: wordWrap ? "wrap" : "scroll",
+            theme: resolveDiffThemeName(resolvedTheme),
+            preferredHighlighter: PREFERRED_HIGHLIGHTER,
+            themeType: resolvedTheme,
+            unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+            onPostRender,
+          },
+        }}
       />
     </div>
   );

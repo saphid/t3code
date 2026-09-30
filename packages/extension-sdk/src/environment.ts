@@ -215,16 +215,27 @@ export interface CodeViewFileProps {
   readonly className?: string;
 }
 
+export interface CodeViewEditorProps extends CodeViewFileProps {
+  readonly documentId: string;
+  readonly onChange: (contents: string) => void;
+  readonly onSave: () => void;
+  readonly onSelectionChange?: (
+    range: { readonly startLine: number; readonly endLine: number } | null,
+  ) => void;
+}
+
 /**
- * `ClientHost.codeView` version 1. A rendering primitive over data the
- * plugin already holds, not a capability: no grant, no broker, no
- * catalogue entry. The host owns tokenization, its worker pool, theme sync
- * and virtualization; the plugin composes the components into its JSX.
+ * `ClientHost.codeView` renders data the plugin already holds. Version 1
+ * offers read-only File and Diff; version 2 adds Editor, probed through
+ * `t3.ui/editor.getCodeViewCapabilities` (1.1.0). Rendering has no write
+ * authority: onChange buffers locally and onSave uses the caller's existing
+ * grant-gated CAS API. The host owns highlighting, workers and virtualization.
  */
 export interface ClientCodeView {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly Diff: React.ComponentType<CodeViewDiffProps>;
   readonly File: React.ComponentType<CodeViewFileProps>;
+  readonly Editor?: React.ComponentType<CodeViewEditorProps>;
 }
 
 /**
@@ -237,6 +248,15 @@ export function resolveCodeView(host: Pick<ClientHost, "codeView">): ClientCodeV
   const { version, Diff, File } = member as Record<string, unknown>;
   return typeof version === "number" && version >= 1 && isComponent(Diff) && isComponent(File)
     ? (member as ClientCodeView)
+    : null;
+}
+
+export function resolveCodeEditor(
+  host: Pick<ClientHost, "codeView">,
+): React.ComponentType<CodeViewEditorProps> | null {
+  const codeView = resolveCodeView(host);
+  return codeView !== null && codeView.version >= 2 && isComponent(codeView.Editor)
+    ? codeView.Editor!
     : null;
 }
 

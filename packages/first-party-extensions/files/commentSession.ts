@@ -23,7 +23,7 @@ import {
   type FileCommentRange,
 } from "./fileComments.ts";
 
-/** A textarea character selection, pinned to the path it was made in. */
+/** Editor selection offsets, pinned to the path they were made in. */
 export interface EditorSelection {
   readonly path: string;
   readonly start: number;

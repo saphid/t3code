@@ -1157,7 +1157,33 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
     availability: ambient(deps, CLIENT_EDITOR),
     invoke(method, input, context, signal, metadata): Promise<Json> {
       if (method === "getCapabilities")
-        return capabilities(deps, "host.ui.editor", { openPath: CLIENT_EDITOR }, metadata);
+        return (async () => {
+          const result = (await capabilities(
+            deps,
+            "host.ui.editor",
+            { openPath: CLIENT_EDITOR },
+            metadata,
+          )) as { operations: Record<string, boolean> };
+          let supported = false;
+          if (result.operations.openPath) {
+            const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+              signal,
+            });
+            supported = (await clientSupports(connectionId, CLIENT_EDITOR, "^1.1.0", signal)).ok;
+          }
+          return {
+            ...result,
+            operations: { ...result.operations, getCodeViewCapabilities: supported },
+          } as Json;
+        })();
+      if (method === "getCodeViewCapabilities")
+        return (async () => {
+          const connectionId = await Effect.runPromise(resolveConnectionId(deps, metadata), {
+            signal,
+          });
+          await requireClient(connectionId, CLIENT_EDITOR, "^1.1.0", method, signal);
+          return forward(deps, CLIENT_EDITOR, method)(method, input, context, signal, metadata);
+        })();
       if (method !== "openPath")
         return Promise.reject(
           providerError("client-provider-unavailable", `Unknown editor op: ${method}`),
