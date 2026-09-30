@@ -1,13 +1,17 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
-import type { SourceControlProvider } from "./SourceControlProvider.ts";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "./SourceControlProvider.ts";
 
 const mockedRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 const layer = it.layer(
@@ -27,6 +31,64 @@ function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
     stderr: "",
     stdoutTruncated: false,
     stderrTruncated: false,
+  };
+}
+
+function fakeGlab(input: {
+  readonly profiles: Readonly<
+    Record<string, { readonly apiHost?: string; readonly authenticated?: boolean }>
+  >;
+  readonly defaultHost?: string;
+  readonly repositoryHost?: string;
+}) {
+  const requests: Array<{ readonly profile: string; readonly apiHost: string }> = [];
+  const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+  mockedRun.mockImplementation((call) => {
+    if (call.args[0] === "config") {
+      expect(call.args.slice(0, 4)).toEqual(["config", "get", "api_host", "--host"]);
+      const profile = call.args[4] ?? "";
+      return Effect.succeed(processOutput(input.profiles[profile]?.apiHost ?? ""));
+    }
+    expect(call.command).toBe("glab");
+    expect(call.args).toEqual(["api", "projects/alex%2Frepo"]);
+    const profile =
+      call.env?.GITLAB_HOST ??
+      (input.repositoryHost && input.repositoryHost in input.profiles
+        ? input.repositoryHost
+        : (input.defaultHost ?? "gitlab.com"));
+    const apiHost = input.profiles[profile]?.apiHost ?? profile;
+    requests.push({ profile, apiHost });
+    if (!(profile in input.profiles) || input.profiles[profile]?.authenticated === false) {
+      return Effect.fail(
+        new VcsProcessExitError({
+          operation: call.operation,
+          command: call.command,
+          cwd: call.cwd,
+          exitCode: 1,
+          detail: "GitLab CLI is not authenticated for this host. Run glab auth login.",
+          failureKind: "authentication",
+        }),
+      );
+    }
+    return Effect.succeed(
+      processOutput(
+        encodeJson({
+          path_with_namespace: "alex/repo",
+          web_url: `https://${apiHost}/alex/repo`,
+          http_url_to_repo: `https://${apiHost}/alex/repo.git`,
+          ssh_url_to_repo: `git@${profile}:alex/repo.git`,
+        }),
+      ),
+    );
+  });
+  return requests;
+}
+
+function repositoryContext(host: string): SourceControlProviderContext {
+  return {
+    provider: { kind: "gitlab", name: "GitLab", baseUrl: `https://${host}` },
+    remoteName: "origin",
+    remoteUrl: `git@${host}:team/repo.git`,
   };
 }
 
@@ -191,13 +253,10 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  // glab keys credentials by whatever hostname the user logged in with, which need not be the
-  // repository's API or web host, so fork lookups never name a host: glab resolves it as it
-  // always has. The fake glab rejects any ':' in `--hostname`, as the real one does.
-  it.effect("reads repository clone URLs through glab's own host for any host", () =>
+  it.effect("keeps unspecified and ported fork lookups on glab's existing host path", () =>
     Effect.gen(function* () {
       const glab = yield* GitLabCli.GitLabCli;
-      for (const host of ["gitlab-b.example", "gitlab-b.example:8443", undefined]) {
+      for (const host of ["gitlab-b.example:8443", undefined]) {
         mockedRun.mockReset();
         mockedRun.mockImplementationOnce((input) => {
           const flag = input.args.indexOf("--hostname");
@@ -238,6 +297,112 @@ layer("GitLabCli.layer", (it) => {
         expect(call?.env).toBeUndefined();
       }
     }),
+  );
+
+  it.effect.each(["gitlab.com", "gitlab-b.example"])(
+    "selects the %s fork profile instead of glab's default host",
+    (host) =>
+      Effect.gen(function* () {
+        const requests = fakeGlab({
+          profiles: { "gitlab.com": {}, "gitlab-b.example": {}, "gitlab-default.example": {} },
+          defaultHost: "gitlab-default.example",
+        });
+        const lookup: Parameters<SourceControlProvider["Service"]["getRepositoryCloneUrls"]>[0] = {
+          cwd: "/repo",
+          host,
+          repository: "alex/repo",
+        };
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab.getRepositoryCloneUrls(lookup);
+
+        expect(result.url).toBe(`https://${host}/alex/repo`);
+        expect(requests).toEqual([{ profile: host, apiHost: host }]);
+        expect(mockedRun.mock.calls.map(([call]) => call.env)).toEqual([{ GITLAB_HOST: host }]);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "preserves the Git hostname's authenticated API-host profile (web login present: %s)",
+    (webLoginPresent) =>
+      Effect.gen(function* () {
+        const profile = "ssh.gitlab.corp.example";
+        const host = "gitlab.corp.example";
+        const requests = fakeGlab({
+          profiles: {
+            "gitlab.com": {},
+            [profile]: { apiHost: host },
+            ...(webLoginPresent ? { [host]: {} } : {}),
+          },
+          repositoryHost: profile,
+        });
+        const lookup: Parameters<SourceControlProvider["Service"]["getRepositoryCloneUrls"]>[0] = {
+          cwd: "/repo",
+          host,
+          context: repositoryContext(profile),
+          repository: "alex/repo",
+        };
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab.getRepositoryCloneUrls(lookup);
+
+        expect(result.url).toBe(`https://${host}/alex/repo`);
+        expect(result.sshUrl).toBe(`git@${profile}:alex/repo.git`);
+        expect(requests).toEqual([{ profile, apiHost: host }]);
+        expect(mockedRun.mock.calls.map(([call]) => ({ args: call.args, env: call.env }))).toEqual([
+          { args: ["config", "get", "api_host", "--host", profile], env: undefined },
+          { args: ["api", "projects/alex%2Frepo"], env: { GITLAB_HOST: profile } },
+        ]);
+      }),
+  );
+
+  it.effect("does not reuse another repository host's credentials for an unrelated API host", () =>
+    Effect.gen(function* () {
+      const profile = "ssh.gitlab.corp.example";
+      const host = "gitlab-b.example";
+      const requests = fakeGlab({
+        profiles: {
+          [profile]: { apiHost: "gitlab.corp.example" },
+          [host]: {},
+        },
+        repositoryHost: profile,
+      });
+      const lookup: Parameters<SourceControlProvider["Service"]["getRepositoryCloneUrls"]>[0] = {
+        cwd: "/repo",
+        host,
+        context: repositoryContext(profile),
+        repository: "alex/repo",
+      };
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls(lookup);
+
+      expect(result.url).toBe(`https://${host}/alex/repo`);
+      expect(requests).toEqual([{ profile: host, apiHost: host }]);
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "reports a missing host credential without falling back (host configured: %s)",
+    (hostConfigured) =>
+      Effect.gen(function* () {
+        const host = "gitlab-missing.example";
+        const requests = fakeGlab({
+          profiles: {
+            "gitlab.com": {},
+            ...(hostConfigured ? { [host]: { authenticated: false } } : {}),
+          },
+        });
+        const lookup: Parameters<SourceControlProvider["Service"]["getRepositoryCloneUrls"]>[0] = {
+          cwd: "/repo",
+          host,
+          repository: "alex/repo",
+        };
+        const glab = yield* GitLabCli.GitLabCli;
+        const error = yield* glab.getRepositoryCloneUrls(lookup).pipe(Effect.flip);
+
+        expect(error._tag).toBe("GitLabCliAuthenticationError");
+        expect(requests).toEqual([{ profile: host, apiHost: host }]);
+        expect(mockedRun.mock.calls).toHaveLength(1);
+        expect(mockedRun.mock.calls[0]?.[0].env).toEqual({ GITLAB_HOST: host });
+      }),
   );
 
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>

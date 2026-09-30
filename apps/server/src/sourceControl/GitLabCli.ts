@@ -287,6 +287,8 @@ export class GitLabCli extends Context.Service<
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly host?: string;
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
@@ -415,6 +417,7 @@ export const make = Effect.gen(function* () {
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
+    env?: NodeJS.ProcessEnv,
   ) =>
     process
       .run({
@@ -423,17 +426,24 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(env === undefined ? {} : { env }),
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })
       .pipe(Effect.mapError(mapError));
 
-  const execute: GitLabCli["Service"]["execute"] = (input) =>
-    run(input, (error) =>
-      GitLabCliCommandError.fromVcsError(
-        { operation: "execute", command: "glab", cwd: input.cwd },
-        error,
-      ),
+  const execute = (
+    input: Parameters<GitLabCli["Service"]["execute"]>[0],
+    env?: NodeJS.ProcessEnv,
+  ) =>
+    run(
+      input,
+      (error) =>
+        GitLabCliCommandError.fromVcsError(
+          { operation: "execute", command: "glab", cwd: input.cwd },
+          error,
+        ),
+      env,
     );
 
   const executeMergeRequest = (input: {
@@ -520,27 +530,48 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getRepositoryCloneUrls: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeGitLabRepositoryCloneUrls(raw).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitLabRepositoryDecodeError({
-                  operation: "getRepositoryCloneUrls",
-                  command: "glab",
-                  cwd: input.cwd,
-                  repository: input.repository,
-                  cause,
-                }),
+      Effect.gen(function* () {
+        let host = input.host?.trim().toLowerCase() ?? "";
+        const qualifyHost = host.length > 0 && !/:\d+$/u.test(host);
+        if (qualifyHost) {
+          const baseUrl = input.context?.provider.baseUrl;
+          const profile = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).host : undefined;
+          if (profile && profile !== host) {
+            const apiHost = yield* execute({
+              cwd: input.cwd,
+              args: ["config", "get", "api_host", "--host", profile],
+              maxOutputBytes: 8_000,
+            });
+            if (apiHost.stdout.trim().toLowerCase() === host) {
+              host = profile;
+            }
+          }
+        }
+        return yield* execute(
+          {
+            cwd: input.cwd,
+            args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+          },
+          qualifyHost ? { GITLAB_HOST: host } : undefined,
+        ).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            decodeGitLabRepositoryCloneUrls(raw).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitLabRepositoryDecodeError({
+                    operation: "getRepositoryCloneUrls",
+                    command: "glab",
+                    cwd: input.cwd,
+                    repository: input.repository,
+                    cause,
+                  }),
+              ),
             ),
           ),
-        ),
-        Effect.map(normalizeRepositoryCloneUrls),
-      ),
+          Effect.map(normalizeRepositoryCloneUrls),
+        );
+      }),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
