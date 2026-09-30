@@ -525,6 +525,7 @@ function withRateLimitBackoff(
     ) =>
     (...args: Args) =>
       protect(operation, call(...args), allowPaused);
+  // The reserve flag signals an interactive confirmation here, which also bypasses the host pause.
   const requested =
     <Args extends ReadonlyArray<unknown>, A>(
       operation: string,
