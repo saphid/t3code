@@ -1,14 +1,13 @@
-import type {
-  SourceControlProviderDiscoveryItem,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import type { SourceControlProviderKind } from "@t3tools/contracts";
+
+const scpRemote = /^[A-Za-z0-9][A-Za-z0-9._-]*@([A-Za-z0-9][A-Za-z0-9.-]*):([^\s]+)$/;
 
 export function isSafeRepositoryRemote(remote: string, allowHttp = false): boolean {
   // URL parsing strips controls; reject them before git can interpret a different remote.
   // eslint-disable-next-line no-control-regex
   if (/[\s\u0000-\u001f\u007f\\]/.test(remote)) return false;
-  if (/^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*:[^\s]+$/.test(remote)) return true;
+  if (scpRemote.test(remote)) return !remote.includes("://");
+  if (/^[a-z]+:\/\/[^/]*%/i.test(remote)) return false;
   if (!remote.includes("://")) return false;
   try {
     const url = new URL(remote);
@@ -68,7 +67,7 @@ export function isSafeRepositoryIdentifier(
 export function repositoryRemoteHost(remote: string): string | null {
   if (!isSafeRepositoryRemote(remote, true)) return null;
   if (!remote.includes("://")) return /^[^@]+@([^:]+):/.exec(remote)?.[1]?.toLowerCase() ?? null;
-  return new URL(remote).host.toLowerCase();
+  return new URL(remote).hostname.toLowerCase();
 }
 
 export function providerRepositoryHost(
@@ -76,7 +75,9 @@ export function providerRepositoryHost(
   repository: string,
 ): string | null {
   if (repository.includes("://") || repository.includes("@"))
-    return repositoryRemoteHost(repository);
+    return isSafeRepositoryRemote(repository, provider === "forgejo")
+      ? (scpRemote.exec(repository)?.[1]?.toLowerCase() ?? new URL(repository).host.toLowerCase())
+      : null;
   const segments = repository.replace(/\/$/, "").split("/");
   return (provider === "github" && segments.length === 3) ||
     (segments.length >= 3 && /[.]/.test(segments[0] ?? ""))
@@ -90,7 +91,7 @@ export function providerRepositoryPath(
 ): string | null {
   let path = repository;
   if (repository.includes("://") || repository.includes("@")) {
-    if (!isSafeRepositoryRemote(repository)) return null;
+    if (!isSafeRepositoryRemote(repository, provider === "forgejo")) return null;
     try {
       path = repository.includes("://")
         ? decodeURIComponent(new URL(repository).pathname.slice(1))
@@ -104,20 +105,12 @@ export function providerRepositoryPath(
   return path.replace(/\/$/, "");
 }
 
-export function isConfiguredRepositoryHost(
-  provider: SourceControlProviderKind,
-  repository: string,
-  providers: readonly SourceControlProviderDiscoveryItem[],
-): boolean {
-  const host = providerRepositoryHost(provider, repository);
-  return (
-    host === null ||
-    providers.some(
-      (configured) =>
-        configured.kind === provider &&
-        configured.status === "available" &&
-        configured.auth.status === "authenticated" &&
-        Option.getOrNull(configured.auth.host)?.toLowerCase() === host,
-    )
-  );
+/** Configured origins retain their scheme/port for HTTP Forgejo lookups. */
+export function configuredRepositoryOrigin(host: string): URL | null {
+  try {
+    const url = new URL(host.includes("://") ? host : `https://${host}`);
+    return isSafeRepositoryRemote(url.origin, true) ? url : null;
+  } catch {
+    return null;
+  }
 }

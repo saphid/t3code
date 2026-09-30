@@ -25,6 +25,10 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["login", "status", "--output", "json"],
   remoteRefinementArgs: ["login", "list", "--output", "json"],
+  parseRepositoryHosts: (input) =>
+    ForgejoCli.parseForgejoLogins(input.stdout)
+      .filter((login) => login.valid === "true")
+      .map((login) => login.url),
   parseAuth: (input) => {
     const logins = ForgejoCli.parseForgejoLogins(input.stdout);
     const login = logins.find((entry) => entry.default === "true") ?? logins[0];
@@ -64,6 +68,32 @@ export const makeDiscovery = Effect.gen(function* () {
     kind: "forgejo",
     label: discovery.label,
     installHint: discovery.installHint,
+    repositoryHosts: Effect.fn("ForgejoSourceControlProvider.repositoryHosts")(function* (
+      cwd: string,
+    ) {
+      const logins = yield* listLogins({ cwd, command: "fj" }).pipe(Effect.orElseSucceed(() => []));
+      const hosts = yield* Effect.forEach(logins, (login) =>
+        cli.getAccount
+          ? cli.getAccount({ cwd, baseUrl: login.url }).pipe(
+              Effect.map(() => login.url),
+              Effect.orElseSucceed(() => null),
+            )
+          : Effect.succeed(null),
+      );
+      if (hosts.some((host) => host !== null)) return hosts.filter((host) => host !== null);
+      const auth = yield* process
+        .run({
+          operation: "source-control.repository-hosts",
+          command: "tea",
+          args: discovery.authArgs,
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      return auth ? discovery.parseRepositoryHosts(auth) : [];
+    }),
     probe: Effect.fn("ForgejoSourceControlProvider.discovery")(function* (cwd: string) {
       const remoteUrl = yield* process
         .run({
@@ -284,9 +314,12 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
-        return cloneUrls(
-          yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
-        );
+        return {
+          ...cloneUrls(
+            yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
+          ),
+          repositoryHost: repo.baseUrl,
+        };
       }).pipe(mapError("getRepositoryCloneUrls", input.cwd)),
     createRepository: (input) =>
       Effect.gen(function* () {

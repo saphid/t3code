@@ -14,14 +14,9 @@ import * as Schema from "effect/Schema";
 import { ServerConfig } from "../config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
-import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { listSourceControlRepositories } from "../sourceControl/RepositoryListing.ts";
 import { assertCloneAuthority } from "./projectsCloneApi.ts";
-import {
-  isConfiguredRepositoryHost,
-  isSafeRepositoryIdentifier,
-  providerRepositoryHost,
-} from "../sourceControl/remoteValidation.ts";
+import { lookupExtensionRepository } from "./repositoryLookup.ts";
 
 const providerKind = Schema.Literals(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"]);
 const listInput = Schema.Struct({ provider: providerKind });
@@ -69,8 +64,10 @@ export function projectSourceControlDiscovery(
 export function createSourceControlDiscoveryApiProvider(dependencies: {
   readonly environmentId: string;
   readonly cwd: string;
-  readonly discovery: Pick<SourceControlProviderRegistry["Service"], "discover">;
-  readonly repositories: Pick<SourceControlRepositoryService["Service"], "lookupRepository">;
+  readonly discovery: Pick<
+    SourceControlProviderRegistry["Service"],
+    "discover" | "get" | "repositoryHosts"
+  >;
   readonly listRepositories: (input: {
     readonly provider: SourceControlKind;
     readonly cwd: string;
@@ -112,20 +109,15 @@ export function createSourceControlDiscoveryApiProvider(dependencies: {
           dependencies.listRepositories({ provider: request.provider, cwd: dependencies.cwd }),
         );
       if (!("repository" in request) || typeof request.repository !== "string") throw fail();
-      if (!isSafeRepositoryIdentifier(request.provider, request.repository)) throw fail(method);
-      if (providerRepositoryHost(request.provider, request.repository) !== null) {
-        const providers = await run(dependencies.discovery.discover);
-        if (!isConfiguredRepositoryHost(request.provider, request.repository, providers))
-          throw fail(method);
-        await assertAuthority();
-      }
-      return run(
-        dependencies.repositories.lookupRepository({
+      const repository = await run(
+        lookupExtensionRepository(dependencies.discovery, {
           provider: request.provider,
           repository: request.repository,
           cwd: dependencies.cwd,
         }),
       );
+      await assertAuthority();
+      return repository;
     },
   };
 }
@@ -140,7 +132,6 @@ export const makeSourceControlDiscoveryApiProvider = Effect.fn("SourceControlDis
       environmentId: yield* environment.getEnvironmentId,
       cwd: config.cwd,
       discovery: yield* SourceControlProviderRegistry,
-      repositories: yield* SourceControlRepositoryService,
       listRepositories: (input) =>
         listSourceControlRepositories(input).pipe(Effect.provideContext(context)),
     });

@@ -18,10 +18,11 @@ it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
     const api = createSourceControlDiscoveryApiProvider({
       environmentId: "env",
       cwd: "/host",
-      discovery: { discover: Effect.succeed([]) },
-      repositories: {
-        lookupRepository: (input) => {
-          calls.push(input);
+      discovery: {
+        discover: Effect.succeed([]),
+        repositoryHosts: () => Effect.succeed([]),
+        get: () => {
+          calls.push("lookup");
           return Effect.die("Unexpected repository lookup");
         },
       },
@@ -120,12 +121,14 @@ it("reuses native repository lookup and bounded listing, with environment read a
         probes++;
         return [provider("github"), provider("gitlab", "missing")];
       }),
-    },
-    repositories: {
-      lookupRepository: (input) => {
-        calls.push(input);
-        return Effect.succeed(repository);
-      },
+      repositoryHosts: () => Effect.succeed([]),
+      get: () =>
+        Effect.succeed({
+          getRepositoryCloneUrls: (input: unknown) => {
+            calls.push(input);
+            return Effect.succeed(repository);
+          },
+        } as unknown as import("../sourceControl/SourceControlProvider.ts").SourceControlProvider["Service"]),
     },
     listRepositories: (input) => {
       if (input.provider === "gitlab")
@@ -174,7 +177,7 @@ it("reuses native repository lookup and bounded listing, with environment read a
   ).toEqual({ repositories: [repository], truncated: false });
   expect(probes).toBe(0);
   expect(calls).toEqual([
-    { provider: "github", repository: "alex/repo", cwd: "/host" },
+    { repository: "alex/repo", cwd: "/host" },
     { provider: "github", cwd: "/host" },
   ]);
   await expect(

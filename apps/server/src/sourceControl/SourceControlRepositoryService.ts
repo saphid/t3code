@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
@@ -28,14 +27,6 @@ import {
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
-import {
-  isConfiguredRepositoryHost,
-  isSafeRepositoryIdentifier,
-  isSafeRepositoryRemote,
-  providerRepositoryHost,
-  providerRepositoryPath,
-  repositoryRemoteHost,
-} from "./remoteValidation.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 export class SourceControlRepositoryService extends Context.Service<
@@ -125,12 +116,6 @@ function toRepositoryInfo(
  * original.
  */
 function redactRemoteUrl(remoteUrl: string): string {
-  if (
-    !remoteUrl.includes("://") &&
-    /^[^@]+@[^:]+:/.test(remoteUrl) &&
-    !remoteUrl.startsWith("git@")
-  )
-    return remoteUrl.slice(remoteUrl.indexOf("@") + 1);
   try {
     const url = new URL(remoteUrl);
     // Clone URLs have no legitimate query; when one is present it is a token.
@@ -201,67 +186,10 @@ export const make = Effect.gen(function* () {
       provider: input.provider,
     });
     const provider = yield* providers.get(providerKind);
-    const repository = input.repository.trim();
-    const discovery = yield* providers.discover;
-    const configured = discovery.find(
-      (item) =>
-        item.kind === providerKind &&
-        item.status === "available" &&
-        item.auth.status === "authenticated",
-    );
-    const configuredHost = configured
-      ? Option.getOrNull(configured.auth.host)?.toLowerCase()
-      : null;
-    const host =
-      providerRepositoryHost(providerKind, repository) ??
-      configuredHost ??
-      (
-        {
-          github: "github.com",
-          gitlab: "gitlab.com",
-          "azure-devops": "dev.azure.com",
-          bitbucket: "bitbucket.org",
-          forgejo: null,
-        } as const
-      )[providerKind];
-    const invalid = () =>
-      new SourceControlRepositoryError({
-        operation: "lookupRepository",
-        provider: providerKind,
-        detail:
-          "Choose a repository on a configured provider host with safe HTTPS or SSH clone URLs.",
-      });
-    if (
-      !host ||
-      !isSafeRepositoryIdentifier(providerKind, repository) ||
-      !isConfiguredRepositoryHost(providerKind, repository, discovery)
-    )
-      return yield* invalid();
-    const repositoryPath = providerRepositoryPath(providerKind, repository);
-    if (repositoryPath === null) return yield* invalid();
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
-      repository: providerKind === "forgejo" ? `https://${host}/${repositoryPath}` : repositoryPath,
-      ...(providerKind === "github" || providerKind === "gitlab" ? { host } : {}),
+      repository: input.repository.trim(),
     });
-    for (const [protocol, remote] of [
-      ["https", urls.url],
-      ["ssh", urls.sshUrl],
-    ] as const) {
-      const remoteHost = repositoryRemoteHost(remote);
-      if (
-        !isSafeRepositoryRemote(remote) ||
-        (remoteHost !== host &&
-          !(
-            protocol === "ssh" &&
-            (remote.startsWith("ssh://") || !remote.includes("://")) &&
-            providerKind === "azure-devops" &&
-            host === "dev.azure.com" &&
-            remoteHost === "ssh.dev.azure.com"
-          ))
-      )
-        return yield* invalid();
-    }
     return toRepositoryInfo(providerKind, urls);
   });
 
@@ -346,13 +274,7 @@ export const make = Effect.gen(function* () {
       destinationPath: preparedDestination.destinationPath,
       remoteUrl: redactRemoteUrl(remoteUrl),
       cloneUrl: remoteUrl,
-      repository: repository
-        ? {
-            ...repository,
-            url: redactRemoteUrl(repository.url),
-            sshUrl: redactRemoteUrl(repository.sshUrl),
-          }
-        : null,
+      repository,
     } satisfies SourceControlPreparedClone;
   });
 

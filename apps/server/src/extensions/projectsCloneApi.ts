@@ -31,11 +31,12 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import {
-  isConfiguredRepositoryHost,
   isSafeRepositoryIdentifier,
   isSafeRepositoryRemote,
-  providerRepositoryHost,
 } from "../sourceControl/remoteValidation.ts";
+
+import { lookupExtensionRepository } from "./repositoryLookup.ts";
+import { ServerConfig } from "../config.ts";
 
 const fail = (detail = "Project clone request is invalid or unavailable.") =>
   new ExtensionOperationError({
@@ -117,7 +118,8 @@ export const managedCloneDestination = Effect.fn("ProjectsClone.destination")(
 
 export function createProjectsCloneApiProvider(dependencies: {
   readonly environmentId: string;
-  readonly discovery: Pick<SourceControlProviderRegistry["Service"], "discover">;
+  readonly cwd: string;
+  readonly discovery: Pick<SourceControlProviderRegistry["Service"], "get" | "repositoryHosts">;
   readonly destinationPath: (name: string) => Effect.Effect<string, Error>;
   readonly tracker: Pick<ProjectCloneTracker["Service"], "start" | "cancel" | "retry" | "stream">;
   readonly hooks: ProjectCloneHooks;
@@ -159,16 +161,18 @@ export function createProjectsCloneApiProvider(dependencies: {
           !isSafeRepositoryIdentifier(request.provider, request.repository)
         )
           throw fail("Use a valid provider repository path, such as owner/name.");
-        if (
-          request.provider !== undefined &&
-          request.repository !== undefined &&
-          providerRepositoryHost(request.provider, request.repository) !== null
-        ) {
-          const providers = await Effect.runPromise(dependencies.discovery.discover, { signal });
-          if (!isConfiguredRepositoryHost(request.provider, request.repository, providers))
-            throw fail("Choose a repository on a host configured in Source Control settings.");
-          await assertAuthority();
-        }
+        const repository =
+          request.provider !== undefined && request.repository !== undefined
+            ? await Effect.runPromise(
+                lookupExtensionRepository(dependencies.discovery, {
+                  provider: request.provider,
+                  repository: request.repository,
+                  cwd: dependencies.cwd,
+                }),
+                { signal },
+              )
+            : null;
+        await assertAuthority();
         const destinationPath = await Effect.runPromise(
           dependencies.destinationPath(request.destinationName),
           { signal },
@@ -176,10 +180,11 @@ export function createProjectsCloneApiProvider(dependencies: {
         await assertAuthority();
         const cloneInput = {
           title: request.title,
-          ...(request.remoteUrl === undefined ? {} : { remoteUrl: request.remoteUrl }),
-          ...(request.provider === undefined ? {} : { provider: request.provider }),
-          ...(request.repository === undefined ? {} : { repository: request.repository }),
-          ...(request.protocol === undefined ? {} : { protocol: request.protocol }),
+          remoteUrl: repository
+            ? request.protocol === "https"
+              ? repository.url
+              : repository.sshUrl
+            : request.remoteUrl!,
         };
         const createdAt = await Effect.runPromise(
           DateTime.now.pipe(Effect.map(DateTime.formatIso)),
@@ -316,6 +321,7 @@ export const makeProjectsCloneApiProvider = Effect.fn("ProjectsCloneApi.make")(f
   };
   return createProjectsCloneApiProvider({
     environmentId: yield* environment.getEnvironmentId,
+    cwd: (yield* ServerConfig).cwd,
     discovery: yield* SourceControlProviderRegistry,
     destinationPath: (name) =>
       settings.getSettings.pipe(

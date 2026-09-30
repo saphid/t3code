@@ -2,7 +2,6 @@ import { it, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -32,6 +31,7 @@ const metadata = (provider: HostApiProvider, callerId = "caller") => ({
     kind: "environment-session" as const,
     id: "session",
     environmentId: "env",
+    cwd: "/host",
     scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
   },
   assertAuthority: async () => {},
@@ -41,23 +41,29 @@ function fixture(stream: Stream.Stream<readonly ProjectCloneSnapshot[]> = Stream
   const calls: unknown[] = [];
   const provider = createProjectsCloneApiProvider({
     environmentId: "env",
+    cwd: "/host",
     discovery: {
-      discover: Effect.succeed([
-        {
-          kind: "github" as const,
-          label: "GitHub",
-          status: "available" as const,
-          installHint: "Install gh",
-          version: Option.none(),
-          detail: Option.none(),
-          auth: {
-            status: "authenticated" as const,
-            host: Option.some("github.com"),
-            account: Option.some("alex"),
-            detail: Option.none(),
-          },
-        },
-      ]),
+      repositoryHosts: () => Effect.succeed(["github.com"]),
+      get: (kind) => {
+        const host = {
+          github: "github.com",
+          gitlab: "gitlab.com",
+          forgejo: "forge.example",
+          "azure-devops": "dev.azure.com",
+          bitbucket: "bitbucket.org",
+          unknown: "unknown",
+        }[kind];
+        return Effect.succeed({
+          kind,
+          getRepositoryCloneUrls: () =>
+            Effect.succeed({
+              nameWithOwner: "alex/repo",
+              url: `https://${host}/alex/repo.git`,
+              sshUrl: `git@${host}:alex/repo.git`,
+              repositoryHost: host,
+            }),
+        } as unknown as import("../sourceControl/SourceControlProvider.ts").SourceControlProvider["Service"]);
+      },
     },
     destinationPath: (name) => Effect.succeed(`/managed/projects/${name}`),
     tracker: {
@@ -120,7 +126,11 @@ it("keeps clone snapshots below the stream broker's byte limit", async () => {
   });
   const provider = createProjectsCloneApiProvider({
     environmentId: "env",
-    discovery: { discover: Effect.succeed([]) },
+    cwd: "/host",
+    discovery: {
+      repositoryHosts: () => Effect.succeed([]),
+      get: () => Effect.die("Unexpected lookup"),
+    },
     destinationPath: () => Effect.succeed("/managed/repo"),
     tracker: {
       start: (input) => {
@@ -322,7 +332,14 @@ it.each([
     signal,
     metadata(provider),
   );
-  expect(calls).toEqual([expect.objectContaining({ provider: source, repository })]);
+  const host = {
+    github: "github.com",
+    gitlab: "gitlab.com",
+    forgejo: "forge.example",
+    "azure-devops": "dev.azure.com",
+    bitbucket: "bitbucket.org",
+  }[source];
+  expect(calls).toEqual([expect.objectContaining({ remoteUrl: `git@${host}:alex/repo.git` })]);
 });
 
 it("explains invalid clone URLs and destination names without echoing the input", async () => {

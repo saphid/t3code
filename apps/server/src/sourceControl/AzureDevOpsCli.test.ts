@@ -217,7 +217,7 @@ describe("AzureDevOpsCli.layer", () => {
 
       assert.deepStrictEqual(result, {
         nameWithOwner: "project/repo",
-        url: "https://dev.azure.com/acme/project/_git/repo",
+        url: "https://acme@dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
       });
     }).pipe(Effect.provide(layer)),

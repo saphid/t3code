@@ -738,6 +738,7 @@ function makeManager(input?: {
     ).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+          repositoryHosts: () => Effect.succeed([]),
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),

@@ -308,7 +308,7 @@ function normalizeRepositoryCloneUrls(
   const projectName = raw.project?.name.trim();
   return {
     nameWithOwner: projectName ? `${projectName}/${raw.name}` : raw.name,
-    url: raw.webUrl,
+    url: raw.remoteUrl,
     sshUrl: raw.sshUrl,
   };
 }

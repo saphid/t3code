@@ -60,27 +60,36 @@ function makeLayer(input: {
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly host?: string;
+  readonly probe?: () => void;
 }) {
   const serviceLayer = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
-        discover: Effect.succeed([
-          {
-            kind: input.provider?.kind ?? "github",
-            label: "Provider",
-            status: "available" as const,
-            installHint: "Install the CLI",
-            version: Option.none(),
-            detail: Option.none(),
-            auth: {
-              status: "authenticated" as const,
-              account: Option.some("alex"),
-              host: Option.some(input.host ?? providerHost(input.provider?.kind ?? "github")),
+        discover: Effect.sync(() => {
+          input.probe?.();
+          return [
+            {
+              kind: input.provider?.kind ?? "github",
+              label: "Provider",
+              status: "available" as const,
+              installHint: "Install the CLI",
+              version: Option.none(),
               detail: Option.none(),
+              auth: {
+                status: "authenticated" as const,
+                account: Option.some("alex"),
+                host: Option.some(input.host ?? providerHost(input.provider?.kind ?? "github")),
+                detail: Option.none(),
+              },
             },
-          },
-        ]),
+          ];
+        }),
+        repositoryHosts: () =>
+          Effect.sync(() => {
+            input.probe?.();
+            return [];
+          }),
         get: () => Effect.succeed(input.provider ?? makeProvider()),
       }),
     ),
@@ -130,104 +139,6 @@ const providerUrls = (host: string) => ({
   sshUrl: `git@${host}:o/n.git`,
 });
 
-it.effect.each(
-  providerKinds.flatMap((kind) =>
-    (["url", "sshUrl"] as const).flatMap((field) =>
-      [
-        "/local/path",
-        "file:///x",
-        "http://attacker.tld/o/n",
-        `http://${providerHost(kind)}/o/n`,
-        "git://attacker.tld/o/n",
-        "ext::sh",
-        "fd::3",
-        "https://attacker.tld/o/n",
-        "https://ssh.dev.azure.com/o/n",
-        "git@attacker.tld:o/n",
-        "ssh://ho\nst/x",
-        "\tssh://host/x",
-        "https://host/x\u0000",
-        "git@host:x\u0000y",
-        "https:host/x",
-        "https://host\\@-x/y",
-        "-cfoo.x@h:y.z=1",
-        "-uX@h:y",
-        "ssh://-oProxyCommand=x/y",
-      ].map((remote) => ({ kind, field, remote })),
-    ),
-  ),
-)("validates $kind CLI $field before git: $remote", ({ kind, field, remote }) => {
-  const host = providerHost(kind);
-  let clones = 0;
-  let lookups = 0;
-  const provider = makeProvider({
-    kind,
-    getRepositoryCloneUrls: () =>
-      Effect.sync(() => {
-        lookups++;
-        return { ...providerUrls(host), [field]: remote };
-      }),
-  });
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const fs = yield* FileSystem.FileSystem;
-      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "clone-url-policy-" });
-      const result = yield* Effect.exit(
-        service.cloneRepository({
-          provider: kind,
-          repository: "o/n",
-          protocol: field === "url" ? "https" : "ssh",
-          destinationPath: `${parent}/repo`,
-        }),
-      );
-      assert.strictEqual(result._tag, "Failure", `${kind} ${field}: ${remote}`);
-      assert.strictEqual(lookups, 1);
-      assert.strictEqual(clones, 0);
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          provider,
-          git: {
-            execute: () =>
-              Effect.sync(() => {
-                clones++;
-                return processOutput();
-              }),
-          },
-        }),
-      ),
-    ),
-  );
-});
-
-it.effect.each(providerKinds)("rejects unconfigured %s hosts before lookup", (kind) =>
-  Effect.gen(function* () {
-    for (const repository of [
-      "attacker.tld/o/n",
-      "1.2.3.4/o/n",
-      "https://attacker.tld/o/n",
-      "ssh://attacker.tld/o/n",
-    ]) {
-      let lookups = 0;
-      const provider = makeProvider({
-        kind,
-        getRepositoryCloneUrls: () =>
-          Effect.sync(() => {
-            lookups++;
-            return providerUrls(providerHost(kind));
-          }),
-      });
-      yield* Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        const result = yield* Effect.exit(service.lookupRepository({ provider: kind, repository }));
-        assert.strictEqual(result._tag, "Failure");
-        assert.strictEqual(lookups, 0);
-      }).pipe(Effect.provide(makeLayer({ provider })));
-    }
-  }),
-);
-
 it.effect.each(providerKinds)("clones a configured %s repository", (kind) => {
   const host = providerHost(kind);
   const urls = providerUrls(host);
@@ -256,7 +167,7 @@ it.effect.each(providerKinds)("clones a configured %s repository", (kind) => {
       assert.strictEqual(result.remoteUrl, urls.sshUrl);
       assert.strictEqual(calls.length, 1);
       assert.deepStrictEqual(clones, [["clone", "--progress", "--", urls.sshUrl, "repo"]]);
-      if (kind === "github" || kind === "gitlab") assert.strictEqual(calls[0]?.host, host);
+      assert.strictEqual(calls[0]?.host, undefined);
     }).pipe(
       Effect.provide(
         makeLayer({
@@ -275,7 +186,7 @@ it.effect.each(providerKinds)("clones a configured %s repository", (kind) => {
 });
 
 it.effect.each(["github", "gitlab"] as const)(
-  "pins a configured %s enterprise host for every locator form",
+  "leaves trusted native %s enterprise locators unchanged",
   (kind) =>
     Effect.gen(function* () {
       const host = "enterprise.example";
@@ -301,32 +212,30 @@ it.effect.each(["github", "gitlab"] as const)(
           const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
           const result = yield* service.lookupRepository({ provider: kind, repository });
           assert.strictEqual(result.url, `https://${host}/o/n`);
-          assert.strictEqual(calls[0]?.host, host);
-          assert.strictEqual(calls[0]?.repository, "o/n");
+          assert.strictEqual(calls[0]?.host, undefined);
+          assert.strictEqual(calls[0]?.repository, repository);
         }).pipe(Effect.provide(makeLayer({ provider, host })));
       }
     }),
 );
 
-it.effect(
-  "redacts nonstandard scp usernames in clone snapshots while git receives the original",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        const fs = yield* FileSystem.FileSystem;
-        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "scp-redaction-" });
-        const prepared = yield* service.prepareClone({
-          remoteUrl: "private-user@github.com:o/n.git",
-          destinationPath: `${parent}/repo`,
-        });
-        assert.strictEqual(prepared.remoteUrl, "github.com:o/n.git");
-        assert.strictEqual(prepared.cloneUrl, "private-user@github.com:o/n.git");
-      }),
-    ).pipe(Effect.provide(makeLayer({}))),
+it.effect("preserves native scp username behavior from integration", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "scp-redaction-" });
+      const prepared = yield* service.prepareClone({
+        remoteUrl: "private-user@github.com:o/n.git",
+        destinationPath: `${parent}/repo`,
+      });
+      assert.strictEqual(prepared.remoteUrl, "private-user@github.com:o/n.git");
+      assert.strictEqual(prepared.cloneUrl, "private-user@github.com:o/n.git");
+    }),
+  ).pipe(Effect.provide(makeLayer({}))),
 );
 
-it.effect("redacts custom provider SSH usernames in prepared clone repository snapshots", () =>
+it.effect("preserves native provider snapshot behavior from integration", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -338,7 +247,7 @@ it.effect("redacts custom provider SSH usernames in prepared clone repository sn
         destinationPath: `${parent}/repo`,
       });
       assert.strictEqual(prepared.cloneUrl, "private-user@github.com:o/n.git");
-      assert.strictEqual(prepared.repository?.sshUrl, "github.com:o/n.git");
+      assert.strictEqual(prepared.repository?.sshUrl, "private-user@github.com:o/n.git");
     }),
   ).pipe(
     Effect.provide(
@@ -828,3 +737,105 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+const nativeParityCases = [
+  { kind: "github", repository: "github.com/o/n", urls: providerUrls("github.com") },
+  { kind: "github", repository: "o/n", urls: providerUrls("github.com") },
+  {
+    kind: "gitlab",
+    repository: "g/p",
+    urls: { ...providerUrls("gitlab.corp"), sshUrl: "ssh://git@gitlab.corp:2222/g/p.git" },
+  },
+  {
+    kind: "forgejo",
+    repository: "o/n",
+    urls: { ...providerUrls("forgejo.lan"), url: "http://forgejo.lan:3000/o/n.git" },
+  },
+  {
+    kind: "bitbucket",
+    repository: "o/n",
+    urls: { ...providerUrls("bitbucket.org"), url: "https://alex@bitbucket.org/o/n.git" },
+  },
+  {
+    kind: "azure-devops",
+    repository: "p/r",
+    urls: { ...providerUrls("org.visualstudio.com"), sshUrl: "org@vs-ssh.visualstudio.com:p/r" },
+  },
+] as const;
+it.effect.each(nativeParityCases)(
+  "preserves integration native lookup for $kind: $repository",
+  ({ kind, repository, urls }) => {
+    const calls: unknown[] = [];
+    let probes = 0;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const result = yield* service.lookupRepository({
+        provider: kind,
+        repository: ` ${repository} `,
+      });
+      assert.deepStrictEqual(result, { provider: kind, ...urls });
+      assert.deepStrictEqual(calls, [{ cwd: process.cwd(), repository }]);
+      assert.strictEqual(probes, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider: makeProvider({
+            kind,
+            getRepositoryCloneUrls: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return urls;
+              }),
+          }),
+          host: "discovery-pick.corp",
+          probe: () => {
+            probes++;
+          },
+        }),
+      ),
+    );
+  },
+);
+
+it.effect.each(nativeParityCases)(
+  "preserves integration native clone for $kind: $repository with zero probes",
+  ({ kind, repository, urls }) => {
+    let probes = 0;
+    const clones: ReadonlyArray<string>[] = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const fs = yield* FileSystem.FileSystem;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "native-clone-parity-" });
+        for (const protocol of ["https", "ssh"] as const) {
+          const remote = protocol === "https" ? urls.url : urls.sshUrl;
+          yield* service.cloneRepository({
+            provider: kind,
+            repository,
+            protocol,
+            destinationPath: `${parent}/${protocol}`,
+          });
+          assert.deepStrictEqual(clones.at(-1), ["clone", "--progress", "--", remote, protocol]);
+        }
+        assert.strictEqual(probes, 0);
+      }),
+    ).pipe(
+      Effect.provide(
+        makeLayer({
+          provider: makeProvider({ kind, getRepositoryCloneUrls: () => Effect.succeed(urls) }),
+          host: "discovery-pick.corp",
+          probe: () => {
+            probes++;
+          },
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                clones.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  },
+);
