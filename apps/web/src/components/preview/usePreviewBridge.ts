@@ -167,7 +167,6 @@ export function usePreviewBridge(input: {
     }
     if (desired !== null && current.claimed === null) {
       current.claimed = desired;
-      useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, null);
       enqueue(async () => {
         const result = await claimEngine({
           environmentId,
@@ -184,6 +183,8 @@ export function usePreviewBridge(input: {
             hostConnectionId: desired.hostConnectionId,
             serverEpoch,
           });
+        } else if (AsyncResult.isSuccess(result) && current.claimed === desired) {
+          useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, null);
         }
       });
     }
