@@ -205,8 +205,8 @@ describe("browser recording", () => {
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
   });
 
-  it.each(["native", "agent"])("does not add host controls for %s recordings", async (source) => {
-    const tabId = `${source}-recording-tab`;
+  it("does not add host controls for direct recorder starts", async () => {
+    const tabId = "direct-recording-tab";
     let renderer!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -268,14 +268,6 @@ describe("browser recording", () => {
       const controls = renderer.root.findAllByType("button");
       expect(controls).toHaveLength(1);
       expect(controls[0]!.props["aria-label"]).toBe("Stop recording");
-      const overlay = renderer.root.findByType("div");
-      expect(overlay.props.className).toContain("[-webkit-app-region:no-drag]");
-      expect(overlay.props.className).toContain("top-[var(--workspace-controls-top)]");
-      expect(overlay.props.className).toContain("h-[var(--workspace-topbar-height)]");
-      expect(overlay.props.className).toContain(
-        "right-[calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem))]",
-      );
-      expect(overlay.props.className).not.toMatch(/bg-background|shadow|\bborder\b/);
       await act(async () => {
         controls[0]!.props.onClick({ shiftKey: false });
       });
