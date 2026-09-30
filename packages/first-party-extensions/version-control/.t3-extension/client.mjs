@@ -11759,7 +11759,7 @@ ${writeKey}`;
       if (!allowed) setOpen(false);
     }, [allowed]);
     (0, import_react2.useEffect)(() => {
-      if (!open || !allowed) return;
+      if (!open || !allowed || list !== null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
@@ -11796,7 +11796,7 @@ ${writeKey}`;
         }
       );
       return () => controller.abort();
-    }, [open, allowed, kind, host, session, reference, words.error]);
+    }, [open, allowed, list, kind, host, session, reference, words.error]);
     (0, import_react2.useEffect)(() => {
       if (open) activeOption.current?.scrollIntoView({ block: "nearest" });
     }, [open, activeId, active?.key, popupElement]);
@@ -11895,7 +11895,7 @@ ${writeKey}`;
       role: "dialog",
       "aria-label": words.trigger,
       onKeyDown: (event) => {
-        if (event.key === "Tab") setOpen(false);
+        if (event.key === "Tab") close();
         else if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
@@ -12025,7 +12025,7 @@ ${writeKey}`;
                 "aria-selected": isSelected(candidate),
                 disabled: pending,
                 tabIndex: -1,
-                onMouseEnter: () => setHighlight(index),
+                onMouseMove: () => setHighlight(index),
                 onMouseDown: (event) => event.preventDefault(),
                 onClick: () => void toggle(candidate),
                 style: {
