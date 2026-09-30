@@ -8,6 +8,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import {
   PullRequestOperationError,
@@ -16,6 +17,7 @@ import {
   type PullRequestSetFilesViewedInput,
 } from "@t3tools/contracts";
 
+import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import type * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import type { ProviderFileRevisions, PullRequestProviderError } from "./PullRequestProvider.ts";
 import type { PullRequestError, SupportedProject } from "./PullRequestService.ts";
@@ -391,6 +393,7 @@ export const make = (dependencies: Dependencies) => {
 
   const setFilesViewed = (
     input: PullRequestSetFilesViewedInput,
+    onSettled: (readback?: PullRequestFilesViewedResult) => Effect.Effect<void>,
   ): Effect.Effect<void, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
@@ -398,14 +401,6 @@ export const make = (dependencies: Dependencies) => {
         if (project.api.capabilities.viewedFiles === "host" && write) {
           if (input.files.length === 0) return Effect.void;
           const read = project.api.getFilesViewed;
-          if (read === undefined) {
-            return Effect.fail(
-              new PullRequestOperationError({
-                operation: "setFilesViewed",
-                detail: "This host cannot confirm viewed file updates.",
-              }),
-            );
-          }
           const reference = {
             cwd: project.project.workspaceRoot,
             repository: project.repository,
@@ -416,36 +411,27 @@ export const make = (dependencies: Dependencies) => {
             project,
             input.number,
             Effect.gen(function* () {
-              // Use the provider's exact keys. NFC/NFD, quotes and whitespace can name distinct
-              // files; a diff header or a normalized display label is not a provider identity.
-              const before = yield* read(reference).pipe(
-                Effect.mapError(toPullRequestError("setFilesViewed")),
-              );
-              const byPath = new Map(before.files.map((file) => [file.path, file]));
-              const files: Array<{ path: string; viewed: boolean }> = [];
-              for (const file of input.files) {
-                const providerFile = byPath.get(file.path);
-                if (providerFile === undefined) {
-                  return yield* new PullRequestOperationError({
-                    operation: "setFilesViewed",
-                    detail: "This file was not found in the host's pull request files.",
-                  });
-                }
-                files.push({ path: providerFile.path, viewed: file.viewed });
-              }
+              // Preserve exact path identities, including distinct NFC/NFD names. The host
+              // validates membership; its bounded file read must not prevent a write.
+              const files = input.files;
               yield* write({ ...reference, files }).pipe(
                 Effect.mapError(toPullRequestError("setFilesViewed")),
               );
-              // GitHub can acknowledge the exact Unicode path without storing its mark. An
-              // exit-zero mutation is not confirmation; check the uncached provider readback.
+              if (read === undefined) return;
+              // Confirmation belongs to the interactive write. An unavailable read leaves the
+              // acknowledged write unverified; only a completed contradiction is a refusal.
               const after = yield* read(reference).pipe(
-                Effect.mapError(toPullRequestError("setFilesViewed")),
+                Effect.provideService(AllowGitHubReserve, true),
+                Effect.catch(() => Effect.succeed(undefined)),
               );
+              if (after === undefined) return;
               const states = new Map(after.files.map((file) => [file.path, file.state]));
               const expected = new Map(files.map((file) => [file.path, file.viewed]));
               for (const [path, viewed] of expected) {
                 const state = states.get(path);
-                if (state === undefined || (state === "viewed") !== viewed) {
+                if (state === undefined && after.truncated) continue;
+                const stored = state === "viewed" || state === "dismissed";
+                if (state === undefined || stored !== viewed) {
                   return yield* new PullRequestOperationError({
                     operation: "setFilesViewed",
                     detail:
@@ -453,14 +439,18 @@ export const make = (dependencies: Dependencies) => {
                   });
                 }
               }
-            }),
+              return after;
+            }).pipe(
+              Effect.onExit((exit) => onSettled(Exit.isSuccess(exit) ? exit.value : undefined)),
+              Effect.asVoid,
+            ),
           );
         }
         if (project.api.capabilities.viewedFiles === "environment") {
           return inFilesViewedOrder(
             project,
             input.number,
-            environmentSetFilesViewed(project, input),
+            environmentSetFilesViewed(project, input).pipe(Effect.ensuring(onSettled())),
           );
         }
         return Effect.fail(

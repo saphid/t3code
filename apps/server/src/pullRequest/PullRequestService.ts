@@ -525,6 +525,15 @@ function withRateLimitBackoff(
     ) =>
     (...args: Args) =>
       protect(operation, call(...args), allowPaused);
+  const requested =
+    <Args extends ReadonlyArray<unknown>, A>(
+      operation: string,
+      call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
+    ) =>
+    (...args: Args) =>
+      AllowGitHubReserve.pipe(
+        Effect.flatMap((allowPaused) => protect(operation, call(...args), allowPaused)),
+      );
   const interactive = <Args extends ReadonlyArray<unknown>, A>(
     operation: string,
     call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
@@ -580,7 +589,7 @@ function withRateLimitBackoff(
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
     ...(api.getFilesViewed === undefined
       ? {}
-      : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
+      : { getFilesViewed: requested("getFilesViewed", api.getFilesViewed) }),
     ...(api.setFilesViewed === undefined
       ? {}
       : { setFilesViewed: interactive("setFilesViewed", api.setFilesViewed) }),
@@ -618,6 +627,10 @@ const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A,
   const observedAt = yield* Clock.currentTimeMillis;
   return { value: yield* read, observedAt };
 });
+
+const encodeFilesViewedCacheKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Number])),
+);
 
 export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
@@ -1867,19 +1880,6 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
-    canonicalRef(input).pipe(
-      Effect.flatMap((ref) =>
-        viewedFiles.setFilesViewed(input).pipe(
-          // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
-          // change request, and dropping a 300-file diff on every checkbox is the whole cost of
-          // the feature. Only this reader's own bookkeeping is forgotten.
-          // A refused batch can still have persisted some files on the host.
-          Effect.ensuring(Effect.sync(() => bumpFilesViewedEpoch(ref))),
-        ),
-      ),
-    );
-
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
@@ -3024,6 +3024,9 @@ export const make = Effect.gen(function* () {
     return staleDiff(key, read);
   };
 
+  const filesViewedCacheKey = (ref: CredentialRef) =>
+    encodeFilesViewedCacheKey([refCacheKey(ref), filesViewedEpoch(ref)]);
+
   const filesViewedCache = yield* Cache.makeWith(
     (key: string) => {
       const [referenceKey] = JSON.parse(key) as [string, number];
@@ -3038,8 +3041,22 @@ export const make = Effect.gen(function* () {
   // so a reference keyed as the client spelled it would never see a refresh or a press.
   const filesViewed: PullRequestService["Service"]["filesViewed"] = (input) =>
     canonicalRef(input).pipe(
+      Effect.flatMap((ref) => getShared(filesViewedCache, filesViewedCacheKey(ref))),
+    );
+
+  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
+    canonicalRef(input).pipe(
       Effect.flatMap((ref) =>
-        getShared(filesViewedCache, JSON.stringify([refCacheKey(ref), filesViewedEpoch(ref)])),
+        viewedFiles.setFilesViewed(input, (readback) =>
+          Effect.gen(function* () {
+            // A refused or unverified batch may still have applied some files. Keep invalidation
+            // and readback seeding inside the write gate so a later press cannot be overwritten.
+            bumpFilesViewedEpoch(ref);
+            if (readback !== undefined) {
+              yield* Cache.set(filesViewedCache, filesViewedCacheKey(ref), readback);
+            }
+          }),
+        ),
       ),
     );
 
@@ -3240,7 +3257,7 @@ export const make = Effect.gen(function* () {
     diff: credentialCached(diff),
     diffFileContents,
     filesViewed: credentialCached(filesViewed),
-    setFilesViewed,
+    setFilesViewed: credentialCached(setFilesViewed),
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
