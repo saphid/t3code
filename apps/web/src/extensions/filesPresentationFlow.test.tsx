@@ -4,6 +4,9 @@
  * and SelectedApiPresentation — the path a host file link and the pack's own
  * "Open in panel" take. File I/O is simulated; nothing touches a disk.
  */
+// Checks whether a sibling pack's source is present in this checkout, outside Effect services.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -68,11 +71,18 @@ const files = (
     default: Pack;
   }
 ).default;
-const diff = (
-  (await import("../../../../packages/first-party-extensions/diff/extension.tsx" as string)) as {
-    default: Pack;
-  }
-).default;
+// The Diff pack ships in its own stack layer; its case runs where it is present.
+const DIFF_SOURCE = new URL(
+  "../../../../packages/first-party-extensions/diff/extension.tsx",
+  import.meta.url,
+);
+const diff = NodeFS.existsSync(DIFF_SOURCE)
+  ? (
+      (await import(/* @vite-ignore */ DIFF_SOURCE.href)) as {
+        default: Pack;
+      }
+    ).default
+  : null;
 const filesServer = (
   (await import("../../../../packages/first-party-extensions/files/server.ts" as string)) as {
     default: {
@@ -480,7 +490,7 @@ describe("reopening a file that is already open", () => {
     return panel;
   };
 
-  // Review repro (proof-host-6 P1): the pack's own toolbar action.
+  // The pack's own toolbar action.
   it("keeps the conflicted buffer when Files opens its own file in the panel", async () => {
     const panel = await open("toolbar.txt");
     try {
@@ -521,7 +531,7 @@ describe("reopening a file that is already open", () => {
   });
 });
 
-// Review repros (proof-host-8 P1, P2): an open aimed at the file view that is
+// An open aimed at the file view that is
 // already showing goes to that view in place. Its editor, and whatever it has
 // not saved yet, stays; a different file is selected in it.
 describe("a file link to the open file view", () => {
@@ -617,7 +627,7 @@ describe("a file link to the open file view", () => {
   });
 });
 
-// Review repros (proof-host-10 P2): a failed open is shown beside the view
+// A failed open is shown beside the view
 // it could not navigate, which keeps its unsaved edits.
 describe("a file link the presentation provider rejects", () => {
   const failing = (files: Record<string, string>) => {
@@ -675,7 +685,7 @@ describe("a file link the presentation provider rejects", () => {
   });
 });
 
-// Review repro (proof-host-10 P2): an in-place open carries the view's saved
+// An in-place open carries the view's saved
 // settings; it does not replace them with the open's path.
 describe("a file link to the path the view already shows", () => {
   it("keeps the view's saved choices across a reload", async () => {
@@ -696,7 +706,7 @@ describe("a file link to the path the view already shows", () => {
   });
 });
 
-// Review repros (proof-host-10 P2): the preference's first answer, begun
+// The preference's first answer, begun
 // before the user chose, does not undo that choice; later changes still apply.
 describe("an HTML file whose first preference answer arrives after a choice", () => {
   const view = { frames: 0, editors: 1 };
@@ -767,7 +777,7 @@ describe("an HTML file whose first preference answer arrives after a choice", ()
   });
 });
 
-// Review repro (proof-host-8 P2): a preference stream that never answers.
+// A preference stream that never answers.
 describe("an HTML file whose preference stream stays silent", () => {
   it("falls back to the view's own choice once the bounded read fails", async () => {
     vi.stubGlobal(
@@ -818,7 +828,7 @@ describe("an HTML file whose preference stream stays silent", () => {
   });
 });
 
-// Review repro (proof-host-6 P5): a line link to an HTML file lands on its
+// A line link to an HTML file lands on its
 // source at that line — without changing the shared rendered preference.
 describe("a file link with a line", () => {
   it("opens an HTML file's source at the line in the selected Files presentation", async () => {
@@ -862,7 +872,7 @@ describe("a presentation provider on 1.0.0", () => {
   });
 });
 
-// Review repro (proof-host-6 P4): the saved HTML choice decides the first
+// The saved HTML choice decides the first
 // frame. Until the preference answers, an HTML file shows neither its page
 // nor its source.
 describe("the first frame of an HTML file", () => {
@@ -975,9 +985,9 @@ describe("the first frame of an HTML file", () => {
   });
 });
 
-// Review finding (proof-host-6 P6): the Diff panel is product UI; its SDK
+// The Diff panel is product UI; its SDK
 // plumbing notes do not ship in it.
-describe("the Diff panel", () => {
+describe.skipIf(diff === null)("the Diff panel", () => {
   it("renders no SDK slice notice", async () => {
     const calls = newCalls();
     const { host } = packHost({ files: {} }, calls);
@@ -993,7 +1003,7 @@ describe("the Diff panel", () => {
       publish: () => true,
       onDispose: () => {},
     } as unknown as ViewSession;
-    const Renderer = diff.client(host).surfaces[0]!.createView(session).renderer;
+    const Renderer = diff!.client(host).surfaces[0]!.createView(session).renderer;
     let root: ReactTestRenderer | undefined;
     try {
       await act(async () => {
@@ -1059,7 +1069,7 @@ describe("expanding and collapsing every folder", () => {
     }
   });
 
-  // Review repro (gaps-files-2 P3): expand-all past the saved-folder bound
+  // Expand-all past the saved-folder bound
   // still stands after a reload.
   it("keeps every folder open across a reload, past the saved-folder bound", async () => {
     const names = Array.from({ length: 600 }, (_, i) => `d${String(i).padStart(3, "0")}`);
@@ -1084,7 +1094,7 @@ describe("expanding and collapsing every folder", () => {
     }
   });
 
-  // Review repro (gaps-files-2 P1): expand-all over a 25,000-entry tree
+  // Expand-all over a 25,000-entry tree
   // mounts only the rows around the viewport, as native's virtualized tree does.
   it("mounts a bounded window of a 25,000-entry tree and still reaches every row", async () => {
     const names = Array.from({ length: 1000 }, (_, i) => `d${String(i).padStart(3, "0")}`);
@@ -1184,7 +1194,7 @@ describe("hiding the file explorer", () => {
   });
 });
 
-// Review repro (fix-w-files20 P2): the host presents a file once, before
+// The host presents a file once, before
 // opening its view, and the view takes that presentation rather than asking
 // the provider (server discovery and package verification) again.
 describe("opening a file in the panel", () => {
@@ -1242,7 +1252,7 @@ describe("opening a file in the panel when the presentation refuses", () => {
   });
 });
 
-// Review repro (gaps-files-2 P2): the explorer choice is the native file
+// The explorer choice is the native file
 // preview's shared one, read when a view opens and written when toggled.
 describe("the shared file explorer choice", () => {
   const shownWith = (fileExplorerOpen: boolean): Promise<Frame> =>
@@ -1340,7 +1350,7 @@ describe("opening a file in the preview browser", () => {
   });
 });
 
-// Review repro (gaps-files-2 P2): as native, the action shows only on a client
+// As native, the action shows only on a client
 // with a preview browser, and only where the host can say so.
 describe("a client without a preview browser", () => {
   it.each([
@@ -1362,7 +1372,7 @@ describe("a client without a preview browser", () => {
   });
 });
 
-// Review backlog (proof-host-12 P3): a reload restores the latest line a link
+// A reload restores the latest line a link
 // revealed, as native's persisted `revealLine` does, not the view's first one.
 describe("a line revealed after the view opened", () => {
   it("is the line a reload reveals", async () => {
@@ -1382,7 +1392,7 @@ describe("a line revealed after the view opened", () => {
   });
 });
 
-// Review repro (gaps-files-2 P2): a restored line reveal outranks a restored
+// A restored line reveal outranks a restored
 // rendered-markdown preference, as native's reveal does, until the user
 // chooses the rendered view again.
 describe("a markdown file reopened at a revealed line", () => {
@@ -1411,7 +1421,7 @@ describe("a markdown file reopened at a revealed line", () => {
   });
 });
 
-// Review repro (gaps-files-3 P2): the tree's window follows its scrolling
+// The tree's window follows its scrolling
 // element when the element comes back, and a row revealed while it was gone
 // is scrolled to once it shows.
 describe("a long tree whose explorer is hidden and shown", () => {
@@ -1466,7 +1476,7 @@ describe("a long tree whose explorer is hidden and shown", () => {
   });
 });
 
-// Review repro (gaps-files-3 P2): the focused row going away moves keyboard
+// The focused row going away moves keyboard
 // focus to the nearest row that remains, as native's tree does.
 describe("a tree whose focused row goes away", () => {
   const rowNamed = (panel: Panel, name: string) =>

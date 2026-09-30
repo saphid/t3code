@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { describe, expect, it } from "@effect/vitest";
 import type { ApiDefinition } from "@t3tools/extension-sdk/capabilities";
 import * as Catalogue from "@t3tools/extension-sdk/catalogue";
@@ -6,8 +7,15 @@ import {
   type ResolutionInstallation,
 } from "@t3tools/extension-runtime/resolution";
 import * as Effect from "effect/Effect";
+import * as NodeFS from "node:fs";
 
-const PACKS = ["agents", "browser", "diff", "files", "terminal", "version-control"];
+const packSource = (pack: string) =>
+  new URL(`../../../../packages/first-party-extensions/${pack}/extension.ts`, import.meta.url);
+
+/** The first-party packs in this checkout (a partial checkout may carry only some). */
+const PACKS = ["agents", "browser", "diff", "files", "terminal", "version-control"].filter((pack) =>
+  NodeFS.existsSync(packSource(pack)),
+);
 
 /**
  * The authored manifests. Files and Agents commit no bundle; each committed
@@ -71,9 +79,9 @@ describe("first-party pack manifests", () => {
     }),
   );
 
-  // proof-host-4 P3: the package-asset proof lives in the SDK examples; the
-  // production Files pack must not ship (or render) its fixture.
-  it.effect("Files ships no package-asset fixture", () =>
+  // The package-asset proof lives in the SDK examples; the production Files
+  // pack must not ship (or render) its fixture.
+  it.effect.skipIf(!PACKS.includes("files"))("Files ships no package-asset fixture", () =>
     Effect.gen(function* () {
       const pack = "files";
       const files = yield* Effect.promise(

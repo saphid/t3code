@@ -7,6 +7,9 @@ import type {
   PrsWriteMergeMethod,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
+// Checks whether a sibling pack's source is present in this checkout, outside Effect services.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as React from "react";
 import { act, type ComponentType, type CSSProperties } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,6 +22,11 @@ import { hostTooltip } from "./hostTooltip";
 // First-party pack controls rendered through the real host tooltip. Packs
 // are their own TypeScript projects, so they load by path, not by import.
 const PACKS = new URL("../../../../packages/first-party-extensions", import.meta.url).pathname;
+// The Browser pack ships in its own stack layer; its cases run where it is present.
+// (jsdom's URL maps PACKS to a dev-server path, so check the real file system path.)
+const HAS_BROWSER = NodeFS.existsSync(
+  `${import.meta.dirname}/../../../../packages/first-party-extensions/browser/annotateButton.tsx`,
+);
 
 let PrsActionButton: ComponentType<{
   host: ClientHost;
@@ -62,9 +70,11 @@ beforeAll(async () => {
   ({ PrsActionButton, PrListRow } = await import(
     /* @vite-ignore */ `${PACKS}/version-control/prsPanel.tsx`
   ));
-  ({ AnnotateButton, ScreenshotButton } = await import(
-    /* @vite-ignore */ `${PACKS}/browser/annotateButton.tsx`
-  ));
+  if (HAS_BROWSER) {
+    ({ AnnotateButton, ScreenshotButton } = await import(
+      /* @vite-ignore */ `${PACKS}/browser/annotateButton.tsx`
+    ));
+  }
 });
 
 const host = { React, tooltip: hostTooltip } as unknown as ClientHost;
@@ -227,7 +237,7 @@ describe("version-control list row", () => {
   });
 });
 
-describe("browser annotate button", () => {
+describe.skipIf(!HAS_BROWSER)("browser annotate button", () => {
   const reason = "Page didn't load — pick unavailable until the page renders";
 
   async function renderAnnotate(state: { blockReason: string | null; pageFailed: boolean }) {
@@ -279,7 +289,7 @@ describe("browser annotate button", () => {
   });
 });
 
-describe("browser screenshot button", () => {
+describe.skipIf(!HAS_BROWSER)("browser screenshot button", () => {
   const failed = "Page didn't load — pick unavailable until the page renders";
 
   async function renderScreenshot(state: { blockReason: string | null; pageFailed: boolean }) {

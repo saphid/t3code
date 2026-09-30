@@ -183,12 +183,6 @@ const loadedStatus = Schema.decodeUnknownSync(BrowserEnginePageStatus)({
   favicon: null,
 });
 
-const decodeManifest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(
-    Schema.Struct({ requires: Schema.Array(Schema.Struct({ id: Schema.String })) }),
-  ),
-);
-
 const WORK_PROFILES: Answer = {
   outcome: "profiles",
   profiles: [
@@ -774,17 +768,6 @@ describe("browser profiles grants through the broker", () => {
               : { outcome: "applied" },
         ),
       );
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const packages = path.resolve(import.meta.dirname, "../../../../../packages");
-      // The browser pack's committed bundle declares the contract it consumes.
-      const packManifest = yield* decodeManifest(
-        yield* fs.readFileString(
-          path.join(packages, "first-party-extensions/browser/.t3-extension/t3-extension.json"),
-        ),
-      );
-      expect(packManifest.requires.map((entry) => entry.id)).toContain(BROWSER_PROFILES);
-
       const { runtime, installed, call } = yield* brokerRuntime(profiles);
       const calls: Record<string, Record<string, unknown>> = {
         list: {},

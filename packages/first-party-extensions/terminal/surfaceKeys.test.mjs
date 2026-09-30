@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
 import * as NodeTest from "node:test";
 
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
@@ -438,19 +439,22 @@ NodeTest.describe("terminal editing commands — host version negotiation", () =
   });
 });
 
-NodeTest.it("the 1.2.0 bump leaves every pack's keybindings floor where it was", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const floor = async (pack) => {
-    const manifest = JSON.parse(
-      await readFile(
-        new URL(`../${pack}/.t3-extension/t3-extension.json`, import.meta.url),
-        "utf8",
-      ),
-    );
-    return manifest.requires.find((requirement) => requirement.id === "t3.ui/keybindings")
-      ?.versionRange;
-  };
-  NodeAssert.equal(await floor("terminal"), "^1.0.0");
-  NodeAssert.equal(await floor("browser"), "^1.1.0");
-  NodeAssert.equal(await floor("diff"), "^1.1.0");
-});
+// Built manifests are build output; a pack absent from this checkout (or not built) is skipped.
+for (const [pack, range] of [
+  ["terminal", "^1.0.0"],
+  ["browser", "^1.1.0"],
+  ["diff", "^1.1.0"],
+]) {
+  const manifestUrl = new URL(`../${pack}/.t3-extension/t3-extension.json`, import.meta.url);
+  NodeTest.it(
+    `the 1.2.0 bump leaves the ${pack} pack's keybindings floor at ${range}`,
+    { skip: NodeFS.existsSync(manifestUrl) ? false : `${pack} is not built in this checkout` },
+    async () => {
+      const manifest = JSON.parse(NodeFS.readFileSync(manifestUrl, "utf8"));
+      const floor = manifest.requires.find(
+        (requirement) => requirement.id === "t3.ui/keybindings",
+      )?.versionRange;
+      NodeAssert.equal(floor, range);
+    },
+  );
+}
