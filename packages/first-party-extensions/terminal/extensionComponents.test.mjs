@@ -95,7 +95,7 @@ NodeTest.before(async () => {
     stdin: {
       contents:
         NodeFS.readFileSync(NodePath.join(packageDir, "extension.tsx"), "utf8") +
-        "\nexport { TerminalPane, TerminalView, streamHub, handleBeforeKey };",
+        "\nexport { TerminalPane, TerminalView, streamHub, handleBeforeKey, restoreState };",
       resolveDir: packageDir,
       loader: "tsx",
     },
@@ -2442,11 +2442,245 @@ NodeTest.describe(
   },
 );
 
+NodeTest.test("saved Close suppression survives component reload (web-r7 S1)", async () => {
+  const savedStates = [];
+  const invokes = [];
+  const commits = [];
+  const host = {
+    invokeApi: async (request) => {
+      invokes.push(request);
+      return { tokens: {}, cssVars: {} };
+    },
+    subscribeApi: (request, signal) => ({
+      async *[Symbol.asyncIterator]() {
+        if (request.id === "t3.terminal/sessions")
+          yield {
+            value: {
+              kind: "snapshot",
+              terminals: [
+                sessionMetadata("term-1"),
+                { ...sessionMetadata("term-6"), status: "exited", exitCode: 0 },
+              ],
+            },
+          };
+        await new Promise((resolve) =>
+          signal.aborted ? resolve() : signal.addEventListener("abort", resolve, { once: true }),
+        );
+      },
+    }),
+  };
+  const session = {
+    signal: new AbortController().signal,
+    context: {
+      resource: { threadId: "t", environmentId: "e" },
+      workspaceRevision: JSON.stringify(["/ws/root", null]),
+    },
+    visible: true,
+    save: (state) => savedStates.push(JSON.parse(JSON.stringify(state))),
+    onVisibility: () => () => {},
+    bindCommands: () => () => {},
+    restoreState: {
+      terminalIds: ["term-1", "term-6"],
+      activeTerminalId: "term-1",
+      suppressedTerminalIds: ["term-6"],
+    },
+  };
+  let renderer;
+  const onRender = () => {
+    if (renderer) commits.push(JSON.stringify(renderer.toJSON()));
+  };
+  for (let reload = 0; reload < 2; reload++) {
+    NodeAssert.equal(bundle.restoreState(session.restoreState), true);
+    NodeAssert.equal(
+      bundle.restoreState({ ...session.restoreState, suppressedTerminalIds: [6] }),
+      false,
+    );
+    await act(async () => {
+      renderer = create(
+        React.createElement(
+          React.Profiler,
+          { id: "terminal-close-reload", onRender },
+          React.createElement(bundle.TerminalView, { host, session }),
+        ),
+        { createNodeMock: nodeMock },
+      );
+    });
+    try {
+      NodeAssert.ok(savedStates.length > 0);
+      NodeAssert.deepEqual(savedStates.at(-1).terminalIds, ["term-1"]);
+      NodeAssert.deepEqual(savedStates.at(-1).suppressedTerminalIds, ["term-6"]);
+      for (const commit of commits)
+        NodeAssert.doesNotMatch(commit, /"data-t3-terminal-session":"term-6"/);
+      session.restoreState = savedStates.at(-1);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  }
+  NodeAssert.equal(invokes.filter((request) => request.id === "t3.terminal/control").length, 0);
+});
+
 NodeTest.describe("a re-attaching pane hides the dead session's attach error (flash)", () => {
   // After a backend restart the resumed output stream can reject with the
   // server's "Unknown terminal thread" before the automatic start lands.
   // Native shows its connecting state there; only a failed start is an error.
   const UNKNOWN = "Unknown terminal thread: t, terminal: term-1";
+  for (const textFallback of [false, true]) {
+    for (const outcome of [
+      "running",
+      "start-failed",
+      "still-unknown",
+      "output-failed",
+      "no-workspace",
+    ]) {
+      NodeTest.test(
+        `${textFallback ? "text fallback" : "surface"}: recovery never commits raw unknown-thread text (${outcome}, desktop-r7 row 1)`,
+        async () => {
+          let rejectOutput;
+          const outputFailure = new Promise((_, reject) => (rejectOutput = reject));
+          let finishAttach;
+          const attach = new Promise((resolve) => (finishAttach = resolve));
+          let attempts = 0;
+          let subscriptions = 0;
+          let outage = false;
+          let recovered = false;
+          const hang = (signal) =>
+            new Promise((resolve) =>
+              signal.aborted
+                ? resolve()
+                : signal.addEventListener("abort", resolve, { once: true }),
+            );
+          const host = {
+            ...(textFallback
+              ? {}
+              : {
+                  readAsset: async (path) => ({
+                    bytes: new Uint8Array([1, 2, 3]),
+                    mediaType: path.endsWith(".woff2")
+                      ? "font/woff2"
+                      : path.endsWith(".txt")
+                        ? "text/plain"
+                        : "application/wasm",
+                    sha256: "0".repeat(64),
+                  }),
+                }),
+            invokeApi: async (request) => {
+              if (request.id === "t3.ui/theme") return { tokens: {}, cssVars: {} };
+              if (request.id !== "t3.terminal/control" || request.method !== "attach") return {};
+              attempts += 1;
+              await attach;
+              if (outcome === "start-failed") throw new Error("spawn failed");
+              recovered = true;
+              return sessionMetadata(request.input.terminalId);
+            },
+            subscribeApi: (request, signal) => ({
+              async *[Symbol.asyncIterator]() {
+                if (request.id === "t3.terminal/sessions")
+                  yield { value: { kind: "snapshot", terminals: [sessionMetadata("term-1")] } };
+                if (request.id === "t3.terminal/output-events") {
+                  subscriptions += 1;
+                  if (outage && (!recovered || outcome === "still-unknown"))
+                    throw new Error(UNKNOWN);
+                  if (outage && outcome === "output-failed")
+                    throw new Error("Terminal output permission denied");
+                  yield {
+                    streamId: "recovered",
+                    sequence: 1,
+                    value: {
+                      terminalId: "term-1",
+                      streamEpoch: "recovered",
+                      kind: "snapshot",
+                      status: "running",
+                      contents: "$ ",
+                      retainedByteLength: 2,
+                      truncated: false,
+                      clearGeneration: 0,
+                      contentsUnitStart: 0,
+                      boundarySequence: 1,
+                    },
+                  };
+                  if (!outage) await Promise.race([outputFailure, hang(signal)]);
+                }
+                await hang(signal);
+              },
+            }),
+          };
+          const session = {
+            signal: new AbortController().signal,
+            context: {
+              resource: { threadId: "t", environmentId: "e" },
+              ...(outcome === "no-workspace"
+                ? {}
+                : { workspaceRevision: JSON.stringify(["/ws/root", null]) }),
+            },
+            visible: true,
+            save() {},
+            onVisibility: () => () => {},
+            bindCommands: () => () => {},
+            restoreState: { terminalIds: ["term-1"], activeTerminalId: "term-1" },
+          };
+          let renderer;
+          const commits = [];
+          const onRender = () => {
+            if (renderer) commits.push(JSON.stringify(renderer.toJSON()));
+          };
+          await act(async () => {
+            renderer = create(
+              React.createElement(
+                React.Profiler,
+                { id: "terminal-recovery", onRender },
+                React.createElement(bundle.TerminalView, { host, session }),
+              ),
+              { createNodeMock: nodeMock },
+            );
+          });
+          const settle = () =>
+            act(async () => {
+              await new Promise(setImmediate);
+            });
+          const statusText = () =>
+            renderer.root
+              .findAll(
+                (node) => node.type === "output" && node.props["aria-label"] === "Output status",
+              )
+              .map((node) => node.children.join(""))
+              .join("\n");
+          try {
+            await settle();
+            NodeAssert.ok(subscriptions >= 1);
+            await act(async () => {
+              outage = true;
+              rejectOutput(new Error(UNKNOWN));
+            });
+            await settle();
+            if (outcome === "no-workspace") {
+              NodeAssert.equal(attempts, 0);
+              NodeAssert.match(statusText(), /Unknown terminal thread/);
+              return;
+            }
+            NodeAssert.ok(commits.length > 0);
+            for (const commit of commits)
+              NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
+            NodeAssert.equal(attempts, 1);
+            NodeAssert.equal(statusText(), "term-1: Connecting…");
+            finishAttach();
+            await settle();
+            if (outcome === "running") {
+              NodeAssert.equal(statusText(), "term-1: Watching live output.");
+              for (const commit of commits)
+                NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
+            } else if (outcome === "output-failed") {
+              NodeAssert.match(statusText(), /Terminal output permission denied/);
+            } else {
+              NodeAssert.match(statusText(), /Unknown terminal thread/);
+            }
+            NodeAssert.equal(attempts, 1);
+          } finally {
+            await act(async () => renderer.unmount());
+          }
+        },
+      );
+    }
+  }
   for (const textFallback of [false, true])
     for (const startFails of [false, true])
       NodeTest.test(

@@ -1145,6 +1145,48 @@ NodeTest.describe("terminal panel — input, resize, lifecycle", () => {
     },
   );
 
+  for (const replacement of [false, true]) {
+    NodeTest.it(
+      `an aborted Close followed by exit stays absent after reload${replacement ? " without hiding a replacement" : ""} (web-r7 S1)`,
+      async () => {
+        const server = fakeServer(["term-1", "term-6"]);
+        const client = server.client();
+        const panel = new TerminalPanel({ control: client.control, launch });
+        client.connect(panel);
+        const abortedClose = deferred();
+        const close = client.control.close;
+        client.control.close = (input) => {
+          client.control.calls.push(["close", input]);
+          return abortedClose.promise;
+        };
+        panel.requestAction("term-6", "close");
+        const closing = panel.confirmAction("term-6");
+        client.drop();
+        client.connect(panel);
+        client.control.close = close;
+        abortedClose.reject(new Error("net::ERR_ABORTED"));
+        await closing;
+        NodeAssert.equal(server.sessions.get("term-6").status, "exited");
+        NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
+        const saved = panel.snapshot;
+        panel.dispose();
+        if (replacement) await client.control.restart({ terminalId: "term-6" });
+        const mark = client.control.calls.length;
+        const reloaded = new TerminalPanel({ control: client.control, launch, restored: saved });
+        try {
+          client.connect(reloaded);
+          NodeAssert.deepEqual(
+            reloaded.snapshot.terminalIds,
+            replacement ? ["term-1", "term-6"] : ["term-1"],
+          );
+          NodeAssert.deepEqual(client.control.calls.slice(mark), []);
+        } finally {
+          reloaded.dispose();
+        }
+      },
+    );
+  }
+
   for (const [name, replace] of [
     [
       "another client closes and reopens the id",
@@ -1435,6 +1477,33 @@ NodeTest.describe("terminal panel — exit UX", () => {
     NodeAssert.deepEqual(panel.snapshot.terminalIds, ["term-1"]);
     panel.dispose();
   });
+});
+
+NodeTest.test("unknown output recovery is bounded until fresh output re-arms it", async () => {
+  const control = fakeControl();
+  const panel = new TerminalPanel({ control, launch });
+  panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+  const unknown = new Error("Unknown terminal thread: t, terminal: term-1");
+  try {
+    for (let outage = 1; outage <= 2; outage++) {
+      panel.noteOutputError("term-1", unknown);
+      NodeAssert.equal(panel.snapshot.tabs[0].outputRecoveryPending, true);
+      panel.startMissingSessions(["term-1"]);
+      await new Promise(setImmediate);
+      NodeAssert.equal(panel.snapshot.tabs[0].status, "running");
+      NodeAssert.equal(panel.snapshot.tabs[0].outputRecoveryPending, true);
+      panel.noteOutputError("term-1", unknown);
+      NodeAssert.equal(panel.snapshot.tabs[0].outputRecoveryPending, false);
+      panel.startMissingSessions(["term-1"]);
+      NodeAssert.equal(control.calls.filter(([method]) => method === "attach").length, outage);
+      panel.noteOutputSnapshot("term-1", "running");
+    }
+    panel.noteOutputError("term-1", new Error("permission denied"));
+    NodeAssert.equal(panel.snapshot.tabs[0].startsWhenShown, false);
+    NodeAssert.equal(control.calls.filter(([method]) => method === "attach").length, 2);
+  } finally {
+    panel.dispose();
+  }
 });
 
 NodeTest.describe("terminal panel — workspace launch", () => {

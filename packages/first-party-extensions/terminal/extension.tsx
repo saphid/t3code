@@ -112,6 +112,7 @@ interface RestoredGroup {
 
 interface RestoredState {
   readonly terminalIds: readonly string[];
+  readonly suppressedTerminalIds?: readonly string[];
   readonly activeTerminalId: string | null;
   readonly terminalGroups?: readonly RestoredGroup[];
   readonly activeTerminalGroupId?: string | null;
@@ -143,6 +144,7 @@ function restoreState(value: unknown): value is RestoredState | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as {
     terminalIds?: unknown;
+    suppressedTerminalIds?: unknown;
     activeTerminalId?: unknown;
     terminalGroups?: unknown;
     activeTerminalGroupId?: unknown;
@@ -151,6 +153,7 @@ function restoreState(value: unknown): value is RestoredState | null {
     Object.keys(value).every(
       (key) =>
         key === "terminalIds" ||
+        key === "suppressedTerminalIds" ||
         key === "activeTerminalId" ||
         key === "terminalGroups" ||
         key === "activeTerminalGroupId",
@@ -158,6 +161,9 @@ function restoreState(value: unknown): value is RestoredState | null {
     (candidate.terminalIds === undefined ||
       (Array.isArray(candidate.terminalIds) &&
         candidate.terminalIds.every((id) => typeof id === "string"))) &&
+    (candidate.suppressedTerminalIds === undefined ||
+      (Array.isArray(candidate.suppressedTerminalIds) &&
+        candidate.suppressedTerminalIds.every((id) => typeof id === "string"))) &&
     (candidate.activeTerminalId === undefined ||
       typeof candidate.activeTerminalId === "string" ||
       candidate.activeTerminalId === null) &&
@@ -758,6 +764,7 @@ function TerminalPane(props: {
             const source = subscribeOutput(
               host,
               session.context,
+              panel,
               terminalId,
               subscribeSignal,
               onSuspended,
@@ -776,7 +783,6 @@ function TerminalPane(props: {
                 // resubscribes and the fresh snapshot says whether the
                 // session's current process is the exited one (close it) or
                 // a restart that replaced it.
-                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                 if (value.kind === "exit") {
                   const surface = surfaceRef.current;
                   if (surface !== null)
@@ -787,6 +793,7 @@ function TerminalPane(props: {
                   panel.noteExit(terminalId, value.exitCode);
                 }
                 yield { streamId: frame.streamId, sequence: frame.sequence, value };
+                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               }
             })();
           },
@@ -1093,19 +1100,25 @@ function TerminalPane(props: {
  * On older hosts a transport drop ends the stream and output returns on the
  * next running edge (OutputReattach).
  */
-function subscribeOutput(
+async function* subscribeOutput(
   host: ClientHost,
   context: ViewSession["context"],
+  panel: TerminalPanel,
   terminalId: string,
   signal: AbortSignal,
   onSuspended: () => void,
 ) {
-  return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
-    "subscribe",
-    { terminalId },
-    signal,
-    resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : undefined,
-  );
+  try {
+    yield* bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+      "subscribe",
+      { terminalId },
+      signal,
+      resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : undefined,
+    );
+  } catch (error) {
+    if (!signal.aborted && !isBrokerStreamRefusal(error)) panel.noteOutputError(terminalId, error);
+    throw error;
+  }
 }
 
 /**
@@ -1158,7 +1171,7 @@ function useTerminalOutput(
         let resurrect = false;
         try {
           reattach.subscribed();
-          const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+          const stream = subscribeOutput(host, session.context, panel, terminalId, signal, () => {
             const suspended = suspendedOutputStatus(stateRef.current);
             if (suspended === stateRef.current) return;
             stateRef.current = suspended;
@@ -1174,7 +1187,6 @@ function useTerminalOutput(
             }
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
-            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "closed") {
               overflowClose = value.reason === "overflow";
               resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -1196,6 +1208,7 @@ function useTerminalOutput(
             pendingRef.current = applied.pending;
             stateRef.current = applied.buffer;
             setState({ terminalId, buffer: applied.buffer });
+            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "exit") {
               panel.noteExit(terminalId, value.exitCode);
               overflowClose = false;
@@ -1321,6 +1334,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         const snapshot = panel.snapshot;
         session.save({
           terminalIds: [...snapshot.terminalIds],
+          suppressedTerminalIds: [...snapshot.suppressedTerminalIds],
           activeTerminalId: snapshot.activeTerminalId,
           terminalGroups: snapshot.groups.map((group) => ({
             id: group.id,

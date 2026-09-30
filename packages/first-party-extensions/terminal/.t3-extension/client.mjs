@@ -12432,7 +12432,7 @@ var __t3Client = (() => {
     return state2.status === "live" ? { ...state2, status: "connecting", statusText: "Reconnecting\u2026" } : state2;
   }
   function isPaneReattaching(tab, stream) {
-    return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true;
+    return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true || tab?.outputRecoveryPending === true;
   }
   function paneStatusText(state2, reattaching) {
     return reattaching && state2.status === "error" && state2.ended ? "Connecting\u2026" : state2.statusText;
@@ -12679,6 +12679,7 @@ var __t3Client = (() => {
      * list frames still describing them are stale and must not re-add a tab.
      */
     #closing = /* @__PURE__ */ new Set();
+    #restoredSuppressed;
     #stream = "connecting";
     #panelError = null;
     #disposed = false;
@@ -12687,7 +12688,12 @@ var __t3Client = (() => {
       this.#launch = options.launch;
       this.#canAllocatePaneStream = options.canAllocatePaneStream;
       this.#onChange = options.onChange;
-      this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
+      this.#restoredSuppressed = new Set(
+        normalizeTerminalIds(options.restored?.suppressedTerminalIds ?? [])
+      );
+      this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []).filter(
+        (terminalId) => !this.#restoredSuppressed.has(terminalId)
+      );
       this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
       this.#groups = normalizeTerminalGroups(
         (options.restored?.terminalGroups ?? []).map((group) => ({
@@ -12705,6 +12711,7 @@ var __t3Client = (() => {
     get snapshot() {
       return {
         terminalIds: [...this.#ids],
+        suppressedTerminalIds: [.../* @__PURE__ */ new Set([...this.#closing, ...this.#restoredSuppressed])],
         activeTerminalId: this.#active,
         groups: this.#groups.map((group) => ({
           id: group.id,
@@ -12723,6 +12730,7 @@ var __t3Client = (() => {
             exitCode: meta?.exitCode ?? null,
             starting: tab.starting,
             startsWhenShown: meta === null && !tab.starting && !tab.closing && !tab.startFailed,
+            outputRecoveryPending: tab.outputRecovery === "pending",
             exitBanner: tab.exitBanner,
             confirmAction: tab.confirm,
             error: tab.error,
@@ -12771,6 +12779,7 @@ var __t3Client = (() => {
           confirm: null,
           closing: false,
           startFailed: false,
+          outputRecovery: "idle",
           error: null,
           resizeInFlight: null,
           resizePending: null,
@@ -12859,6 +12868,8 @@ var __t3Client = (() => {
     noteOutputSnapshot(terminalId, status) {
       const tab = this.#tabs.get(terminalId);
       if (this.#disposed || !tab) return;
+      const recovered = tab.outputRecovery === "pending" || status === "running" && tab.outputRecovery === "attempted";
+      if (recovered) tab.outputRecovery = status === "running" ? "idle" : "attempted";
       if (status === "exited") {
         if (tab.starting || tab.closing) return;
         this.#closing.add(terminalId);
@@ -12869,13 +12880,18 @@ var __t3Client = (() => {
       if (status !== "error" && tab.exitBanner !== null) {
         tab.exitBanner = null;
         this.#emit();
-      }
+      } else if (recovered) this.#emit();
     }
     applySessionsEvent(event) {
       if (this.#disposed) return;
       switch (event.kind) {
         case "snapshot": {
           this.#stream = "live";
+          for (const terminal of event.terminals) {
+            if (this.#restoredSuppressed.has(terminal.terminalId) && terminal.status === "exited")
+              this.#closing.add(terminal.terminalId);
+          }
+          this.#restoredSuppressed.clear();
           for (const id2 of this.#closing)
             if (!event.terminals.some((terminal) => terminal.terminalId === id2))
               this.#closing.delete(id2);
@@ -13034,6 +13050,22 @@ var __t3Client = (() => {
           void this.#attach(terminalId, false);
       }
     }
+    noteOutputError(terminalId, error) {
+      const tab = this.#tabs.get(terminalId);
+      if (this.#disposed || !tab || tab.closing) return;
+      if (tab.outputRecovery !== "idle") {
+        if (!tab.starting && tab.outputRecovery === "pending") {
+          tab.outputRecovery = "attempted";
+          this.#emit();
+        }
+        return;
+      }
+      if (!this.#launch || tab.startFailed || !(error instanceof Error) || !error.message.startsWith("Unknown terminal thread:"))
+        return;
+      tab.outputRecovery = "pending";
+      tab.meta = null;
+      this.#emit();
+    }
     /** Start: attach a tracked id that has no live metadata, restarting a stopped session. */
     startSession(terminalId) {
       return this.#attach(terminalId, true);
@@ -13044,6 +13076,7 @@ var __t3Client = (() => {
       if (!tab || !launch || tab.starting || tab.closing) return;
       if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
       tab.starting = true;
+      tab.outputRecovery = "pending";
       this.#liveInput(terminalId, tab).reset();
       tab.input.setReady(false);
       tab.exitBanner = null;
@@ -13069,6 +13102,7 @@ var __t3Client = (() => {
         tab.starting = false;
         this.#liveInput(terminalId, tab).setReady(true);
         tab.startFailed = true;
+        tab.outputRecovery = "attempted";
         tab.error = error instanceof Error ? error.message : "Terminal attach failed";
         this.#emit();
       }
@@ -13152,8 +13186,8 @@ var __t3Client = (() => {
     }
     /**
      * Confirmed destructive action. A failed close falls back to a plain
-     * `exit\n` write and keeps the id hidden for this page, like native
-     * suppression. It is never re-sent: the id is a reusable slot, so a later
+     * `exit\n` write and saves suppression so its exited row stays hidden on
+     * reload. It is never re-sent: the id is a reusable slot, so a later
      * listing may be another client's replacement session.
      */
     async confirmAction(terminalId) {
@@ -15158,8 +15192,8 @@ var __t3Client = (() => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
     const candidate = value;
     return Object.keys(value).every(
-      (key) => key === "terminalIds" || key === "activeTerminalId" || key === "terminalGroups" || key === "activeTerminalGroupId"
-    ) && (candidate.terminalIds === void 0 || Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id2) => typeof id2 === "string")) && (candidate.activeTerminalId === void 0 || typeof candidate.activeTerminalId === "string" || candidate.activeTerminalId === null) && (candidate.terminalGroups === void 0 || Array.isArray(candidate.terminalGroups) && candidate.terminalGroups.every(isRestoredGroup)) && (candidate.activeTerminalGroupId === void 0 || typeof candidate.activeTerminalGroupId === "string" || candidate.activeTerminalGroupId === null);
+      (key) => key === "terminalIds" || key === "suppressedTerminalIds" || key === "activeTerminalId" || key === "terminalGroups" || key === "activeTerminalGroupId"
+    ) && (candidate.terminalIds === void 0 || Array.isArray(candidate.terminalIds) && candidate.terminalIds.every((id2) => typeof id2 === "string")) && (candidate.suppressedTerminalIds === void 0 || Array.isArray(candidate.suppressedTerminalIds) && candidate.suppressedTerminalIds.every((id2) => typeof id2 === "string")) && (candidate.activeTerminalId === void 0 || typeof candidate.activeTerminalId === "string" || candidate.activeTerminalId === null) && (candidate.terminalGroups === void 0 || Array.isArray(candidate.terminalGroups) && candidate.terminalGroups.every(isRestoredGroup)) && (candidate.activeTerminalGroupId === void 0 || typeof candidate.activeTerminalGroupId === "string" || candidate.activeTerminalGroupId === null);
   }
   function controlOps(host, session) {
     const api = bindApi(terminalControlApi, host, session.context);
@@ -15537,6 +15571,7 @@ var __t3Client = (() => {
               const source = subscribeOutput(
                 host,
                 session.context,
+                panel,
                 terminalId,
                 subscribeSignal,
                 onSuspended
@@ -15547,7 +15582,6 @@ var __t3Client = (() => {
                   if (value.kind === "closed" && value.reason !== "overflow") {
                     panel.resetInput(terminalId);
                   }
-                  if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                   if (value.kind === "exit") {
                     const surface = surfaceRef.current;
                     if (surface !== null)
@@ -15558,6 +15592,7 @@ var __t3Client = (() => {
                     panel.noteExit(terminalId, value.exitCode);
                   }
                   yield { streamId: frame.streamId, sequence: frame.sequence, value };
+                  if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                 }
               })();
             },
@@ -15804,13 +15839,18 @@ var __t3Client = (() => {
       }
     );
   }
-  function subscribeOutput(host, context, terminalId, signal, onSuspended) {
-    return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
-      "subscribe",
-      { terminalId },
-      signal,
-      resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : void 0
-    );
+  async function* subscribeOutput(host, context, panel, terminalId, signal, onSuspended) {
+    try {
+      yield* bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+        "subscribe",
+        { terminalId },
+        signal,
+        resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : void 0
+      );
+    } catch (error) {
+      if (!signal.aborted && !isBrokerStreamRefusal(error)) panel.noteOutputError(terminalId, error);
+      throw error;
+    }
   }
   function useTerminalOutput(host, session, panel, terminalId, visible, running) {
     const [state2, setState] = (0, import_react2.useState)(null);
@@ -15849,7 +15889,7 @@ var __t3Client = (() => {
           let resurrect = false;
           try {
             reattach.subscribed();
-            const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+            const stream = subscribeOutput(host, session.context, panel, terminalId, signal, () => {
               const suspended = suspendedOutputStatus(stateRef.current);
               if (suspended === stateRef.current) return;
               stateRef.current = suspended;
@@ -15863,7 +15903,6 @@ var __t3Client = (() => {
               }
               const value = frame.value;
               streak = noteOutputFrameForStreak(value, streak, Date.now());
-              if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               if (value.kind === "closed") {
                 overflowClose = value.reason === "overflow";
                 resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -15885,6 +15924,7 @@ var __t3Client = (() => {
               pendingRef.current = applied.pending;
               stateRef.current = applied.buffer;
               setState({ terminalId, buffer: applied.buffer });
+              if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               if (value.kind === "exit") {
                 panel.noteExit(terminalId, value.exitCode);
                 overflowClose = false;
@@ -15985,6 +16025,7 @@ var __t3Client = (() => {
           const snapshot2 = panel2.snapshot;
           session.save({
             terminalIds: [...snapshot2.terminalIds],
+            suppressedTerminalIds: [...snapshot2.suppressedTerminalIds],
             activeTerminalId: snapshot2.activeTerminalId,
             terminalGroups: snapshot2.groups.map((group) => ({
               id: group.id,

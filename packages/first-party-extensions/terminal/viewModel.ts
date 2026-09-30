@@ -333,17 +333,22 @@ export function suspendedOutputStatus<
 
 /**
  * A pane is re-attaching while the session list has not re-proven itself or
- * its start is pending or in flight: an ended stream's error then belongs to
- * the session it replaces (a restarted backend's "Unknown terminal thread").
+ * its start or recovered output is pending: an ended stream's error then
+ * belongs to the session it replaces (a restarted backend's "Unknown terminal thread").
  */
 export function isPaneReattaching(
-  tab: Pick<TerminalTabState, "starting" | "startsWhenShown"> | undefined,
+  tab: Pick<TerminalTabState, "starting" | "startsWhenShown" | "outputRecoveryPending"> | undefined,
   stream: TerminalPanelSnapshot["stream"],
 ): boolean {
-  return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true;
+  return (
+    stream === "connecting" ||
+    tab?.starting === true ||
+    tab?.startsWhenShown === true ||
+    tab?.outputRecoveryPending === true
+  );
 }
 
-/** A re-attaching pane reads as connecting, as native does, until its start fails. */
+/** A re-attaching pane reads as connecting, as native does, until recovery fails. */
 export function paneStatusText(
   state: {
     readonly status: OutputBuffer["status"];
@@ -763,6 +768,7 @@ export interface TerminalTabState {
    * attaches what it shows), so it is not announced as closed.
    */
   readonly startsWhenShown: boolean;
+  readonly outputRecoveryPending: boolean;
   /** Exit observed while tracked; the banner renders until removal lands. */
   readonly exitBanner: string | null;
   readonly confirmAction: TerminalConfirmAction | null;
@@ -775,6 +781,7 @@ export interface TerminalTabState {
 
 export interface TerminalPanelSnapshot {
   readonly terminalIds: readonly string[];
+  readonly suppressedTerminalIds: readonly string[];
   readonly activeTerminalId: string | null;
   readonly tabs: readonly TerminalTabState[];
   /**
@@ -801,6 +808,7 @@ interface TabInternal {
    * again. Other failures (a resize, dropped input) never block a start.
    */
   startFailed: boolean;
+  outputRecovery: "idle" | "pending" | "attempted";
   error: string | null;
   resizeInFlight: { cols: number; rows: number } | null;
   resizePending: { cols: number; rows: number } | null;
@@ -835,6 +843,7 @@ export class TerminalPanel {
    * list frames still describing them are stale and must not re-add a tab.
    */
   readonly #closing = new Set<string>();
+  readonly #restoredSuppressed: Set<string>;
   #stream: "connecting" | "live" | "closed" = "connecting";
   #panelError: string | null = null;
   #disposed = false;
@@ -844,6 +853,7 @@ export class TerminalPanel {
     readonly launch: TerminalLaunchContext | null;
     readonly restored?: {
       readonly terminalIds: readonly string[];
+      readonly suppressedTerminalIds?: readonly string[];
       readonly activeTerminalId: string | null;
       readonly terminalGroups?: readonly {
         readonly id: string;
@@ -864,7 +874,12 @@ export class TerminalPanel {
     this.#launch = options.launch;
     this.#canAllocatePaneStream = options.canAllocatePaneStream;
     this.#onChange = options.onChange;
-    this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []);
+    this.#restoredSuppressed = new Set(
+      normalizeTerminalIds(options.restored?.suppressedTerminalIds ?? []),
+    );
+    this.#ids = normalizeTerminalIds(options.restored?.terminalIds ?? []).filter(
+      (terminalId) => !this.#restoredSuppressed.has(terminalId),
+    );
     this.#active = resolveActiveTerminalId(this.#ids, options.restored?.activeTerminalId ?? null);
     this.#groups = normalizeTerminalGroups(
       (options.restored?.terminalGroups ?? []).map((group) => ({
@@ -883,6 +898,7 @@ export class TerminalPanel {
   get snapshot(): TerminalPanelSnapshot {
     return {
       terminalIds: [...this.#ids],
+      suppressedTerminalIds: [...new Set([...this.#closing, ...this.#restoredSuppressed])],
       activeTerminalId: this.#active,
       groups: this.#groups.map((group) => ({
         id: group.id,
@@ -901,6 +917,7 @@ export class TerminalPanel {
           exitCode: meta?.exitCode ?? null,
           starting: tab.starting,
           startsWhenShown: meta === null && !tab.starting && !tab.closing && !tab.startFailed,
+          outputRecoveryPending: tab.outputRecovery === "pending",
           exitBanner: tab.exitBanner,
           confirmAction: tab.confirm,
           error: tab.error,
@@ -954,6 +971,7 @@ export class TerminalPanel {
         confirm: null,
         closing: false,
         startFailed: false,
+        outputRecovery: "idle",
         error: null,
         resizeInFlight: null,
         resizePending: null,
@@ -1065,6 +1083,10 @@ export class TerminalPanel {
   noteOutputSnapshot(terminalId: string, status: TerminalOutputEventsSnapshot["status"]) {
     const tab = this.#tabs.get(terminalId);
     if (this.#disposed || !tab) return;
+    const recovered =
+      tab.outputRecovery === "pending" ||
+      (status === "running" && tab.outputRecovery === "attempted");
+    if (recovered) tab.outputRecovery = status === "running" ? "idle" : "attempted";
     if (status === "exited") {
       // A user close owns this id: its request (or `exit\n` fallback) is
       // pending, and a failed cleanup must not lift its suppression.
@@ -1079,7 +1101,7 @@ export class TerminalPanel {
     if (status !== "error" && tab.exitBanner !== null) {
       tab.exitBanner = null;
       this.#emit();
-    }
+    } else if (recovered) this.#emit();
   }
 
   applySessionsEvent(event: TerminalSessionsListEvent) {
@@ -1087,6 +1109,11 @@ export class TerminalPanel {
     switch (event.kind) {
       case "snapshot": {
         this.#stream = "live";
+        for (const terminal of event.terminals) {
+          if (this.#restoredSuppressed.has(terminal.terminalId) && terminal.status === "exited")
+            this.#closing.add(terminal.terminalId);
+        }
+        this.#restoredSuppressed.clear();
         // Reconcile before absorbing metadata: #observeMeta registers every
         // server id as a tracked tab, which would turn a disjoint server list
         // into a strict subset and let stale restored ids survive (#17).
@@ -1275,6 +1302,28 @@ export class TerminalPanel {
     }
   }
 
+  noteOutputError(terminalId: string, error: unknown) {
+    const tab = this.#tabs.get(terminalId);
+    if (this.#disposed || !tab || tab.closing) return;
+    if (tab.outputRecovery !== "idle") {
+      if (!tab.starting && tab.outputRecovery === "pending") {
+        tab.outputRecovery = "attempted";
+        this.#emit();
+      }
+      return;
+    }
+    if (
+      !this.#launch ||
+      tab.startFailed ||
+      !(error instanceof Error) ||
+      !error.message.startsWith("Unknown terminal thread:")
+    )
+      return;
+    tab.outputRecovery = "pending";
+    tab.meta = null;
+    this.#emit();
+  }
+
   /** Start: attach a tracked id that has no live metadata, restarting a stopped session. */
   startSession(terminalId: string): Promise<void> {
     return this.#attach(terminalId, true);
@@ -1286,6 +1335,7 @@ export class TerminalPanel {
     if (!tab || !launch || tab.starting || tab.closing) return;
     if (tab.meta !== null && tab.meta.status !== "exited" && tab.meta.status !== "error") return;
     tab.starting = true;
+    tab.outputRecovery = "pending";
     // No process to attach to: input queued or stopped against the missing
     // or ended one is stale for the process this starts.
     this.#liveInput(terminalId, tab).reset();
@@ -1314,6 +1364,7 @@ export class TerminalPanel {
       tab.starting = false;
       this.#liveInput(terminalId, tab).setReady(true);
       tab.startFailed = true;
+      tab.outputRecovery = "attempted";
       tab.error = error instanceof Error ? error.message : "Terminal attach failed";
       this.#emit();
     }
@@ -1406,8 +1457,8 @@ export class TerminalPanel {
 
   /**
    * Confirmed destructive action. A failed close falls back to a plain
-   * `exit\n` write and keeps the id hidden for this page, like native
-   * suppression. It is never re-sent: the id is a reusable slot, so a later
+   * `exit\n` write and saves suppression so its exited row stays hidden on
+   * reload. It is never re-sent: the id is a reusable slot, so a later
    * listing may be another client's replacement session.
    */
   async confirmAction(terminalId: string): Promise<void> {
