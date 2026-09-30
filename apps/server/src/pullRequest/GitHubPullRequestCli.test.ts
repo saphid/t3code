@@ -4192,6 +4192,10 @@ layer("GitHubPullRequestCli.layer", (it) => {
         files: [
           { path: "src/a.ts", viewed: true },
           { path: "src/b.ts", viewed: false },
+          { path: "café-日本語.txt", viewed: true },
+          { path: "with spaces.txt", viewed: true },
+          { path: 'quote"and\\backslash.txt', viewed: true },
+          { path: "b/nested.txt", viewed: true },
         ],
       });
 
@@ -4208,6 +4212,10 @@ layer("GitHubPullRequestCli.layer", (it) => {
         pullRequestId: "PR_1",
         path0: "src/a.ts",
         path1: "src/b.ts",
+        path2: "café-日本語.txt",
+        path3: "with spaces.txt",
+        path4: 'quote"and\\backslash.txt',
+        path5: "b/nested.txt",
       });
     }),
   );

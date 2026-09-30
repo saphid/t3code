@@ -5548,6 +5548,67 @@ it.effect("returns large diff slices intact without retaining them in either cac
   }),
 );
 
+it.effect("delivers UTF-8 PR paths without changing quoted names or patch contents", () =>
+  Effect.gen(function* () {
+    const names = [
+      "café-日本語.txt",
+      "with spaces.txt",
+      'quote"and\\backslash.txt',
+      "b/nested.txt",
+    ];
+    const written = [
+      '"caf\\303\\251-\\346\\227\\245\\346\\234\\254\\350\\252\\236.txt"',
+      "with spaces.txt",
+      '"quote\\"and\\\\backslash.txt"',
+      "b/nested.txt",
+    ];
+    const section = (path: string) => {
+      const side = (prefix: string) =>
+        path.startsWith('"') ? `"${prefix}/${path.slice(1)}` : `${prefix}/${path}`;
+      return [
+        `diff --git ${side("a")} ${side("b")}`,
+        `--- ${side("a")}`,
+        `+++ ${side("b")}`,
+        "@@ -1 +1 @@",
+        '-literal "caf\\303\\251.txt"',
+        '+literal "caf\\303\\251.txt"',
+        "",
+      ].join("\n");
+    };
+    const inputPatch = written.map(section).join("");
+    const expectedPatch = [names[0]!, ...written.slice(1)].map(section).join("");
+    const writes: unknown[] = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () => Effect.succeed({ patch: inputPatch, truncated: false, nextCursor: "2" }),
+          capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+          setFilesViewed: (input) =>
+            Effect.sync(() => {
+              writes.push(input.files);
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    for (const scope of [
+      reference,
+      { ...reference, cursor: "2" },
+      { ...reference, commit: "a".repeat(40) },
+    ]) {
+      assert.deepStrictEqual(yield* service.diff(scope), {
+        patch: expectedPatch,
+        truncated: false,
+        nextCursor: "2",
+      });
+    }
+    const files = names.map((path) => ({ path, viewed: true }));
+    yield* service.setFilesViewed({ ...reference, files });
+    assert.deepStrictEqual(writes, [files]);
+  }),
+);
+
 it.effect("caches a small replacement after releasing a large diff", () =>
   Effect.gen(function* () {
     let reads = 0;
