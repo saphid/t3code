@@ -65,7 +65,7 @@ function domStubs() {
     polls.splice(0, polls.length);
     return id;
   };
-  // Retry timers are captured, not scheduled — tests fire them explicitly.
+  // Timeouts are captured, not scheduled — tests fire them explicitly.
   const timeouts = new Map();
   let timeoutId = 0;
   globalThis.setTimeout = (fn) => {
@@ -203,7 +203,7 @@ function render(View, nodeMock) {
 
 NodeTest.test("t3.browser/surface contract surface is named, versioned and grant-scoped", () => {
   NodeAssert.equal(BROWSER_SURFACE, "t3.browser/surface");
-  NodeAssert.equal(BROWSER_SURFACE_VERSION, "1.0.0");
+  NodeAssert.equal(BROWSER_SURFACE_VERSION, "2.0.0");
   NodeAssert.deepEqual(BROWSER_SURFACE_REQUIRED_GRANTS, [
     "t3.browser/sessions",
     "t3.browser/surface",
@@ -259,6 +259,65 @@ NodeTest.test("useBrowserSurfaceSlot reports host-unavailable without the capabi
   }
 });
 
+NodeTest.test("a synchronous 1.x consumer denies the async 2.x surface before acquiring", () => {
+  const { host, calls } = fakeLeaseHost();
+  const acquire = host.browserSurface.acquire;
+  host.browserSurface.acquire = async (request) => acquire(request);
+  function acquireWithV1Hook() {
+    const surface = host.browserSurface;
+    const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1)
+      return {
+        ok: false,
+        denial: {
+          reason: "host-unavailable",
+          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+        },
+      };
+    const acquired = surface.acquire({ context, session: sessionRef });
+    if (!acquired.ok && acquired.denial.reason === "host-unavailable") return acquired;
+    return acquired;
+  }
+  NodeAssert.deepEqual(acquireWithV1Hook(), {
+    ok: false,
+    denial: {
+      reason: "host-unavailable",
+      detail: "This host does not implement t3.browser/surface@1.x.",
+    },
+  });
+  NodeAssert.equal(calls.acquire.length, 0);
+});
+
+NodeTest.test("useBrowserSurfaceSlot denies a 1.x host before acquiring", async () => {
+  const dom = domStubs();
+  try {
+    const session = makeSession();
+    const { host, calls } = fakeLeaseHost();
+    host.browserSurface.version = "1.0.0";
+    let slot;
+    function View() {
+      const value = useBrowserSurfaceSlot(host, session, {
+        session: sessionRef,
+        visible: true,
+      });
+      React.useEffect(() => {
+        slot = value;
+      }, [value]);
+      return React.createElement("div", { ref: value.ref });
+    }
+    const renderer = render(View, fakeElement(rect, { document: dom.document }));
+    NodeAssert.equal(slot.lease, null);
+    NodeAssert.deepEqual(slot.denial, {
+      reason: "host-unavailable",
+      detail: "This host does not implement t3.browser/surface@2.x.",
+    });
+    NodeAssert.equal(calls.acquire.length, 0);
+    await TestRenderer.act(async () => renderer.unmount());
+  } finally {
+    dom.restore();
+  }
+});
+
 NodeTest.test("useBrowserSurfaceSlot acquires, presents element bounds and releases", async () => {
   const dom = domStubs();
   try {
@@ -280,13 +339,15 @@ NodeTest.test("useBrowserSurfaceSlot acquires, presents element bounds and relea
     NodeAssert.equal(calls.acquire.length, 1);
     NodeAssert.deepEqual(calls.acquire[0].context, context);
     NodeAssert.deepEqual(calls.acquire[0].session, sessionRef);
-    NodeAssert.equal(calls.acquire[0].signal, session.signal);
+    NodeAssert.equal(calls.acquire[0].signal.aborted, false);
     // First present fires from the layout effect with the element's bounds.
     NodeAssert.deepEqual(calls.presents, [
       { rect: { x: 4, y: 8, width: 320, height: 200 }, visible: true, cornerRadius: 6, zIndex: 30 },
     ]);
     NodeAssert.equal(slot.lease, lease);
     NodeAssert.equal(slot.denial, null);
+    session.lifetime.abort();
+    NodeAssert.equal(calls.acquire[0].signal.aborted, true);
     await TestRenderer.act(async () => renderer.unmount());
     NodeAssert.equal(calls.released, 1);
     NodeAssert.equal(lease.state.kind, "ended");
@@ -330,7 +391,7 @@ NodeTest.test("useBrowserSurfaceSlot surfaces a named acquire denial", async () 
     NodeAssert.equal(slot.lease, null);
     NodeAssert.equal(slot.denial.reason, "grant-denied");
     NodeAssert.equal(slot.denial.grant, BROWSER_SURFACE);
-    // Only host-unavailable is transient — a grant denial never retries.
+    // An acquire denial never schedules an automatic retry.
     NodeAssert.equal(dom.timeouts.size, 0);
     await TestRenderer.act(async () => renderer.unmount());
   } finally {
@@ -590,21 +651,17 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "useBrowserSurfaceSlot retries a transient host-unavailable denial and recovers",
+  "useBrowserSurfaceSlot waits for one asynchronous acquisition without retries or a denial",
   async () => {
     const dom = domStubs();
     try {
       const session = makeSession();
       const { host, calls, lease } = fakeLeaseHost();
-      let denied = true;
+      let resolveAcquire;
+      const pending = new Promise((resolve) => (resolveAcquire = resolve));
       host.browserSurface.acquire = (request) => {
         calls.acquire.push(request);
-        return denied
-          ? {
-              ok: false,
-              denial: { reason: "host-unavailable", detail: "shell synchronizing" },
-            }
-          : { ok: true, lease };
+        return pending;
       };
       let slot;
       function View() {
@@ -621,13 +678,10 @@ NodeTest.test(
       try {
         NodeAssert.equal(calls.acquire.length, 1);
         NodeAssert.equal(slot.lease, null);
-        NodeAssert.equal(slot.denial.reason, "host-unavailable");
-        NodeAssert.equal(dom.timeouts.size, 1);
-        // The host recovers before the first retry — the slot acquires and
-        // presents without a remount or identity change.
-        denied = false;
-        TestRenderer.act(() => dom.fireTimeouts());
-        NodeAssert.equal(calls.acquire.length, 2);
+        NodeAssert.equal(slot.denial, null);
+        NodeAssert.equal(dom.timeouts.size, 0);
+        await TestRenderer.act(async () => resolveAcquire({ ok: true, lease }));
+        NodeAssert.equal(calls.acquire.length, 1);
         NodeAssert.equal(slot.lease, lease);
         NodeAssert.equal(slot.denial, null);
         NodeAssert.equal(calls.presents.at(-1).visible, true);
@@ -642,7 +696,7 @@ NodeTest.test(
 );
 
 NodeTest.test(
-  "useBrowserSurfaceSlot stops retrying when the bounded backoff is exhausted",
+  "useBrowserSurfaceSlot does not retry a failed acquisition automatically",
   async () => {
     const dom = domStubs();
     try {
@@ -673,14 +727,42 @@ NodeTest.test(
           rounds += 1;
           TestRenderer.act(() => dom.fireTimeouts());
         }
-        // 1 initial attempt + 5 bounded retries, then the denial is terminal.
-        NodeAssert.equal(calls.acquire.length, 6);
+        NodeAssert.equal(calls.acquire.length, 1);
         NodeAssert.equal(dom.timeouts.size, 0);
         NodeAssert.equal(slot.lease, null);
         NodeAssert.equal(slot.denial.reason, "host-unavailable");
       } finally {
         await TestRenderer.act(async () => renderer.unmount());
       }
+    } finally {
+      dom.restore();
+    }
+  },
+);
+
+NodeTest.test(
+  "useBrowserSurfaceSlot aborts pending acquisition and releases a late lease",
+  async () => {
+    const dom = domStubs();
+    try {
+      const session = makeSession();
+      const { host, calls, lease } = fakeLeaseHost();
+      let resolveAcquire;
+      const pending = new Promise((resolve) => (resolveAcquire = resolve));
+      host.browserSurface.acquire = (request) => {
+        calls.acquire.push(request);
+        return pending;
+      };
+      function View() {
+        const slot = useBrowserSurfaceSlot(host, session, { session: sessionRef, visible: true });
+        return React.createElement("div", { ref: slot.ref });
+      }
+      const renderer = render(View, fakeElement(rect, { document: dom.document }));
+      await TestRenderer.act(async () => renderer.unmount());
+      NodeAssert.equal(calls.acquire[0].signal.aborted, true);
+      await TestRenderer.act(async () => resolveAcquire({ ok: true, lease }));
+      NodeAssert.equal(calls.released, 1);
+      NodeAssert.deepEqual(calls.presents, []);
     } finally {
       dom.restore();
     }

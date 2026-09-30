@@ -8,6 +8,7 @@
  * keeps real browser traversal semantics (submitting drops forward entries).
  */
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import type { BrowserSurfaceLeaseState } from "@t3tools/extension-sdk/catalogue";
 
 /** The normalized target the user asked for, or the rejection reason. */
 export type NavigationStatus =
@@ -160,6 +161,10 @@ export function describeStatus(state: NavigationState): string {
     case "target":
       return `Requested ${state.status.url} (request ${state.epoch})`;
   }
+}
+
+export function isEpochChangedPresentation(leaseState: BrowserSurfaceLeaseState | null): boolean {
+  return leaseState?.kind === "ended" && leaseState.reason === "epoch-changed";
 }
 
 /**
