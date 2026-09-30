@@ -290,7 +290,7 @@ NodeTest.test(
       const stop = renderer.root
         .findAllByType("button")
         .find((button) => button.props["aria-label"] === "Stop recording");
-      NodeAssert.equal(stop.props["data-kit-variant"], "destructive");
+      NodeAssert.equal(stop.props["data-kit-variant"], "secondary");
       NodeAssert.equal(
         renderer.root.findAll((node) => node.props.className !== undefined).length,
         0,

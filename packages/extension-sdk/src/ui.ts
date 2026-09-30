@@ -112,6 +112,7 @@ export interface ClientUiKit {
     readonly name: UiIconName;
     readonly active?: boolean;
     readonly refreshing?: boolean;
+    readonly recording?: boolean;
   }>;
 }
 

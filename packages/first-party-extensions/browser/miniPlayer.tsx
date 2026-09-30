@@ -1,5 +1,6 @@
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import { uiPanelsApi } from "@t3tools/extension-sdk/catalogue";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
@@ -62,6 +63,8 @@ export function MiniPlayerButton(props: {
   readonly report: (message: string) => void;
 }) {
   const { host, session, held, visible, style, report, available = true } = props;
+  const kit = resolveUiKit(host);
+  const Button = kit?.Button ?? "button";
   const tabId = held?.tabId;
   const serverEpoch = held?.serverEpoch;
   const identity = JSON.stringify([
@@ -103,12 +106,15 @@ export function MiniPlayerButton(props: {
   const label = open ? "Close floating preview" : "Float preview over chat";
   return (
     <Tooltip host={host} label={label}>
-      <button
+      <Button
+        {...(kit
+          ? ({ variant: open ? "secondary" : "ghost", size: "icon-xs" } as const)
+          : { "data-t3-browser-fallback-control": "" })}
         type="button"
         aria-label={label}
         aria-pressed={open}
         disabled={!held || !visible || !available || !pageAvailable || pending}
-        style={{ ...style, ...(open ? { color: "var(--primary)" } : {}) }}
+        style={kit ? undefined : { ...style, ...(open ? { color: "var(--primary)" } : {}) }}
         onClick={() => {
           const signal = lifetime.current;
           if (
@@ -148,7 +154,7 @@ export function MiniPlayerButton(props: {
           <path d="M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4" />
           <rect width="10" height="7" x="12" y="13" rx="2" />
         </svg>
-      </button>
+      </Button>
     </Tooltip>
   );
 }

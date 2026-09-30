@@ -169,7 +169,7 @@ export function ProfileSection(props: {
   const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
   const kit = props.kit === undefined ? resolveUiKit(props.host ?? {}) : props.kit;
   const Action = kit?.MenuItem ?? "button";
-  const Heading = kit?.MenuGroupLabel ?? "span";
+  const Heading = kit?.MenuNote ?? "span";
   const Group = kit?.MenuGroup ?? "div";
   const Note = kit?.MenuNote ?? "p";
   const profileId = sessionProfileId(session);
@@ -300,7 +300,7 @@ export function ProfileSection(props: {
         )
       )}
       <Action
-        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
+        {...(!kit ? { type: "button" as const, "data-t3-browser-fallback-control": "" } : {})}
         role="menuitem"
         onClick={() => clear("clearCookies")}
         style={kit ? undefined : { ...control, textAlign: "left" }}
@@ -308,7 +308,7 @@ export function ProfileSection(props: {
         Clear cookies
       </Action>
       <Action
-        {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
+        {...(!kit ? { type: "button" as const, "data-t3-browser-fallback-control": "" } : {})}
         role="menuitem"
         onClick={() => clear("clearCache")}
         style={kit ? undefined : { ...control, textAlign: "left" }}
@@ -317,7 +317,7 @@ export function ProfileSection(props: {
       </Action>
       {importer.kind === "closed" ? (
         <Action
-          {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
+          {...(!kit ? { type: "button" as const, "data-t3-browser-fallback-control": "" } : {})}
           {...(kit ? { closeOnClick: false } : {})}
           role="menuitem"
           onClick={openImporter}
@@ -417,7 +417,7 @@ export function ProfileSection(props: {
             </select>
           )}
           <Action
-            {...(!kit ? { "data-t3-browser-fallback-control": "" } : {})}
+            {...(!kit ? { type: "button" as const, "data-t3-browser-fallback-control": "" } : {})}
             role="menuitem"
             disabled={!importer.handle || selectedSource?.unavailable !== undefined}
             onClick={() => runImport(importer.sourceId, importer.handle)}

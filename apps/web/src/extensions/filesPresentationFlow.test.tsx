@@ -144,16 +144,27 @@ const alternateKit: ClientUiKit = {
   InputGroup: ({ controlSize: _controlSize, variant: _variant, ...props }) => <div {...props} />,
   InputGroupAddon: nullControl,
   Toolbar: ({ variant: _variant, ...props }) => <div {...props} />,
-  Menu: nullControl,
-  MenuTrigger: nullControl,
-  MenuPopup: nullControl,
+  Menu: ({ open, onOpenChange, children }) => (
+    <div data-editor-menu-open={open}>
+      <button type="button" aria-label="Choose editor" onClick={() => onOpenChange(!open)}>
+        Choose editor
+      </button>
+      {open && children}
+    </div>
+  ),
+  MenuTrigger: () => null,
+  MenuPopup: ({ children }) => <div>{children}</div>,
   MenuSub: nullControl,
   MenuSubTrigger: nullControl,
   MenuSubPopup: nullControl,
   MenuGroup: nullControl,
   MenuRow: nullControl,
-  MenuNote: nullControl,
-  MenuItem: nullControl,
+  MenuNote: ({ children }) => <p>{children}</p>,
+  MenuItem: ({ children, ...props }) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  ),
   MenuSeparator: nullControl,
   MenuGroupLabel: nullControl,
   MenuRadioGroup: nullControl,
@@ -1768,8 +1779,13 @@ it("uses kit editor controls and still opens the chosen remote editor", async ()
     const controls = panel.labelled("File actions")!.findAllByType("button");
     const main = controls.find((button) => button.children.join("") === "Open in VS Code")!;
     expect(main.props["data-kit-variant"]).toBe("outline");
-    const cursor = controls.find((button) => button.children.join("") === "Cursor")!;
-    expect(cursor.props["data-kit-variant"]).toBe("outline");
+    expect(controls.some((button) => button.children.join("") === "Cursor")).toBe(false);
+    await act(async () => panel.labelled("Choose editor")!.props.onClick());
+    const menu = panel.labelled("File actions")!.findByProps({ "data-editor-menu-open": true });
+    expect(menu.findByType("p").children.join("")).toBe("Remote workspace");
+    const cursor = menu
+      .findAllByType("button")
+      .find((button) => button.children.join("") === "Cursor")!;
     await act(async () => cursor.props.onClick());
     expect(panel.calls.log).toContainEqual(["t3.ui/editor", "openPath"]);
     expect(
@@ -1778,6 +1794,25 @@ it("uses kit editor controls and still opens the chosen remote editor", async ()
         .findAllByType("button")
         .some((button) => button.children.join("") === "Open in Cursor"),
     ).toBe(true);
+  } finally {
+    await panel.unmount();
+  }
+});
+
+it("keeps browser-default fallback file actions and conflict recovery controls", async () => {
+  vi.useFakeTimers();
+  const panel = await mountPanel({
+    files: { "a.txt": "disk" },
+    save: () => ({ kind: "conflict" }),
+  });
+  try {
+    await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+    expect(panel.button("Open in panel")!.props.style).toBeUndefined();
+    expect(panel.button("Open in panel")!.props["data-t3-files-fallback-control"]).toBe("");
+    await conflictedEdit(panel, "my edit");
+    expect(panel.button("Keep my version")!.props.style).toBeUndefined();
+    expect(panel.button("Reload file")!.props.style).toBeUndefined();
+    expect(panel.editor().props.contents).toBe("my edit");
   } finally {
     await panel.unmount();
   }

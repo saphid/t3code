@@ -1194,7 +1194,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const ActionButton = kit?.Button ?? "button";
   const actionProps = kit
     ? ({ variant: "outline", size: "xs" } as const)
-    : { "data-t3-files-fallback-control": "", style: toolbarControl };
+    : { "data-t3-files-fallback-control": "" };
   const { host, session } = props;
   const [visible, setVisible] = useState(session.visible);
   useEffect(() => session.onVisibility(setVisible), [session]);
@@ -1208,6 +1208,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
   const externalEditor = useExternalEditor(host, session);
+  const [editorMenuOpen, setEditorMenuOpen] = useState(false);
   const wordWrap = preferences.wordWrap;
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
@@ -2327,28 +2328,65 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                 {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
                   ?.label ?? "editor"}
               </ActionButton>
-              <details
-                style={{ position: "relative" }}
-                onToggle={(event) => {
-                  if (event.currentTarget.open) externalEditor.markHintShown();
-                }}
-              >
-                <summary style={toolbarControl}>Choose editor</summary>
-                {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
-                {externalEditor.editors.map((editor) => (
-                  <ActionButton
-                    {...actionProps}
-                    key={editor.id}
-                    type="button"
-                    disabled={
-                      externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
-                    }
-                    onClick={() => externalEditor.openInEditor(selected, editor.id)}
-                  >
-                    {editor.label}
-                  </ActionButton>
-                ))}
-              </details>
+              {kit ? (
+                <kit.Menu
+                  open={editorMenuOpen}
+                  onOpenChange={(open) => {
+                    setEditorMenuOpen(open);
+                    if (open) externalEditor.markHintShown();
+                  }}
+                >
+                  <kit.MenuTrigger>
+                    <kit.Button variant="outline" size="xs" type="button">
+                      Choose editor
+                    </kit.Button>
+                  </kit.MenuTrigger>
+                  <kit.MenuPopup align="start">
+                    {externalEditor.remoteHint && (
+                      <kit.MenuNote>{externalEditor.remoteHint}</kit.MenuNote>
+                    )}
+                    {externalEditor.editors.map((editor) => (
+                      <kit.MenuItem
+                        key={editor.id}
+                        disabled={
+                          externalEditor.blockReason !== null ||
+                          externalEditor.state.kind === "opening"
+                        }
+                        onClick={() => {
+                          setEditorMenuOpen(false);
+                          externalEditor.openInEditor(selected, editor.id);
+                        }}
+                      >
+                        {editor.label}
+                      </kit.MenuItem>
+                    ))}
+                  </kit.MenuPopup>
+                </kit.Menu>
+              ) : (
+                <details
+                  style={{ position: "relative" }}
+                  onToggle={(event) => {
+                    if (event.currentTarget.open) externalEditor.markHintShown();
+                  }}
+                >
+                  <summary style={toolbarControl}>Choose editor</summary>
+                  {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
+                  {externalEditor.editors.map((editor) => (
+                    <ActionButton
+                      {...actionProps}
+                      key={editor.id}
+                      type="button"
+                      disabled={
+                        externalEditor.blockReason !== null ||
+                        externalEditor.state.kind === "opening"
+                      }
+                      onClick={() => externalEditor.openInEditor(selected, editor.id)}
+                    >
+                      {editor.label}
+                    </ActionButton>
+                  ))}
+                </details>
+              )}
             </>
           )}
           {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (

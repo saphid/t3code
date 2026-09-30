@@ -69,11 +69,13 @@ The frozen v1 component/prop list is:
 | `TreeRow`                                      | Standard button props except `children`; `path`, `depth`, `directory`, `expanded`, `selected`, optional display `label`; positional ARIA attributes pass through |
 | `Icon`                                         | `name`: `back`, `forward`, `refresh`, `more`, `external`, `camera`, `annotate`, `viewport`, `minus`, `plus`, `reset`; `refreshing`, `active`                     |
 
+The additive optional `Icon.recording` prop gives camera icons the host’s recording colour and status dot. The dot is static to avoid continuously repainting retained controls.
+
 Generic input groups and menus do not assume Browser sizing or popup placement;
 packs choose their documented props. Menu portals carry the browser-surface
 overlay marker. `ExtensionSurface` supplies visibility to host menus: hiding a
 retained view closes its portals, and showing it does not reopen them.
-`SurfaceVisibilityContext` is host-only plumbing in the `./host` entry; packs
+The `./host` entry loads React for `SurfaceVisibilityContext`. `SurfaceVisibilityContext` is host-only plumbing in the `./host` entry; packs
 use the view session's visibility callbacks instead of a bundled context.
 
 Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native needs a native renderer and bridge; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The SDK package does not itself serve endpoints. The application environment runtime supplies authenticated installation and API transports; domain support must still be discovered and verified. Broader orchestration operations, structured attachments, asynchronous context resolution and untrusted isolation remain later phases.

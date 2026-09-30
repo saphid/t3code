@@ -48,15 +48,26 @@ const icons = {
   reset: RotateCcw,
 };
 
-function Icon({ name, active, refreshing }: React.ComponentProps<ClientUiKit["Icon"]>) {
+function Icon({ name, active, refreshing, recording }: React.ComponentProps<ClientUiKit["Icon"]>) {
   if (!Object.hasOwn(icons, name)) return null;
   const Component = icons[name];
   return (
-    <Component
-      aria-hidden
-      className={active ? "text-primary" : undefined}
-      {...(name === "refresh" ? { refreshing } : {})}
-    />
+    <>
+      <Component
+        aria-hidden
+        className={
+          name === "camera" && recording ? "text-destructive" : active ? "text-primary" : undefined
+        }
+        {...(name === "refresh" ? { refreshing } : {})}
+      />
+      {name === "camera" && recording && (
+        <span
+          aria-hidden
+          data-t3-recording-indicator=""
+          className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-destructive"
+        />
+      )}
+    </>
   );
 }
 

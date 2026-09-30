@@ -708,7 +708,7 @@ it("renders the real Browser chrome in native order without changing the older-h
   }
 });
 
-it("uses kit destructive recording chrome and allows stopping after the page fails", async () => {
+it("uses native recording chrome and allows stopping after the page fails", async () => {
   const path = "../../../../packages/first-party-extensions/browser/annotateButton.tsx";
   const {
     ScreenshotButton,
@@ -740,7 +740,9 @@ it("uses kit destructive recording chrome and allows stopping after the page fai
     ),
   );
   const button = container.querySelector<HTMLButtonElement>('[aria-label="Stop recording"]')!;
-  expect(button.classList.contains("bg-destructive")).toBe(true);
+  expect(button.classList.contains("bg-secondary")).toBe(true);
+  expect(button.querySelector("svg")?.classList.contains("text-destructive")).toBe(true);
+  expect(button.querySelector("[data-t3-recording-indicator]")).not.toBeNull();
   expect(button.disabled).toBe(false);
   await act(async () => button.click());
   expect(stop).toHaveBeenCalledExactlyOnceWith(false);
@@ -792,6 +794,17 @@ it("chooses cookie import sources and profiles with native menu keys", async () 
   )!;
   await act(async () => importer.click());
   expect(document.querySelector('[role="menu"] select')).toBeNull();
+  const profileGroup = document
+    .querySelector('[title="Profile: Default"]')!
+    .closest('[data-slot="menu-group"]')!;
+  expect(profileGroup.hasAttribute("aria-labelledby")).toBe(false);
+  expect(profileGroup.getAttribute("aria-label")).toBe("Profile");
+  for (const label of ["Import from browser", "Import from browser profile"]) {
+    const heading = Array.from(document.querySelectorAll('[data-slot="menu-label"]')).find(
+      (node) => node.textContent === label,
+    )!;
+    expect(heading.closest('[role="group"]')?.getAttribute("aria-labelledby")).toBe(heading.id);
+  }
   const radios = () => Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
   const firefox = radios().find((item) => item.textContent === "Firefox")!;
   expect(firefox).toBeDefined();
@@ -825,4 +838,124 @@ it("chooses cookie import sources and profiles with native menu keys", async () 
     { profileId: "default", sourceId: "firefox", sourceProfile: "personal" },
     expect.any(AbortSignal),
   );
+});
+
+it("profile fallback actions do not submit an enclosing form", async () => {
+  const path = "../../../../packages/first-party-extensions/browser/profileMenu.tsx";
+  const { ProfileSection }: { ProfileSection: React.ComponentType<ProfileSectionProps> } =
+    await import(new URL(path, import.meta.url).pathname);
+  const invoke = vi.fn().mockResolvedValue({ cleared: true });
+  const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
+  const snapshot = { list: null, error: null };
+  await act(async () =>
+    root.render(
+      <form onSubmit={submit}>
+        <ProfileSection
+          host={{}}
+          session={pageMenuProps().session!}
+          api={{ invoke }}
+          profiles={{ subscribe: () => () => {}, getSnapshot: () => snapshot, refresh: vi.fn() }}
+          signal={new AbortController().signal}
+          onOpenInProfile={vi.fn()}
+          report={vi.fn()}
+          onChosen={vi.fn()}
+        />
+      </form>,
+    ),
+  );
+  const clear = Array.from(container.querySelectorAll("button")).find(
+    (node) => node.textContent === "Clear cookies",
+  )!;
+  await act(async () => clear.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith(
+    "clearCookies",
+    { profileId: "default" },
+    expect.any(AbortSignal),
+  );
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("mini-player kit and fallback controls track native open state and preserve toggling", async () => {
+  const path = "../../../../packages/first-party-extensions/browser/miniPlayer.tsx";
+  const {
+    MiniPlayerButton,
+  }: typeof import("../../../../packages/first-party-extensions/browser/miniPlayer") = await import(
+    new URL(path, import.meta.url).pathname
+  );
+  for (const native of [true, false]) {
+    let active: string | null = null;
+    const listeners = new Set<() => void>();
+    const toggle = vi.fn(async (request: { method: string; input: { open: boolean } }) => {
+      if (request.method === "getCapabilities")
+        return { operations: { setBrowserMiniPlayer: true, getBrowserMiniPlayer: true } };
+      active = request.input.open ? "tab" : null;
+      for (const listener of listeners) listener();
+      return { tabId: active };
+    });
+    const host = {
+      React,
+      tooltip: hostTooltip,
+      ...(native ? { uiKit: testKit } : {}),
+      browserMiniPlayer: {
+        supported: true,
+        canFloat: () => true,
+        read: () => active,
+        subscribe: (_context: unknown, listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      discoverApis: async () => [{ id: "t3.ui/panels", version: "1.1.0" }],
+      invokeApi: toggle,
+    } as unknown as ClientHost;
+    await act(async () =>
+      root.render(
+        <TooltipProvider delay={0}>
+          <MiniPlayerButton
+            host={host}
+            session={
+              {
+                context: {
+                  client: "desktop",
+                  resource: {
+                    namespace: "t3.browser",
+                    id: "view",
+                    environmentId: "env",
+                    projectId: "project",
+                    threadId: "thread",
+                  },
+                },
+                signal: new AbortController().signal,
+              } as React.ComponentProps<typeof MiniPlayerButton>["session"]
+            }
+            held={{ tabId: "tab", serverEpoch: "epoch" }}
+            visible
+            available
+            style={{ padding: 4 }}
+            report={vi.fn()}
+          />
+        </TooltipProvider>,
+      ),
+    );
+    const button = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Float preview over chat"]',
+    )!;
+    if (native) {
+      expect(button.classList.contains("sm:size-6")).toBe(true);
+      expect(button.style.padding).toBe("");
+    } else {
+      expect(button.hasAttribute("data-t3-browser-fallback-control")).toBe(true);
+      expect(button.style.padding).toBe("4px");
+    }
+    await act(async () => button.click());
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.getAttribute("aria-label")).toBe("Close floating preview");
+    if (native) expect(button.classList.contains("bg-secondary")).toBe(true);
+    await act(async () => button.click());
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(
+      toggle.mock.calls.filter(([request]) => request.method === "setBrowserMiniPlayer"),
+    ).toHaveLength(2);
+    await act(async () => root.render(null));
+  }
 });

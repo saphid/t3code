@@ -138,7 +138,7 @@ export function ScreenshotButton(props: {
     >
       <Button
         {...(kit
-          ? ({ variant: recording ? "destructive" : "ghost", size: "icon-xs" } as const)
+          ? ({ variant: recording ? "secondary" : "ghost", size: "icon-xs" } as const)
           : { "data-t3-browser-fallback-control": "" })}
         type="button"
         aria-label={recording ? "Stop recording" : "Capture screenshot"}
@@ -160,7 +160,7 @@ export function ScreenshotButton(props: {
               }
         }
       >
-        {kit ? <kit.Icon name="camera" /> : "▣"}
+        {kit ? <kit.Icon name="camera" recording={recording} /> : "▣"}
         {recording && !kit && (
           <span
             aria-hidden
