@@ -16,6 +16,7 @@
  */
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import type {
   AgentsEvent,
   OrchestrationCapabilities,
@@ -42,68 +43,6 @@ import type {
 export function resolveDiffPath(raw: string): string {
   return unquoteGitPatchPath(raw);
 }
-
-const CHARACTER_BY_ESCAPE: Record<string, number> = {
-  '"': 0x22,
-  "\\": 0x5c,
-  a: 0x07,
-  b: 0x08,
-  f: 0x0c,
-  n: 0x0a,
-  r: 0x0d,
-  t: 0x09,
-  v: 0x0b,
-};
-const utf8 = new TextEncoder();
-const fromUtf8 = new TextDecoder();
-
-function unquoteGitPatchPath(token: string): string {
-  const body =
-    token.length >= 2 && token.startsWith('"') && token.endsWith('"') ? token.slice(1, -1) : token;
-  if (!body.includes("\\")) return body;
-  const bytes: number[] = [];
-  let literal = "";
-  const flush = () => {
-    if (literal.length === 0) return;
-    bytes.push(...utf8.encode(literal));
-    literal = "";
-  };
-  let at = 0;
-  while (at < body.length) {
-    const character = body.charAt(at);
-    if (character !== "\\") {
-      literal += character;
-      at += 1;
-      continue;
-    }
-    const escaped = body.charAt(at + 1);
-    if (escaped === "") {
-      flush();
-      bytes.push(0x5c);
-      break;
-    }
-    const named = CHARACTER_BY_ESCAPE[escaped];
-    if (named !== undefined) {
-      flush();
-      bytes.push(named);
-      at += 2;
-      continue;
-    }
-    const octal = body.slice(at + 1, at + 4);
-    if (/^[0-7]{3}$/.test(octal)) {
-      flush();
-      bytes.push(Number.parseInt(octal, 8));
-      at += 4;
-      continue;
-    }
-    literal += escaped;
-    at += 2;
-  }
-  flush();
-  return fromUtf8.decode(new Uint8Array(bytes));
-}
-
-/* ---------------- binary detection ---------------- */
 
 const DIFF_GIT_BOUNDARY = /^diff --git /gm;
 const BINARY_FILES_MARKER = /^Binary files .+ differ$/m;

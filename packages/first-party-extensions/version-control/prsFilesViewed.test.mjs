@@ -456,6 +456,42 @@ for (const notifications of [false, true]) {
   );
 }
 
+for (const notifications of [false, true]) {
+  NodeTest.test(
+    `successful retry clears an inline viewed failure when toasts ${notifications ? "die" : "are unavailable"}`,
+    async (context) => {
+      context.mock.timers.enable({ apis: ["setTimeout"] });
+      const retry = deferred();
+      let writes = 0;
+      const view = mountViewed({
+        notifications,
+        write: () =>
+          ++writes === 1 ? Promise.reject(new Error("private host detail")) : retry.promise,
+        notify: () => Promise.reject(new Error("private notification detail")),
+      });
+      try {
+        await flush();
+        await setViewed(view, true);
+        await send(context);
+        NodeAssert.match(view.text(), /Could not update viewed files/);
+        await setViewed(view, true);
+        await send(context);
+        NodeAssert.match(view.text(), /Could not update viewed files/);
+        view.setSnapshot({
+          filesViewed: { files: [{ path: "a.ts", state: "viewed" }], truncated: false },
+        });
+        retry.resolve({});
+        await flush();
+        NodeAssert.equal(writes, 2);
+        NodeAssert.equal(checkbox(view).props.checked, true);
+        NodeAssert.doesNotMatch(view.text(), /Could not update viewed files/);
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+}
+
 NodeTest.test(
   "a pre-write read landing last cannot replace fresher viewed state",
   async (context) => {

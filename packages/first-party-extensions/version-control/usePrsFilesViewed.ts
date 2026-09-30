@@ -29,6 +29,7 @@ export function usePrsFilesViewed(
   readSupported: boolean,
   revision: string,
   onFailure: () => void,
+  onSuccess: () => void,
 ) {
   const enabled = readSupported && prsViewedFilesEnabled(store, operations);
   const scope = useRef({
@@ -49,9 +50,11 @@ export function usePrsFilesViewed(
   });
   const states = useMemo(() => prsFileViewedStates(read.result), [read.result]);
   const latestFailure = useRef(onFailure);
+  const latestSuccess = useRef(onSuccess);
   useEffect(() => {
     latestFailure.current = onFailure;
-  }, [onFailure]);
+    latestSuccess.current = onSuccess;
+  }, [onFailure, onSuccess]);
   const changeOverlay = useCallback(
     (change: (current: ReadonlyMap<string, boolean>) => ReadonlyMap<string, boolean>) =>
       setPressed((current) => {
@@ -136,6 +139,7 @@ export function usePrsFilesViewed(
             current.sentBy.delete(file.path);
             if (!current.queued.has(file.path)) current.answered.add(file.path);
           }
+          latestSuccess.current();
           void readViewed();
         },
         () => {

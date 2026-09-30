@@ -1762,6 +1762,7 @@ function PrsDiffSection(props: {
   viewedReadSupported: boolean;
   revision: string;
   onViewedFailure: () => void;
+  onViewedSuccess: () => void;
 }) {
   const { diff, supported, onLoadMore } = props;
   const viewed = usePrsFilesViewed(
@@ -1773,6 +1774,7 @@ function PrsDiffSection(props: {
     props.viewedReadSupported,
     props.revision,
     props.onViewedFailure,
+    props.onViewedSuccess,
   );
   const patch = diff.status === "ready" ? diff.delivery.patch : "";
   const renderable = useMemo(() => renderableFromPatch(patch), [patch]);
@@ -3806,6 +3808,7 @@ export function PullRequestsPanel(props: {
                     write={writeOps}
                     viewedReadSupported={ops?.["prs.filesViewed"] === true}
                     revision={revision}
+                    onViewedSuccess={() => setViewedFailureKey(null)}
                     onViewedFailure={() => {
                       const disclose = () => setViewedFailureKey(selectedKey);
                       if (

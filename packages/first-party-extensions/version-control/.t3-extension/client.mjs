@@ -10415,6 +10415,72 @@ ${prefix}`;
     };
   }
 
+  // node_modules/@t3tools/shared/src/gitPatchPath.ts
+  var CHARACTER_BY_ESCAPE = {
+    '"': 34,
+    "\\": 92,
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11
+  };
+  var QUOTE = '"';
+  var BACKSLASH = 92;
+  var utf8 = new TextEncoder();
+  var fromUtf8 = new TextDecoder();
+  function unescapeBody(body) {
+    if (!body.includes("\\")) return body;
+    const bytes = [];
+    let literal = "";
+    const flush = () => {
+      if (literal.length === 0) return;
+      bytes.push(...utf8.encode(literal));
+      literal = "";
+    };
+    let at = 0;
+    while (at < body.length) {
+      const character = body.charAt(at);
+      if (character !== "\\") {
+        literal += character;
+        at += 1;
+        continue;
+      }
+      const escaped = body.charAt(at + 1);
+      if (escaped === "") {
+        flush();
+        bytes.push(BACKSLASH);
+        break;
+      }
+      const named = CHARACTER_BY_ESCAPE[escaped];
+      if (named !== void 0) {
+        flush();
+        bytes.push(named);
+        at += 2;
+        continue;
+      }
+      const octal = body.slice(at + 1, at + 4);
+      if (/^[0-7]{3}$/.test(octal)) {
+        flush();
+        bytes.push(Number.parseInt(octal, 8));
+        at += 4;
+        continue;
+      }
+      literal += escaped;
+      at += 2;
+    }
+    flush();
+    return fromUtf8.decode(new Uint8Array(bytes));
+  }
+  function unquoteGitPatchPath(token) {
+    if (token.length >= 2 && token.startsWith(QUOTE) && token.endsWith(QUOTE)) {
+      return unescapeBody(token.slice(1, -1));
+    }
+    return unescapeBody(token);
+  }
+
   // prsViewModel.ts
   function prsViewedFilesEnabled(store, operations) {
     return store !== void 0 && operations?.["prs.setFilesViewed"] === true;
@@ -10877,62 +10943,8 @@ ${ref.number}`;
     return `${files} file${files === 1 ? "" : "s"} omitted from the delivered diff (+${additions} \u2212${deletions})`;
   }
   function resolveDiffPath(raw) {
-    const body = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
-    if (!body.includes("\\")) return body;
-    const bytes = [];
-    let literal = "";
-    const flush = () => {
-      if (literal.length === 0) return;
-      bytes.push(...utf8.encode(literal));
-      literal = "";
-    };
-    let at = 0;
-    while (at < body.length) {
-      const character = body.charAt(at);
-      if (character !== "\\") {
-        literal += character;
-        at += 1;
-        continue;
-      }
-      const escaped = body.charAt(at + 1);
-      if (escaped === "") {
-        flush();
-        bytes.push(92);
-        break;
-      }
-      const named = CHARACTER_BY_ESCAPE[escaped];
-      if (named !== void 0) {
-        flush();
-        bytes.push(named);
-        at += 2;
-        continue;
-      }
-      const octal = body.slice(at + 1, at + 4);
-      if (/^[0-7]{3}$/.test(octal)) {
-        flush();
-        bytes.push(Number.parseInt(octal, 8));
-        at += 4;
-        continue;
-      }
-      literal += escaped;
-      at += 2;
-    }
-    flush();
-    return fromUtf8.decode(new Uint8Array(bytes));
+    return unquoteGitPatchPath(raw);
   }
-  var CHARACTER_BY_ESCAPE = {
-    '"': 34,
-    "\\": 92,
-    a: 7,
-    b: 8,
-    f: 12,
-    n: 10,
-    r: 13,
-    t: 9,
-    v: 11
-  };
-  var utf8 = new TextEncoder();
-  var fromUtf8 = new TextDecoder();
   var DIFF_GIT_BOUNDARY = /^diff --git /gm;
   var BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
   var GIT_BINARY_MARKER = /^GIT binary patch$/m;
@@ -11392,7 +11404,7 @@ ${writeKey}`;
 
   // usePrsFilesViewed.ts
   var EMPTY_OVERLAY = /* @__PURE__ */ new Map();
-  function usePrsFilesViewed(host, session, reference, store, operations, readSupported, revision2, onFailure) {
+  function usePrsFilesViewed(host, session, reference, store, operations, readSupported, revision2, onFailure, onSuccess) {
     const enabled = readSupported && prsViewedFilesEnabled(store, operations);
     const scope = (0, import_react2.useRef)({
       queued: /* @__PURE__ */ new Map(),
@@ -11409,9 +11421,11 @@ ${writeKey}`;
     });
     const states = (0, import_react2.useMemo)(() => prsFileViewedStates(read.result), [read.result]);
     const latestFailure = (0, import_react2.useRef)(onFailure);
+    const latestSuccess = (0, import_react2.useRef)(onSuccess);
     (0, import_react2.useEffect)(() => {
       latestFailure.current = onFailure;
-    }, [onFailure]);
+      latestSuccess.current = onSuccess;
+    }, [onFailure, onSuccess]);
     const changeOverlay = (0, import_react2.useCallback)(
       (change) => setPressed((current) => {
         const overlay = change(current.overlay);
@@ -11490,6 +11504,7 @@ ${writeKey}`;
             current.sentBy.delete(file.path);
             if (!current.queued.has(file.path)) current.answered.add(file.path);
           }
+          latestSuccess.current();
           void readViewed();
         },
         () => {
@@ -12743,7 +12758,8 @@ ${writeKey}`;
       props.write,
       props.viewedReadSupported,
       props.revision,
-      props.onViewedFailure
+      props.onViewedFailure,
+      props.onViewedSuccess
     );
     const patch = diff.status === "ready" ? diff.delivery.patch : "";
     const renderable = (0, import_react3.useMemo)(() => renderableFromPatch(patch), [patch]);
@@ -14228,6 +14244,7 @@ ${thread.id}`) === activity,
                       write: writeOps,
                       viewedReadSupported: ops?.["prs.filesViewed"] === true,
                       revision: revision2,
+                      onViewedSuccess: () => setViewedFailureKey(null),
                       onViewedFailure: () => {
                         const disclose = () => setViewedFailureKey(selectedKey);
                         if (!toasts.report(

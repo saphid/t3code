@@ -10192,10 +10192,7 @@ ${prefix}`;
     };
   }
 
-  // viewModel.ts
-  function resolveDiffPath(raw) {
-    return unquoteGitPatchPath(raw);
-  }
+  // node_modules/@t3tools/shared/src/gitPatchPath.ts
   var CHARACTER_BY_ESCAPE = {
     '"': 34,
     "\\": 92,
@@ -10207,10 +10204,11 @@ ${prefix}`;
     t: 9,
     v: 11
   };
+  var QUOTE = '"';
+  var BACKSLASH = 92;
   var utf8 = new TextEncoder();
   var fromUtf8 = new TextDecoder();
-  function unquoteGitPatchPath(token) {
-    const body = token.length >= 2 && token.startsWith('"') && token.endsWith('"') ? token.slice(1, -1) : token;
+  function unescapeBody(body) {
     if (!body.includes("\\")) return body;
     const bytes = [];
     let literal = "";
@@ -10230,7 +10228,7 @@ ${prefix}`;
       const escaped = body.charAt(at + 1);
       if (escaped === "") {
         flush();
-        bytes.push(92);
+        bytes.push(BACKSLASH);
         break;
       }
       const named = CHARACTER_BY_ESCAPE[escaped];
@@ -10252,6 +10250,17 @@ ${prefix}`;
     }
     flush();
     return fromUtf8.decode(new Uint8Array(bytes));
+  }
+  function unquoteGitPatchPath(token) {
+    if (token.length >= 2 && token.startsWith(QUOTE) && token.endsWith(QUOTE)) {
+      return unescapeBody(token.slice(1, -1));
+    }
+    return unescapeBody(token);
+  }
+
+  // viewModel.ts
+  function resolveDiffPath(raw) {
+    return unquoteGitPatchPath(raw);
   }
   var DIFF_GIT_BOUNDARY = /^diff --git /gm;
   var BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
