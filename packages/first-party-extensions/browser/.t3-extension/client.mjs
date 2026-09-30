@@ -16685,8 +16685,10 @@ ${ind(d)}}`;
   }
 
   // pageControls.ts
-  function pageControlsBlock(session) {
+  function pageControlsBlock(session, engineClaimPending = false) {
     if (session === null) return "Waiting for the browser session to report its state.";
+    if (awaitingEngineClaim(session, engineClaimPending))
+      return "Waiting for the browser engine to attach.";
     const { engine } = session;
     switch (engine.state) {
       case "ready":
@@ -16703,9 +16705,12 @@ ${ind(d)}}`;
   function isRecoveryExhausted(session) {
     return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
   }
-  function engineStatusLabel(session) {
+  function awaitingEngineClaim(session, engineClaimPending) {
+    return engineClaimPending && session.engine.state === "unavailable" && session.engine.generation === null && session.engine.reason === "desktop-required";
+  }
+  function engineStatusLabel(session, engineClaimPending = false) {
     const { engine, navigation } = session;
-    const engineText = engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
+    const engineText = awaitingEngineClaim(session, engineClaimPending) ? "engine pending" : engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
     const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
     return `${engineText}, navigation ${navigation.kind}${failure}`;
   }
@@ -16772,8 +16777,8 @@ ${ind(d)}}`;
         return `${label}: the browser engine did not answer (unknown). The page state will catch up from the session.`;
     }
   }
-  async function runPageCommand(api, target, session, verb, signal) {
-    const block = pageControlsBlock(session);
+  async function runPageCommand(api, target, session, verb, signal, engineClaimPending = false) {
+    const block = pageControlsBlock(session, engineClaimPending);
     if (block !== null) return { kind: "blocked", message: block };
     if (verb.method === "zoom" && !isLadderFactor(verb.zoomFactor))
       return {
@@ -19129,6 +19134,8 @@ ${ind(d)}}`;
       if (fileSourceRef.current && !heldRef.current) openFile(fileSourceRef.current);
       return () => fileRun.current?.abort();
     }, []);
+    const leaseState = surfaceLease?.state;
+    const engineClaimPending = host.browserSurface?.presentation.supported === true && surfaceDenial === null && (leaseState === void 0 ? host.browserSurface.engineClaimPending === true : leaseState.kind === "active" && leaseState.presentation.supported && leaseState.engineClaimPending === true);
     const pendingZoom = (0, import_react9.useRef)(null);
     (0, import_react9.useEffect)(() => {
       if (live?.zoomFactor === pendingZoom.current) pendingZoom.current = null;
@@ -19137,32 +19144,37 @@ ${ind(d)}}`;
       const epoch = tabsEpoch.current;
       const target = tab ? epoch ? { tabId: tab.tabId, serverEpoch: epoch, engineGeneration: tab.engine.generation } : null : heldRef.current;
       if (!target) return;
+      const targetPage = tab ?? live;
+      const claimPending = (!tab || tab.tabId === held?.tabId) && engineClaimPending;
       if (verb.method === "zoom" && !tab) pendingZoom.current = verb.zoomFactor;
       const api = bindApi(browserSessionsApi, host, session.context);
-      void runPageCommand(api, target, tab ?? live, verb, session.signal).then((outcome) => {
-        if (session.signal.aborted) return;
-        if (outcome.kind !== "accepted") {
-          if (verb.method === "zoom" && !tab) pendingZoom.current = null;
-          setNotice(outcome.message);
-          return;
+      void runPageCommand(api, target, targetPage, verb, session.signal, claimPending).then(
+        (outcome) => {
+          if (session.signal.aborted) return;
+          if (outcome.kind !== "accepted") {
+            if (verb.method === "zoom" && !tab) pendingZoom.current = null;
+            if (outcome.kind !== "blocked" || targetPage === null || !awaitingEngineClaim(targetPage, claimPending))
+              setNotice(outcome.message);
+            return;
+          }
+          setNotice(null);
+          const { receipt: receipt2 } = outcome;
+          const current = heldRef.current;
+          if (!current || receipt2.session.tabId !== current.tabId) return;
+          if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
+          heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
+          const next = { ...current, engineGeneration: receipt2.session.engine.generation };
+          heldRef.current = next;
+          setHeld(next);
+          setLive(receipt2.session);
         }
-        setNotice(null);
-        const { receipt: receipt2 } = outcome;
-        const current = heldRef.current;
-        if (!current || receipt2.session.tabId !== current.tabId) return;
-        if (!advanceRevision(fence, receipt2.serverEpoch, receipt2.revision)) return;
-        heldRevision.current = Math.max(heldRevision.current, receipt2.revision);
-        const next = { ...current, engineGeneration: receipt2.session.engine.generation };
-        heldRef.current = next;
-        setHeld(next);
-        setLive(receipt2.session);
-      });
+      );
     };
     const zoomStep = (direction) => runPage({
       method: "zoom",
       zoomFactor: nextZoomFactor(pendingZoom.current ?? live?.zoomFactor ?? null, direction)
     });
-    const pageBlock = held ? pageControlsBlock(live) : null;
+    const pageBlock = held ? pageControlsBlock(live, engineClaimPending) : null;
     const command = (method) => {
       if (method === "reload" && fileSourceRef.current) return openFile(fileSourceRef.current);
       if (!held) return;
@@ -19172,7 +19184,7 @@ ${ind(d)}}`;
         return;
       }
       if (pageBlock !== null) {
-        setNotice(pageBlock);
+        if (live === null || !awaitingEngineClaim(live, engineClaimPending)) setNotice(pageBlock);
         return;
       }
       if (method === "back") commit2(goBack(state2));
@@ -19236,7 +19248,6 @@ ${titledTitle}`;
       recentCount: showRecents ? recents.length : 0,
       localServers
     });
-    const leaseState = surfaceLease?.state;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
@@ -19459,7 +19470,7 @@ ${titledTitle}`;
                           type: "button",
                           "aria-label": tab.audioMuted ? `Unmute ${label}` : `Mute ${label}`,
                           "aria-pressed": tab.audioMuted === true,
-                          disabled: pageControlsBlock(tab) !== null,
+                          disabled: pageControlsBlock(tab, tab.tabId === held?.tabId && engineClaimPending) !== null,
                           onClick: () => runPage({ method: "setAudioMuted", muted: !tab.audioMuted }, tab),
                           style: { ...buttonStyle, border: "none", padding: "0 2px" },
                           children: tab.audioMuted ? "\u{1F507}" : "\u{1F50A}"
@@ -19478,7 +19489,7 @@ ${titledTitle}`;
               role: "status",
               "aria-label": "Browser status",
               style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
-              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live, engineClaimPending)}` : describeStatus(state2))
             }
           ),
           held ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [

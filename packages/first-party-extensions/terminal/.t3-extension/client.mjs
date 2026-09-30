@@ -12723,7 +12723,7 @@ var __t3Client = (() => {
     if (!reattaching && state2.status === "error" && state2.ended && state2.statusText.startsWith("Unknown terminal thread:") && tab?.error)
       return tab.error;
     if (!reattaching && (tab?.status === "error" || tab?.status === "exited") && (state2.status === "connecting" || state2.status === "error" && state2.ended && state2.statusText.startsWith("Unknown terminal thread:")))
-      return `Terminal is ${tab.status}.`;
+      return tab.status === "error" ? "Terminal failed to start." : "Terminal is exited.";
     return reattaching && state2.status === "error" && state2.ended ? "Connecting\u2026" : state2.statusText;
   }
   var EMPTY_OUTPUT_BUFFER = {
@@ -12780,7 +12780,7 @@ var __t3Client = (() => {
           retainedBytes: utf8Bytes(contents3),
           truncated: omitted,
           status: ended ? "exited" : "live",
-          statusText: ended ? `Terminal is ${value.status}.` : omitted ? "Watching live output. Older retained history was omitted." : "Watching live output.",
+          statusText: ended ? value.status === "error" ? "Terminal failed to start." : `Terminal is ${value.status}.` : omitted ? "Watching live output. Older retained history was omitted." : "Watching live output.",
           exitCode: null,
           epoch: value.streamEpoch,
           sequence,
@@ -13141,6 +13141,8 @@ var __t3Client = (() => {
      */
     #observeMeta(next) {
       const tab = this.#tab(next.terminalId);
+      if (!tab.starting && tab.outputRecovery === "pending" && tab.meta?.status !== "running" && next.status === "running")
+        tab.attachmentRevision += 1;
       tab.meta = next;
       if (!tab.starting && tab.outputRecovery === "pending" && (next.status === "error" || next.status === "exited"))
         tab.outputRecovery = "attempted";
@@ -13154,6 +13156,8 @@ var __t3Client = (() => {
         this.#closing.delete(terminalId);
         this.#emit();
       }).catch(() => {
+        if (this.#disposed || this.#closing.get(terminalId) !== marker) return;
+        this.#closing.set(terminalId, { sent: false });
       });
     }
     /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */
@@ -15315,7 +15319,7 @@ var __t3Client = (() => {
         const degraded = caughtUp ? this.#state.degraded : unfaithful;
         this.#emit({
           status: ended ? "exited" : running.status,
-          statusText: ended ? `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : caughtUp ? "Watching live output." : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : value.clearGeneration > 0 ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : unfaithful ? "Watching live output \u2014 earlier output exceeded retention, so terminal state may be incomplete." : "Watching live output.",
+          statusText: ended ? value.status === "error" ? "Terminal failed to start." : `Terminal is ${value.status}.` : this.#sinkFailure !== null ? this.#sinkFailure : caughtUp ? "Watching live output." : value.truncated ? "Watching live output \u2014 earlier history was truncated, so terminal state may be incomplete." : value.clearGeneration > 0 ? "Watching live output \u2014 history was cleared, so terminal modes may be incomplete." : unfaithful ? "Watching live output \u2014 earlier output exceeded retention, so terminal state may be incomplete." : "Watching live output.",
           degraded: degraded && !ended,
           exitCode: null,
           ended
@@ -16543,6 +16547,7 @@ var __t3Client = (() => {
     );
     const iconControl = { ...control, padding: "0 6px", fontSize: 13, lineHeight: "22px" };
     const activeStatus = activeTab === null ? null : sessionStatusText(activeTab);
+    const activeOutputStatus = activeTab?.exitBanner ?? (output && activeTab ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream), activeTab) : "Connecting\u2026");
     const closeLabel = terminalActionLabel("Close Terminal", closeShortcutLabel);
     const sessionActions = activeTab !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
@@ -16890,14 +16895,9 @@ var __t3Client = (() => {
                                 style: { padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 },
                                 children: [
                                   activeId,
-                                  ":",
-                                  " ",
-                                  activeTab.exitBanner ?? (output ? paneStatusText(
-                                    output,
-                                    isPaneReattaching(activeTab, snapshot.stream),
-                                    activeTab
-                                  ) : "Connecting\u2026"),
-                                  activeTab.error ? ` \u2014 ${activeTab.error}` : ""
+                                  ": ",
+                                  activeOutputStatus,
+                                  activeTab.error && activeTab.error !== activeOutputStatus ? ` \u2014 ${activeTab.error}` : ""
                                 ]
                               }
                             ),
