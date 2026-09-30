@@ -635,6 +635,9 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/** The server broker's deadline for a whole `t3.vcs/actions` pull request handoff. */
+export const PULL_REQUEST_HANDOFF_DEADLINE_MS = 6 * 60_000;
+
 class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
   .add(
     HttpApiEndpoint.post("invokeApi", "/api/extensions/api/invoke", {

@@ -15,8 +15,8 @@ import {
   ThreadId,
   type ClientProviderServerFrame,
   type ClientProvidersRespondInput,
+  PULL_REQUEST_HANDOFF_DEADLINE_MS,
 } from "@t3tools/contracts";
-import { PULL_REQUEST_HANDOFF_DEADLINE_MS } from "@t3tools/client-runtime/state/extensions";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { startClientProviderConnection } from "./clientProviderConnection";

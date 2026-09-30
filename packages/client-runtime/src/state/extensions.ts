@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { PULL_REQUEST_HANDOFF_DEADLINE_MS, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
@@ -36,9 +36,6 @@ import {
 } from "./environmentHttpAuth.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-
-/** The server broker's deadline for a whole `t3.vcs/actions` pull request handoff. */
-export const PULL_REQUEST_HANDOFF_DEADLINE_MS = 6 * 60_000;
 
 /**
  * Long-running API methods. Each HTTP deadline exceeds the server broker's

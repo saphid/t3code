@@ -11,6 +11,7 @@ import {
   type GitActionProgressEvent,
   type GitRunStackedActionResult,
   type VcsDriverKind,
+  PULL_REQUEST_HANDOFF_DEADLINE_MS,
 } from "@t3tools/contracts";
 import {
   PRS_WRITE,
@@ -28,7 +29,6 @@ import {
   type VcsActionsOperationsSupport,
 } from "@t3tools/extension-sdk/catalogue";
 import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
-import { PULL_REQUEST_HANDOFF_DEADLINE_MS } from "@t3tools/client-runtime/state/extensions";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type {
   HostApiInvocationMetadata,
