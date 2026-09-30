@@ -1036,6 +1036,8 @@ describe("browser sessions adapter", () => {
         canGoBack: true,
       });
       expect(Object.keys(listed.sessions[0] ?? {})).not.toContain("favicon");
+      expect(listed.sessions[0]).not.toHaveProperty("controller");
+      expect(listed.sessions[0]).not.toHaveProperty("remoteLive");
       expect(Object.values(listed.sessions[0] ?? {})).not.toContain("data:image/png;base64,AAAA");
     }),
   );

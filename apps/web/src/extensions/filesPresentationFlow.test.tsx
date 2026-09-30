@@ -345,11 +345,16 @@ async function mountPanel(disk: Disk) {
       clients: [],
     };
   });
+  let stopPresentationClient = registerInstalledApiClient(
+    ref.environmentId,
+    "t3.files",
+    host as never,
+  );
   const cleanups = [
     registerWorkspaceExtension(files.client(host) as never, undefined, {
       environmentId: ref.environmentId,
     }),
-    registerInstalledApiClient(ref.environmentId, "t3.files", host as never),
+    () => stopPresentationClient(),
   ];
   setInstalledApiPolicy(ref.environmentId, {
     apiSelections: [],
@@ -404,6 +409,14 @@ async function mountPanel(disk: Disk) {
     focused,
     /** The tree's current scrolling element. */
     viewport: () => viewports.at(-1)!,
+    refreshPresentationProvider() {
+      stopPresentationClient();
+      stopPresentationClient = registerInstalledApiClient(
+        ref.environmentId,
+        "t3.files",
+        host as never,
+      );
+    },
     /** Remounts the panel from its persisted state, as a reload does. */
     async reload() {
       await act(async () => tree.update(<></>));
@@ -1246,6 +1259,42 @@ describe("opening a file in the panel when the presentation refuses", () => {
         useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]?.surfaces ?? [];
       expect(surfaces.map((surface) => surface.id)).toEqual(["files"]);
       expect(panel.text()).not.toContain("capability denied");
+    } finally {
+      await panel.unmount();
+    }
+  });
+});
+
+describe("already-open file tabs after presentation grant changes", () => {
+  it("names the revoked grant and re-reads when permission returns", async () => {
+    const denied = { on: false };
+    const disk = { "app.ts": "original contents" };
+    const panel = await mountPanel({
+      files: disk,
+      presentationError: () =>
+        denied.on ? new Error("API capability denied: t3.file/open") : undefined,
+    });
+    try {
+      await act(async () => useRightPanelStore.getState().openFile(ref, "app.ts"));
+      expect(panel.editor().props.value).toBe("original contents");
+      expect(panel.calls.reads).toBe(1);
+
+      denied.on = true;
+      await act(async () => panel.refreshPresentationProvider());
+      expect(panel.text()).toContain(
+        "Needs permission t3.file/open. Grant it in Settings → Extensions.",
+      );
+      expect(panel.text()).not.toContain("API capability denied");
+      expect(panel.editors()).toBe(0);
+      expect(panel.calls.reads).toBe(1);
+
+      disk["app.ts"] = "updated after permission returns";
+      denied.on = false;
+      await act(async () => panel.refreshPresentationProvider());
+      expect(panel.editor().props.value).toBe("updated after permission returns");
+      expect(panel.calls.reads).toBe(2);
+      expect(panel.calls.presentations).toHaveLength(3);
+      expect(panel.text()).not.toContain("Needs permission");
     } finally {
       await panel.unmount();
     }

@@ -23,6 +23,7 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type RightPanelSurface,
+  extensionPanelSurface,
   pullRequestSurface,
   selectActiveRightPanelSurface,
   useRightPanelStore,
@@ -31,6 +32,9 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
+import { acquireBrowserSurface, useBrowserSurfaceStore } from "../browser/browserSurfaceStore";
+import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
@@ -129,6 +133,107 @@ describe("agent browser close confirmation", () => {
 });
 
 describe("floating browser preview", () => {
+  it("keeps an extension-owned tab in its open panel across occlusion, thread switches and remounts", () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread-a"),
+    };
+    const otherThreadRef = { ...threadRef, threadId: ThreadId.make("thread-b") };
+    const source = { kind: "browser", tabId: "agent-tab" } as const;
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", source.tabId);
+    const panel = extensionPanelSurface(threadRef, {
+      version: 1,
+      surfaceId: "test.browser/panel",
+      placement: "side-panel",
+      stateVersion: 1,
+      restoreState: {},
+      fallback: "Browser",
+      context: {
+        client: "desktop",
+        resource: {
+          namespace: "test.browser",
+          id: threadRef.threadId,
+          projectId: "project",
+          ...threadRef,
+        },
+      },
+    });
+    expect(panel).not.toBeNull();
+    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.getState().open(threadRef, source);
+    const extensionResourceKey = resourceKey(panel!.record.context.resource);
+    let lease = acquireBrowserSurface(runtimeTabId, false, false, extensionResourceKey);
+    const renderPlayer = (activeThreadRef = threadRef, open = true) => {
+      const entry = selectThreadPreviewMiniPlayer(
+        usePreviewMiniPlayerStore.getState().byThreadKey,
+        activeThreadRef,
+      );
+      const activeRuntimeTabId = previewRuntimeTabId(activeThreadRef, "epoch-1", source.tabId);
+      return shouldRenderPreviewMiniPlayer(entry?.source ?? null, panel, {
+        extensionPanelOpen: open,
+        browserSurface: useBrowserSurfaceStore.getState().byTabId[activeRuntimeTabId],
+      });
+    };
+    const rect = { x: 10, y: 20, width: 900, height: 700 };
+    expect(renderPlayer()).toBe(false);
+    lease.present(rect, true);
+    const owner = useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner;
+    expect(renderPlayer()).toBe(false);
+    lease.present(rect, false);
+    expect(renderPlayer()).toBe(false);
+    expect(renderPlayer(otherThreadRef)).toBe(false);
+    usePreviewMiniPlayerStore.getState().open(otherThreadRef, source);
+    expect(renderPlayer(otherThreadRef)).toBe(true);
+    expect(renderPlayer()).toBe(false);
+    expect(renderPlayer(threadRef, false)).toBe(true);
+    const otherPanel = extensionPanelSurface(threadRef, {
+      ...panel!.record,
+      surfaceId: "test.files/panel",
+      context: {
+        ...panel!.record.context,
+        resource: { ...panel!.record.context.resource, namespace: "test.files" },
+      },
+    });
+    expect(otherPanel).not.toBeNull();
+    expect(
+      shouldRenderPreviewMiniPlayer(source, otherPanel, {
+        extensionPanelOpen: true,
+        browserSurface: useBrowserSurfaceStore.getState().byTabId[runtimeTabId],
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderPreviewMiniPlayer(
+        source,
+        { id: "diff", kind: "diff" },
+        {
+          extensionPanelOpen: true,
+          browserSurface: useBrowserSurfaceStore.getState().byTabId[runtimeTabId],
+        },
+      ),
+    ).toBe(true);
+    expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner).toBe(owner);
+    expect(lease.present(rect, true)).toBe(true);
+    lease.release();
+    const reconnectedRuntimeTabId = previewRuntimeTabId(threadRef, "epoch-2", source.tabId);
+    lease = acquireBrowserSurface(reconnectedRuntimeTabId, false, false, extensionResourceKey);
+    expect(
+      shouldRenderPreviewMiniPlayer(source, panel, {
+        extensionPanelOpen: true,
+        browserSurface: useBrowserSurfaceStore.getState().byTabId[reconnectedRuntimeTabId],
+      }),
+    ).toBe(false);
+    expect(lease.present(rect, true)).toBe(true);
+    lease.release();
+    expect(
+      shouldRenderPreviewMiniPlayer(source, panel, {
+        extensionPanelOpen: true,
+        browserSurface: useBrowserSurfaceStore.getState().byTabId[reconnectedRuntimeTabId],
+      }),
+    ).toBe(true);
+    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+  });
+
   it("keeps agent preview intent when a user selects its browser tab and then switches away", () => {
     useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
