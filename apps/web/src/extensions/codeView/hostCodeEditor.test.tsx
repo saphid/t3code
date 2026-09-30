@@ -175,7 +175,7 @@ function typeText(element: HTMLElement, text: string) {
   );
 }
 
-it("opens the real Files view editable, autosaves through CAS, and keeps its conflicted buffer", async () => {
+async function renderFiles(contents = "original") {
   const fileReads = vi.spyOn(Editor.prototype, "getFile");
   const saves: ApiInvocation[] = [];
   const requests: ApiInvocation[] = [];
@@ -189,7 +189,7 @@ it("opens the real Files view editable, autosaves through CAS, and keeps its con
     invokeApi: async (request) => {
       requests.push(request);
       if (request.method === "readSnapshot")
-        return { kind: "editable", contents: "original", revision: "base" };
+        return { kind: "editable", contents, revision: "base" };
       if (request.method === "save") {
         saves.push(request);
         return saves.length === 1
@@ -198,6 +198,13 @@ it("opens the real Files view editable, autosaves through CAS, and keeps its con
       }
       if (request.id === "t3.ui/preferences" && request.method === "getPreferences")
         return { wordWrap: false, renderBrowserFile: true };
+      if (request.id === "t3.messages/enrichment" && request.method === "getCapabilities")
+        return {
+          adapter: "web",
+          transport: "client",
+          detail: null,
+          operations: { attachAnnotation: true, listAnnotations: true, removeAnnotation: true },
+        };
       throw new Error("unavailable: " + request.id + " " + request.method);
     },
     subscribeApi: (request, signal) =>
@@ -257,12 +264,17 @@ it("opens the real Files view editable, autosaves through CAS, and keeps its con
   expect(container.textContent).not.toContain("Native code editor unavailable");
   await editorReady();
   await act(async () => {});
-  const editor = content();
-  expect(editor.textContent).toContain("original");
+  expect(content().textContent).toContain(contents.split("\n")[0]!);
   expect(container.textContent).not.toContain("unavailable on this client");
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const instance = fileReads.mock.contexts.at(-1) as Editor<unknown>;
   expect(instance).toBeInstanceOf(Editor);
+  return { instance, saves, requests };
+}
+
+it("opens the real Files view editable, autosaves through CAS, and keeps its conflicted buffer", async () => {
+  const { instance, saves, requests } = await renderFiles();
+  const editor = content();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   instance.setSelections([
     { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, direction: "none" },
   ]);
@@ -288,7 +300,106 @@ it("opens the real Files view editable, autosaves through CAS, and keeps its con
   await act(async () => vi.advanceTimersByTimeAsync(500));
   expect(content().textContent).toContain("typed conflicted kept original");
   expect(saves).toHaveLength(2);
-  expect(requests.some((request) => request.id === "t3.ui/editor")).toBe(false);
+  expect(requests.filter((request) => request.id === "t3.ui/editor")).toEqual([
+    expect.objectContaining({ method: "getCapabilities" }),
+  ]);
+});
+
+it.each(["mouse", "touch"])(
+  "opens a Files comment draft with a %s pointer",
+  async (pointerType) => {
+    const { instance } = await renderFiles("one\ntwo\nthree\n");
+    instance.setSelections([
+      { start: { line: 0, character: 0 }, end: { line: 2, character: 0 }, direction: "forward" },
+    ]);
+    await act(async () =>
+      content().dispatchEvent(new Event("pointerup", { bubbles: true, composed: true })),
+    );
+    const button = container.querySelector<HTMLButtonElement>('[aria-label="File comment"] button');
+    expect(button?.textContent).toBe("Comment on L1 to L2");
+    await act(async () =>
+      button!.dispatchEvent(
+        new PointerEvent("pointerdown", { pointerType, bubbles: true, composed: true }),
+      ),
+    );
+    expect(button?.isConnected).toBe(true);
+    await act(async () => button!.click());
+    expect(container.querySelector('textarea[aria-label="Comment text"]')).not.toBeNull();
+    expect(container.textContent).toContain("Comment on L1 to L2");
+  },
+);
+
+async function selectGutterLines() {
+  const shadow = container.querySelector("diffs-container")!.shadowRoot!;
+  const start = shadow.querySelector('[data-column-number="1"]');
+  const end = shadow.querySelector('[data-column-number="2"]');
+  expect(start).not.toBeNull();
+  expect(end).not.toBeNull();
+  await act(async () => {
+    start!.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 1,
+        pointerType: "mouse",
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    end!.dispatchEvent(
+      new PointerEvent("pointermove", {
+        pointerId: 1,
+        pointerType: "mouse",
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    end!.dispatchEvent(
+      new PointerEvent("pointerup", {
+        pointerId: 1,
+        pointerType: "mouse",
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  });
+}
+
+it("clears the controlled gutter highlight on Escape and outside pointer dismissal", async () => {
+  await renderFiles("one\ntwo\nthree\n");
+  for (const reason of ["escape", "pointer"]) {
+    await selectGutterLines();
+    const shadow = container.querySelector("diffs-container")!.shadowRoot!;
+    expect(shadow.querySelector("[data-selected-line]")).not.toBeNull();
+    await act(async () => {
+      if (reason === "escape") {
+        content().focus();
+        content().dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }),
+        );
+      } else
+        container.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+    });
+    expect(shadow.querySelector("[data-selected-line]")).toBeNull();
+    expect(container.querySelector('[aria-label="File comment"]') === null).toBe(
+      reason === "escape",
+    );
+  }
+});
+
+it("shows the Files comment toolbar when the same gutter lines are selected after an edit", async () => {
+  const { instance } = await renderFiles("one\ntwo\nthree\n");
+  await selectGutterLines();
+  expect(container.querySelector('[aria-label="File comment"]')?.textContent).toBe(
+    "Comment on L1 to L2",
+  );
+  instance.setSelections([
+    { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, direction: "none" },
+  ]);
+  await act(async () => typeText(content(), "edited "));
+  expect(container.querySelector('[aria-label="File comment"]')).toBeNull();
+  await selectGutterLines();
+  expect(container.querySelector('[aria-label="File comment"]')?.textContent).toBe(
+    "Comment on L1 to L2",
+  );
 });
 
 it("uses native dismissal, leaves save shortcuts alone, and remounts on a theme change", async () => {
@@ -336,7 +447,7 @@ it("uses native dismissal, leaves save shortcuts alone, and remounts on a theme 
   });
 });
 
-it("normalizes text selections once and dismisses them on an outside pointer", async () => {
+it("normalizes text selections once and preserves the caller range on an outside pointer", async () => {
   const fileReads = vi.spyOn(Editor.prototype, "getFile");
   const onSelectionChange = vi.fn();
   await act(async () =>
@@ -372,11 +483,19 @@ it("normalizes text selections once and dismisses them on an outside pointer", a
   await act(async () =>
     outside.dispatchEvent(new Event("pointerdown", { bubbles: true, composed: true })),
   );
-  expect(onSelectionChange).toHaveBeenLastCalledWith(null);
+  expect(onSelectionChange).toHaveBeenCalledTimes(1);
   expect(instance.getState().selections).toBeUndefined();
   outside.remove();
   await act(async () =>
     editor.dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true, composed: true })),
   );
+  expect(onSelectionChange).toHaveBeenCalledTimes(1);
+  instance.setSelections([
+    { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, direction: "none" },
+  ]);
+  await act(async () =>
+    editor.dispatchEvent(new Event("pointerup", { bubbles: true, composed: true })),
+  );
   expect(onSelectionChange).toHaveBeenCalledTimes(2);
+  expect(onSelectionChange).toHaveBeenLastCalledWith(null);
 });

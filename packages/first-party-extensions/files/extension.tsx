@@ -2740,7 +2740,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.10.0",
+  version: "0.11.0",
   provides: [filePresentationApi.definition],
   serverEntry: "server.ts",
   requires: [

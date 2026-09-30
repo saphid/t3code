@@ -220,8 +220,7 @@ function EditableDocument(props: CodeViewEditorProps) {
   const { resolvedTheme } = useTheme();
   const preferredWordWrap = useClientSettings((settings) => settings.wordWrap);
   const wordWrap = props.wordWrap ?? preferredWordWrap;
-  const onChange = useStableCallback((file: FileContents) => props.onChange(file.contents));
-  const hasLineSelection = useRef(false);
+  const [selectedLines, setSelectedLines] = useState<SelectedLineRange | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const lastSelection =
     useRef<Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]>(null);
@@ -236,6 +235,11 @@ function EditableDocument(props: CodeViewEditorProps) {
       props.onSelectionChange?.(range);
     },
   );
+  const onChange = useStableCallback((file: FileContents) => {
+    setSelectedLines(null);
+    reportSelection(null);
+    props.onChange(file.contents);
+  });
   const editor = useMemo(
     () =>
       new Editor({
@@ -253,9 +257,9 @@ function EditableDocument(props: CodeViewEditorProps) {
       root,
       editor,
       isBlocked: () => false,
-      onDismiss: () => {
-        hasLineSelection.current = false;
-        reportSelection(null);
+      onDismiss: (reason) => {
+        setSelectedLines(null);
+        if (reason === "escape") reportSelection(null);
       },
     });
   }, [editor, reportSelection]);
@@ -278,11 +282,11 @@ function EditableDocument(props: CodeViewEditorProps) {
     const empty =
       selection.start.line === selection.end.line &&
       selection.start.character === selection.end.character;
-    if (empty && hasLineSelection.current) return;
+    if (empty && selectedLines !== null) return;
     reportSelection(empty ? null : { startLine, endLine });
   };
   const reportLineSelection = (range: SelectedLineRange | null) => {
-    hasLineSelection.current = range !== null;
+    setSelectedLines(range);
     reportSelection(
       range === null
         ? null
@@ -304,6 +308,7 @@ function EditableDocument(props: CodeViewEditorProps) {
       <EditableSourcePreview
         editor={editor}
         fileProps={{
+          selectedLines,
           file: {
             name: props.path,
             contents: props.contents,
