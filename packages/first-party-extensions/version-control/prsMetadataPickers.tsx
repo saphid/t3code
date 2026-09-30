@@ -292,7 +292,7 @@ export function PrsMetadataPicker({
     if (!allowed) setOpen(false);
   }, [allowed]);
   useEffect(() => {
-    if (!open || !allowed) return;
+    if (!open || !allowed || list !== null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
     const api = bindApi(prsReadApi, host, session.context);
@@ -329,7 +329,7 @@ export function PrsMetadataPicker({
       },
     );
     return () => controller.abort();
-  }, [open, allowed, kind, host, session, reference, words.error]);
+  }, [open, allowed, list, kind, host, session, reference, words.error]);
   useEffect(() => {
     if (open) activeOption.current?.scrollIntoView({ block: "nearest" });
   }, [open, activeId, active?.key, popupElement]);
@@ -452,7 +452,7 @@ export function PrsMetadataPicker({
     role: "dialog",
     "aria-label": words.trigger,
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "Tab") setOpen(false);
+      if (event.key === "Tab") close();
       else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -589,7 +589,7 @@ export function PrsMetadataPicker({
               aria-selected={isSelected(candidate)}
               disabled={pending}
               tabIndex={-1}
-              onMouseEnter={() => setHighlight(index)}
+              onMouseMove={() => setHighlight(index)}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => void toggle(candidate)}
               style={{

@@ -593,6 +593,54 @@ NodeTest.it("keyboard highlight scrolls long candidate lists before selecting", 
   view.unmount();
 });
 
+for (const [method, trigger, search, name, field] of [
+  ["labelCandidates", "Change labels", "Search labels", "bug", "applied"],
+  ["reviewerCandidates", "Request a review", "Search people with access", "ada", "requested"],
+]) {
+  NodeTest.it(`${method} reopen keeps patched rows and the next toggle direction`, async () => {
+    const stale = deferred();
+    let count = 0;
+    const view = mountPanel({
+      [`t3.prs/read#${method}`]: () => {
+        count += 1;
+        return count === 1 ? (method === "labelCandidates" ? labels : reviewers) : stale.promise;
+      },
+    });
+    await open(view, trigger);
+    dispatch(view.find(search), "onKeyDown", { key: "Escape" });
+    await open(view, trigger);
+    dispatch(candidate(view, name), "onClick");
+    await flush();
+    NodeAssert.equal(candidate(view, name).props["aria-selected"], true);
+    stale.resolve(method === "labelCandidates" ? labels : reviewers);
+    await flush();
+    NodeAssert.equal(candidate(view, name).props["aria-selected"], true);
+    dispatch(candidate(view, name), "onClick");
+    await flush();
+    NodeAssert.equal(view.writes()[1].input[field], false);
+    NodeAssert.equal(reads(view, method).length, 1);
+    view.unmount();
+  });
+}
+
+NodeTest.it(
+  "scroll-induced mouse entry preserves keyboard selection until the pointer moves",
+  async () => {
+    const view = mountPanel();
+    await open(view, "Change labels");
+    dispatch(view.find("Search labels"), "onKeyDown", { key: "ArrowDown" });
+    dispatch(candidate(view, "bug"), "onMouseEnter");
+    dispatch(view.find("Search labels"), "onKeyDown", { key: "Enter" });
+    await flush();
+    NodeAssert.deepEqual(view.writes()[0].input, { ...REF, labels: ["docs"], applied: false });
+    dispatch(candidate(view, "bug"), "onMouseMove");
+    dispatch(view.find("Search labels"), "onKeyDown", { key: "Enter" });
+    await flush();
+    NodeAssert.deepEqual(view.writes()[1].input, { ...REF, labels: ["bug"], applied: true });
+    view.unmount();
+  },
+);
+
 NodeTest.it("Tab closes a portaled picker even when focus has no next target", async () => {
   const view = mountPanel(undefined, {
     floatingLayer: {
@@ -602,7 +650,9 @@ NodeTest.it("Tab closes a portaled picker even when focus has no next target", a
     },
   });
   await open(view, "Change labels");
-  dispatch(view.find("Search labels"), "onKeyDown", { key: "Tab" });
+  const event = dispatch(view.find("Search labels"), "onKeyDown", { key: "Tab" });
+  NodeAssert.equal(event.defaultPrevented, false);
+  NodeAssert.equal(view.focused(), "Change labels");
   NodeAssert.equal(button(view, "Change labels").props["aria-expanded"], false);
   NodeAssert.equal(candidates(view).length, 0);
   view.unmount();
