@@ -179,26 +179,26 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
 }
 
 describe("browserSurfaceBridge", () => {
-  it("denies by name when a required grant is missing", () => {
+  it("denies by name when a required grant is missing", async () => {
     const h = harness();
     const noSurface = h.host({ capabilities: [BROWSER_SESSIONS] });
-    const denied = noSurface.acquire({ context, session: sessionRef });
+    const denied = await noSurface.acquire({ context, session: sessionRef });
     expect(denied.ok).toBe(false);
     if (denied.ok) throw new Error("expected denial");
     expect(denied.denial.reason).toBe("grant-denied");
     expect(denied.denial.grant).toBe(BROWSER_SURFACE);
 
     const noSessions = h.host({ capabilities: [BROWSER_SURFACE] });
-    const denied2 = noSessions.acquire({ context, session: sessionRef });
+    const denied2 = await noSessions.acquire({ context, session: sessionRef });
     expect(denied2.ok).toBe(false);
     if (denied2.ok) throw new Error("expected denial");
     expect(denied2.denial.grant).toBe(BROWSER_SESSIONS);
   });
 
-  it("denies scopes outside this environment, non-thread scopes, and ungranted projects", () => {
+  it("denies scopes outside this environment, non-thread scopes, and ungranted projects", async () => {
     const h = harness();
     const host = h.host();
-    const wrongEnv = host.acquire({
+    const wrongEnv = await host.acquire({
       context: { ...context, resource: { ...context.resource, environmentId: "env-b" } },
       session: sessionRef,
     });
@@ -206,7 +206,7 @@ describe("browserSurfaceBridge", () => {
     if (!wrongEnv.ok) expect(wrongEnv.denial.reason).toBe("scope-invalid");
 
     const { threadId: _dropped, ...resourceWithoutThread } = context.resource;
-    const noThread = host.acquire({
+    const noThread = await host.acquire({
       context: { ...context, resource: resourceWithoutThread },
       session: sessionRef,
     });
@@ -214,29 +214,29 @@ describe("browserSurfaceBridge", () => {
     if (!noThread.ok) expect(noThread.denial.reason).toBe("scope-invalid");
 
     const otherProject = h.host({ projectIds: ["project-b"] });
-    const denied = otherProject.acquire({ context, session: sessionRef });
+    const denied = await otherProject.acquire({ context, session: sessionRef });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.denial.reason).toBe("scope-invalid");
   });
 
-  it("denies a granted project paired with a thread from another project", () => {
+  it("denies a granted project paired with a thread from another project", async () => {
     const h = harness();
     const host = h.host();
     h.setThreadProject("thread-a", "project-b");
-    const denied = host.acquire({ context, session: sessionRef });
+    const denied = await host.acquire({ context, session: sessionRef });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.denial.reason).toBe("scope-invalid");
     expect(h.syncMounts).toEqual([]);
 
     h.setThreadProject("thread-a", null);
-    const unknown = host.acquire({ context, session: sessionRef });
+    const unknown = await host.acquire({ context, session: sessionRef });
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.denial.reason).toBe("scope-invalid");
   });
 
-  it("ends the lease when the thread's project is invalidated mid-lease", () => {
+  it("ends the lease when the thread's project is invalidated mid-lease", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     h.setThreadProject("thread-a", "project-b");
     h.fireThreads();
@@ -244,19 +244,19 @@ describe("browserSurfaceBridge", () => {
     expect(h.nativeLeases[0]?.released).toBe(true);
   });
 
-  it("denies acquire while the shell is not authoritative", () => {
+  it("denies acquire while the shell is not authoritative", async () => {
     const h = harness();
     h.setShellLive(false);
-    const denied = h.host().acquire({ context, session: sessionRef });
+    const denied = await h.host().acquire({ context, session: sessionRef });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.denial.reason).toBe("host-unavailable");
     expect(h.syncMounts).toEqual([]);
     expect(h.nativeLeases).toEqual([]);
   });
 
-  it("holds the lease through a sync loss and re-validates when live", () => {
+  it("holds the lease through a sync loss and re-validates when live", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     // Losing shell authority mid-lease is not evidence the thread moved.
     h.setShellLive(false);
@@ -278,23 +278,152 @@ describe("browserSurfaceBridge", () => {
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "scope-invalidated" });
   });
 
-  it("denies malformed session identity and stale epochs by name", () => {
+  it("denies malformed session identity and checks mismatched epochs after sync", async () => {
     const h = harness();
     const host = h.host();
-    const malformed = host.acquire({ context, session: { tabId: "", serverEpoch: "e" } });
+    const malformed = await host.acquire({ context, session: { tabId: "", serverEpoch: "e" } });
     expect(malformed.ok).toBe(false);
     if (!malformed.ok) expect(malformed.denial.reason).toBe("session-invalid");
 
     h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 1, listFailures: 0 });
-    const stale = host.acquire({ context, session: sessionRef });
+    const pending = host.acquire({ context, session: sessionRef });
+    h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 2, listFailures: 0 });
+    h.fireSessions();
+    const stale = await pending;
     expect(stale.ok).toBe(false);
     if (!stale.ok) expect(stale.denial.reason).toBe("epoch-changed");
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+    expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+    expect(h.sessionListeners.size).toBe(0);
   });
 
-  it("coalesces present calls into one latest-wins native write per frame", () => {
+  it.each([true, false])(
+    "keeps sync mounted until a stale cache catches up (composites=%s)",
+    async (composites) => {
+      const h = harness({ composites });
+      const host = h.host();
+      const freshSession = { tabId: "tab-3", serverEpoch: "epoch-3" };
+      h.setPreviewState({ serverEpoch: "epoch-2", sessions: {}, listSeq: 2, listFailures: 0 });
+      expect(h.syncMounts).toEqual([]);
+
+      const pending = host.acquire({ context, session: freshSession });
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+      expect(h.syncMounts).toEqual(["env-a/thread-a"]);
+      expect(h.syncUnmounts).toEqual([]);
+      expect(h.sessionListeners.size).toBe(1);
+      expect(h.nativeLeases).toEqual([]);
+
+      h.setPreviewState({
+        serverEpoch: "epoch-3",
+        sessions: { "tab-3": {} },
+        listSeq: 3,
+        listFailures: 0,
+      });
+      h.fireSessions();
+      const acquired = await pending;
+      if (!acquired.ok) throw new Error("expected refreshed session to acquire");
+      expect(acquired.lease.state.kind).toBe("active");
+      expect(h.syncMounts).toEqual(["env-a/thread-a"]);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+      acquired.lease.release();
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+      expect(h.sessionListeners.size).toBe(0);
+    },
+  );
+
+  it("attaches on the same attempt when mounting reconciles a matching cached list", async () => {
+    const h = harness();
+    h.setPreviewState({ serverEpoch: "epoch-old", sessions: {}, listSeq: 1, listFailures: 0 });
+    const bind = createBrowserSurfaceBridge("env-a", {
+      ...h.deps,
+      mountSessionSync: (ref) => {
+        const unmount = h.deps.mountSessionSync(ref);
+        h.setPreviewState({
+          serverEpoch: sessionRef.serverEpoch,
+          sessions: { [sessionRef.tabId]: {} },
+          listSeq: 2,
+          listFailures: 0,
+        });
+        return unmount;
+      },
+    });
+    const host = bind({
+      grants: { capabilities: [BROWSER_SESSIONS, BROWSER_SURFACE], projectIds: ["project-a"] },
+      lifetime: h.lifetime.signal,
+    });
+    const acquired = await host.acquire({ context, session: sessionRef });
+    if (!acquired.ok) throw new Error("expected the mounted cache to attach immediately");
+    expect(h.deferred).toEqual([]);
+    expect(h.sessionRefreshes).toEqual([]);
+    expect(h.syncMounts).toEqual(["env-a/thread-a"]);
+    acquired.lease.release();
+  });
+
+  it.each(["scope", "install", "deadline", "failure", "project"])(
+    "cleans up pending attach without a native claim on %s",
+    async (cause) => {
+      const h = harness();
+      h.setPreviewState({ serverEpoch: "epoch-old", sessions: {}, listSeq: 1, listFailures: 0 });
+      const view = new AbortController();
+      const pending = h.host().acquire({ context, session: sessionRef, signal: view.signal });
+      if (cause === "scope") view.abort();
+      else if (cause === "install") h.lifetime.abort();
+      else if (cause === "deadline") h.fireDeferred();
+      else {
+        if (cause === "project") h.setThreadProject("thread-a", "project-b");
+        h.setPreviewState({
+          serverEpoch: sessionRef.serverEpoch,
+          sessions: { [sessionRef.tabId]: {} },
+          listSeq: cause === "failure" ? 1 : 2,
+          listFailures: cause === "failure" ? 1 : 0,
+        });
+        h.fireSessions();
+      }
+      const acquired = await pending;
+      expect(acquired.ok).toBe(false);
+      if (acquired.ok) throw new Error("expected a canceled or failed attach");
+      expect(acquired.denial.reason).toBe(
+        cause === "scope" || cause === "project" ? "scope-invalid" : "host-unavailable",
+      );
+      expect(h.sessionListeners.size).toBe(0);
+      expect(h.nativeLeases).toEqual([]);
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+      expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+    },
+  );
+
+  it.each(["scope", "install"])(
+    "honors %s cancellation after sync resolves but before acquire resumes",
+    async (cause) => {
+      const h = harness();
+      h.setPreviewState({ serverEpoch: "epoch-old", sessions: {}, listSeq: 1, listFailures: 0 });
+      const view = new AbortController();
+      const pending = h.host().acquire({ context, session: sessionRef, signal: view.signal });
+      h.setPreviewState({
+        serverEpoch: sessionRef.serverEpoch,
+        sessions: { [sessionRef.tabId]: {} },
+        listSeq: 2,
+        listFailures: 0,
+      });
+      h.fireSessions();
+      if (cause === "scope") view.abort();
+      else h.lifetime.abort();
+      const acquired = await pending;
+      expect(acquired.ok).toBe(false);
+      if (acquired.ok) throw new Error("expected a canceled attach");
+      expect(acquired.denial.reason).toBe(cause === "scope" ? "scope-invalid" : "host-unavailable");
+      expect(h.nativeLeases).toEqual([]);
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+      expect(h.sessionListeners.size).toBe(0);
+      expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
+    },
+  );
+
+  it("coalesces present calls into one latest-wins native write per frame", async () => {
     const h = harness();
     const host = h.host();
-    const acquired = host.acquire({ context, session: sessionRef });
+    const acquired = await host.acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
     const lease = acquired.lease;
@@ -309,9 +438,9 @@ describe("browserSurfaceBridge", () => {
     ]);
   });
 
-  it("composites the webview at the contract layer, below plugin UI floating over the page", () => {
+  it("composites the webview at the contract layer, below plugin UI floating over the page", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected a lease");
     const rect = { x: 0, y: 0, width: 10, height: 10 };
     acquired.lease.present(rect, true);
@@ -330,9 +459,9 @@ describe("browserSurfaceBridge", () => {
     expect(wrapper.zIndex).toBe(BROWSER_SURFACE_Z_INDEX);
   });
 
-  it("keeps preview sync mounted for the lease lifetime and releases on release()", () => {
+  it("keeps preview sync mounted for the lease lifetime and releases on release()", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     expect(h.syncMounts).toEqual(["env-a/thread-a"]);
     if (!acquired.ok) return;
     const states: string[] = [];
@@ -346,10 +475,10 @@ describe("browserSurfaceBridge", () => {
     expect(acquired.lease.present({ x: 0, y: 0, width: 1, height: 1 }, true)).toBe("ended");
   });
 
-  it("supersedes a prior plugin lease on the same session", () => {
+  it("supersedes a prior plugin lease on the same session", async () => {
     const h = harness();
-    const first = h.host().acquire({ context, session: sessionRef });
-    const second = h.host().acquire({ context, session: sessionRef });
+    const first = await h.host().acquire({ context, session: sessionRef });
+    const second = await h.host().acquire({ context, session: sessionRef });
     expect(first.ok && second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
     expect(first.lease.state).toEqual({ kind: "ended", reason: "superseded" });
@@ -358,9 +487,9 @@ describe("browserSurfaceBridge", () => {
     expect(h.nativeLeases[0]?.released).toBe(true);
   });
 
-  it("ends the lease when the session disappears or the epoch moves", () => {
+  it("ends the lease when the session disappears or the epoch moves", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 2, listFailures: 0 });
     h.fireSessions();
@@ -372,7 +501,7 @@ describe("browserSurfaceBridge", () => {
       listSeq: 3,
       listFailures: 0,
     });
-    const again = h.host().acquire({ context, session: sessionRef });
+    const again = await h.host().acquire({ context, session: sessionRef });
     if (!again.ok) throw new Error("expected lease");
     h.setPreviewState({
       serverEpoch: "epoch-2",
@@ -384,11 +513,11 @@ describe("browserSurfaceBridge", () => {
     expect(again.lease.state).toEqual({ kind: "ended", reason: "epoch-changed" });
   });
 
-  it("ends a missing-session lease once a post-acquire list proves absence", () => {
+  it("ends a missing-session lease once a post-acquire list proves absence", async () => {
     const h = harness();
     // Warm sync: a list has already been applied and the tab is absent.
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
     // The bridge forces a fresh list to arbitrate the absence.
@@ -405,11 +534,11 @@ describe("browserSurfaceBridge", () => {
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "session-closed" });
   });
 
-  it("keeps the open-before-sync race alive until the first list lands", () => {
+  it("keeps the open-before-sync race alive until the first list lands", async () => {
     const h = harness();
     // Cold sync: no list has ever been applied for this thread.
-    h.setPreviewState({ serverEpoch: null, sessions: {}, listSeq: 0, listFailures: 0 });
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 0, listFailures: 0 });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
     // The bridge always dispatches its own post-acquire arbitrating request.
@@ -428,11 +557,11 @@ describe("browserSurfaceBridge", () => {
     });
   });
 
-  it("retries a failed arbitration inside the bound instead of ending early", () => {
+  it("retries a failed arbitration inside the bound instead of ending early", async () => {
     const h = harness();
     // Warm sync: the tab is absent from applied state but unverified.
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
     // A completed Failure is a completed attempt, not evidence of absence —
@@ -461,10 +590,10 @@ describe("browserSurfaceBridge", () => {
     });
   });
 
-  it("ends a never-verified lease at the arbitration deadline", () => {
+  it("ends a never-verified lease at the arbitration deadline", async () => {
     const h = harness();
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     // The arbitrating request never resolves — the bound ends it honestly.
     h.fireDeferred();
@@ -473,10 +602,10 @@ describe("browserSurfaceBridge", () => {
     expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
   });
 
-  it("cancels the arbitration deadline once the session verifies", () => {
+  it("cancels the arbitration deadline once the session verifies", async () => {
     const h = harness();
     h.setPreviewState({ serverEpoch: "epoch-1", sessions: {}, listSeq: 7, listFailures: 0 });
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     h.setPreviewState({
       serverEpoch: "epoch-1",
@@ -493,38 +622,38 @@ describe("browserSurfaceBridge", () => {
     });
   });
 
-  it("ends the lease when the view signal aborts or the install lifetime ends", () => {
+  it("ends the lease when the view signal aborts or the install lifetime ends", async () => {
     const h = harness();
     const view = new AbortController();
-    const acquired = h.host().acquire({ context, session: sessionRef, signal: view.signal });
+    const acquired = await h.host().acquire({ context, session: sessionRef, signal: view.signal });
     if (!acquired.ok) throw new Error("expected lease");
     view.abort();
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "scope-invalidated" });
     expect(h.nativeLeases[0]?.released).toBe(true);
 
-    const second = h.host().acquire({ context, session: sessionRef });
+    const second = await h.host().acquire({ context, session: sessionRef });
     if (!second.ok) throw new Error("expected lease");
     h.lifetime.abort();
     expect(second.lease.state).toEqual({ kind: "ended", reason: "grant-revoked" });
     // And new acquires fail once the install lifetime is over.
-    const third = h.host().acquire({ context, session: sessionRef });
+    const third = await h.host().acquire({ context, session: sessionRef });
     expect(third.ok).toBe(false);
     if (!third.ok) expect(third.denial.reason).toBe("host-unavailable");
   });
 
-  it("ends the lease when the native owner is stolen outside the bridge", () => {
+  it("ends the lease when the native owner is stolen outside the bridge", async () => {
     const h = harness();
-    const acquired = h.host().acquire({ context, session: sessionRef });
+    const acquired = await h.host().acquire({ context, session: sessionRef });
     if (!acquired.ok) throw new Error("expected lease");
     h.nativeLeases[0]?.stolen();
     expect(acquired.lease.state).toEqual({ kind: "ended", reason: "superseded" });
   });
 
-  it("reports the named uncomposited state on non-compositing clients", () => {
+  it("reports the named uncomposited state on non-compositing clients", async () => {
     const h = harness({ composites: false });
     const host = h.host();
     expect(host.presentation).toEqual({ supported: false, reason: "desktop-required" });
-    const acquired = host.acquire({ context, session: sessionRef });
+    const acquired = await host.acquire({ context, session: sessionRef });
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
     expect(acquired.lease.state).toEqual({
