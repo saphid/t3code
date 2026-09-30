@@ -25,6 +25,7 @@ function fixture(
   kind: SourceControlProviderKind,
   hosts: readonly string[],
   result: SourceControlRepositoryCloneUrls,
+  withForgejoOrigin = true,
 ) {
   const calls: unknown[] = [];
   const starts: unknown[] = [];
@@ -32,7 +33,10 @@ function fixture(
   const lookup = (input: unknown) =>
     Effect.sync(() => {
       calls.push(input);
-      return { ...result, ...(kind === "forgejo" ? { repositoryHost: hosts[0] } : {}) };
+      return {
+        ...result,
+        ...(kind === "forgejo" && withForgejoOrigin ? { repositoryHost: hosts[0] } : {}),
+      };
     });
   const discovery = {
     discover: Effect.sync(() => {
@@ -120,6 +124,16 @@ function fixture(
   return { read, clone, invoke, calls, starts, probes };
 }
 const positives = [
+  {
+    kind: "gitlab",
+    hosts: ["https://gitlab.corp:8443"],
+    repository: "ssh://git@gitlab.corp:2222/g/p.git",
+    result: {
+      ...urls("gitlab.corp"),
+      url: "https://gitlab.corp:8443/g/p",
+      sshUrl: "ssh://git@gitlab.corp:2222/g/p.git",
+    },
+  },
   {
     kind: "github",
     hosts: ["ghe.corp", "github.com"],
@@ -295,3 +309,18 @@ it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
     }
   },
 );
+
+it("requires Forgejo's resolved login origin instead of trusting paired response hosts", async () => {
+  for (const operation of ["read", "clone"] as const) {
+    const f = fixture(
+      "forgejo",
+      ["http://forgejo.lan:3000"],
+      { ...urls("attacker.test"), url: "http://attacker.test/o/n" },
+      false,
+    );
+    await expect(f.invoke(f[operation], "o/n")).rejects.toThrow();
+    expect(f.calls).toHaveLength(1);
+    expect(f.probes).toEqual([]);
+    expect(f.starts).toEqual([]);
+  }
+});

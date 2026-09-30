@@ -40,9 +40,14 @@ export const lookupExtensionRepository = Effect.fn("Extensions.lookupRepository"
   let origin: URL | null = null;
   if (host !== null) {
     const hosts = yield* registry.repositoryHosts(input.provider);
-    // Input authority includes the port; response validation compares hostnames.
+    // SSH transport ports do not change the authenticated provider authority.
+    const sshLocator =
+      input.repository.startsWith("ssh://") ||
+      (!input.repository.includes("://") && input.repository.includes("@"));
     origin =
-      hosts.map(configuredRepositoryOrigin).find((url) => url?.host.toLowerCase() === host) ?? null;
+      hosts
+        .map(configuredRepositoryOrigin)
+        .find((url) => (sshLocator ? url?.hostname : url?.host)?.toLowerCase() === host) ?? null;
     if (origin === null)
       return yield* invalid("Choose a repository on an authenticated provider host.");
   }
@@ -55,6 +60,8 @@ export const lookupExtensionRepository = Effect.fn("Extensions.lookupRepository"
       input.provider === "forgejo" && origin ? `${origin.origin}/${repository}` : repository,
     ...(host && (input.provider === "github" || input.provider === "gitlab") ? { host } : {}),
   });
+  if (input.provider === "forgejo" && raw.repositoryHost === undefined)
+    return yield* invalid("The provider did not return its authenticated repository origin.");
   const urls =
     input.provider === "bitbucket" || input.provider === "azure-devops"
       ? { ...raw, url: withoutHttpsUserinfo(raw.url) }

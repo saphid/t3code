@@ -76,7 +76,11 @@ export function providerRepositoryHost(
 ): string | null {
   if (repository.includes("://") || repository.includes("@"))
     return isSafeRepositoryRemote(repository, provider === "forgejo")
-      ? (scpRemote.exec(repository)?.[1]?.toLowerCase() ?? new URL(repository).host.toLowerCase())
+      ? (scpRemote.exec(repository)?.[1]?.toLowerCase() ??
+          (new URL(repository).protocol === "ssh:"
+            ? new URL(repository).hostname
+            : new URL(repository).host
+          ).toLowerCase())
       : null;
   const segments = repository.replace(/\/$/, "").split("/");
   return (provider === "github" && segments.length === 3) ||
