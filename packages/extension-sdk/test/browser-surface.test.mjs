@@ -219,7 +219,7 @@ NodeTest.test("t3.browser/surface contract surface is named, versioned and grant
 
 NodeTest.test("t3.browser/capture is a host-local grant, never a brokered API", () => {
   NodeAssert.equal(BROWSER_CAPTURE, "t3.browser/capture");
-  NodeAssert.equal(BROWSER_CAPTURE_VERSION, "1.1.0");
+  NodeAssert.equal(BROWSER_CAPTURE_VERSION, "1.2.0");
   NodeAssert.deepEqual(BROWSER_CAPTURE_REQUIRED_GRANTS, [
     "t3.browser/sessions",
     "t3.browser/capture",

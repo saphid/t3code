@@ -36,8 +36,8 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddressInput, committedAddress } from "./addressInput.js";
-import { AnnotateButton, ScreenshotButton } from "./annotateButton.js";
-import { capturePageView, useBrowserCapture } from "./capture.js";
+import { BrowserCaptureButtons } from "./annotateButton.js";
+import { capturePageView } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
 import {
   BrowserFavicon,
@@ -1031,7 +1031,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           : null;
   // Native disables capture until the page is on screen here and while it failed to load.
   const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
-  const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
@@ -1146,20 +1145,12 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
         >
           ⛶
         </button>
-        <ScreenshotButton
+        <BrowserCaptureButtons
           host={host}
-          blockReason={capture.blockReason}
-          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
-          pageFailed={capturePage === "failed"}
-          onCapture={() => capture.capture("page")}
-          style={buttonStyle}
-        />
-        <AnnotateButton
-          host={host}
-          blockReason={capture.blockReason}
-          capturing={capture.state.kind === "capturing" ? capture.state.target : null}
-          pageFailed={capturePage === "failed"}
-          onPick={() => capture.capture("element")}
+          session={session}
+          held={held}
+          page={capturePage}
+          onStatus={setNotice}
           style={buttonStyle}
         />
         {held && live && (

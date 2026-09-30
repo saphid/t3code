@@ -334,6 +334,7 @@ export async function runCaptureToastAction(
   notificationId: string,
   actionId: string,
   signal: AbortSignal,
+  kind: "screenshot" | "recording" = "screenshot",
 ): Promise<void> {
   if (actionId === "reveal") {
     await capture.revealArtifact?.(request);
@@ -343,7 +344,7 @@ export async function runCaptureToastAction(
     actionId === "copy-image"
       ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" }
       : actionId === "copy-path"
-        ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" }
+        ? { run: capture.copyArtifactPath, failTitle: `Unable to copy ${kind} path` }
         : null;
   if (!copy?.run) return;
   const result = await copy.run(request);
@@ -354,7 +355,7 @@ export async function runCaptureToastAction(
       ? {
           notificationId,
           severity: "success",
-          title: "Screenshot saved",
+          title: kind === "recording" ? "Recording saved" : "Screenshot saved",
           body: "",
           flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS },
         }
@@ -362,7 +363,7 @@ export async function runCaptureToastAction(
           notificationId,
           severity: "error",
           title: copy.failTitle,
-          body: copyFailureBody(result.failure.reason),
+          body: copyFailureBody(result.failure.reason).replaceAll("screenshot", kind),
         },
     signal,
   );
@@ -381,6 +382,7 @@ export async function serveCaptureToastActions(
   request: BrowserCaptureArtifactActionRequest,
   notificationId: string,
   signal: AbortSignal,
+  kind: "screenshot" | "recording" = "screenshot",
 ): Promise<void> {
   while (!signal.aborted) {
     let outcome;
@@ -397,6 +399,7 @@ export async function serveCaptureToastActions(
       notificationId,
       outcome.actionId,
       signal,
+      kind,
     ).catch(() => {});
   }
 }

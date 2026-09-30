@@ -117,7 +117,7 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
   const host = (grants: Partial<BrowserCaptureBinding["grants"]> = {}) =>
     bind({
       grants: {
-        capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE],
+        capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.browser/artifact-actions"],
         projectIds: ["project-a"],
         ...grants,
       },
@@ -352,6 +352,22 @@ describe("browser capture bridge", () => {
 
   describe("artifact actions", () => {
     const request = { context, artifactRef: ARTIFACT_REF };
+
+    it("requires the artifact-actions grant without denying screenshot capture", async () => {
+      const h = harness();
+      const host = h.host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE] });
+      expect(await host.capture({ context, session, target: "page" })).toMatchObject({ ok: true });
+      expect(await host.revealArtifact!(request)).toMatchObject({
+        ok: false,
+        failure: { reason: "grant-denied", grant: "t3.browser/artifact-actions" },
+      });
+      expect(await host.copyArtifactToClipboard!(request)).toMatchObject({ ok: false });
+      expect(await host.copyArtifactPath!(request)).toMatchObject({ ok: false });
+      expect(host.artifactActions?.reveal.supported).toBe(false);
+      expect(h.preview.revealArtifact).not.toHaveBeenCalled();
+      expect(h.preview.copyArtifactToClipboard).not.toHaveBeenCalled();
+      expect(h.clipboardText).toEqual([]);
+    });
 
     it("acts on the file its own page capture saved, through the desktop bridge", async () => {
       const h = harness();

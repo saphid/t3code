@@ -76,10 +76,13 @@ import {
   findActiveBrowserRecordingRuntimeTabId,
   readActiveBrowserRecordingTabIds,
   readActiveBrowserRecordingTargets,
+  readBrowserRecordingPhase,
   startBrowserRecording,
   stopBrowserRecording,
   stopBrowserRecordingForUpload,
+  subscribeBrowserRecording,
 } from "./browserRecording";
+import { createBrowserCaptureBridge } from "~/extensions/browserCaptureBridge";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
@@ -171,6 +174,66 @@ describe("browser recording", () => {
 
     await stopBrowserRecording("recording-tab");
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
+  });
+
+  it("runs SDK capture through the native recorder and transfers the saved artifact once", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("sdk-env"),
+      threadId: ThreadId.make("sdk-thread"),
+    };
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", "sdk-tab");
+    const context = {
+      client: "desktop",
+      resource: {
+        namespace: "test.browser",
+        id: "view",
+        environmentId: threadRef.environmentId,
+        projectId: "sdk-project",
+        threadId: threadRef.threadId,
+      },
+    };
+    const upload = vi.fn(async (_threadRef, artifact, blob: Blob) => {
+      expect(save).toHaveBeenCalledOnce();
+      expect(artifact.path).toBe("/tmp/recording-test.webm");
+      expect(blob.type).toBe("video/webm;codecs=vp9");
+      expect(readBrowserRecordingPhase(runtimeTabId)).toBe("idle");
+      return "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+    });
+    const lifetime = new AbortController();
+    const host = createBrowserCaptureBridge(threadRef.environmentId, {
+      resolveThreadScope: () => ({ projectId: "sdk-project", authoritative: true }),
+      serverEpoch: () => "epoch-1",
+      presented: () => true,
+      uploadRecording: upload,
+      platform: () => "MacIntel",
+    })({
+      grants: {
+        capabilities: ["t3.browser/sessions", "t3.browser/capture", "t3.browser/recording"],
+        projectIds: ["sdk-project"],
+      },
+      lifetime: lifetime.signal,
+    });
+    const phases = [readBrowserRecordingPhase(runtimeTabId)];
+    const unsubscribe = subscribeBrowserRecording(() =>
+      phases.push(readBrowserRecordingPhase(runtimeTabId)),
+    );
+    const request = { context, session: { tabId: "sdk-tab", serverEpoch: "epoch-1" } };
+    expect(await host.startRecording!(request)).toMatchObject({ ok: true });
+    expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    const [first, second] = await Promise.all([
+      host.stopRecording!(request),
+      host.stopRecording!(request),
+    ]);
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      ok: true,
+      artifact: { artifactRef: "pending-0f1e2d3c-4b5a-4968-8776-655443322110", saved: true },
+    });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(phases).toEqual(["idle", "starting", "recording", "stopping", "idle"]);
+    expect(JSON.stringify(first)).not.toContain("/tmp/");
+    unsubscribe();
+    lifetime.abort();
   });
 
   it("routes gesture-free starts through the desktop capture trigger", async () => {
