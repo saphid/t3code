@@ -268,6 +268,7 @@ const activity: NativePullRequestActivity = {
 };
 
 type Deps = Parameters<typeof createPrsApiProvider>[0];
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const githubProviderApi = (
   overrides: Partial<PullRequestProviderApi["capabilities"]> = {},
@@ -482,7 +483,7 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     }),
   );
 
-  it.effect("includes native viewed states in detail only when the host offers them", () =>
+  it.effect("reads viewed states separately without charging detail for the read", () =>
     Effect.gen(function* () {
       const calls: unknown[] = [];
       const filesViewed = {
@@ -511,12 +512,21 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
           expect(result).not.toHaveProperty("filesViewed");
           expect(result).not.toHaveProperty("capabilities.viewedFiles");
         } else {
-          expect(result).toMatchObject({ capabilities: { viewedFiles: store }, filesViewed });
+          expect(result).toMatchObject({ capabilities: { viewedFiles: store } });
         }
         const schema = PRS_READ_API.methods!.find(
           (method) => method.name === "detail",
         )!.outputSchema;
         expect(new Ajv({ strict: true, addUsedSchema: false }).compile(schema)(result)).toBe(true);
+        expect(result).not.toHaveProperty("filesViewed");
+        expect(result).not.toHaveProperty("filesViewedError");
+        expect(calls).toHaveLength(store === "host" ? 0 : store === "environment" ? 1 : 2);
+        if (store !== undefined) {
+          expect(yield* invoke(provider, "filesViewed", REF, makeContext())).toEqual({
+            ...filesViewed,
+            nextCursor: null,
+          });
+        }
       }
       expect(calls).toEqual([
         { projectId: PROJECT_ID, repository: REF.repository, number: REF.number },
@@ -525,7 +535,44 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
     }),
   );
 
-  it.effect("keeps detail usable and discloses a failed viewed-state read", () =>
+  it.effect("advertises viewed reads only when the scoped provider supports them", () =>
+    Effect.gen(function* () {
+      for (const store of [undefined, "host", "environment"] as const) {
+        const provider = createPrsApiProvider(
+          makeDeps(
+            { list: () => Effect.succeed(listResult) },
+            {
+              registry: fromProviders([githubProviderApi({ viewedFiles: store })]),
+            },
+          ),
+        );
+        const capabilities = yield* invoke(provider, "getCapabilities", {}, makeContext());
+        expect(capabilities).toMatchObject({
+          operations: { "prs.filesViewed": store === "environment" },
+        });
+      }
+      const provider = createPrsApiProvider(
+        makeDeps(
+          { list: () => Effect.succeed(listResult) },
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                { viewedFiles: "host" },
+                {
+                  getFilesViewed: () => Effect.succeed({ files: [], truncated: false }),
+                },
+              ),
+            ]),
+          },
+        ),
+      );
+      expect(yield* invoke(provider, "getCapabilities", {}, makeContext())).toMatchObject({
+        operations: { "prs.filesViewed": true },
+      });
+    }),
+  );
+
+  it.effect("keeps detail independent while a separate viewed-state read fails by name", () =>
     Effect.gen(function* () {
       const provider = createPrsApiProvider(
         makeDeps({
@@ -541,15 +588,18 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       const result = yield* invoke(provider, "detail", REF, makeContext());
       expect(result).toHaveProperty("title", detail.title);
       expect(result).not.toHaveProperty("filesViewed");
-      expect(result).toHaveProperty("filesViewedError");
+      expect(result).not.toHaveProperty("filesViewedError");
+      const error = yield* invokeError(provider, "filesViewed", REF, makeContext());
+      expect(error.operation).toBe("prs.filesViewed");
+      expect(error.detail).toContain("authenticated");
     }),
   );
 
-  it.effect("bounds viewed-state rows without mutating the native result", () =>
+  it.effect("pages all 500 viewed paths within their own envelope without truncating them", () =>
     Effect.gen(function* () {
       const filesViewed = {
         files: Array.from({ length: 500 }, (_, index) => ({
-          path: `${index}/${"x".repeat(1000)}`,
+          path: `${index}/${"x".repeat(4090)}`,
           state: "viewed" as const,
         })),
         truncated: false,
@@ -564,12 +614,55 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
           filesViewed: () => Effect.succeed(filesViewed),
         }),
       );
-      const result = yield* invoke(provider, "detail", REF, makeContext());
-      expect(result).toMatchObject({ filesViewed: { truncated: true } });
-      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(result);
-      expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(48 * 1024);
+      const delivered: typeof filesViewed.files = [];
+      let cursor: string | null = null;
+      do {
+        const result = (yield* invoke(
+          provider,
+          "filesViewed",
+          { ...REF, ...(cursor === null ? {} : { cursor }) },
+          makeContext(),
+        )) as { files: typeof filesViewed.files; truncated: boolean; nextCursor: string | null };
+        expect(result.truncated).toBe(false);
+        const encoded = yield* encodeJson(result);
+        expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(48 * 1024);
+        expect(
+          new Ajv({ strict: true, addUsedSchema: false }).compile(
+            PRS_READ_API.methods!.find((method) => method.name === "filesViewed")!.outputSchema,
+          )(result),
+        ).toBe(true);
+        delivered.push(...result.files);
+        cursor = result.nextCursor;
+      } while (cursor !== null);
+      expect(delivered).toEqual(filesViewed.files);
       expect(filesViewed.files).toHaveLength(500);
       expect(filesViewed.truncated).toBe(false);
+    }),
+  );
+
+  it.effect("a refresh can invalidate just viewed state through the native service", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const provider = createPrsApiProvider(
+        makeDeps({
+          invalidate: (input) => {
+            calls.push(input);
+            return Effect.void;
+          },
+        }),
+      );
+      yield* invoke(
+        provider,
+        "invalidate",
+        { reference: REF, filesViewedOnly: true },
+        makeContext(),
+      );
+      expect(calls).toEqual([
+        {
+          reference: { projectId: PROJECT_ID, repository: REF.repository, number: REF.number },
+          filesViewedOnly: true,
+        },
+      ]);
     }),
   );
 

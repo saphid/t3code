@@ -4867,6 +4867,33 @@ var __t3Client = (() => {
       observedAt: prsObservedAtField
     }
   };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
   var prsDetailSchema = {
     ...prsDetailSchemaV1_1,
     properties: {
@@ -4877,29 +4904,7 @@ var __t3Client = (() => {
           ...prsCapabilitiesSchema.properties,
           viewedFiles: { enum: ["host", "environment"] }
         }
-      },
-      filesViewed: {
-        type: "object",
-        additionalProperties: false,
-        required: ["files", "truncated"],
-        properties: {
-          files: {
-            type: "array",
-            maxItems: 500,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "state"],
-              properties: {
-                path: { type: "string", minLength: 1, maxLength: 1024 },
-                state: { enum: ["unviewed", "viewed", "dismissed"] }
-              }
-            }
-          },
-          truncated: { type: "boolean" }
-        }
-      },
-      filesViewedError: { type: "string", maxLength: 512 }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5471,15 +5476,58 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
       { version: "1.1.0", method: "list", output: "entries[].observedAt" },
       { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
-      { version: "1.2.0", method: "detail", output: "filesViewed" },
-      { version: "1.2.0", method: "detail", output: "filesViewedError" }
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
   var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
@@ -6308,7 +6356,7 @@ var __t3Client = (() => {
                 additionalProperties: false,
                 required: ["path", "viewed"],
                 properties: {
-                  path: { type: "string", minLength: 1, maxLength: 1024 },
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
                   viewed: { type: "boolean" }
                 }
               }
@@ -6320,10 +6368,7 @@ var __t3Client = (() => {
     ]
   }, {
     baseline: "1.0.0",
-    additions: [
-      { version: "1.1.0", method: "getCapabilities", output: "operations" },
-      { version: "1.1.0", method: "setFilesViewed" }
-    ]
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
@@ -11292,129 +11337,136 @@ ${writeKey}`;
   }
 
   // usePrsFilesViewed.ts
-  function usePrsFilesViewed(host, session, reference, detail, operations, onFailure) {
-    const enabled = prsViewedFilesEnabled(detail?.capabilities.viewedFiles, operations);
-    const scopeKey = reference === null ? "" : prsRefKey(reference);
-    const scope = (0, import_react2.useMemo)(
-      () => ({
-        queued: /* @__PURE__ */ new Map(),
-        sentBy: /* @__PURE__ */ new Map(),
-        answeredFrom: /* @__PURE__ */ new Map(),
-        request: 0,
-        read: 0,
-        timer: null,
-        disposed: false
+  var EMPTY_OVERLAY = /* @__PURE__ */ new Map();
+  function usePrsFilesViewed(host, session, reference, store, operations, readSupported, revision2, onFailure) {
+    const enabled = readSupported && prsViewedFilesEnabled(store, operations);
+    const scope = (0, import_react2.useRef)({
+      queued: /* @__PURE__ */ new Map(),
+      sentBy: /* @__PURE__ */ new Map(),
+      answered: /* @__PURE__ */ new Set(),
+      request: 0,
+      read: 0,
+      timer: null,
+      disposed: false
+    });
+    const [read, setRead] = (0, import_react2.useState)({ result: null, error: false });
+    const [pressed, setPressed] = (0, import_react2.useState)({
+      overlay: EMPTY_OVERLAY
+    });
+    const states = (0, import_react2.useMemo)(() => prsFileViewedStates(read.result), [read.result]);
+    const latestFailure = (0, import_react2.useRef)(onFailure);
+    (0, import_react2.useEffect)(() => {
+      latestFailure.current = onFailure;
+    }, [onFailure]);
+    const changeOverlay = (0, import_react2.useCallback)(
+      (change) => setPressed((current) => {
+        const overlay = change(current.overlay);
+        return overlay === current.overlay ? current : { overlay };
       }),
-      [host, session, scopeKey]
+      []
     );
-    const [read, setRead] = (0, import_react2.useState)(null);
-    const [pressed, setPressed] = (0, import_react2.useState)(null);
-    const [failure, setFailure] = (0, import_react2.useState)(null);
-    const result = read?.scope === scope ? read.result : detail?.filesViewed ?? null;
-    const states = (0, import_react2.useMemo)(() => prsFileViewedStates(result), [result]);
-    const overlay = pressed?.scope === scope ? pressed.overlay : /* @__PURE__ */ new Map();
-    const latest = (0, import_react2.useRef)({ states, onFailure });
-    latest.current = { states, onFailure };
-    const changeOverlay = (change) => setPressed((current) => ({
-      scope,
-      overlay: change(current?.scope === scope ? current.overlay : /* @__PURE__ */ new Map())
-    }));
-    const acceptRead = (next) => setRead((current) => ({
-      scope,
-      result: next.filesViewed ?? (current?.scope === scope ? current.result : null),
-      error: next.filesViewedError ?? null
-    }));
-    (0, import_react2.useEffect)(() => {
-      scope.read += 1;
-      if (detail !== null) acceptRead(detail);
-    }, [scope, detail?.filesViewed, detail?.filesViewedError]);
-    (0, import_react2.useEffect)(() => {
-      const pending = /* @__PURE__ */ new Set([...scope.queued.keys(), ...scope.sentBy.keys()]);
-      const answered = /* @__PURE__ */ new Set();
-      for (const [path3, from] of scope.answeredFrom) {
-        if (!pending.has(path3) && from !== states) {
-          answered.add(path3);
-          scope.answeredFrom.delete(path3);
+    const readViewed = (0, import_react2.useCallback)(async () => {
+      const current = scope.current;
+      if (!enabled || reference === null || current.disposed || session.signal.aborted) return;
+      const request = ++current.read;
+      const api = bindApi(prsReadApi, host, session.context, "^1.2.0");
+      const files = [];
+      let cursor = null;
+      let truncated = false;
+      try {
+        do {
+          const page = await api.invoke(
+            "filesViewed",
+            { ...reference, ...cursor === null ? {} : { cursor } },
+            session.signal
+          );
+          if (current.disposed || session.signal.aborted || current.read !== request) return;
+          files.push(...page.files);
+          truncated ||= page.truncated;
+          cursor = page.nextCursor;
+        } while (cursor !== null);
+        const result = { files, truncated, nextCursor: null };
+        const pending = /* @__PURE__ */ new Set([...current.queued.keys(), ...current.sentBy.keys()]);
+        const answered = /* @__PURE__ */ new Set();
+        for (const path3 of current.answered) {
+          if (!pending.has(path3)) {
+            answered.add(path3);
+            current.answered.delete(path3);
+          }
         }
+        const nextStates = prsFileViewedStates(result);
+        changeOverlay((overlay) => prsSettleViewedOverlay(overlay, nextStates, pending, answered));
+        setRead({ result, error: false });
+      } catch {
+        if (!current.disposed && !session.signal.aborted && current.read === request)
+          setRead((current2) => ({ ...current2, error: true }));
       }
-      changeOverlay((current) => prsSettleViewedOverlay(current, states, pending, answered));
-    }, [scope, states]);
+    }, [enabled, reference, host, session, changeOverlay]);
+    (0, import_react2.useEffect)(() => {
+      void readViewed();
+    }, [readViewed, revision2]);
     const flush = () => {
-      scope.timer = null;
-      if (reference === null || scope.queued.size === 0 || session.signal.aborted) return;
-      const files = [...scope.queued].map(([path3, viewed]) => ({ path: path3, viewed }));
-      scope.queued.clear();
-      const request = ++scope.request;
-      for (const file of files) scope.sentBy.set(file.path, request);
+      const current = scope.current;
+      current.timer = null;
+      if (reference === null || current.queued.size === 0 || session.signal.aborted) return;
+      const files = [...current.queued].map(([path3, viewed]) => ({ path: path3, viewed }));
+      current.queued.clear();
+      const request = ++current.request;
+      for (const file of files) current.sentBy.set(file.path, request);
       void bindApi(prsWriteApi, host, session.context, "^1.1.0").invoke("setFilesViewed", { ...reference, files }, session.signal).then(
         () => {
-          if (scope.disposed || session.signal.aborted) return;
+          if (current.disposed || session.signal.aborted) return;
           for (const file of files) {
-            if (scope.sentBy.get(file.path) !== request) continue;
-            scope.sentBy.delete(file.path);
-            if (!scope.queued.has(file.path))
-              scope.answeredFrom.set(file.path, latest.current.states);
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) current.answered.add(file.path);
           }
-          const readRequest = ++scope.read;
-          void bindApi(prsReadApi, host, session.context).invoke("detail", reference, session.signal).then(
-            (next) => {
-              if (!scope.disposed && !session.signal.aborted && scope.read === readRequest)
-                acceptRead(next);
-            },
-            (error) => {
-              if (!scope.disposed && !session.signal.aborted && scope.read === readRequest)
-                setRead((current) => ({
-                  scope,
-                  result: current?.scope === scope ? current.result : result,
-                  error: error instanceof Error ? error.message : "Your ticks could not be read"
-                }));
-            }
-          );
+          void readViewed();
         },
-        (error) => {
-          if (scope.disposed || session.signal.aborted) return;
+        () => {
+          if (current.disposed || session.signal.aborted) return;
           const owned = /* @__PURE__ */ new Set();
           for (const file of files) {
-            if (scope.sentBy.get(file.path) !== request) continue;
-            scope.sentBy.delete(file.path);
-            if (!scope.queued.has(file.path)) owned.add(file.path);
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) owned.add(file.path);
           }
           if (owned.size === 0) return;
-          changeOverlay((current) => prsRevertViewedOverlay(current, owned));
-          setFailure({
-            scope,
-            detail: error instanceof Error ? error.message : "Could not update viewed files"
-          });
-          latest.current.onFailure();
+          changeOverlay((current2) => prsRevertViewedOverlay(current2, owned));
+          latestFailure.current();
         }
       );
     };
     const flushRef = (0, import_react2.useRef)(flush);
     flushRef.current = flush;
     (0, import_react2.useEffect)(() => {
-      scope.disposed = false;
+      const current = scope.current;
+      current.disposed = false;
       return () => {
-        if (scope.timer !== null) {
-          clearTimeout(scope.timer);
-          flush();
+        if (current.timer !== null) {
+          clearTimeout(current.timer);
+          flushRef.current();
         }
-        scope.disposed = true;
+        current.disposed = true;
       };
-    }, [scope]);
+    }, []);
+    const setViewed = (0, import_react2.useCallback)(
+      (path3, viewed) => {
+        if (!enabled) return;
+        changeOverlay((current2) => new Map(current2).set(path3, viewed));
+        const current = scope.current;
+        current.queued.set(path3, viewed);
+        if (current.timer !== null) clearTimeout(current.timer);
+        current.timer = setTimeout(() => flushRef.current(), 400);
+      },
+      [enabled, changeOverlay]
+    );
     return {
       enabled,
-      file: (path3) => prsFileViewed(path3, states, overlay),
-      setViewed: (path3, viewed) => {
-        if (!enabled) return;
-        changeOverlay((current) => new Map(current).set(path3, viewed));
-        setFailure(null);
-        scope.queued.set(path3, viewed);
-        if (scope.timer !== null) clearTimeout(scope.timer);
-        scope.timer = setTimeout(() => flushRef.current(), 400);
-      },
-      truncated: result?.truncated === true,
-      error: read?.scope === scope ? read.error : detail?.filesViewedError ?? null,
-      failure: failure?.scope === scope ? failure.detail : null
+      file: (path3) => prsFileViewed(path3, states, pressed.overlay),
+      setViewed,
+      truncated: read.result?.truncated === true,
+      error: read.error
     };
   }
 
@@ -12509,9 +12561,12 @@ ${writeKey}`;
       }
     );
   }
-  function PrsFileSection({
+  var PrsFileSection = (0, import_react3.memo)(function PrsFileSection2({
     row,
+    enabled,
     viewed,
+    stale,
+    setViewed,
     host
   }) {
     const [collapsed, setCollapsed] = (0, import_react3.useState)(false);
@@ -12563,7 +12618,7 @@ ${writeKey}`;
                 ]
               }
             ),
-            viewed.enabled && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            enabled && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "label",
               {
                 "data-viewed-toggle": "",
@@ -12581,16 +12636,16 @@ ${writeKey}`;
                     "input",
                     {
                       type: "checkbox",
-                      "aria-label": viewed.file(row.path).stale ? "Changed" : "Viewed",
-                      checked: viewed.file(row.path).viewed,
+                      "aria-label": stale ? "Changed" : "Viewed",
+                      checked: viewed,
                       onChange: (event) => {
-                        viewed.setViewed(row.path, event.target.checked);
+                        setViewed(row.path, event.target.checked);
                         setCollapsed(event.target.checked);
                       },
                       style: { margin: 0, accentColor: "var(--primary, #2563eb)" }
                     }
                   ),
-                  viewed.file(row.path).stale ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, label: "This file has been pushed to since you marked it viewed.", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--warning, #b45309)" }, children: "Changed" }) }) : "Viewed"
+                  stale ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, label: "This file has been pushed to since you marked it viewed.", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: "var(--warning, #b45309)" }, children: "Changed" }) }) : "Viewed"
                 ]
               }
             )
@@ -12608,17 +12663,21 @@ ${writeKey}`;
       ] }),
       !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsDiffRow, { row: line }, line.ordinal))
     ] });
-  }
+  });
   function PrsDiffSection(props) {
     const { diff, supported, onLoadMore } = props;
     const viewed = usePrsFilesViewed(
       props.host,
       props.session,
       props.reference,
-      props.detail,
+      props.detail?.capabilities.viewedFiles,
       props.write,
+      props.viewedReadSupported,
+      props.revision,
       props.onViewedFailure
     );
+    const patch = diff.status === "ready" ? diff.delivery.patch : "";
+    const renderable = (0, import_react3.useMemo)(() => renderableFromPatch(patch), [patch]);
     if (!supported) {
       return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Diff streaming is not supported by this host (prs.streamDiff)." });
     }
@@ -12629,7 +12688,6 @@ ${writeKey}`;
       return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: diff.detail });
     }
     const { delivery } = diff;
-    const renderable = renderableFromPatch(delivery.patch);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { ...noteStyle, fontSize: 12 }, children: [
         delivery.diffHashes[0] !== void 0 ? `sha256 ${delivery.diffHashes[0].slice(0, 12)} \xB7 ${delivery.byteLength} bytes` : "empty diff",
@@ -12683,15 +12741,18 @@ ${writeKey}`;
             ]
           }
         ),
-        viewed.enabled && viewed.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
-          "Your ticks could not be read. The boxes are whatever was last read, and empty if nothing has been read yet. ",
-          viewed.error
-        ] }),
-        viewed.enabled && viewed.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
-          "Could not update viewed files. ",
-          viewed.failure
-        ] }),
-        renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsFileSection, { row, viewed, host: props.host }, row.key))
+        viewed.enabled && viewed.error && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: "Your ticks could not be read. The boxes are whatever was last read, and empty if nothing has been read yet." }),
+        renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          PrsFileSection,
+          {
+            row,
+            enabled: viewed.enabled,
+            ...viewed.file(row.path),
+            setViewed: viewed.setViewed,
+            host: props.host
+          },
+          row.key
+        ))
       ] }),
       delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
       delivery.nextCursor !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -13142,6 +13203,14 @@ ${writeKey}`;
       const invalidations = [api.invoke("invalidate", {}, signal)];
       if (selected !== null)
         invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+      if (selected !== null && ops?.["prs.filesViewed"] === true)
+        invalidations.push(
+          bindApi(prsReadApi, host, session.context, "^1.2.0").invoke(
+            "invalidate",
+            { reference: selected, filesViewedOnly: true },
+            signal
+          )
+        );
       void Promise.all(invalidations).then(
         () => {
           if (signal.aborted) return;
@@ -14086,6 +14155,8 @@ ${thread.id}`) === activity,
                       reference: selected,
                       detail: sections.detail,
                       write: writeOps,
+                      viewedReadSupported: ops?.["prs.filesViewed"] === true,
+                      revision: revision2,
                       onViewedFailure: () => {
                         toasts.report(
                           { severity: "error", title: "Could not update viewed files" },

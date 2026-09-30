@@ -270,11 +270,14 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
     }),
   );
 
-  it.effect("does not offer or invoke viewed writes on unsupported providers", () =>
+  it.effect("does not offer unsupported viewed writes and propagates the native refusal", () =>
     Effect.gen(function* () {
       for (const viewedFiles of [undefined, "host"] as const) {
         const deps = makeDeps(
-          {},
+          {
+            setFilesViewed: () =>
+              Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
+          },
           { registry: fromProviders([githubProviderApi({ viewedFiles })]) },
         );
         const provider = createPrsWriteApiProvider(deps);
@@ -285,7 +288,7 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
           files: [{ path: "a.ts", viewed: true }],
         });
         expect(error.detail).toContain("provider-unsupported");
-        expect(deps.calls.filter((call) => call.method === "setFilesViewed")).toHaveLength(0);
+        expect(deps.calls.filter((call) => call.method === "setFilesViewed")).toHaveLength(1);
       }
     }),
   );
@@ -299,7 +302,7 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
       const provider = createPrsWriteApiProvider(deps);
       for (const input of [
         { ...REF, files: [{ path: "", viewed: true }] },
-        { ...REF, files: [{ path: "a".repeat(1025), viewed: true }] },
+        { ...REF, files: [{ path: "a".repeat(4097), viewed: true }] },
         { ...REF, files: [{ path: "a.ts", viewed: "yes" }] },
         { ...REF, files: Array.from({ length: 501 }, () => ({ path: "a.ts", viewed: true })) },
         { ...REF, repository: "other/repo", files: [{ path: "a.ts", viewed: true }] },
@@ -310,6 +313,18 @@ it.layer(NodeServices.layer)("t3.prs/write adapter", (it) => {
         AuthOrchestrationReadScope,
       ]);
       expect(deps.calls.filter((call) => call.method === "setFilesViewed")).toHaveLength(0);
+    }),
+  );
+
+  it.effect("accepts native-length viewed paths without an extra provider probe", () =>
+    Effect.gen(function* () {
+      const deps = makeDeps();
+      const provider = createPrsWriteApiProvider(deps);
+      const files = [{ path: "a".repeat(4096), viewed: true }];
+      expect(yield* invoke(provider, "setFilesViewed", { ...REF, files })).toEqual({});
+      expect(deps.calls.find((call) => call.method === "setFilesViewed")?.input).toMatchObject({
+        files,
+      });
     }),
   );
   it.effect("reports declared write support from the bound project's provider", () =>

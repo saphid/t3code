@@ -47,7 +47,16 @@ import {
   type ClientHost,
 } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
 import { usePrsFilesViewed } from "./usePrsFilesViewed.js";
@@ -1637,13 +1646,19 @@ function PrsDiffRow({ row }: { row: ReturnType<typeof fileRows>[number] }) {
   );
 }
 
-function PrsFileSection({
+const PrsFileSection = memo(function PrsFileSection({
   row,
+  enabled,
   viewed,
+  stale,
+  setViewed,
   host,
 }: {
   row: DiffFileRow;
-  viewed: ReturnType<typeof usePrsFilesViewed>;
+  enabled: boolean;
+  viewed: boolean;
+  stale: boolean;
+  setViewed: (path: string, viewed: boolean) => void;
   host: ClientHost;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -1687,7 +1702,7 @@ function PrsFileSection({
             {fileStatLabel(row) !== "" ? ` ${fileStatLabel(row)}` : ""}
           </span>
         </span>
-        {viewed.enabled && (
+        {enabled && (
           <label
             data-viewed-toggle=""
             onClick={(event) => event.stopPropagation()}
@@ -1702,15 +1717,15 @@ function PrsFileSection({
           >
             <input
               type="checkbox"
-              aria-label={viewed.file(row.path).stale ? "Changed" : "Viewed"}
-              checked={viewed.file(row.path).viewed}
+              aria-label={stale ? "Changed" : "Viewed"}
+              checked={viewed}
               onChange={(event) => {
-                viewed.setViewed(row.path, event.target.checked);
+                setViewed(row.path, event.target.checked);
                 setCollapsed(event.target.checked);
               }}
               style={{ margin: 0, accentColor: "var(--primary, #2563eb)" }}
             />
-            {viewed.file(row.path).stale ? (
+            {stale ? (
               <Tooltip host={host} label="This file has been pushed to since you marked it viewed.">
                 <span style={{ color: "var(--warning, #b45309)" }}>Changed</span>
               </Tooltip>
@@ -1733,7 +1748,7 @@ function PrsFileSection({
       {!collapsed && rows.map((line) => <PrsDiffRow key={line.ordinal} row={line} />)}
     </section>
   );
-}
+});
 
 function PrsDiffSection(props: {
   diff: PrsDiffState;
@@ -1744,6 +1759,8 @@ function PrsDiffSection(props: {
   reference: PrsRef | null;
   detail: PrsDetail | null;
   write: PrsWriteOperationsSupport | null;
+  viewedReadSupported: boolean;
+  revision: string;
   onViewedFailure: () => void;
 }) {
   const { diff, supported, onLoadMore } = props;
@@ -1751,10 +1768,14 @@ function PrsDiffSection(props: {
     props.host,
     props.session,
     props.reference,
-    props.detail,
+    props.detail?.capabilities.viewedFiles,
     props.write,
+    props.viewedReadSupported,
+    props.revision,
     props.onViewedFailure,
   );
+  const patch = diff.status === "ready" ? diff.delivery.patch : "";
+  const renderable = useMemo(() => renderableFromPatch(patch), [patch]);
   if (!supported) {
     return (
       <p role="note" style={noteStyle}>
@@ -1773,7 +1794,6 @@ function PrsDiffSection(props: {
     );
   }
   const { delivery } = diff;
-  const renderable = renderableFromPatch(delivery.patch);
   return (
     <div>
       <p style={{ ...noteStyle, fontSize: 12 }}>
@@ -1829,19 +1849,21 @@ function PrsDiffSection(props: {
               )}
             </p>
           )}
-          {viewed.enabled && viewed.error !== null && (
+          {viewed.enabled && viewed.error && (
             <p role="alert" style={noteStyle}>
               Your ticks could not be read. The boxes are whatever was last read, and empty if
-              nothing has been read yet. {viewed.error}
-            </p>
-          )}
-          {viewed.enabled && viewed.failure !== null && (
-            <p role="alert" style={noteStyle}>
-              Could not update viewed files. {viewed.failure}
+              nothing has been read yet.
             </p>
           )}
           {renderable.files.map((row) => (
-            <PrsFileSection key={row.key} row={row} viewed={viewed} host={props.host} />
+            <PrsFileSection
+              key={row.key}
+              row={row}
+              enabled={viewed.enabled}
+              {...viewed.file(row.path)}
+              setViewed={viewed.setViewed}
+              host={props.host}
+            />
           ))}
         </div>
       )}
@@ -2493,6 +2515,14 @@ export function PullRequestsPanel(props: {
     const invalidations = [api.invoke("invalidate", {}, signal)];
     if (selected !== null)
       invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+    if (selected !== null && ops?.["prs.filesViewed"] === true)
+      invalidations.push(
+        bindApi(prsReadApi, host, session.context, "^1.2.0").invoke(
+          "invalidate",
+          { reference: selected, filesViewedOnly: true },
+          signal,
+        ),
+      );
     void Promise.all(invalidations)
       .then(
         () => {
@@ -3772,6 +3802,8 @@ export function PullRequestsPanel(props: {
                     reference={selected}
                     detail={sections.detail}
                     write={writeOps}
+                    viewedReadSupported={ops?.["prs.filesViewed"] === true}
+                    revision={revision}
                     onViewedFailure={() => {
                       toasts.report(
                         { severity: "error", title: "Could not update viewed files" },

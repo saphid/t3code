@@ -54,7 +54,7 @@ const filesViewedInput = decode(
     ...refFields,
     files: Schema.Array(
       Schema.Struct({
-        path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+        path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
         viewed: Schema.Boolean,
       }),
     ).check(Schema.isMaxLength(500)),
@@ -496,19 +496,9 @@ export function createPrsWriteApiProvider(dependencies: PrsWriteApiDependencies)
           applied: safe.applied,
         }),
       ),
-      setFilesViewed: runMethod({
-        operation: "setFilesViewed",
-        decode: filesViewedInput,
-        run: Effect.fn("prs.setFilesViewed")(function* (safe, scope) {
-          const ref = yield* bindRef(scope, safe);
-          const bound = yield* bindRepository(scope);
-          if (writeOperationsSupport(bound.api)["prs.setFilesViewed"] !== true) {
-            return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
-          }
-          yield* dependencies.pullRequests.setFilesViewed({ ...ref, files: safe.files });
-          return {} satisfies PrsWriteEmptyResult;
-        }),
-      }),
+      setFilesViewed: writeOp("setFilesViewed", filesViewedInput, (safe, ref) =>
+        dependencies.pullRequests.setFilesViewed({ ...ref, files: safe.files }),
+      ),
     }),
   };
 }

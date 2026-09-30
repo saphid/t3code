@@ -3424,8 +3424,6 @@ export type PrsViewerPermissions = {
 };
 export type PrsDetail = {
   readonly provider: PrsProviderKind;
-  readonly filesViewed?: PrsFilesViewedResult;
-  readonly filesViewedError?: string;
   readonly capabilities: PrsCapabilities;
   readonly viewerPermissions: PrsViewerPermissions;
   readonly projectId: string;
@@ -3565,7 +3563,10 @@ export type PrsLabelCandidateList = {
   readonly candidates: readonly PrsLabelCandidate[];
   readonly truncated: boolean;
 };
-export type PrsInvalidateInput = { readonly reference?: PrsRef };
+export type PrsInvalidateInput = {
+  readonly reference?: PrsRef;
+  readonly filesViewedOnly?: boolean;
+};
 export type PrsDiffInput = PrsRef & {
   /** One commit's own changes, rather than the whole change request. */
   readonly commit?: string;
@@ -3618,6 +3619,7 @@ export type PrsRefreshedEvent =
   | { readonly kind: "closed"; readonly reason: "overflow" | "refresh-error" };
 /** Per-operation support flags keyed by `prs.<method>`/`prs.<stream>`. */
 export type PrsOperationsSupport = {
+  readonly "prs.filesViewed"?: boolean;
   readonly "prs.list": boolean;
   readonly "prs.listStats": boolean;
   readonly "prs.summary": boolean;
@@ -4049,10 +4051,39 @@ const prsDetailSchemaV1_1 = {
   },
 } as const;
 export type PrsFileViewedState = "unviewed" | "viewed" | "dismissed";
+export type PrsFilesViewedInput = PrsRef & { readonly cursor?: string };
 export type PrsFilesViewedResult = {
   readonly files: readonly { readonly path: string; readonly state: PrsFileViewedState }[];
   readonly truncated: boolean;
+  readonly nextCursor: string | null;
 };
+const prsFilesViewedSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["files", "truncated", "nextCursor"],
+  properties: {
+    files: {
+      type: "array",
+      maxItems: 500,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "state"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          state: { enum: ["unviewed", "viewed", "dismissed"] },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+    nextCursor: {
+      type: ["string", "null"],
+      minLength: 1,
+      maxLength: 3,
+      pattern: "^[1-9][0-9]{0,2}$",
+    },
+  },
+} as const;
 const prsDetailSchema = {
   ...prsDetailSchemaV1_1,
   properties: {
@@ -4064,28 +4095,6 @@ const prsDetailSchema = {
         viewedFiles: { enum: ["host", "environment"] },
       },
     },
-    filesViewed: {
-      type: "object",
-      additionalProperties: false,
-      required: ["files", "truncated"],
-      properties: {
-        files: {
-          type: "array",
-          maxItems: 500,
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["path", "state"],
-            properties: {
-              path: { type: "string", minLength: 1, maxLength: 1024 },
-              state: { enum: ["unviewed", "viewed", "dismissed"] },
-            },
-          },
-        },
-        truncated: { type: "boolean" },
-      },
-    },
-    filesViewedError: { type: "string", maxLength: 512 },
   },
 } as const;
 const prsCommentSchema = {
@@ -4494,6 +4503,7 @@ type PrsReadApi = TypedApi<{
   listStats: { input: PrsListStatsInput; output: PrsListStatsResult };
   summary: { input: PrsRef; output: PrsSummary };
   detail: { input: PrsRef; output: PrsDetail };
+  filesViewed: { input: PrsFilesViewedInput; output: PrsFilesViewedResult };
   activity: { input: PrsRef; output: PrsActivity };
   threadComments: { input: PrsThreadCommentsInput; output: PrsThreadCommentsResult };
   stack: { input: PrsRef; output: PrsStack | null };
@@ -4701,12 +4711,61 @@ function prsReadDefinition(
  * size never matters; `subscribeRefreshes` mirrors the native refresh
  * counter so a plugin re-reads exactly when the native client would.
  * 1.1.0 adds optional merge preferences and observation times; 1.2.0 adds
- * optional viewed-file capabilities, states and read errors to the detail.
+ * optional viewed-file capabilities and a separate, paged `filesViewed` read.
  * Consumers still default to `^1.0.0` and must treat newer outputs as absent
  * on older hosts.
  */
 export const prsReadApi: PrsReadApi = defineStreamApi<PrsReadStreams>(
-  prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+  {
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods!.map((method) =>
+        method.name === "getCapabilities"
+          ? {
+              ...method,
+              outputSchema: {
+                ...prsCapabilitiesResultSchema,
+                properties: {
+                  ...prsCapabilitiesResultSchema.properties,
+                  operations: {
+                    ...prsOperationsSupportSchema,
+                    properties: {
+                      ...prsOperationsSupportSchema.properties,
+                      "prs.filesViewed": { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            }
+          : method.name === "invalidate"
+            ? {
+                ...method,
+                inputSchema: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    reference: prsRefInputSchema,
+                    filesViewedOnly: { type: "boolean" },
+                  },
+                },
+              }
+            : method,
+      ),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" },
+          },
+        },
+        outputSchema: prsFilesViewedSchema,
+      },
+    ],
+  },
   {
     baseline: "1.0.0",
     additions: [
@@ -4714,8 +4773,8 @@ export const prsReadApi: PrsReadApi = defineStreamApi<PrsReadStreams>(
       { version: "1.1.0", method: "detail", output: "observedAt" },
       { version: "1.1.0", method: "list", output: "entries[].observedAt" },
       { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
-      { version: "1.2.0", method: "detail", output: "filesViewed" },
-      { version: "1.2.0", method: "detail", output: "filesViewedError" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" },
     ],
   },
 );
@@ -5949,7 +6008,7 @@ export const prsWriteApi = defineApi<
                 additionalProperties: false,
                 required: ["path", "viewed"],
                 properties: {
-                  path: { type: "string", minLength: 1, maxLength: 1024 },
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
                   viewed: { type: "boolean" },
                 },
               },
@@ -5962,10 +6021,7 @@ export const prsWriteApi = defineApi<
   },
   {
     baseline: "1.0.0",
-    additions: [
-      { version: "1.1.0", method: "getCapabilities", output: "operations" },
-      { version: "1.1.0", method: "setFilesViewed" },
-    ],
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }],
   },
 );
 export const PRS_WRITE_API = prsWriteApi.definition;

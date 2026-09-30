@@ -37,11 +37,22 @@ const frames = [
 function mountViewed({
   store = "host",
   support = true,
+  readSupport = true,
   files = [],
   truncated = false,
   write = () => ({}),
+  read,
+  detailRead,
+  patchText = patch,
+  notifications = false,
 } = {}) {
   let snapshot = { filesViewed: { files, truncated } };
+  const patchHash = NodeCrypto.createHash("sha256").update(patchText).digest("hex");
+  const diffFrames = [
+    { ...frames[0], diffHash: patchHash, diffByteLength: Buffer.byteLength(patchText) },
+    { ...frames[1], data: patchText },
+    { ...frames[2], payloadSha256: patchHash },
+  ];
   const base = defaultHandlers();
   const handlers = {
     ...base,
@@ -50,6 +61,7 @@ function mountViewed({
       operations: {
         ...base["t3.prs/read#getCapabilities"]().operations,
         "prs.streamDiff": true,
+        ...(readSupport === null ? {} : { "prs.filesViewed": store !== null && readSupport }),
       },
     }),
     "t3.prs/write#getCapabilities": () => ({
@@ -61,13 +73,26 @@ function mountViewed({
     }),
     "t3.prs/read#detail": () => {
       const detail = detailOf();
-      return {
+      const result = {
         ...detail,
         capabilities: { ...detail.capabilities, ...(store === null ? {} : { viewedFiles: store }) },
         ...snapshot,
       };
+      return detailRead === undefined ? result : detailRead(result);
     },
     "t3.prs/write#setFilesViewed": write,
+    "t3.prs/read#filesViewed": (input) =>
+      read === undefined ? { ...snapshot.filesViewed, nextCursor: null } : read(input),
+    ...(notifications
+      ? {
+          "t3.ui/notifications#getCapabilities": () => ({
+            adapter: "web",
+            operations: { notify: true, update: true },
+            clients: ["web"],
+          }),
+          "t3.ui/notifications#notify": () => ({ notificationId: "viewed-failure" }),
+        }
+      : {}),
   };
   const view = mount(
     (host, session) =>
@@ -83,7 +108,7 @@ function mountViewed({
       subscribeApi: (request, signal) =>
         (async function* () {
           if (request.name === "streamDiff") {
-            for (const [sequence, value] of frames.entries())
+            for (const [sequence, value] of diffFrames.entries())
               yield { streamId: "diff", sequence, type: "data", value };
           } else {
             await new Promise((resolve) =>
@@ -120,7 +145,7 @@ NodeTest.test(
   async (context) => {
     context.mock.timers.enable({ apis: ["setTimeout"] });
     const pending = deferred();
-    const view = mountViewed({ write: () => pending.promise });
+    const view = mountViewed({ write: () => pending.promise, notifications: true });
     try {
       await flush();
       NodeAssert.equal(checkbox(view).props.checked, false);
@@ -136,7 +161,13 @@ NodeTest.test(
       pending.reject(new Error("host refused"));
       await flush();
       NodeAssert.equal(checkbox(view).props.checked, false);
-      NodeAssert.match(view.text(), /Could not update viewed files/);
+      NodeAssert.doesNotMatch(view.text(), /host refused/);
+      NodeAssert.equal(view.renderer.root.findAll((node) => node.props.role === "alert").length, 0);
+      NodeAssert.equal(
+        view.calls.filter((call) => call.id === "t3.ui/notifications" && call.method === "notify")
+          .length,
+        1,
+      );
       await setViewed(view, false);
       NodeAssert.equal(view.has("Collapse a.ts"), true);
     } finally {
@@ -169,6 +200,12 @@ NodeTest.test(
       NodeAssert.equal(checkbox(view).props.checked, false);
       NodeAssert.equal(checkbox(view).props["aria-label"], "Changed");
       NodeAssert.match(view.text(), /Changed/);
+      NodeAssert.equal(view.calls.filter((call) => call.method === "detail").length, 1);
+      NodeAssert.equal(view.calls.filter((call) => call.method === "filesViewed").length, 2);
+      NodeAssert.equal(
+        view.calls.find((call) => call.method === "filesViewed").versionRange,
+        "^1.2.0",
+      );
     } finally {
       view.unmount();
     }
@@ -201,7 +238,13 @@ NodeTest.test("a failed earlier request cannot roll back a later press", async (
 });
 
 NodeTest.test("old or unsupported hosts expose no viewed controls", async () => {
-  for (const options of [{ store: null }, { support: false }, { support: null }]) {
+  for (const options of [
+    { store: null },
+    { support: false },
+    { support: null },
+    { readSupport: false },
+    { readSupport: null },
+  ]) {
     const view = mountViewed(options);
     try {
       await flush();
@@ -213,3 +256,123 @@ NodeTest.test("old or unsupported hosts expose no viewed controls", async () => 
     }
   }
 });
+
+NodeTest.test(
+  "late panel detail cannot retire a press against stale viewed fields",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const staleDetail = deferred();
+    let details = 0;
+    let reads = 0;
+    let oldDetail;
+    const view = mountViewed({
+      detailRead: (value) => {
+        if (++details === 1) return value;
+        oldDetail = value;
+        return staleDetail.promise;
+      },
+      read: () => ({
+        files: ++reads < 3 ? [] : [{ path: "a.ts", state: "viewed" }],
+        truncated: false,
+        nextCursor: null,
+      }),
+    });
+    try {
+      await flush();
+      await act(async () => view.find("Refresh").props.onClick());
+      await flush();
+      await setViewed(view, true);
+      await send(context);
+      staleDetail.resolve({ ...oldDetail, title: "Late detail landed" });
+      await flush();
+      NodeAssert.match(view.text(), /Late detail landed/);
+      NodeAssert.equal(checkbox(view).props.checked, true);
+      NodeAssert.equal(details, 2);
+      NodeAssert.equal(reads, 3);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.test(
+  "a tick preserves unrelated file render identity through write and re-read",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const view = mountViewed({ patchText: patch + patch.replaceAll("a.ts", "b.ts") });
+    try {
+      await flush();
+      const other = () =>
+        view.renderer.root.findAll(
+          (node) => node.type === "section" && node.props["aria-label"] === "b.ts",
+        )[0];
+      const children = other().props.children;
+      await setViewed(view, true);
+      NodeAssert.ok(
+        other().props.children === children,
+        "an unrelated file must not re-render on a press",
+      );
+      view.setSnapshot({
+        filesViewed: { files: [{ path: "a.ts", state: "viewed" }], truncated: false },
+      });
+      await send(context);
+      NodeAssert.ok(
+        other().props.children === children,
+        "an unrelated file must not re-render on settlement",
+      );
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.test("Refresh invalidates viewed cache and reads every dedicated page", async () => {
+  const view = mountViewed({
+    read: (input) =>
+      input.cursor === undefined
+        ? { files: [], truncated: false, nextCursor: "1" }
+        : { files: [{ path: "a.ts", state: "viewed" }], truncated: false, nextCursor: null },
+  });
+  try {
+    await flush();
+    NodeAssert.equal(checkbox(view).props.checked, true);
+    await act(async () => view.find("Refresh").props.onClick());
+    await flush();
+    NodeAssert.ok(
+      view.calls.some(
+        (call) => call.method === "invalidate" && call.input.filesViewedOnly === true,
+      ),
+    );
+    NodeAssert.equal(view.calls.filter((call) => call.method === "filesViewed").length, 4);
+  } finally {
+    view.unmount();
+  }
+});
+
+NodeTest.test(
+  "a pre-write read landing last cannot replace fresher viewed state",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const stale = deferred();
+    const fresh = deferred();
+    let reads = 0;
+    const view = mountViewed({ read: () => (++reads === 1 ? stale.promise : fresh.promise) });
+    try {
+      await flush();
+      await setViewed(view, true);
+      await send(context);
+      fresh.resolve({
+        files: [{ path: "a.ts", state: "viewed" }],
+        truncated: false,
+        nextCursor: null,
+      });
+      await flush();
+      stale.resolve({ files: [], truncated: false, nextCursor: null });
+      await flush();
+      NodeAssert.equal(checkbox(view).props.checked, true);
+      NodeAssert.equal(reads, 2);
+    } finally {
+      view.unmount();
+    }
+  },
+);

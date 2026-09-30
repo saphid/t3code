@@ -45,8 +45,28 @@ import {
   toggleAllDiffFiles,
   toggleCollapsedKey,
   readWithRetry,
+  resolveDiffPath,
   turnChoices,
 } from "./viewModel.ts";
+
+NodeTest.test("git-quoted paths resolve to native file names for every diff consumer", () => {
+  NodeAssert.equal(resolveDiffPath('"b/src/caf\\303\\251.ts"'), "src/café.ts");
+  NodeAssert.equal(resolveDiffPath("b/src/caf\\303\\251.ts"), "src/café.ts");
+  NodeAssert.equal(resolveDiffPath('"a/line\\t\\\"name\\\\.ts"'), 'line\t"name\\.ts');
+  NodeAssert.equal(resolveDiffPath("b/src/plain.ts"), "src/plain.ts");
+  NodeAssert.equal(resolveDiffPath("/dev/null"), "/dev/null");
+  const quoted =
+    'diff --git "a/src/caf\\303\\251.ts" "b/src/caf\\303\\251.ts"\n--- "a/src/caf\\303\\251.ts"\n+++ "b/src/caf\\303\\251.ts"\n@@ -1 +1 @@\n-old\n+new\n';
+  const rendered = renderableFromPatch(quoted);
+  NodeAssert.equal(rendered.kind, "files");
+  NodeAssert.equal(rendered.files[0].path, "src/café.ts");
+  NodeAssert.equal(displayPath(rendered.files[0]), "src/café.ts");
+  const binary =
+    'diff --git "a/src/caf\\303\\251.bin" "b/src/caf\\303\\251.bin"\nBinary files "a/src/caf\\303\\251.bin" and "b/src/caf\\303\\251.bin" differ\n';
+  NodeAssert.deepEqual([...binaryPathsFromPatch(binary)], ["src/café.bin"]);
+  const gitBinary = binary.replace(/Binary files[^\n]+/, "GIT binary patch");
+  NodeAssert.deepEqual([...binaryPathsFromPatch(gitBinary)], ["src/café.bin"]);
+});
 
 // A real git-shaped working-tree patch: tracked change with two hunks
 // (net +1 line, so old/new gap line numbers diverge), a deletion, an

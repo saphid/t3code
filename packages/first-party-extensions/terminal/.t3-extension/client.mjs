@@ -4876,6 +4876,33 @@ var __t3Client = (() => {
       observedAt: prsObservedAtField
     }
   };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
   var prsDetailSchema = {
     ...prsDetailSchemaV1_1,
     properties: {
@@ -4886,29 +4913,7 @@ var __t3Client = (() => {
           ...prsCapabilitiesSchema.properties,
           viewedFiles: { enum: ["host", "environment"] }
         }
-      },
-      filesViewed: {
-        type: "object",
-        additionalProperties: false,
-        required: ["files", "truncated"],
-        properties: {
-          files: {
-            type: "array",
-            maxItems: 500,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "state"],
-              properties: {
-                path: { type: "string", minLength: 1, maxLength: 1024 },
-                state: { enum: ["unviewed", "viewed", "dismissed"] }
-              }
-            }
-          },
-          truncated: { type: "boolean" }
-        }
-      },
-      filesViewedError: { type: "string", maxLength: 512 }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5480,15 +5485,58 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
       { version: "1.1.0", method: "list", output: "entries[].observedAt" },
       { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
-      { version: "1.2.0", method: "detail", output: "filesViewed" },
-      { version: "1.2.0", method: "detail", output: "filesViewedError" }
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
   var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
@@ -6317,7 +6365,7 @@ var __t3Client = (() => {
                 additionalProperties: false,
                 required: ["path", "viewed"],
                 properties: {
-                  path: { type: "string", minLength: 1, maxLength: 1024 },
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
                   viewed: { type: "boolean" }
                 }
               }
@@ -6329,10 +6377,7 @@ var __t3Client = (() => {
     ]
   }, {
     baseline: "1.0.0",
-    additions: [
-      { version: "1.1.0", method: "getCapabilities", output: "operations" },
-      { version: "1.1.0", method: "setFilesViewed" }
-    ]
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";

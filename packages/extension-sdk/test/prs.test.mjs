@@ -59,19 +59,30 @@ NodeTest.test("a provider still registering the published 1.0.0 descriptor is ac
   NodeAssert.doesNotThrow(() => assertProvidedApiOwner("host.prs", PRS_READ_API));
 });
 
-NodeTest.test("viewed state is an optional output-only read addition", () => {
+NodeTest.test("viewed state has its own negotiated read, leaving detail unchanged", () => {
   const detail = methods.detail.outputSchema;
   NodeAssert.ok("viewedFiles" in detail.properties.capabilities.properties);
   NodeAssert.equal(detail.properties.capabilities.required.includes("viewedFiles"), false);
   for (const output of ["filesViewed", "filesViewedError"]) {
-    NodeAssert.ok(output in detail.properties);
-    NodeAssert.equal(detail.required.includes(output), false);
-    NodeAssert.ok(
-      prsReadApi.additions.some(
-        (addition) => addition.version === "1.2.0" && addition.output === output,
-      ),
-    );
+    NodeAssert.equal(output in detail.properties, false);
   }
+  NodeAssert.ok(
+    prsReadApi.additions.some(
+      (addition) =>
+        addition.version === "1.2.0" &&
+        addition.method === "filesViewed" &&
+        addition.output === undefined,
+    ),
+  );
+  NodeAssert.equal(
+    methods.filesViewed.outputSchema.properties.files.items.properties.path.maxLength,
+    4096,
+  );
+  NodeAssert.ok(methods.filesViewed.outputSchema.required.includes("nextCursor"));
+  NodeAssert.ok("filesViewedOnly" in methods.invalidate.inputSchema.properties);
+  NodeAssert.ok(
+    "prs.filesViewed" in methods.getCapabilities.outputSchema.properties.operations.properties,
+  );
   const published = prsReadApiV1_1.definition.methods.find(
     (method) => method.name === "detail",
   ).outputSchema;
@@ -79,6 +90,41 @@ NodeTest.test("viewed state is an optional output-only read addition", () => {
   NodeAssert.equal("viewedFiles" in published.properties.capabilities.properties, false);
   NodeAssert.deepEqual(requireApi(prsReadApi), { id: PRS_READ, versionRange: "^1.0.0" });
 });
+
+NodeTest.test(
+  "viewed reads and cache invalidation negotiate 1.2.0 without raising old reads",
+  async () => {
+    const calls = [];
+    const client = {
+      invokeApi: async (request) => {
+        calls.push(request);
+        return {};
+      },
+    };
+    const context = { resource: { namespace: "test", id: "test", projectId: "p" }, client: "web" };
+    const signal = new AbortController().signal;
+    const ref = { repository: "o/r", number: 3 };
+    await NodeAssert.rejects(
+      bindApi(prsReadApi, client, context).invoke("filesViewed", ref, signal),
+      /needs \^1\.2\.0/,
+    );
+    await NodeAssert.rejects(
+      bindApi(prsReadApi, client, context).invoke(
+        "invalidate",
+        { reference: ref, filesViewedOnly: true },
+        signal,
+      ),
+      /needs \^1\.2\.0/,
+    );
+    NodeAssert.equal(calls.length, 0);
+    await bindApi(prsReadApi, client, context, "^1.2.0").invoke("filesViewed", ref, signal);
+    await bindApi(prsReadApi, client, context).invoke("detail", ref, signal);
+    NodeAssert.deepEqual(
+      calls.map((call) => call.versionRange),
+      ["^1.2.0", "^1.0.0"],
+    );
+  },
+);
 
 NodeTest.test("1.1.0 only adds optional outputs, so default consumers stay on ^1.0.0", async () => {
   for (const [method, member] of [
@@ -149,6 +195,7 @@ NodeTest.test("every operation is read-effected and rides the single t3.prs/read
   NodeAssert.deepEqual(Object.keys(methods).sort(), [
     "activity",
     "detail",
+    "filesViewed",
     "getCapabilities",
     "invalidate",
     "labelCandidates",

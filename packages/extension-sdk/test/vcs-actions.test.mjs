@@ -39,6 +39,14 @@ NodeTest.test("t3.prs/write 1.1.0 retains its frozen 1.0.0 catalogue entry", () 
   NodeAssert.equal(PRS_WRITE_API.id, PRS_WRITE);
   NodeAssert.equal(PRS_WRITE_API.version, "1.1.0");
   NodeAssert.equal(prsWriteApi.definition, PRS_WRITE_API);
+  NodeAssert.equal(
+    prsWriteApi.additions.some((addition) => addition.output === "operations"),
+    false,
+  );
+  NodeAssert.equal(
+    prsMethods.setFilesViewed.inputSchema.properties.files.items.properties.path.maxLength,
+    4096,
+  );
   NodeAssert.deepEqual(
     GENERIC_API_CATALOGUE.filter((d) => d.id === PRS_WRITE),
     [PRS_WRITE_API, prsWriteApiV1.definition],

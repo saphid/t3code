@@ -1,7 +1,7 @@
 import {
   prsReadApi,
   prsWriteApi,
-  type PrsDetail,
+  type PrsCapabilities,
   type PrsFilesViewedResult,
   type PrsRef,
   type PrsWriteOperationsSupport,
@@ -9,164 +9,165 @@ import {
 import { bindApi } from "@t3tools/extension-sdk/capabilities";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   prsFileViewed,
   prsFileViewedStates,
-  prsRefKey,
   prsRevertViewedOverlay,
   prsSettleViewedOverlay,
   prsViewedFilesEnabled,
 } from "./prsViewModel.js";
 
+const EMPTY_OVERLAY: ReadonlyMap<string, boolean> = new Map();
+
 export function usePrsFilesViewed(
   host: ClientHost,
   session: ViewSession,
   reference: PrsRef | null,
-  detail: PrsDetail | null,
+  store: PrsCapabilities["viewedFiles"],
   operations: PrsWriteOperationsSupport | null,
+  readSupported: boolean,
+  revision: string,
   onFailure: () => void,
 ) {
-  const enabled = prsViewedFilesEnabled(detail?.capabilities.viewedFiles, operations);
-  const scopeKey = reference === null ? "" : prsRefKey(reference);
-  const scope = useMemo(
-    () => ({
-      queued: new Map<string, boolean>(),
-      sentBy: new Map<string, number>(),
-      answeredFrom: new Map<string, ReturnType<typeof prsFileViewedStates>>(),
-      request: 0,
-      read: 0,
-      timer: null as ReturnType<typeof setTimeout> | null,
-      disposed: false,
-    }),
-    [host, session, scopeKey],
-  );
+  const enabled = readSupported && prsViewedFilesEnabled(store, operations);
+  const scope = useRef({
+    queued: new Map<string, boolean>(),
+    sentBy: new Map<string, number>(),
+    answered: new Set<string>(),
+    request: 0,
+    read: 0,
+    timer: null as ReturnType<typeof setTimeout> | null,
+    disposed: false,
+  });
   const [read, setRead] = useState<{
-    scope: typeof scope;
     result: PrsFilesViewedResult | null;
-    error: string | null;
-  } | null>(null);
-  const [pressed, setPressed] = useState<{
-    scope: typeof scope;
-    overlay: ReadonlyMap<string, boolean>;
-  } | null>(null);
-  const [failure, setFailure] = useState<{ scope: typeof scope; detail: string } | null>(null);
-  const result = read?.scope === scope ? read.result : (detail?.filesViewed ?? null);
-  const states = useMemo(() => prsFileViewedStates(result), [result]);
-  const overlay = pressed?.scope === scope ? pressed.overlay : new Map<string, boolean>();
-  const latest = useRef({ states, onFailure });
-  latest.current = { states, onFailure };
-  const changeOverlay = (
-    change: (current: ReadonlyMap<string, boolean>) => ReadonlyMap<string, boolean>,
-  ) =>
-    setPressed((current) => ({
-      scope,
-      overlay: change(current?.scope === scope ? current.overlay : new Map()),
-    }));
-
-  const acceptRead = (next: PrsDetail) =>
-    setRead((current) => ({
-      scope,
-      result: next.filesViewed ?? (current?.scope === scope ? current.result : null),
-      error: next.filesViewedError ?? null,
-    }));
+    error: boolean;
+  }>({ result: null, error: false });
+  const [pressed, setPressed] = useState<{ overlay: ReadonlyMap<string, boolean> }>({
+    overlay: EMPTY_OVERLAY,
+  });
+  const states = useMemo(() => prsFileViewedStates(read.result), [read.result]);
+  const latestFailure = useRef(onFailure);
   useEffect(() => {
-    scope.read += 1;
-    if (detail !== null) acceptRead(detail);
-  }, [scope, detail?.filesViewed, detail?.filesViewedError]);
+    latestFailure.current = onFailure;
+  }, [onFailure]);
+  const changeOverlay = useCallback(
+    (change: (current: ReadonlyMap<string, boolean>) => ReadonlyMap<string, boolean>) =>
+      setPressed((current) => {
+        const overlay = change(current.overlay);
+        return overlay === current.overlay ? current : { overlay };
+      }),
+    [],
+  );
 
-  useEffect(() => {
-    const pending = new Set([...scope.queued.keys(), ...scope.sentBy.keys()]);
-    const answered = new Set<string>();
-    for (const [path, from] of scope.answeredFrom) {
-      if (!pending.has(path) && from !== states) {
-        answered.add(path);
-        scope.answeredFrom.delete(path);
+  const readViewed = useCallback(async () => {
+    const current = scope.current;
+    if (!enabled || reference === null || current.disposed || session.signal.aborted) return;
+    const request = ++current.read;
+    const api = bindApi(prsReadApi, host, session.context, "^1.2.0");
+    const files: PrsFilesViewedResult["files"][number][] = [];
+    let cursor: string | null = null;
+    let truncated = false;
+    try {
+      do {
+        const page: PrsFilesViewedResult = await api.invoke(
+          "filesViewed",
+          { ...reference, ...(cursor === null ? {} : { cursor }) },
+          session.signal,
+        );
+        if (current.disposed || session.signal.aborted || current.read !== request) return;
+        files.push(...page.files);
+        truncated ||= page.truncated;
+        cursor = page.nextCursor;
+      } while (cursor !== null);
+      const result = { files, truncated, nextCursor: null };
+      const pending = new Set([...current.queued.keys(), ...current.sentBy.keys()]);
+      const answered = new Set<string>();
+      for (const path of current.answered) {
+        if (!pending.has(path)) {
+          answered.add(path);
+          current.answered.delete(path);
+        }
       }
+      const nextStates = prsFileViewedStates(result);
+      changeOverlay((overlay) => prsSettleViewedOverlay(overlay, nextStates, pending, answered));
+      setRead({ result, error: false });
+    } catch {
+      if (!current.disposed && !session.signal.aborted && current.read === request)
+        setRead((current) => ({ ...current, error: true }));
     }
-    changeOverlay((current) => prsSettleViewedOverlay(current, states, pending, answered));
-  }, [scope, states]);
+  }, [enabled, reference, host, session, changeOverlay]);
+
+  useEffect(() => {
+    void readViewed();
+  }, [readViewed, revision]);
 
   const flush = () => {
-    scope.timer = null;
-    if (reference === null || scope.queued.size === 0 || session.signal.aborted) return;
-    const files = [...scope.queued].map(([path, viewed]) => ({ path, viewed }));
-    scope.queued.clear();
-    const request = ++scope.request;
-    for (const file of files) scope.sentBy.set(file.path, request);
+    const current = scope.current;
+    current.timer = null;
+    if (reference === null || current.queued.size === 0 || session.signal.aborted) return;
+    const files = [...current.queued].map(([path, viewed]) => ({ path, viewed }));
+    current.queued.clear();
+    const request = ++current.request;
+    for (const file of files) current.sentBy.set(file.path, request);
     void bindApi(prsWriteApi, host, session.context, "^1.1.0")
       .invoke("setFilesViewed", { ...reference, files }, session.signal)
       .then(
         () => {
-          if (scope.disposed || session.signal.aborted) return;
+          if (current.disposed || session.signal.aborted) return;
           for (const file of files) {
-            if (scope.sentBy.get(file.path) !== request) continue;
-            scope.sentBy.delete(file.path);
-            if (!scope.queued.has(file.path))
-              scope.answeredFrom.set(file.path, latest.current.states);
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) current.answered.add(file.path);
           }
-          const readRequest = ++scope.read;
-          void bindApi(prsReadApi, host, session.context)
-            .invoke("detail", reference, session.signal)
-            .then(
-              (next) => {
-                if (!scope.disposed && !session.signal.aborted && scope.read === readRequest)
-                  acceptRead(next);
-              },
-              (error: unknown) => {
-                if (!scope.disposed && !session.signal.aborted && scope.read === readRequest)
-                  setRead((current) => ({
-                    scope,
-                    result: current?.scope === scope ? current.result : result,
-                    error: error instanceof Error ? error.message : "Your ticks could not be read",
-                  }));
-              },
-            );
+          void readViewed();
         },
-        (error: unknown) => {
-          if (scope.disposed || session.signal.aborted) return;
+        () => {
+          if (current.disposed || session.signal.aborted) return;
           const owned = new Set<string>();
           for (const file of files) {
-            if (scope.sentBy.get(file.path) !== request) continue;
-            scope.sentBy.delete(file.path);
-            if (!scope.queued.has(file.path)) owned.add(file.path);
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) owned.add(file.path);
           }
           if (owned.size === 0) return;
           changeOverlay((current) => prsRevertViewedOverlay(current, owned));
-          setFailure({
-            scope,
-            detail: error instanceof Error ? error.message : "Could not update viewed files",
-          });
-          latest.current.onFailure();
+          latestFailure.current();
         },
       );
   };
   const flushRef = useRef(flush);
   flushRef.current = flush;
   useEffect(() => {
-    scope.disposed = false;
+    const current = scope.current;
+    current.disposed = false;
     return () => {
-      if (scope.timer !== null) {
-        clearTimeout(scope.timer);
-        flush();
+      if (current.timer !== null) {
+        clearTimeout(current.timer);
+        flushRef.current();
       }
-      scope.disposed = true;
+      current.disposed = true;
     };
-  }, [scope]);
+  }, []);
+
+  const setViewed = useCallback(
+    (path: string, viewed: boolean) => {
+      if (!enabled) return;
+      changeOverlay((current) => new Map(current).set(path, viewed));
+      const current = scope.current;
+      current.queued.set(path, viewed);
+      if (current.timer !== null) clearTimeout(current.timer);
+      current.timer = setTimeout(() => flushRef.current(), 400);
+    },
+    [enabled, changeOverlay],
+  );
 
   return {
     enabled,
-    file: (path: string) => prsFileViewed(path, states, overlay),
-    setViewed: (path: string, viewed: boolean) => {
-      if (!enabled) return;
-      changeOverlay((current) => new Map(current).set(path, viewed));
-      setFailure(null);
-      scope.queued.set(path, viewed);
-      if (scope.timer !== null) clearTimeout(scope.timer);
-      scope.timer = setTimeout(() => flushRef.current(), 400);
-    },
-    truncated: result?.truncated === true,
-    error: read?.scope === scope ? read.error : (detail?.filesViewedError ?? null),
-    failure: failure?.scope === scope ? failure.detail : null,
+    file: (path: string) => prsFileViewed(path, states, pressed.overlay),
+    setViewed,
+    truncated: read.result?.truncated === true,
+    error: read.error,
   };
 }
