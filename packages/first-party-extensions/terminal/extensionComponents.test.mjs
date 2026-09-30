@@ -2446,9 +2446,14 @@ NodeTest.test("saved Close suppression survives component reload (web-r7 S1)", a
   const savedStates = [];
   const invokes = [];
   const commits = [];
+  let closed = false;
   const host = {
     invokeApi: async (request) => {
       invokes.push(request);
+      if (request.id === "t3.terminal/control" && request.method === "close") {
+        closed = true;
+        return {};
+      }
       return { tokens: {}, cssVars: {} };
     },
     subscribeApi: (request, signal) => ({
@@ -2459,7 +2464,9 @@ NodeTest.test("saved Close suppression survives component reload (web-r7 S1)", a
               kind: "snapshot",
               terminals: [
                 sessionMetadata("term-1"),
-                { ...sessionMetadata("term-6"), status: "exited", exitCode: 0 },
+                ...(closed
+                  ? []
+                  : [{ ...sessionMetadata("term-6"), status: "exited", exitCode: 0 }]),
               ],
             },
           };
@@ -2508,7 +2515,7 @@ NodeTest.test("saved Close suppression survives component reload (web-r7 S1)", a
     try {
       NodeAssert.ok(savedStates.length > 0);
       NodeAssert.deepEqual(savedStates.at(-1).terminalIds, ["term-1"]);
-      NodeAssert.deepEqual(savedStates.at(-1).suppressedTerminalIds, ["term-6"]);
+      NodeAssert.deepEqual(savedStates.at(-1).suppressedTerminalIds, []);
       for (const commit of commits)
         NodeAssert.doesNotMatch(commit, /"data-t3-terminal-session":"term-6"/);
       session.restoreState = savedStates.at(-1);
@@ -2516,7 +2523,12 @@ NodeTest.test("saved Close suppression survives component reload (web-r7 S1)", a
       await act(async () => renderer.unmount());
     }
   }
-  NodeAssert.equal(invokes.filter((request) => request.id === "t3.terminal/control").length, 0);
+  NodeAssert.deepEqual(
+    invokes
+      .filter((request) => request.id === "t3.terminal/control")
+      .map(({ method, input }) => [method, input]),
+    [["close", { terminalId: "term-6", deleteHistory: true }]],
+  );
 });
 
 NodeTest.describe("a re-attaching pane hides the dead session's attach error (flash)", () => {
@@ -2530,6 +2542,14 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
       "start-failed",
       "still-unknown",
       "output-failed",
+      "ack-error-r2",
+      "ack-error-snapshot",
+      "ack-exited-r2",
+      "empty-output-r2",
+      "ack-error-empty-r2",
+      "ack-exited-empty-r2",
+      "ack-error-hang-r2",
+      "ack-exited-hang-r2",
       "no-workspace",
     ]) {
       NodeTest.test(
@@ -2570,7 +2590,14 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
               await attach;
               if (outcome === "start-failed") throw new Error("spawn failed");
               recovered = true;
-              return sessionMetadata(request.input.terminalId);
+              return {
+                ...sessionMetadata(request.input.terminalId),
+                status: outcome.startsWith("ack-error")
+                  ? "error"
+                  : outcome.startsWith("ack-exited")
+                    ? "exited"
+                    : "running",
+              };
             },
             subscribeApi: (request, signal) => ({
               async *[Symbol.asyncIterator]() {
@@ -2582,6 +2609,13 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
                     throw new Error(UNKNOWN);
                   if (outage && outcome === "output-failed")
                     throw new Error("Terminal output permission denied");
+                  if (outage && outcome.includes("empty")) return;
+                  if (outage && outcome.includes("hang")) {
+                    await hang(signal);
+                    return;
+                  }
+                  if (outage && outcome === "ack-error-r2")
+                    throw new Error("PTY spawn failed: shell not found");
                   yield {
                     streamId: "recovered",
                     sequence: 1,
@@ -2589,7 +2623,12 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
                       terminalId: "term-1",
                       streamEpoch: "recovered",
                       kind: "snapshot",
-                      status: "running",
+                      status:
+                        outage && outcome === "ack-exited-r2"
+                          ? "exited"
+                          : outage && outcome === "ack-error-snapshot"
+                            ? "error"
+                            : "running",
                       contents: "$ ",
                       retainedByteLength: 2,
                       truncated: false,
@@ -2670,8 +2709,36 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
                 NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
             } else if (outcome === "output-failed") {
               NodeAssert.match(statusText(), /Terminal output permission denied/);
+            } else if (outcome.includes("empty")) {
+              NodeAssert.match(statusText(), /Terminal output ended before a snapshot arrived/);
+            } else if (outcome === "ack-error-r2") {
+              NodeAssert.match(statusText(), /PTY spawn failed: shell not found/);
+            } else if (outcome === "ack-error-snapshot") {
+              NodeAssert.equal(statusText(), "term-1: Terminal is error.");
+              NodeAssert.equal(subscriptions, 3);
+              for (const commit of commits)
+                NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
+            } else if (outcome === "ack-exited-r2") {
+              NodeAssert.doesNotMatch(
+                JSON.stringify(renderer.toJSON()),
+                /"data-t3-terminal-session":"term-1"/,
+              );
+            } else if (outcome.includes("hang")) {
+              NodeAssert.equal(
+                statusText(),
+                `term-1: Terminal is ${outcome.startsWith("ack-error") ? "error" : "exited"}.`,
+              );
+            } else if (outcome === "start-failed") {
+              NodeAssert.match(statusText(), /spawn failed/);
+              for (const commit of commits)
+                NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
             } else {
               NodeAssert.match(statusText(), /Unknown terminal thread/);
+            }
+            if (outcome.endsWith("r2")) {
+              NodeAssert.equal(subscriptions, 3);
+              for (const commit of commits)
+                NodeAssert.doesNotMatch(commit, /Unknown terminal thread/);
             }
             NodeAssert.equal(attempts, 1);
           } finally {
@@ -2785,7 +2852,7 @@ NodeTest.describe("a re-attaching pane hides the dead session's attach error (fl
             NodeAssert.equal(statusText(), "term-1: Connecting…", "no raw error while starting");
             finishAttach();
             await settle();
-            if (startFails) NodeAssert.match(statusText(), /Unknown terminal thread/);
+            if (startFails) NodeAssert.match(statusText(), /spawn failed/);
             else NodeAssert.equal(statusText(), "term-1: Watching live output.");
           } finally {
             await act(async () => renderer.unmount());

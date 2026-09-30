@@ -12338,13 +12338,19 @@ var __t3Client = (() => {
   var isResumableOutputClose = (reason, overflowAttempts) => reason === "identity-changed" || reason === "overflow" && overflowAttempts <= OVERFLOW_RESUBSCRIBE_MAX;
   var OutputReattach = class {
     #running;
+    #attachmentRevision;
     #pending = false;
-    constructor(running) {
+    constructor(running, attachmentRevision = 0) {
       this.#running = running;
+      this.#attachmentRevision = attachmentRevision;
     }
     noteRunning(running) {
       if (running && !this.#running) this.#pending = true;
       this.#running = running;
+    }
+    noteAttachment(attachmentRevision) {
+      if (attachmentRevision !== this.#attachmentRevision) this.#pending = true;
+      this.#attachmentRevision = attachmentRevision;
     }
     /** A subscription reads the current session, so it consumes a latched edge. */
     subscribed() {
@@ -12434,7 +12440,11 @@ var __t3Client = (() => {
   function isPaneReattaching(tab, stream) {
     return stream === "connecting" || tab?.starting === true || tab?.startsWhenShown === true || tab?.outputRecoveryPending === true;
   }
-  function paneStatusText(state2, reattaching) {
+  function paneStatusText(state2, reattaching, tab) {
+    if (!reattaching && state2.status === "error" && state2.ended && state2.statusText.startsWith("Unknown terminal thread:") && tab?.error)
+      return tab.error;
+    if (!reattaching && (tab?.status === "error" || tab?.status === "exited") && (state2.status === "connecting" || state2.status === "error" && state2.ended && state2.statusText.startsWith("Unknown terminal thread:")))
+      return `Terminal is ${tab.status}.`;
     return reattaching && state2.status === "error" && state2.ended ? "Connecting\u2026" : state2.statusText;
   }
   var EMPTY_OUTPUT_BUFFER = {
@@ -12678,7 +12688,7 @@ var __t3Client = (() => {
      * Exited sessions this panel closed whose server `remove` has not landed:
      * list frames still describing them are stale and must not re-add a tab.
      */
-    #closing = /* @__PURE__ */ new Set();
+    #closing = /* @__PURE__ */ new Map();
     #restoredSuppressed;
     #stream = "connecting";
     #panelError = null;
@@ -12711,7 +12721,7 @@ var __t3Client = (() => {
     get snapshot() {
       return {
         terminalIds: [...this.#ids],
-        suppressedTerminalIds: [.../* @__PURE__ */ new Set([...this.#closing, ...this.#restoredSuppressed])],
+        suppressedTerminalIds: [.../* @__PURE__ */ new Set([...this.#closing.keys(), ...this.#restoredSuppressed])],
         activeTerminalId: this.#active,
         groups: this.#groups.map((group) => ({
           id: group.id,
@@ -12731,6 +12741,7 @@ var __t3Client = (() => {
             starting: tab.starting,
             startsWhenShown: meta === null && !tab.starting && !tab.closing && !tab.startFailed,
             outputRecoveryPending: tab.outputRecovery === "pending",
+            attachmentRevision: tab.attachmentRevision,
             exitBanner: tab.exitBanner,
             confirmAction: tab.confirm,
             error: tab.error,
@@ -12745,7 +12756,7 @@ var __t3Client = (() => {
     }
     /** Ids eligible for allocation: client list plus any tab we are tracking. */
     get allocatableTerminalIds() {
-      return [.../* @__PURE__ */ new Set([...this.#ids, ...this.#tabs.keys(), ...this.#closing])];
+      return [.../* @__PURE__ */ new Set([...this.#ids, ...this.#tabs.keys(), ...this.#closing.keys()])];
     }
     #emit() {
       this.#onChange?.();
@@ -12780,6 +12791,7 @@ var __t3Client = (() => {
           closing: false,
           startFailed: false,
           outputRecovery: "idle",
+          attachmentRevision: 0,
           error: null,
           resizeInFlight: null,
           resizePending: null,
@@ -12849,7 +12861,21 @@ var __t3Client = (() => {
      * now, so exits are decided by the pane's output stream (noteOutputSnapshot).
      */
     #observeMeta(next) {
-      this.#tab(next.terminalId).meta = next;
+      const tab = this.#tab(next.terminalId);
+      tab.meta = next;
+      if (!tab.starting && tab.outputRecovery === "pending" && (next.status === "error" || next.status === "exited"))
+        tab.outputRecovery = "attempted";
+    }
+    #completeClose(terminalId) {
+      if (this.#closing.get(terminalId)?.sent) return;
+      const marker = { sent: true };
+      this.#closing.set(terminalId, marker);
+      void this.#control.close({ terminalId, deleteHistory: true }).then(() => {
+        if (this.#disposed || this.#closing.get(terminalId) !== marker) return;
+        this.#closing.delete(terminalId);
+        this.#emit();
+      }).catch(() => {
+      });
     }
     /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */
     noteExit(terminalId, exitCode) {
@@ -12872,8 +12898,7 @@ var __t3Client = (() => {
       if (recovered) tab.outputRecovery = status === "running" ? "idle" : "attempted";
       if (status === "exited") {
         if (tab.starting || tab.closing) return;
-        this.#closing.add(terminalId);
-        void this.#control.close({ terminalId, deleteHistory: true }).catch(() => this.#closing.delete(terminalId));
+        this.#completeClose(terminalId);
         this.#removeTab(terminalId);
         return;
       }
@@ -12889,12 +12914,15 @@ var __t3Client = (() => {
           this.#stream = "live";
           for (const terminal of event.terminals) {
             if (this.#restoredSuppressed.has(terminal.terminalId) && terminal.status === "exited")
-              this.#closing.add(terminal.terminalId);
+              this.#closing.set(terminal.terminalId, { sent: false });
           }
           this.#restoredSuppressed.clear();
-          for (const id2 of this.#closing)
-            if (!event.terminals.some((terminal) => terminal.terminalId === id2))
-              this.#closing.delete(id2);
+          const pendingCloses = [];
+          for (const [id2] of this.#closing) {
+            const terminal = event.terminals.find((terminal2) => terminal2.terminalId === id2);
+            if (!terminal) this.#closing.delete(id2);
+            else if (terminal.status === "exited") pendingCloses.push(id2);
+          }
           const terminals = event.terminals.filter(
             (terminal) => !this.#closing.has(terminal.terminalId)
           );
@@ -12910,10 +12938,14 @@ var __t3Client = (() => {
           }
           this.#active = resolveActiveTerminalId(this.#ids, this.#active);
           this.#syncGroupsFollowingActive();
+          for (const id2 of pendingCloses) this.#completeClose(id2);
           break;
         }
         case "upsert":
-          if (this.#closing.has(event.terminal.terminalId)) return;
+          if (this.#closing.has(event.terminal.terminalId)) {
+            if (event.terminal.status === "exited") this.#completeClose(event.terminal.terminalId);
+            return;
+          }
           this.#observeMeta(event.terminal);
           this.#syncGroups();
           break;
@@ -13095,6 +13127,7 @@ var __t3Client = (() => {
         });
         tab.starting = false;
         if (this.#tabs.get(terminalId) !== tab) return;
+        tab.attachmentRevision += 1;
         this.#liveInput(terminalId, tab).setReady(true);
         this.#observeMeta(meta);
         await this.#drain(terminalId);
@@ -13186,9 +13219,8 @@ var __t3Client = (() => {
     }
     /**
      * Confirmed destructive action. A failed close falls back to a plain
-     * `exit\n` write and saves suppression so its exited row stays hidden on
-     * reload. It is never re-sent: the id is a reusable slot, so a later
-     * listing may be another client's replacement session.
+     * `exit\n` write and saves suppression until the exited session can be
+     * closed once after reconnect. A running replacement is never re-closed.
      */
     async confirmAction(terminalId) {
       const tab = this.#tabs.get(terminalId);
@@ -13200,7 +13232,7 @@ var __t3Client = (() => {
         try {
           await this.#control.close({ terminalId, deleteHistory: true });
         } catch {
-          this.#closing.add(terminalId);
+          this.#closing.set(terminalId, { sent: false });
           try {
             await this.#control.write({ terminalId, data: "exit\n" });
           } catch {
@@ -15514,6 +15546,9 @@ var __t3Client = (() => {
     const shownRef = (0, import_react2.useRef)(shown && visible);
     const runningRef = (0, import_react2.useRef)(running);
     runningRef.current = running;
+    const attachmentRevision = props.sessionState?.attachmentRevision ?? 0;
+    const attachmentRevisionRef = (0, import_react2.useRef)(attachmentRevision);
+    attachmentRevisionRef.current = attachmentRevision;
     const activeRef = (0, import_react2.useRef)(active);
     activeRef.current = active;
     const appearanceVarsRef = (0, import_react2.useRef)(appearanceVars);
@@ -15521,13 +15556,13 @@ var __t3Client = (() => {
     const [streamBlocked, setStreamBlocked] = (0, import_react2.useState)(false);
     const acquireStreamRef = (0, import_react2.useRef)((_mandatory) => {
     });
-    const runningChangedRef = (0, import_react2.useRef)((_running) => {
+    const runningChangedRef = (0, import_react2.useRef)((_running, _attachmentRevision) => {
     });
     (0, import_react2.useEffect)(() => {
       if (!visible) return;
       let stopped = false;
       let run = null;
-      const reattach = new OutputReattach(runningRef.current);
+      const reattach = new OutputReattach(runningRef.current, attachmentRevisionRef.current);
       let retryRegistration = null;
       let brokerRefusals = 0;
       let brokerRefusalTimer = null;
@@ -15633,8 +15668,9 @@ var __t3Client = (() => {
       const resume = () => {
         if (!stopped && run === null && reattach.take()) acquire(shownRef.current);
       };
-      runningChangedRef.current = (next) => {
+      runningChangedRef.current = (next, revision2) => {
         reattach.noteRunning(next);
+        reattach.noteAttachment(revision2);
         resume();
       };
       acquire(shownRef.current);
@@ -15648,8 +15684,8 @@ var __t3Client = (() => {
       };
     }, [host, session, panel, terminalId, attachment, visible, streamKeyPrefix]);
     (0, import_react2.useEffect)(() => {
-      runningChangedRef.current(running);
-    }, [running]);
+      runningChangedRef.current(running, attachmentRevision);
+    }, [running, attachmentRevision]);
     (0, import_react2.useEffect)(() => {
       acquireStreamRef.current(shown && visible);
     }, [shown, visible]);
@@ -15791,7 +15827,7 @@ var __t3Client = (() => {
               children: [
                 terminalId,
                 ": ",
-                paneStatusText(state2, reattaching)
+                paneStatusText(state2, reattaching, props.sessionState)
               ]
             }
           ),
@@ -15841,30 +15877,39 @@ var __t3Client = (() => {
   }
   async function* subscribeOutput(host, context, panel, terminalId, signal, onSuspended) {
     try {
-      yield* bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+      let received = false;
+      const stream = bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
         "subscribe",
         { terminalId },
         signal,
         resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : void 0
       );
+      for await (const frame of stream) {
+        received = true;
+        yield frame;
+      }
+      if (!signal.aborted && !received)
+        throw new Error("Terminal output ended before a snapshot arrived.");
     } catch (error) {
       if (!signal.aborted && !isBrokerStreamRefusal(error)) panel.noteOutputError(terminalId, error);
       throw error;
     }
   }
-  function useTerminalOutput(host, session, panel, terminalId, visible, running) {
+  function useTerminalOutput(host, session, panel, terminalId, visible, running, attachmentRevision) {
     const [state2, setState] = (0, import_react2.useState)(null);
     const pendingRef = (0, import_react2.useRef)(null);
     const runningRef = (0, import_react2.useRef)(running);
     runningRef.current = running;
-    const runningChangedRef = (0, import_react2.useRef)((_running) => {
+    const attachmentRevisionRef = (0, import_react2.useRef)(attachmentRevision);
+    attachmentRevisionRef.current = attachmentRevision;
+    const runningChangedRef = (0, import_react2.useRef)((_running, _attachmentRevision) => {
     });
     (0, import_react2.useEffect)(() => {
       pendingRef.current = null;
       if (!visible || terminalId === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      const reattach = new OutputReattach(runningRef.current);
+      const reattach = new OutputReattach(runningRef.current, attachmentRevisionRef.current);
       let attached = false;
       const attach = () => {
         attached = true;
@@ -15876,8 +15921,9 @@ var __t3Client = (() => {
       const resume = () => {
         if (!signal.aborted && !attached && reattach.take()) attach();
       };
-      runningChangedRef.current = (next) => {
+      runningChangedRef.current = (next, revision2) => {
         reattach.noteRunning(next);
+        reattach.noteAttachment(revision2);
         resume();
       };
       const pump = async () => {
@@ -15967,8 +16013,8 @@ var __t3Client = (() => {
       };
     }, [host, session, panel, terminalId, visible]);
     (0, import_react2.useEffect)(() => {
-      runningChangedRef.current(running);
-    }, [running]);
+      runningChangedRef.current(running, attachmentRevision);
+    }, [running, attachmentRevision]);
     return state2?.terminalId === terminalId ? state2.buffer : null;
   }
   function useFitResize(panel, terminalId, ref) {
@@ -16110,7 +16156,8 @@ var __t3Client = (() => {
       panel,
       textFallback ? activeId : null,
       visible && textFallback,
-      activeTab?.status === "running"
+      activeTab?.status === "running",
+      activeTab?.attachmentRevision ?? 0
     );
     useFitResize(panel, textFallback ? activeId : null, outputRef);
     const outputContents = output?.contents ?? "";
@@ -16533,6 +16580,7 @@ var __t3Client = (() => {
                                     visible,
                                     running: tabById.get(terminalId)?.status === "running",
                                     reattaching: isPaneReattaching(tabById.get(terminalId), snapshot.stream),
+                                    sessionState: tabById.get(terminalId),
                                     assets,
                                     themeVars,
                                     appearanceVars,
@@ -16565,7 +16613,11 @@ var __t3Client = (() => {
                                   activeId,
                                   ":",
                                   " ",
-                                  activeTab.exitBanner ?? (output ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream)) : "Connecting\u2026"),
+                                  activeTab.exitBanner ?? (output ? paneStatusText(
+                                    output,
+                                    isPaneReattaching(activeTab, snapshot.stream),
+                                    activeTab
+                                  ) : "Connecting\u2026"),
                                   activeTab.error ? ` \u2014 ${activeTab.error}` : ""
                                 ]
                               }
