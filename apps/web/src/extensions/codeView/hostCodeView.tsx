@@ -42,7 +42,6 @@ function File(props: CodeViewFileProps) {
   );
 }
 
-/** The web and desktop `ClientHost.codeView`, shared by every installed client. */
 function Editor(props: CodeViewEditorProps) {
   return (
     <Suspense fallback={<CodeViewLoading />}>
@@ -51,4 +50,5 @@ function Editor(props: CodeViewEditorProps) {
   );
 }
 
-export const hostCodeView: ClientCodeView = { version: 2, Diff, File, Editor };
+/** The web and desktop `ClientHost.codeView`, shared by every installed client. */
+export const hostCodeView: ClientCodeView = { version: 1, Diff, File, Editor };

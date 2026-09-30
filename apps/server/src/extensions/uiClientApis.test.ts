@@ -191,34 +191,6 @@ function makeProviders(
   };
 }
 
-describe("code editor capability adapter", () => {
-  it("forwards the grant-free probe to the caller's compatible client", async () => {
-    const bridge = fakeBridge();
-    const { editor } = makeProviders(bridge);
-    await editor.invoke("getCodeViewCapabilities", {}, context, signal, metadata());
-    expect(bridge.invoked[0]).toMatchObject({
-      apiId: "t3.client/editor",
-      method: "getCodeViewCapabilities",
-      input: { target: { kind: "connection", connectionId: "conn-1" } },
-    });
-  });
-
-  it("refuses old clients before sending an unknown method", async () => {
-    const bridge = fakeBridge({
-      targets: [
-        { connectionId: "conn-1", providers: [{ id: "t3.client/editor", version: "1.0.0" }] },
-      ],
-    });
-    const { editor } = makeProviders(bridge);
-    const capabilities = await editor.invoke("getCapabilities", {}, context, signal, metadata());
-    expect(capabilities).toMatchObject({ operations: { getCodeViewCapabilities: false } });
-    await expect(
-      editor.invoke("getCodeViewCapabilities", {}, context, signal, metadata()),
-    ).rejects.toThrow("needs t3.client/editor ^1.1.0");
-    expect(bridge.invoked).toHaveLength(0);
-  });
-});
-
 describe("preferences adapter", () => {
   it("forwards writes as the broker-verified writer's patch", async () => {
     const bridge = fakeBridge();

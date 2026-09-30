@@ -74,6 +74,58 @@ NodeTest.describe("ReadOnlyFileBody", () => {
 });
 
 NodeTest.describe("EditableFileBody", () => {
+  NodeTest.it(
+    "mounts the available editor immediately without discovery or a read-only mount",
+    async () => {
+      const requests = [];
+      const mounts = [];
+      const host = {
+        codeView: {
+          version: 1,
+          Diff: () => null,
+          File: () => {
+            mounts.push("read-only");
+            return e("pre");
+          },
+          Editor: () => {
+            mounts.push("editor");
+            return e("div", { "data-editor": true });
+          },
+        },
+        async discoverApis() {
+          requests.push("discover");
+          throw new Error("offline");
+        },
+        async invokeApi() {
+          requests.push("invoke");
+          throw new Error("offline");
+        },
+      };
+      let root;
+      try {
+        await act(async () => {
+          root = create(
+            e(EditableFileBody, {
+              host,
+              session: { context: {}, signal: new AbortController().signal },
+              documentId: "app.ts",
+              path: "app.ts",
+              contents: "old",
+              wordWrap: null,
+              reveal: null,
+              onChange() {},
+              renderFallback: () => e("pre"),
+            }),
+          );
+        });
+        NodeAssert.deepEqual(mounts, ["editor"]);
+        NodeAssert.deepEqual(requests, []);
+        NodeAssert.equal(root.root.findAllByProps({ role: "status" }).length, 0);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
   NodeTest.it("keeps old or unsupported clients read-only, never a textarea", async () => {
     for (const host of [{}, codeViewHost().host]) {
       let root;
@@ -88,7 +140,6 @@ NodeTest.describe("EditableFileBody", () => {
             wordWrap: null,
             reveal: null,
             onChange() {},
-            onSave() {},
             onSelectionChange() {},
             renderFallback: () => e("pre", {}, "old"),
           }),
@@ -107,6 +158,10 @@ NodeTest.describe("EditableFileBody", () => {
   NodeTest.it("saves the host editor's actual edit through the Files CAS session", async () => {
     const { useFileEditor } = await import("./editorSession.ts");
     const saves = [];
+    let finishSave;
+    const saved = new Promise((resolve) => {
+      finishSave = resolve;
+    });
     let latest;
     const session = {
       context: { resource: { environmentId: "env", projectId: "project" } },
@@ -114,7 +169,7 @@ NodeTest.describe("EditableFileBody", () => {
     };
     const host = {
       codeView: {
-        version: 2,
+        version: 1,
         Diff: () => null,
         File: () => null,
         Editor: (props) => {
@@ -122,15 +177,12 @@ NodeTest.describe("EditableFileBody", () => {
           return e("div", { "data-editor": true });
         },
       },
-      async discoverApis() {
-        return [{ id: "t3.ui/editor", version: "1.1.0" }];
-      },
       async invokeApi(request) {
-        if (request.method === "getCodeViewCapabilities") return { editable: true };
         if (request.method === "readSnapshot")
           return { kind: "editable", contents: "old", revision: "base" };
         if (request.method === "save") {
           saves.push(request.input);
+          finishSave();
           return { kind: "saved", revision: "next" };
         }
         throw new Error(request.method);
@@ -148,7 +200,6 @@ NodeTest.describe("EditableFileBody", () => {
         wordWrap: false,
         reveal: { line: 2, requestId: 7 },
         onChange: editor.change,
-        onSave: editor.save,
         onSelectionChange() {},
         renderFallback: () => e("pre"),
       });
@@ -160,56 +211,12 @@ NodeTest.describe("EditableFileBody", () => {
     NodeAssert.equal(root.root.findAllByType("textarea").length, 0);
     NodeAssert.deepEqual(latest.reveal, { line: 2, requestId: 7 });
     await act(async () => latest.onChange("edited"));
-    await act(async () => latest.onSave());
+    await act(async () => saved);
     NodeAssert.deepEqual(saves, [
       { relativePath: "app.ts", contents: "edited", expectedRevision: "base" },
     ]);
     await act(async () => root.unmount());
   });
-
-  NodeTest.it(
-    "does not invoke a newer capability on old servers or enable a refusing client",
-    async () => {
-      for (const version of ["1.0.0", "1.1.0"]) {
-        const probes = [];
-        const host = {
-          codeView: {
-            version: 2,
-            Diff: () => null,
-            File: () => e("pre"),
-            Editor: () => e("div", { "data-editor": true }),
-          },
-          async discoverApis() {
-            return [{ id: "t3.ui/editor", version }];
-          },
-          async invokeApi(request) {
-            probes.push(request.method);
-            return { editable: false };
-          },
-        };
-        let root;
-        await act(async () => {
-          root = create(
-            e(EditableFileBody, {
-              host,
-              session: { context: {}, signal: new AbortController().signal },
-              documentId: "app.ts",
-              path: "app.ts",
-              contents: "old",
-              wordWrap: null,
-              reveal: null,
-              onChange() {},
-              onSave() {},
-              renderFallback: () => e("pre"),
-            }),
-          );
-        });
-        NodeAssert.deepEqual(probes, version === "1.0.0" ? [] : ["getCodeViewCapabilities"]);
-        NodeAssert.equal(root.root.findAll((node) => node.props["data-editor"]).length, 0);
-        await act(async () => root.unmount());
-      }
-    },
-  );
 
   NodeTest.it(
     "routes large editor buffers through chunked CAS and preserves conflicts until recovery",
@@ -220,6 +227,10 @@ NodeTest.describe("EditableFileBody", () => {
       let upload;
       let chunks;
       let conflict = true;
+      let finishConflict;
+      const conflicted = new Promise((resolve) => {
+        finishConflict = resolve;
+      });
       let latest;
       let controls;
       const begins = [];
@@ -229,7 +240,7 @@ NodeTest.describe("EditableFileBody", () => {
       });
       const host = {
         codeView: {
-          version: 2,
+          version: 1,
           Diff: () => null,
           File: () => null,
           Editor: (props) => {
@@ -237,12 +248,8 @@ NodeTest.describe("EditableFileBody", () => {
             return e("div");
           },
         },
-        async discoverApis() {
-          return [{ id: "t3.ui/editor", version: "1.1.0" }];
-        },
         async invokeApi(request) {
           const { method, input } = request;
-          if (method === "getCodeViewCapabilities") return { editable: true };
           if (method === "readSnapshot") return { kind: "not-editable", reason: "oversized" };
           if (method === "save") throw new Error("large buffers must use resources");
           if (method === "save.begin") {
@@ -262,6 +269,7 @@ NodeTest.describe("EditableFileBody", () => {
             NodeAssert.equal(chunks.length, upload.chunkCount);
             if (conflict) {
               disk = "remote\n".repeat(5000);
+              finishConflict();
               return { kind: "conflict" };
             }
             NodeAssert.equal(upload.expectedRevision, digest(disk));
@@ -303,7 +311,6 @@ NodeTest.describe("EditableFileBody", () => {
           wordWrap: false,
           reveal: null,
           onChange: editor.change,
-          onSave: editor.save,
           renderFallback: () => e("pre"),
         });
       }
@@ -315,11 +322,10 @@ NodeTest.describe("EditableFileBody", () => {
         const mine = "edited Ω\n".repeat(5000);
         await act(async () => latest.onChange(mine));
         NodeAssert.equal(controls.surface.saveState.kind, "dirty");
-        await act(async () => latest.onSave());
+        await act(async () => conflicted);
         NodeAssert.equal(controls.surface.saveState.kind, "conflict");
         await act(async () => {
           latest.onChange(mine + "kept");
-          latest.onSave();
         });
         NodeAssert.equal(begins.length, 1);
         NodeAssert.equal(controls.surface.contents, mine + "kept");

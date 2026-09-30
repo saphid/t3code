@@ -5,7 +5,7 @@ import { CLIENT_PROVIDER_APIS } from "../dist/clientProviders.js";
 
 NodeTest.test("t3.ui/editor is a shared catalogue contract behind its own grant", () => {
   NodeAssert.ok(GENERIC_API_CATALOGUE.includes(uiEditorApi.definition));
-  NodeAssert.equal(uiEditorApi.definition.version, "1.1.0");
+  NodeAssert.equal(uiEditorApi.definition.version, "1.0.0");
   const methods = Object.fromEntries(
     uiEditorApi.definition.methods.map((method) => [method.name, method]),
   );

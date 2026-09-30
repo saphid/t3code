@@ -13,11 +13,7 @@ import {
   type CodeViewFileProps,
   type CodeViewEditorProps,
 } from "@t3tools/extension-sdk/environment";
-import { uiEditorApi } from "@t3tools/extension-sdk/catalogue";
-import { bindApi } from "@t3tools/extension-sdk/capabilities";
-import { satisfiesSemverRange } from "@t3tools/shared/semver";
-import type { ViewSession } from "@t3tools/extension-sdk/host";
-import { createElement, useEffect, useState, type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 
 /** The read-only file body: the host's view when offered, else the panel's own. */
 export function ReadOnlyFileBody(props: {
@@ -56,41 +52,13 @@ export function ReadOnlyFileBody(props: {
 export function EditableFileBody(
   props: Omit<CodeViewEditorProps, "wordWrap" | "reveal"> & {
     readonly host: ClientHost;
-    readonly session: ViewSession;
     readonly wordWrap: boolean | null;
     readonly reveal: NonNullable<CodeViewFileProps["reveal"]> | null;
     readonly renderFallback: () => ReactNode;
   },
 ): ReactNode {
   const Editor = resolveCodeEditor(props.host);
-  const [enabledFor, setEnabledFor] = useState<{ host: ClientHost; session: ViewSession } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (Editor === null) return;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, props.session.signal]);
-    void props.host
-      .discoverApis(props.session.context, signal)
-      .then(async (apis) => {
-        const supported = apis.some(
-          (api) =>
-            api.id === uiEditorApi.definition.id && satisfiesSemverRange(api.version, "^1.1.0"),
-        );
-        if (!supported || signal.aborted) return;
-        const capability = await bindApi(
-          uiEditorApi,
-          props.host,
-          props.session.context,
-          "^1.1.0",
-        ).invoke("getCodeViewCapabilities", {}, signal);
-        if (!signal.aborted && capability.editable)
-          setEnabledFor({ host: props.host, session: props.session });
-      })
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [props.host, props.session, Editor]);
-  if (Editor === null || enabledFor?.host !== props.host || enabledFor.session !== props.session) {
+  if (Editor === null) {
     return createElement(
       "div",
       { style: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 } },
@@ -107,7 +75,6 @@ export function EditableFileBody(
     path: props.path,
     contents: props.contents,
     onChange: props.onChange,
-    onSave: props.onSave,
     ...(props.onSelectionChange === undefined
       ? {}
       : { onSelectionChange: props.onSelectionChange }),

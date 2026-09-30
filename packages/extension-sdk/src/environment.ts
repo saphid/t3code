@@ -218,21 +218,19 @@ export interface CodeViewFileProps {
 export interface CodeViewEditorProps extends CodeViewFileProps {
   readonly documentId: string;
   readonly onChange: (contents: string) => void;
-  readonly onSave: () => void;
   readonly onSelectionChange?: (
     range: { readonly startLine: number; readonly endLine: number } | null,
   ) => void;
 }
 
 /**
- * `ClientHost.codeView` renders data the plugin already holds. Version 1
- * offers read-only File and Diff; version 2 adds Editor, probed through
- * `t3.ui/editor.getCodeViewCapabilities` (1.1.0). Rendering has no write
- * authority: onChange buffers locally and onSave uses the caller's existing
- * grant-gated CAS API. The host owns highlighting, workers and virtualization.
+ * `ClientHost.codeView` renders data the plugin already holds. File and Diff
+ * are read-only; the optional Editor member buffers through onChange. Rendering
+ * has no write authority, grant, broker or catalogue entry. The caller owns
+ * persistence through its existing CAS API; the host owns the rendering stack.
  */
 export interface ClientCodeView {
-  readonly version: 1 | 2;
+  readonly version: 1;
   readonly Diff: React.ComponentType<CodeViewDiffProps>;
   readonly File: React.ComponentType<CodeViewFileProps>;
   readonly Editor?: React.ComponentType<CodeViewEditorProps>;
@@ -255,9 +253,7 @@ export function resolveCodeEditor(
   host: Pick<ClientHost, "codeView">,
 ): React.ComponentType<CodeViewEditorProps> | null {
   const codeView = resolveCodeView(host);
-  return codeView !== null && codeView.version >= 2 && isComponent(codeView.Editor)
-    ? codeView.Editor!
-    : null;
+  return codeView !== null && isComponent(codeView.Editor) ? codeView.Editor! : null;
 }
 
 /** One host-rendered tooltip around a single trigger element. */

@@ -9641,54 +9641,35 @@ export type UiEditorOpenReceipt =
  */
 export const uiEditorApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
-  getCodeViewCapabilities: { input: Record<string, never>; output: { editable: boolean } };
   openPath: { input: { path: string; cwd: string }; output: UiEditorOpenReceipt };
-}>(
-  {
-    id: UI_EDITOR,
-    version: "1.1.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: uiCapabilitiesOutput(["openPath", "getCodeViewCapabilities"]),
-      },
-      {
-        name: "getCodeViewCapabilities",
-        effect: "read",
-        requiredGrants: [],
-        inputSchema: composerEmptyInputSchema,
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["editable"],
-          properties: { editable: { type: "boolean" } },
+}>({
+  id: UI_EDITOR,
+  version: "1.0.0",
+  methods: [
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: composerEmptyInputSchema,
+      outputSchema: uiCapabilitiesOutput(["openPath"]),
+    },
+    {
+      name: "openPath",
+      effect: "write",
+      requiredGrants: [UI_EDITOR_OPEN],
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "cwd"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          cwd: { type: "string", minLength: 1, maxLength: 4096 },
         },
       },
-      {
-        name: "openPath",
-        effect: "write",
-        requiredGrants: [UI_EDITOR_OPEN],
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["path", "cwd"],
-          properties: {
-            path: { type: "string", minLength: 1, maxLength: 4096 },
-            cwd: { type: "string", minLength: 1, maxLength: 4096 },
-          },
-        },
-        outputSchema: uiEditorOpenReceiptSchema,
-      },
-    ],
-  },
-  {
-    baseline: "1.0.0",
-    additions: [{ version: "1.1.0", method: "getCodeViewCapabilities" }],
-  },
-);
+      outputSchema: uiEditorOpenReceiptSchema,
+    },
+  ],
+});
 
 export const UI_NAVIGATION = "t3.ui/navigation";
 export const UI_NAVIGATION_OPEN = "t3.ui/navigation.open";

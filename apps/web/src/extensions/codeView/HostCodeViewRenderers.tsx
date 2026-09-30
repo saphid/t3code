@@ -19,8 +19,8 @@ import { useCodeViewFileReveal } from "~/components/diffs/useCodeViewFileReveal"
 import ReadOnlySourcePreview from "~/components/files/ReadOnlySourcePreview";
 import { EditableSourcePreview } from "~/components/files/EditableSourcePreview";
 import { projectFileEditorCacheKey } from "~/components/files/fileContentRevision";
+import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "~/components/files/fileSurfaceChrome";
-import type { KeyboardEvent } from "react";
 import { useFileLineReveal } from "~/components/files/useFileLineReveal";
 import { Button } from "~/components/ui/button";
 import { useTheme } from "~/hooks/useTheme";
@@ -212,7 +212,8 @@ export function HostCodeFile(props: CodeViewFileProps) {
 }
 
 export function HostCodeEditor(props: CodeViewEditorProps) {
-  return <EditableDocument key={`${props.documentId}:${props.path}`} {...props} />;
+  const { resolvedTheme } = useTheme();
+  return <EditableDocument key={`${props.documentId}:${props.path}:${resolvedTheme}`} {...props} />;
 }
 
 function EditableDocument(props: CodeViewEditorProps) {
@@ -221,6 +222,20 @@ function EditableDocument(props: CodeViewEditorProps) {
   const wordWrap = props.wordWrap ?? preferredWordWrap;
   const onChange = useStableCallback((file: FileContents) => props.onChange(file.contents));
   const hasLineSelection = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const lastSelection =
+    useRef<Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]>(null);
+  const reportSelection = useStableCallback(
+    (range: Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]) => {
+      if (
+        lastSelection.current?.startLine === range?.startLine &&
+        lastSelection.current?.endLine === range?.endLine
+      )
+        return;
+      lastSelection.current = range;
+      props.onSelectionChange?.(range);
+    },
+  );
   const editor = useMemo(
     () =>
       new Editor({
@@ -231,23 +246,24 @@ function EditableDocument(props: CodeViewEditorProps) {
     [onChange],
   );
   useEffect(() => () => editor.cleanUp(), [editor]);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (root === null) return;
+    return installFileEditorDismissal({
+      root,
+      editor,
+      isBlocked: () => false,
+      onDismiss: () => {
+        hasLineSelection.current = false;
+        reportSelection(null);
+      },
+    });
+  }, [editor, reportSelection]);
   const onPostRender = useFileLineReveal(
     props.path,
     props.reveal?.line ?? null,
     props.reveal?.requestId ?? 0,
   );
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key.toLowerCase() === "s" && (event.metaKey || event.ctrlKey) && !event.altKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      props.onSave();
-    } else if (event.key === "Escape") {
-      editor.setSelections([]);
-      editor.blur();
-      hasLineSelection.current = false;
-      props.onSelectionChange?.(null);
-    }
-  };
   const reportTextSelection = () => {
     const selection = editor.getState().selections?.[0];
     if (selection === undefined) return;
@@ -263,11 +279,11 @@ function EditableDocument(props: CodeViewEditorProps) {
       selection.start.line === selection.end.line &&
       selection.start.character === selection.end.character;
     if (empty && hasLineSelection.current) return;
-    props.onSelectionChange?.(empty ? null : { startLine, endLine });
+    reportSelection(empty ? null : { startLine, endLine });
   };
   const reportLineSelection = (range: SelectedLineRange | null) => {
     hasLineSelection.current = range !== null;
-    props.onSelectionChange?.(
+    reportSelection(
       range === null
         ? null
         : {
@@ -278,9 +294,10 @@ function EditableDocument(props: CodeViewEditorProps) {
   };
   return (
     <div
+      ref={rootRef}
+      role="group"
       aria-label="File editor"
       className={cn("flex min-h-0 flex-1", props.className)}
-      onKeyDown={onKeyDown}
       onPointerUp={reportTextSelection}
       onKeyUp={reportTextSelection}
     >

@@ -19,25 +19,22 @@ import type { EditorSurface } from "./editorSession.ts";
 import {
   buildCommentExcerpt,
   commentUnavailableReason,
-  selectionLineRange,
   type FileCommentRange,
 } from "./fileComments.ts";
 
-/** Editor selection offsets, pinned to the path they were made in. */
-export interface EditorSelection {
+/** Editor line selection, pinned to the path they were made in. */
+export interface EditorSelection extends FileCommentRange {
   readonly path: string;
-  readonly start: number;
-  readonly end: number;
 }
 
 /**
  * The editor selection the comment toolbar offers, expanded to whole lines.
- * A selection is a pair of offsets into one buffer, so it is captured pinned
+ * A selection is a line range in one buffer, so it is captured pinned
  * to that buffer (path + contents identity) and dies the moment either
  * changes: a path switch (or re-selecting the current file), a local edit, a
  * reload, an external sync. Liveness is derived at read rather than cleared
  * in an effect — the toolbar never renders one frame of a stale range. And
- * without the pin at all, reopening a file re-arms stale offsets over lines
+ * without the pin at all, reopening a file re-arms stale lines over lines
  * that drifted underneath them, offering "Comment on L40 to L42" for a
  * selection nobody is holding.
  */
@@ -64,27 +61,37 @@ export function useEditorSelection(
     // the pin in render (React's adjust-state-when-props-change shape) on
     // EITHER input's mismatch: `===` on string primitives is value equality,
     // so a byte-identical reopen or revert would re-match a lingering pin
-    // and re-arm offsets nobody is holding. The pin is already dead at read
+    // and re-arm lines nobody is holding. The pin is already dead at read
     // on a contents mismatch, so retiring it there is free.
     setPinned({ contents: null, selected, selection: null });
   }
-  // Drag-select re-renders on every mousemove while a selection is held, and
-  // expanding two offsets into lines scans the buffer from offset 0 — the
-  // memo bounds that to one scan per actual input change.
+  // Keep the range identity through unrelated save-state renders.
   const selectionRange = useMemo(
     () =>
       editorSelection !== null &&
       editorSelection.path === selected &&
       surface !== null &&
       surface.open.editable
-        ? selectionLineRange(surface.contents, editorSelection.start, editorSelection.end)
+        ? { startLine: editorSelection.startLine, endLine: editorSelection.endLine }
         : null,
     [surface, editorSelection, selected],
   );
   return {
     selectionRange,
-    setSelection: (selection) => setPinned({ contents, selected, selection }),
-    clearSelection: () => setPinned({ contents, selected, selection: null }),
+    setSelection: (selection) => {
+      if (
+        pinned.contents === contents &&
+        pinned.selected === selected &&
+        pinned.selection?.path === selection.path &&
+        pinned.selection.startLine === selection.startLine &&
+        pinned.selection.endLine === selection.endLine
+      )
+        return;
+      setPinned({ contents, selected, selection });
+    },
+    clearSelection: () => {
+      if (pinned.selection !== null) setPinned({ contents, selected, selection: null });
+    },
   };
 }
 

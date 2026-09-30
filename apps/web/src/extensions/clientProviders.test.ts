@@ -1798,15 +1798,6 @@ describe("panels provider", () => {
 });
 
 describe("editor provider", () => {
-  it("probes native editing without granting external editor launch", async () => {
-    const provider = createEditorClientProvider(makeDeps([]));
-    await expect(provider.invoke(invokeCall("getCodeViewCapabilities", {}))).resolves.toEqual({
-      editable: true,
-    });
-    await expect(
-      provider.invoke(invokeCall("openPath", { path: "app.ts", cwd: "/ws" })),
-    ).rejects.toMatchObject({ code: "client-target-denied" });
-  });
   const EDITOR = ["t3.ui/editor.open"];
   const launcher = (availableEditors: readonly EditorId[], fail?: Error) => {
     const openInEditor = vi.fn(async (_value: unknown) =>

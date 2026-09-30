@@ -8,7 +8,6 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
-  uiEditorApi,
   uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
@@ -2480,7 +2479,6 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
               ) : null}
               <EditableFileBody
                 host={host}
-                session={session}
                 documentId={`${session.context.resource.environmentId}:${session.context.resource.projectId}:${selected}`}
                 path={selected}
                 contents={editorSurface.contents}
@@ -2491,14 +2489,12 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                     : null
                 }
                 onChange={editor.change}
-                onSave={editor.save}
                 onSelectionChange={(range) => {
                   if (range === null) clearEditorSelection();
                   else
                     setEditorSelection({
                       path: selected,
-                      start: lineStartOffset(editorSurface.contents, range.startLine),
-                      end: lineStartOffset(editorSurface.contents, range.endLine + 1),
+                      ...range,
                     });
                 }}
                 renderFallback={() => (
@@ -2717,7 +2713,6 @@ export default defineExtension({
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(uiNavigationApi),
-    requireApi(uiEditorApi),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

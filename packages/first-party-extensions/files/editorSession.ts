@@ -382,7 +382,6 @@ export function useFileEditor(
   };
 
   const retry = () => activeRef.current?.coordinator.retry();
-  const save = () => activeRef.current?.coordinator.retry();
 
-  return { surface, change, reload, keepMine, retry, save };
+  return { surface, change, reload, keepMine, retry };
 }

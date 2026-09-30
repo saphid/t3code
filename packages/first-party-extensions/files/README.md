@@ -71,10 +71,10 @@ non-UTF-8) show read-only. Where the host offers `ClientHost.codeView`, that
 view is the host's native source preview — highlighted on the shared worker
 pool and virtualized — with the same word-wrap setting and line reveals.
 Hosts without the member keep a plain `<pre>`. Editable files use the same
-Pierre editor as the native panel through `ClientHost.codeView.Editor` v2.
-A grant-free `t3.ui/editor.getCodeViewCapabilities` probe (1.1.0) confirms
-client support; older or unsupported clients stay read-only. Cmd/Ctrl+S
-flushes the existing revisioned save coordinator, using the unary CAS path
+Pierre editor as the native panel through the optional `ClientHost.codeView.Editor`
+member, with no discovery or capability request. Hosts without that member stay
+read-only. Edits autosave through the revisioned save coordinator after 500 ms,
+using the unary CAS path
 up to 24,000 bytes and the chunked resource CAS path up to 8 MiB. Dirty state,
 conflict recovery and write grants stay with the Files session.
 
