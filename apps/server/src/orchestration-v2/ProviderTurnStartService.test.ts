@@ -150,7 +150,7 @@ it("does not commit running state when inherited background routing cannot be re
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-effectIt.effect("retries a start effect that advanced the run before provider startup failed", () =>
+const startAfterProviderStartupFailure = (input: { readonly sessionOpenFailsOnRetry: boolean }) =>
   Effect.gen(function* () {
     const now = DateTime.makeUnsafe("2026-09-17T06:40:00Z");
     const threadId = ThreadId.make("thread-provider-start-retry");
@@ -303,6 +303,7 @@ effectIt.effect("retries a start effect that advanced the run before provider st
       },
       resumeThread: () => Effect.succeed(providerThread),
     } as never;
+    let sessionOpenFails = false;
     let startAttempt = 0;
     const startRootRun = vi.fn(() => {
       startAttempt += 1;
@@ -355,7 +356,10 @@ effectIt.effect("retries a start effect that advanced the run before provider st
               }),
           }),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-            open: () => Effect.succeed(session),
+            open: () =>
+              sessionOpenFails
+                ? Effect.fail(new Error("simulated session open failure") as never)
+                : Effect.succeed(session),
           }),
           Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
           Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
@@ -371,8 +375,38 @@ effectIt.effect("retries a start effect that advanced the run before provider st
     expect(projection.runs[0]?.status).toBe("running");
     expect(projection.providerTurns).toEqual([]);
 
+    const startedAt = projection.runs[0]?.startedAt;
+    const providerThreadStatusAfterFailure = projection.providerThreads[0]?.status;
+
+    sessionOpenFails = input.sessionOpenFailsOnRetry;
     yield* start;
+    return {
+      startRootRun,
+      run: projection.runs[0],
+      startedAt,
+      providerThreadStatusAfterFailure,
+      providerThread: projection.providerThreads[0],
+    };
+  });
+
+effectIt.effect("retries a start effect that advanced the run before provider startup failed", () =>
+  Effect.gen(function* () {
+    const { startRootRun } = yield* startAfterProviderStartupFailure({
+      sessionOpenFailsOnRetry: false,
+    });
     expect(startRootRun).toHaveBeenCalledTimes(2);
+  }),
+);
+
+effectIt.effect("fails a recovered run whose final start attempt cannot open a session", () =>
+  Effect.gen(function* () {
+    const { startRootRun, run, startedAt, providerThreadStatusAfterFailure, providerThread } =
+      yield* startAfterProviderStartupFailure({ sessionOpenFailsOnRetry: true });
+    expect(run?.status).toBe("failed");
+    expect(run?.startedAt).toEqual(startedAt);
+    expect(providerThreadStatusAfterFailure).toBe("active");
+    expect(providerThread?.status).toBe("idle");
+    expect(startRootRun).toHaveBeenCalledTimes(1);
   }),
 );
 
