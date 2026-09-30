@@ -12,7 +12,7 @@ import type { ClientUiKit, UiTreeRowProps } from "@t3tools/extension-sdk/ui";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import { hostTooltip } from "./hostTooltip";
 import { BROWSER_SURFACE_OVERLAY_ATTRIBUTE } from "@t3tools/extension-sdk/catalogue";
-import { createExtensionHost } from "@t3tools/extension-sdk/host";
+import { createExtensionHost, type ViewSession } from "@t3tools/extension-sdk/host";
 import { ExtensionSurface, type SurfaceRenderer } from "@t3tools/extension-sdk/react";
 
 type PageMenuProps = {
@@ -879,9 +879,17 @@ it("mini-player kit and fallback controls track native open state and preserve t
   const path = "../../../../packages/first-party-extensions/browser/miniPlayer.tsx";
   const {
     MiniPlayerButton,
-  }: typeof import("../../../../packages/first-party-extensions/browser/miniPlayer") = await import(
-    new URL(path, import.meta.url).pathname
-  );
+  }: {
+    MiniPlayerButton: React.ComponentType<{
+      host: ClientHost;
+      session: ViewSession;
+      held: { tabId: string; serverEpoch: string };
+      visible: boolean;
+      available: boolean;
+      style: React.CSSProperties;
+      report: (message: string) => void;
+    }>;
+  } = await import(new URL(path, import.meta.url).pathname);
   for (const native of [true, false]) {
     let active: string | null = null;
     const listeners = new Set<() => void>();

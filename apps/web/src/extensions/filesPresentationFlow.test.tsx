@@ -160,10 +160,10 @@ const alternateKit: ClientUiKit = {
   MenuGroup: nullControl,
   MenuRow: nullControl,
   MenuNote: ({ children }) => <p>{children}</p>,
-  MenuItem: ({ children, ...props }) => (
-    <button type="button" {...props}>
+  MenuItem: ({ children, disabled, closeOnClick: _closeOnClick, ...props }) => (
+    <div role="menuitem" aria-disabled={disabled} {...props}>
       {children}
-    </button>
+    </div>
   ),
   MenuSeparator: nullControl,
   MenuGroupLabel: nullControl,
@@ -1784,7 +1784,7 @@ it("uses kit editor controls and still opens the chosen remote editor", async ()
     const menu = panel.labelled("File actions")!.findByProps({ "data-editor-menu-open": true });
     expect(menu.findByType("p").children.join("")).toBe("Remote workspace");
     const cursor = menu
-      .findAllByType("button")
+      .findAllByProps({ role: "menuitem" })
       .find((button) => button.children.join("") === "Cursor")!;
     await act(async () => cursor.props.onClick());
     expect(panel.calls.log).toContainEqual(["t3.ui/editor", "openPath"]);
