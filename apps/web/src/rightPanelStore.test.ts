@@ -1,6 +1,10 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as previewRuntime from "./previewStateStore";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
+import { useBrowserSurfaceStore } from "./browser/browserSurfaceStore";
+import { usePreviewMiniPlayerStore } from "./previewMiniPlayerStore";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   migratePersistedRightPanelState,
@@ -11,12 +15,17 @@ import {
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
+  returnBrowserMiniPlayerToPanel,
 } from "./rightPanelStore";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
+afterEach(() => vi.restoreAllMocks());
+
 beforeEach(() => {
+  useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} });
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   useRightPanelStore.setState({
     byThreadKey: {},
     extensionDockByThreadKey: {},
@@ -25,6 +34,99 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it.each(["close", "toggleVisibility"] as const)(
+    "%s on an unsupported runtime closes the extension panel without floating its target",
+    (action) => {
+      vi.spyOn(previewRuntime, "isPreviewSupportedInRuntime").mockReturnValue(false);
+      const record = {
+        version: 1 as const,
+        surfaceId: "t3.browser/panel",
+        placement: "side-panel" as const,
+        stateVersion: 1,
+        restoreState: {},
+        fallback: "Browser",
+        context: {
+          client: "web",
+          resource: {
+            namespace: "t3.browser",
+            id: "view-a",
+            environmentId: refA.environmentId,
+            projectId: "project-a",
+            threadId: refA.threadId,
+          },
+        },
+      };
+      useBrowserSurfaceStore.getState().requestExtension(resourceKey(record.context.resource), {
+        installationId: "t3.browser",
+        tabId: "tab-a",
+        serverEpoch: "epoch-a",
+        runtimeTabId: "runtime-a",
+      });
+      const store = useRightPanelStore.getState();
+      store.openExtension(refA, record);
+      store[action](refA);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+      ).toBe(false);
+      expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
+    },
+  );
+
+  it("close, return to the originating extension panel, and float again preserve one browser session", () => {
+    vi.spyOn(previewRuntime, "isPreviewSupportedInRuntime").mockReturnValue(true);
+    const record = {
+      version: 1 as const,
+      surfaceId: "t3.browser/panel",
+      placement: "side-panel" as const,
+      stateVersion: 1,
+      restoreState: {},
+      fallback: "Browser",
+      context: {
+        client: "desktop",
+        resource: {
+          namespace: "t3.browser",
+          id: "view-a",
+          environmentId: refA.environmentId,
+          projectId: "project-a",
+          threadId: refA.threadId,
+        },
+      },
+    };
+    useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} });
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+    useBrowserSurfaceStore.getState().requestExtension(resourceKey(record.context.resource), {
+      installationId: "t3.browser",
+      tabId: "tab-a",
+      serverEpoch: "epoch-a",
+      runtimeTabId: "runtime-a",
+    });
+    const store = useRightPanelStore.getState();
+    store.openExtension(refA, record);
+    const panel = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(panel?.kind).toBe("extension");
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      store.close(refA);
+      const source =
+        usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(refA)]?.source;
+      expect(source).toEqual({ kind: "browser", tabId: "tab-a", returnSurfaceId: panel!.id });
+      returnBrowserMiniPlayerToPanel(refA, source!);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+      ).toBe(true);
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id,
+      ).toBe(panel!.id);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+      ).toHaveLength(1);
+    }
+    store.toggleVisibility(refA);
+    expect(
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(refA)]?.source.kind,
+    ).toBe("browser");
+    useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} });
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+  });
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {

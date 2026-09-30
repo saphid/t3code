@@ -1,13 +1,14 @@
 /**
  * Capture to chat. The header's capture buttons screenshot the held session
  * (`page`) or run the in-page element picker (`element`) through the host's
- * `t3.browser/capture` capability, then attach the stored image to this
- * thread's draft with `t3.composer/context` `insertImage`. Only the
- * artifactRef moves between the two; the image bytes stay in the
- * environment's attachment store.
+ * `t3.browser/capture` capability, then insert the native annotation and crop
+ * through `t3.composer/context` `insertPreviewAnnotation` on current hosts.
+ * Page captures and older hosts use `insertImage`. Only opaque references
+ * move between them; the image bytes and native pick stay on the client.
  */
 import {
   composerContextApi,
+  BROWSER_ANNOTATION_MIN_VERSION,
   uiNotificationsApi,
   type BrowserCaptureArtifact,
   type BrowserCaptureArtifactActionFailureReason,
@@ -115,6 +116,11 @@ export function annotationControl(input: {
 
 export type CaptureToChatOutcome =
   | {
+      readonly kind: "annotated";
+      readonly imageInserted: boolean;
+      readonly screenshotFailed: boolean;
+    }
+  | {
       readonly kind: "added";
       readonly artifact: BrowserCaptureArtifact;
       readonly inserted: boolean;
@@ -128,13 +134,44 @@ const IMAGE_LOST_REASONS: ReadonlySet<BrowserCaptureFailureReason> = new Set([
   "upload-failed",
 ]);
 
+const annotationSupport = new WeakMap<
+  ClientHost["discoverApis"],
+  WeakMap<ViewContext, Promise<boolean>>
+>();
+
+function supportsAnnotationComposer(
+  host: Partial<Pick<ClientHost, "discoverApis">>,
+  context: ViewContext,
+  signal: AbortSignal,
+) {
+  const discover = host.discoverApis;
+  if (!discover) return Promise.resolve(false);
+  let scopes = annotationSupport.get(discover);
+  if (!scopes) {
+    scopes = new WeakMap();
+    annotationSupport.set(discover, scopes);
+  }
+  const cached = scopes.get(context);
+  if (cached) return cached;
+  const support = discover(context, signal).then((apis) =>
+    apis.some(
+      (api) =>
+        api.id === composerContextApi.definition.id && satisfiesSemverRange(api.version, "^1.3.0"),
+    ),
+  );
+  scopes.set(context, support);
+  void support.catch(() => scopes.delete(context));
+  return support;
+}
+
 /**
  * One capture-then-insert run. Every failure comes back as a named message;
  * an abort of `signal` at any stage, even after the image is stored, is a
  * silent cancel.
  */
 export async function captureToChat(
-  host: Pick<ClientHost, "browserCapture" | "invokeApi">,
+  host: Pick<ClientHost, "browserCapture" | "invokeApi"> &
+    Partial<Pick<ClientHost, "discoverApis">>,
   context: ViewContext,
   held: CaptureSessionRef,
   target: BrowserCaptureTarget,
@@ -148,8 +185,21 @@ export async function captureToChat(
       message: "This host cannot capture browser sessions.",
     };
   let captured: BrowserCaptureResult;
+  let composerSupported = false;
   try {
-    captured = await host.browserCapture.capture({ context, session: held, target, signal });
+    composerSupported =
+      target === "element" && (await supportsAnnotationComposer(host, context, signal));
+    signal.throwIfAborted();
+    captured = await host.browserCapture.capture({
+      context,
+      session: held,
+      target,
+      signal,
+      ...(composerSupported &&
+      satisfiesSemverRange(host.browserCapture.version, `^${BROWSER_ANNOTATION_MIN_VERSION}`)
+        ? { annotation: true }
+        : {}),
+    });
   } catch (error) {
     if (signal.aborted) return { kind: "cancelled" };
     return {
@@ -161,6 +211,28 @@ export async function captureToChat(
   // Cancel wins over whatever the host settled with: an upload that fails or
   // succeeds after Cancel annotation is still a silent cancel.
   if (signal.aborted) return { kind: "cancelled" };
+  if (target === "element" && captured.annotationRef && composerSupported) {
+    try {
+      const inserted = await bindApi(composerContextApi, host, context, "^1.3.0").invoke(
+        "insertPreviewAnnotation",
+        { threadId, annotationRef: captured.annotationRef },
+        signal,
+      );
+      if (signal.aborted) return { kind: "cancelled" };
+      return {
+        kind: "annotated",
+        imageInserted: inserted.imageInserted,
+        screenshotFailed: inserted.screenshotFailed,
+      };
+    } catch (error) {
+      if (signal.aborted) return { kind: "cancelled" };
+      return {
+        kind: "failed",
+        stage: "insert",
+        message: `The annotation could not be added to chat: ${error instanceof Error ? error.message : "the composer refused it"}`,
+      };
+    }
+  }
   if (!captured.ok) {
     if (captured.failure.reason === "cancelled") return { kind: "cancelled" };
     return {
@@ -171,6 +243,12 @@ export async function captureToChat(
         : `Capture failed — ${captured.failure.reason}: ${captured.failure.detail}`,
     };
   }
+  if (!captured.artifact)
+    return {
+      kind: "failed",
+      stage: "insert",
+      message: "The annotation could not be added to chat.",
+    };
   try {
     const result = await bindApi(composerContextApi, host, context).invoke(
       "insertImage",
@@ -205,6 +283,10 @@ export function captureOutcomeMessage(
   outcome: CaptureToChatOutcome,
 ): string | null {
   switch (outcome.kind) {
+    case "annotated":
+      return outcome.screenshotFailed
+        ? "The annotation was kept without the screenshot."
+        : "Annotation added to chat.";
     case "cancelled":
       return null;
     case "failed":
@@ -274,6 +356,15 @@ export function captureOutcomeToast(
   actions: readonly CaptureToastAction[] = [],
 ): CaptureToast | null {
   switch (outcome.kind) {
+    case "annotated":
+      return outcome.screenshotFailed
+        ? {
+            severity: "error",
+            title: "Could not capture the picked element",
+            body: "The annotation was kept without the screenshot.",
+            durationMs: CAPTURE_TOAST_DURATION_MS,
+          }
+        : null;
     case "cancelled":
       return null;
     case "failed":

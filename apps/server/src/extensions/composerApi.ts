@@ -8,6 +8,7 @@ import {
   CLIENT_COMPOSER_V11_RANGE,
   CLIENT_COMPOSER_V12_RANGE,
   CLIENT_COMPOSER_V13_RANGE,
+  CLIENT_COMPOSER_V14_RANGE,
 } from "@t3tools/extension-sdk/clientProviders";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { HostApiInvocationMetadata, HostApiProvider } from "@t3tools/extension-runtime";
@@ -48,6 +49,10 @@ const boundedString = (max: number) =>
 const lineSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 }));
 const diffIndexSchema = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }));
 const threadIdField = { threadId: Schema.optional(boundedString(128)) } as const;
+const previewAnnotationInput = Schema.decodeUnknownSync(
+  Schema.Struct({ ...threadIdField, annotationRef: boundedString(128) }),
+  { onExcessProperty: "error" },
+);
 
 const insertInput = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -301,6 +306,7 @@ export function createComposerApiProviders(
           insertMention: CLIENT_COMPOSER_V11_RANGE,
           insertTerminalContext: CLIENT_COMPOSER_V11_RANGE,
           insertImage: CLIENT_COMPOSER_V12_RANGE,
+          insertPreviewAnnotation: CLIENT_COMPOSER_V14_RANGE,
         },
         metadata,
       );
@@ -378,6 +384,27 @@ export function createComposerApiProviders(
               lineEnd: safe.lineEnd,
               text: safe.text,
             } as Json,
+            scope.context,
+            signal,
+            metadata,
+            connectionId,
+          ),
+        catch: clientFailure(operation),
+      });
+    }
+    if (method === "insertPreviewAnnotation") {
+      const safe = yield* Effect.try({
+        try: () => previewAnnotationInput(input),
+        catch: invalid(operation),
+      });
+      const threadId = yield* scopedThread(operation, safe.threadId, scope.context);
+      yield* resolve(scope.context);
+      const connectionId = yield* requireComposer(operation, metadata, CLIENT_COMPOSER_V14_RANGE);
+      return yield* Effect.tryPromise({
+        try: () =>
+          forward(
+            method,
+            { threadId, annotationRef: safe.annotationRef },
             scope.context,
             signal,
             metadata,

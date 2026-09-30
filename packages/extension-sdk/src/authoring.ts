@@ -609,9 +609,9 @@ function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
  * release cycle for a plugin-rendered slot element. Geometry is observed with
  * ResizeObserver + window resize + capture-phase scroll, clipped to the slot's
  * visible region, and forwarded through the lease's frame-coalesced
- * `present`. There is no automatic re-acquire — a `superseded` end is
- * terminal for the lease; the caller must remount the slot element or change
- * the session identity (clear it and open a fresh session) to acquire again.
+ * `present`. When a superseded slot becomes visible again, it automatically
+ * re-acquires the same session so returning from the floating player preserves
+ * the browser tab.
  * Acquisition may wait for the host's bounded session synchronization. A
  * denied acquisition or a lease that ends `session-unverified` can be tried
  * again by remount or identity change once the host recovers.
@@ -625,6 +625,8 @@ export function useBrowserSurfaceSlot(
   const { useCallback, useLayoutEffect, useRef, useState } = host.React;
   const [element, setElement] = useState<HTMLElement | null>(null);
   const [result, setResult] = useState<BrowserSurfaceAcquireResult | null>(null);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(0);
+  const [wasVisible, setWasVisible] = useState(options.visible);
   const [shown, setShown] = useState(false);
   // Lease transitions are host-originated; the bump re-reads lease.state.
   const [, setLeaseVersion] = useState(0);
@@ -637,6 +639,17 @@ export function useBrowserSurfaceSlot(
   const updateRef = useRef<(() => void) | null>(null);
 
   const ref = useCallback((node: HTMLElement | null) => setElement(node), []);
+
+  if (wasVisible !== options.visible) {
+    setWasVisible(options.visible);
+    if (
+      options.visible &&
+      result?.ok &&
+      result.lease.state.kind === "ended" &&
+      result.lease.state.reason === "superseded"
+    )
+      setSurfaceAttempt((attempt) => attempt + 1);
+  }
 
   useLayoutEffect(() => {
     presentationRef.current = {
@@ -779,8 +792,7 @@ export function useBrowserSurfaceSlot(
       detach();
       acquisition.abort();
     };
-    // The lease is re-acquired only when the element or session identity changes.
-  }, [element, targetKey, host, session]);
+  }, [element, targetKey, host, session, surfaceAttempt]);
 
   return {
     ref,

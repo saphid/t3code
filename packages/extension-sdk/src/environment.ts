@@ -17,6 +17,7 @@ import {
   type BrowserCaptureHost,
   type BrowserFramesHost,
   type BrowserSurfaceHost,
+  type BrowserSurfaceSessionRef,
   type UiKeybindingsHost,
   type UiEditorOpenInput,
   type UiEditorOpenReceipt,
@@ -457,6 +458,14 @@ export function resolvePullRequestPreferences(
     : null;
 }
 
+export interface ClientBrowserMiniPlayer {
+  readonly version: 1;
+  readonly supported: boolean;
+  read(context: ViewContext): string | null;
+  canFloat(context: ViewContext, session: BrowserSurfaceSessionRef): boolean;
+  subscribe(context: ViewContext, listener: () => void): () => void;
+}
+
 export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
@@ -504,6 +513,7 @@ export interface ClientHost {
    * hosts that predate it (treat as "host-unavailable").
    */
   readonly browserCapture?: BrowserCaptureHost;
+  readonly browserMiniPlayer?: ClientBrowserMiniPlayer;
   /**
    * `t3.ui/keybindings@1.1.0` host capability — synchronous, client-local
    * keymap resolution. Absent on hosts that predate it or without the

@@ -1237,6 +1237,30 @@ var __t3Client = (() => {
     ]
   });
 
+  // node_modules/@t3tools/extension-sdk/dist/browserPresentation.js
+  var composerPreviewAnnotationResultSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["inserted", "imageInserted", "screenshotFailed", "target"],
+    properties: {
+      inserted: { type: "boolean" },
+      imageInserted: { type: "boolean" },
+      screenshotFailed: { type: "boolean" },
+      target: { type: "string", minLength: 1, maxLength: 256 }
+    }
+  };
+  var browserMiniPlayerStateSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tabId"],
+    properties: { tabId: { type: ["string", "null"], minLength: 1, maxLength: 128 } }
+  };
+  var browserMiniPlayerInputProperties = {
+    tabId: { type: "string", minLength: 1, maxLength: 128 },
+    serverEpoch: { type: "string", minLength: 1, maxLength: 128 },
+    open: { type: "boolean" }
+  };
+
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
     type: "object",
@@ -1620,8 +1644,39 @@ var __t3Client = (() => {
   };
   var CLIENT_PANELS_API = validateApiDefinition({
     id: "t3.client/panels",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}),
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["browserMiniPlayer"],
+          properties: { browserMiniPlayer: { type: "boolean" } }
+        }
+      },
+      {
+        name: "getBrowserMiniPlayer",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput }, ["threadId"]),
+        outputSchema: browserMiniPlayerStateSchema
+      },
+      {
+        name: "setBrowserMiniPlayer",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({ ...panelThreadInput, ...browserMiniPlayerInputProperties }, [
+          "threadId",
+          "tabId",
+          "serverEpoch",
+          "open"
+        ]),
+        outputSchema: browserMiniPlayerStateSchema
+      },
       {
         name: "openSurface",
         effect: "write",
@@ -1800,8 +1855,18 @@ var __t3Client = (() => {
   };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.3.0",
+    version: "1.4.0",
     methods: [
+      {
+        name: "insertPreviewAnnotation",
+        effect: "write",
+        requiredGrants: [],
+        inputSchema: withTarget({
+          ...composerThreadIdInput,
+          annotationRef: { type: "string", minLength: 1, maxLength: 128 }
+        }, ["threadId", "annotationRef"]),
+        outputSchema: composerPreviewAnnotationResultSchema
+      },
       {
         name: "insertContext",
         effect: "write",
@@ -7422,7 +7487,7 @@ var __t3Client = (() => {
   };
   var composerContextApi = defineApi({
     id: COMPOSER_CONTEXT,
-    version: "1.2.0",
+    version: "1.3.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7436,8 +7501,24 @@ var __t3Client = (() => {
           "getDraftState",
           "insertMention",
           "insertTerminalContext",
-          "insertImage"
+          "insertImage",
+          "insertPreviewAnnotation"
         ])
+      },
+      {
+        name: "insertPreviewAnnotation",
+        effect: "write",
+        requiredGrants: [COMPOSER_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["annotationRef"],
+          properties: {
+            threadId: composerThreadIdInput2,
+            annotationRef: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        },
+        outputSchema: composerPreviewAnnotationResultSchema
       },
       {
         name: "insertContext",
@@ -7596,6 +7677,9 @@ var __t3Client = (() => {
         }
       }
     ]
+  }, {
+    baseline: "1.2.0",
+    additions: [{ version: "1.3.0", method: "insertPreviewAnnotation" }]
   });
   var messagesEnrichmentDefinition = (withText) => ({
     id: MESSAGES_ENRICHMENT,
@@ -8145,7 +8229,7 @@ var __t3Client = (() => {
   );
   var uiPanelsApi = defineApi({
     id: "t3.ui/panels",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -8158,8 +8242,33 @@ var __t3Client = (() => {
           "closeSurface",
           "listSurfaces",
           "hideDock",
-          "showDock"
+          "showDock",
+          "getBrowserMiniPlayer",
+          "setBrowserMiniPlayer"
         ])
+      },
+      {
+        name: "getBrowserMiniPlayer",
+        effect: "read",
+        requiredGrants: [UI_PANELS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { threadId: composerThreadIdInput2 }
+        },
+        outputSchema: browserMiniPlayerStateSchema
+      },
+      {
+        name: "setBrowserMiniPlayer",
+        effect: "write",
+        requiredGrants: [UI_PANELS, BROWSER_SESSIONS],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tabId", "serverEpoch", "open"],
+          properties: { threadId: composerThreadIdInput2, ...browserMiniPlayerInputProperties }
+        },
+        outputSchema: browserMiniPlayerStateSchema
       },
       {
         name: "openSurface",
@@ -8290,6 +8399,12 @@ var __t3Client = (() => {
           properties: { applied: { type: "boolean" } }
         }
       }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "getBrowserMiniPlayer" },
+      { version: "1.1.0", method: "setBrowserMiniPlayer" }
     ]
   });
   var uiPreferencesDefinition = (version, preferences, patch) => ({

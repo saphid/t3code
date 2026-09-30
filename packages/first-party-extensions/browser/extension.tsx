@@ -81,6 +81,7 @@ import {
 } from "./pageControls.js";
 import { floatingLayers } from "./floating.js";
 import { PageMenu, ZoomIndicator } from "./pageMenu.js";
+import { MiniPlayerButton } from "./miniPlayer.js";
 import { panelPopover, type PanelFloating } from "./popover.js";
 import { bindProfilesApi, ProfileBadge, ProfileSection } from "./profileMenu.js";
 import { createProfileListStore, profileFailureMessage, reopenRequest } from "./profiles.js";
@@ -1065,7 +1066,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const surfaceNotice =
     epochChangedPresentation || surfaceDenial?.reason === "host-unavailable"
       ? null
-      : leaseState?.kind === "ended"
+      : leaseState?.kind === "ended" && leaseState.reason !== "superseded"
         ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
         : remoteEligible
           ? remoteNotice
@@ -1225,6 +1226,19 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           </button>
         </Tooltip>
 
+        <MiniPlayerButton
+          host={host}
+          session={session}
+          held={held}
+          visible={visible}
+          available={
+            surfaceLease?.state.kind === "active" &&
+            live?.engine.state === "ready" &&
+            live?.navigation.kind !== "failed"
+          }
+          style={buttonStyle}
+          report={setNotice}
+        />
         <PageMenu
           host={host}
           session={held ? live : null}

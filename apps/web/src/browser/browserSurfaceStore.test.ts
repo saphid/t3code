@@ -9,7 +9,32 @@ import {
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
-    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    useBrowserSurfaceStore.setState({
+      activityByTabId: {},
+      byTabId: {},
+      extensionTargetsByResourceKey: {},
+    });
+  });
+
+  it("an old acquisition cannot remove a newer target for the same runtime session", () => {
+    const store = useBrowserSurfaceStore.getState();
+    const old = {
+      installationId: "install-a",
+      tabId: "tab-a",
+      serverEpoch: "epoch-a",
+      runtimeTabId: "runtime-a",
+    };
+    const current = { ...old };
+    store.requestExtension("resource-a", old);
+    store.requestExtension("resource-a", current);
+    store.forgetExtension("resource-a", old);
+    expect(useBrowserSurfaceStore.getState().extensionTargetsByResourceKey["resource-a"]).toBe(
+      current,
+    );
+    store.forgetExtension("resource-a", current);
+    expect(
+      useBrowserSurfaceStore.getState().extensionTargetsByResourceKey["resource-a"],
+    ).toBeUndefined();
   });
 
   it("keeps concurrent background work active until every lease is released", () => {

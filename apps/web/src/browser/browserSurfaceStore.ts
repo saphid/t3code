@@ -36,7 +36,17 @@ export interface BrowserSurfaceContentPresentation {
   readonly scrollTop: number;
 }
 
+export interface BrowserExtensionTarget {
+  readonly installationId: string;
+  readonly tabId: string;
+  readonly serverEpoch: string;
+  readonly runtimeTabId: string;
+}
+
 interface BrowserSurfaceStoreState {
+  readonly extensionTargetsByResourceKey: Record<string, BrowserExtensionTarget>;
+  readonly requestExtension: (resourceKey: string, target: BrowserExtensionTarget) => void;
+  readonly forgetExtension: (resourceKey: string, target: BrowserExtensionTarget) => void;
   readonly activityByTabId: Record<string, number>;
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
   readonly acquireActivity: (tabId: string) => () => void;
@@ -96,6 +106,21 @@ const rectEquals = (left: BrowserSurfaceRect | null, right: BrowserSurfaceRect):
   left.height === right.height;
 
 export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) => ({
+  extensionTargetsByResourceKey: {},
+  requestExtension: (resourceKey, target) =>
+    set((state) => ({
+      extensionTargetsByResourceKey: {
+        ...state.extensionTargetsByResourceKey,
+        [resourceKey]: target,
+      },
+    })),
+  forgetExtension: (resourceKey, target) =>
+    set((state) => {
+      if (state.extensionTargetsByResourceKey[resourceKey] !== target) return state;
+      const { [resourceKey]: _removed, ...extensionTargetsByResourceKey } =
+        state.extensionTargetsByResourceKey;
+      return { extensionTargetsByResourceKey };
+    }),
   activityByTabId: {},
   byTabId: {},
   acquireActivity: (tabId) => {

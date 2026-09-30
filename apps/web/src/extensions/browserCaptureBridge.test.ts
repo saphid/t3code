@@ -10,6 +10,7 @@ import {
   type BrowserCaptureBinding,
   type BrowserCaptureBridgeDeps,
 } from "./browserCaptureBridge";
+import { readBrowserCaptureAnnotation } from "./browserCaptureAnnotations";
 
 const context = {
   client: "desktop",
@@ -114,8 +115,9 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
   };
   const lifetime = new AbortController();
   const bind = createBrowserCaptureBridge("env-a", deps);
-  const host = (grants: Partial<BrowserCaptureBinding["grants"]> = {}) =>
+  const host = (grants: Partial<BrowserCaptureBinding["grants"]> = {}, installationId?: string) =>
     bind({
+      ...(installationId ? { installationId } : {}),
       grants: {
         capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.browser/artifact-actions"],
         projectIds: ["project-a"],
@@ -127,6 +129,99 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
 }
 
 describe("browser capture bridge", () => {
+  it("refuses annotation without composer access before opening the picker", async () => {
+    const h = harness();
+    const result = await h
+      .host({}, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result).toMatchObject({ ok: false, failure: { reason: "grant-denied" } });
+    expect(h.preview.pickElement).not.toHaveBeenCalled();
+  });
+  it("does not retain an annotation handle for ordinary element screenshots", async () => {
+    const h = harness();
+    const result = await h.host({}, "ext.a").capture({ context, session, target: "element" });
+    expect(result.ok).toBe(true);
+    expect(result.annotationRef).toBeUndefined();
+    expect(h.uploads).toHaveLength(1);
+    h.lifetime.abort();
+  });
+  it("retains annotation crops locally without waiting for an unused upload", async () => {
+    const fixture = harness();
+    const host = fixture.host(
+      { capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] },
+      "ext.a",
+    );
+    const result = await host.capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
+    expect(result.annotationRef).toBeTruthy();
+    expect(fixture.uploads).toHaveLength(0);
+    fixture.lifetime.abort();
+  });
+  it("retains native annotation geometry behind a local reference, even when the crop fails", async () => {
+    const regions = [{ id: "region-a", rect: { x: 4, y: 5, width: 6, height: 7 } }];
+    const h = harness();
+    h.preview.pickElement.mockResolvedValue({
+      ...pick({ screenshot: null, regions }),
+      screenshotFailed: true,
+    });
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
+    expect(result.annotationRef).toMatch(/^preview-annotation-/);
+    const retained = readBrowserCaptureAnnotation(
+      "env-a",
+      "thread-a",
+      "ext.a",
+      result.annotationRef!,
+    );
+    expect(retained?.annotation.regions).toEqual(regions);
+    expect(retained?.annotation.elements[0]?.element.htmlPreview).toContain("<button");
+    expect(retained?.screenshotFailed).toBe(true);
+    expect(h.uploads).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toMatch(/base64|htmlPreview|region-a/);
+    h.lifetime.abort();
+    expect(
+      readBrowserCaptureAnnotation("env-a", "thread-a", "ext.a", result.annotationRef!),
+    ).toBeNull();
+  });
+
+  it("retains the crop locally without an uploaded artifact", async () => {
+    const h = harness();
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
+    const retained = readBrowserCaptureAnnotation(
+      "env-a",
+      "thread-a",
+      "ext.a",
+      result.annotationRef!,
+    );
+    expect(retained?.file?.size).toBe(PNG.byteLength);
+    expect(retained?.artifactRef).toBeNull();
+    expect(h.uploads).toHaveLength(0);
+    expect(retained?.screenshotFailed).toBe(false);
+    h.lifetime.abort();
+  });
+  it("drops a leftover crop when the native picker reports screenshot failure", async () => {
+    const h = harness();
+    h.preview.pickElement.mockResolvedValue({ ...pick(), screenshotFailed: true });
+    const result = await h
+      .host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] }, "ext.a")
+      .capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
+    const retained = readBrowserCaptureAnnotation(
+      "env-a",
+      "thread-a",
+      "ext.a",
+      result.annotationRef!,
+    );
+    expect(retained?.file).toBeNull();
+    expect(retained?.annotation.screenshot).toBeNull();
+    expect(retained?.screenshotFailed).toBe(true);
+    h.lifetime.abort();
+  });
   it("preserves the 1.1.0 screenshot actions with only the original grants", async () => {
     const fixture = harness();
     const host = fixture.host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE] });

@@ -6,6 +6,10 @@ NodeTest.test("host-local capture does not advertise a phantom brokered recordin
   NodeAssert.equal(catalogue.BROWSER_CAPTURE_ADDITIONS, undefined);
 });
 
+NodeTest.test("annotation capture uses an independent minimum version", () => {
+  NodeAssert.equal(catalogue.BROWSER_ANNOTATION_MIN_VERSION, "1.3.0");
+});
+
 NodeTest.test("recording and artifact actions have independent installable grants", () => {
   for (const grant of ["t3.browser/recording", "t3.browser/artifact-actions"])
     NodeAssert.ok(catalogue.HOST_CAPABILITY_GRANTS.includes(grant));

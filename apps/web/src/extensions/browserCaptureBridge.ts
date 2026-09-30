@@ -48,7 +48,10 @@ import { validateContext } from "@t3tools/extension-sdk/contracts";
 import * as Schema from "effect/Schema";
 
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
-import { uploadBrowserCapture } from "~/browser/browserCaptureArtifacts";
+import {
+  uploadBrowserCapture,
+  releaseBrowserCaptureArtifact,
+} from "~/browser/browserCaptureArtifacts";
 import {
   BrowserRecordingConflictError,
   acquireBrowserRecordingControl,
@@ -64,12 +67,15 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { revealInFileExplorerLabel } from "~/components/preview/fileExplorerLabel";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { dataUrlToFile } from "~/lib/imageCompression";
+import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
+import { retainBrowserCaptureAnnotation } from "./browserCaptureAnnotations";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentShell } from "~/state/shell";
 import { environmentThreadShells } from "~/state/threads";
 
 export interface BrowserCaptureBinding {
+  readonly installationId?: string;
   /** The installation's grant set — the authority every capture checks. */
   readonly grants: {
     readonly capabilities: readonly string[];
@@ -667,6 +673,16 @@ export function createBrowserCaptureBridge(
         const { threadRef, runtimeTabId, projectId, preview } = authorized;
         if (request.target !== "page" && request.target !== "element")
           return fail("session-invalid", 'target must be "page" or "element".');
+        if (
+          request.target === "element" &&
+          request.annotation &&
+          !binding.grants.capabilities.includes("t3.composer/write")
+        )
+          return fail(
+            "grant-denied",
+            "Adding annotations requires composer access.",
+            "t3.composer/write",
+          );
         if (inFlight.has(runtimeTabId))
           return fail("busy", "Another capture of this session is still running.");
 
@@ -678,6 +694,14 @@ export function createBrowserCaptureBridge(
         };
         try {
           let png: Blob;
+          let retainedAnnotation: ReturnType<typeof retainBrowserCaptureAnnotation> | null = null;
+          const imageFailure = (
+            reason: BrowserCaptureFailureReason,
+            detail: string,
+          ): BrowserCaptureResult => ({
+            ...fail(reason, detail),
+            ...(retainedAnnotation ? { annotationRef: retainedAnnotation.annotationRef } : {}),
+          });
           let savedPath: string | null = null;
           let partial: Omit<BrowserCaptureArtifact, "artifactRef" | "sizeBytes">;
           if (request.target === "page") {
@@ -723,15 +747,44 @@ export function createBrowserCaptureBridge(
             if (!picked || request.signal?.aborted || binding.lifetime.aborted)
               return fail("cancelled", "The element pick was dismissed.");
             const { annotation } = picked;
+            if (request.annotation && binding.installationId) {
+              const capture = capturePreviewAnnotationScreenshot(annotation);
+              const file =
+                !picked.screenshotFailed &&
+                capture.status === "captured" &&
+                capture.file.size <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+                  ? capture.file
+                  : null;
+              const screenshotFailed =
+                picked.screenshotFailed === true ||
+                capture.status === "failed" ||
+                (capture.status === "captured" && file === null);
+              retainedAnnotation = retainBrowserCaptureAnnotation({
+                environmentId,
+                threadId: threadRef.threadId,
+                installationId: binding.installationId,
+                lifetime: request.signal
+                  ? AbortSignal.any([binding.lifetime, request.signal])
+                  : binding.lifetime,
+                annotation: file ? annotation : { ...annotation, screenshot: null },
+                file,
+                screenshotFailed,
+                submission: picked.submission,
+                releaseArtifact: (artifactRef) =>
+                  releaseBrowserCaptureArtifact(threadRef.environmentId, artifactRef),
+              });
+            }
+            if (request.annotation && retainedAnnotation)
+              return { ok: true, artifact: null, annotationRef: retainedAnnotation.annotationRef };
             const screenshot = annotation.screenshot;
             if (!screenshot || picked.screenshotFailed)
-              return fail("capture-failed", "The picker kept no crop of the selection.");
+              return imageFailure("capture-failed", "The picker kept no crop of the selection.");
             try {
               // Electron hands the crop to the renderer as a data URL; it is
               // decoded here and never leaves this client in that form.
               png = dataUrlToFile(screenshot.dataUrl, "crop.png", "image/png");
             } catch {
-              return fail("capture-failed", "The picker's crop could not be decoded.");
+              return imageFailure("capture-failed", "The picker's crop could not be decoded.");
             }
             partial = {
               mimeType: "image/png",
@@ -744,9 +797,9 @@ export function createBrowserCaptureBridge(
               elements: pickedElements(annotation),
             };
           }
-          if (png.size === 0) return fail("capture-failed", "The capture is empty.");
+          if (png.size === 0) return imageFailure("capture-failed", "The capture is empty.");
           if (png.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
-            return fail("too-large", "The capture exceeds the image attachment limit.");
+            return imageFailure("too-large", "The capture exceeds the image attachment limit.");
           let artifactRef: string;
           try {
             artifactRef = await deps.upload(
@@ -755,16 +808,24 @@ export function createBrowserCaptureBridge(
               captureName(request.target, Date.now()),
             );
           } catch (error) {
-            return fail(
+            return imageFailure(
               "upload-failed",
               error instanceof Error ? error.message : "The capture could not be stored.",
             );
+          }
+          retainedAnnotation?.setArtifact(artifactRef);
+          if (request.signal?.aborted || binding.lifetime.aborted) {
+            if (!retainedAnnotation)
+              releaseBrowserCaptureArtifact(threadRef.environmentId, artifactRef);
+            retainedAnnotation?.discard();
+            return fail("cancelled", "The capture was cancelled.");
           }
           if (savedPath !== null) {
             remember(artifactRef, savedPath, projectId, true);
           }
           return {
             ok: true,
+            ...(retainedAnnotation ? { annotationRef: retainedAnnotation.annotationRef } : {}),
             artifact: {
               ...partial,
               artifactRef,

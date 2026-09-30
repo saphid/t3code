@@ -14,6 +14,7 @@ import {
   type ClientTooltip,
   type ClientFloatingLayer,
   type ClientPullRequestPreferences,
+  type ClientBrowserMiniPlayer,
   type ClientHost,
   type EnvironmentPackage,
   type GlobalCommandsHandle,
@@ -217,6 +218,7 @@ export function createInstalledExtensionController(options: {
   readonly browserFrames?: (binding: BrowserFramesBinding) => BrowserFramesHost;
   /** Per-installation `t3.browser/capture` host, bound like `browserSurface`. */
   readonly browserCapture?: (binding: BrowserCaptureBinding) => BrowserCaptureHost;
+  readonly browserMiniPlayer?: (binding: BrowserSurfaceBinding) => ClientBrowserMiniPlayer;
   /**
    * `t3.ui/keybindings@1.1.0` client capability — bound per installation so
    * `host.keybindings` exists only under that installation's grant and
@@ -404,6 +406,7 @@ export function createInstalledExtensionController(options: {
               throw new Error("Installed client must export a factory");
             const identity = signature(item);
             const browserSurface = options.browserSurface?.({
+              installationId: item.id,
               grants: item.grants,
               lifetime: lifetime.signal,
             });
@@ -412,6 +415,11 @@ export function createInstalledExtensionController(options: {
               lifetime: lifetime.signal,
             });
             const browserCapture = options.browserCapture?.({
+              installationId: item.id,
+              grants: item.grants,
+              lifetime: lifetime.signal,
+            });
+            const browserMiniPlayer = options.browserMiniPlayer?.({
               grants: item.grants,
               lifetime: lifetime.signal,
             });
@@ -621,6 +629,7 @@ export function createInstalledExtensionController(options: {
               ...(browserSurface ? { browserSurface } : {}),
               ...(browserFrames ? { browserFrames } : {}),
               ...(browserCapture ? { browserCapture } : {}),
+              ...(browserMiniPlayer ? { browserMiniPlayer } : {}),
               ...(keybindings ? { keybindings } : {}),
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),

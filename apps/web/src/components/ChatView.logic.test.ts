@@ -133,6 +133,16 @@ describe("agent browser close confirmation", () => {
 });
 
 describe("floating browser preview", () => {
+  it("does not render a restored extension player on an unsupported runtime", () => {
+    expect(
+      shouldRenderPreviewMiniPlayer(
+        { kind: "browser", tabId: "tab-a", returnSurfaceId: "extension:browser" },
+        null,
+        undefined,
+        false,
+      ),
+    ).toBe(false);
+  });
   it("keeps an extension-owned tab in its open panel across occlusion, thread switches and remounts", () => {
     const threadRef = {
       environmentId: EnvironmentId.make("env"),
@@ -159,6 +169,13 @@ describe("floating browser preview", () => {
       },
     });
     expect(panel).not.toBeNull();
+    expect(
+      shouldRenderPreviewMiniPlayer(source, panel, {
+        extensionPanelOpen: true,
+        requestedTabId: source.tabId,
+        browserSurface: undefined,
+      }),
+    ).toBe(false);
     useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
     usePreviewMiniPlayerStore.getState().open(threadRef, source);

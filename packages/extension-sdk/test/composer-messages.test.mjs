@@ -11,6 +11,7 @@ import {
   MESSAGES_WRITE,
   assertProvidedApiOwner,
   composerContextApi,
+  uiPanelsApi,
   messagesEnrichmentApi,
 } from "../dist/catalogue.js";
 import { validateApiDefinition } from "../dist/capabilities.js";
@@ -25,10 +26,66 @@ const LISTED_TEXT_MAX = 160;
 const methodsOf = (definition) =>
   Object.fromEntries((definition.methods ?? []).map((m) => [m.name, m]));
 
+NodeTest.test("annotation and mini-player additions require explicit version opt-in", async () => {
+  const context = {
+    client: "desktop",
+    resource: {
+      namespace: "test",
+      id: "view",
+      environmentId: "env",
+      projectId: "project",
+      threadId: "thread",
+    },
+  };
+  const client = {
+    invokeApi: async () => ({
+      inserted: true,
+      imageInserted: false,
+      screenshotFailed: false,
+      target: "env:thread",
+    }),
+  };
+  const signal = new AbortController().signal;
+  await NodeAssert.rejects(
+    bindApi(composerContextApi, client, context).invoke(
+      "insertPreviewAnnotation",
+      { annotationRef: "pick-ref" },
+      signal,
+    ),
+    ApiVersionError,
+  );
+  await NodeAssert.rejects(
+    bindApi(uiPanelsApi, client, context).invoke(
+      "setBrowserMiniPlayer",
+      { tabId: "tab", serverEpoch: "epoch", open: true },
+      signal,
+    ),
+    ApiVersionError,
+  );
+  NodeAssert.equal(
+    (
+      await bindApi(composerContextApi, client, context, "^1.3.0").invoke(
+        "insertPreviewAnnotation",
+        { annotationRef: "pick-ref" },
+        signal,
+      )
+    ).inserted,
+    true,
+  );
+  const insert = methodsOf(COMPOSER_CONTEXT_API).insertPreviewAnnotation;
+  NodeAssert.deepEqual(insert.requiredGrants, [COMPOSER_WRITE]);
+  NodeAssert.deepEqual(Object.keys(insert.inputSchema.properties), ["threadId", "annotationRef"]);
+  NodeAssert.equal(insert.inputSchema.properties.annotationRef.maxLength, 128);
+  NodeAssert.deepEqual(methodsOf(uiPanelsApi.definition).setBrowserMiniPlayer.requiredGrants, [
+    "t3.ui/panels",
+    "t3.browser/sessions",
+  ]);
+});
+
 NodeTest.test("both contracts are registered with stable ids", () => {
   NodeAssert.equal(COMPOSER_CONTEXT_API.id, "t3.composer/context");
   NodeAssert.equal(COMPOSER_CONTEXT_API.id, COMPOSER_CONTEXT);
-  NodeAssert.equal(COMPOSER_CONTEXT_API.version, "1.2.0");
+  NodeAssert.equal(COMPOSER_CONTEXT_API.version, "1.3.0");
   NodeAssert.equal(composerContextApi.definition, COMPOSER_CONTEXT_API);
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, "t3.messages/enrichment");
   NodeAssert.equal(MESSAGES_ENRICHMENT_API.id, MESSAGES_ENRICHMENT);
@@ -52,6 +109,7 @@ NodeTest.test("grants split write authority across the two contracts", () => {
     "insertContext",
     "insertImage",
     "insertMention",
+    "insertPreviewAnnotation",
     "insertTerminalContext",
   ]);
   NodeAssert.deepEqual(composer.insertImage.requiredGrants, [COMPOSER_WRITE]);
@@ -198,7 +256,7 @@ NodeTest.test("the private client-provider seam carries every public op", () => 
   // missing here can never cross to the client, whatever the public contract
   // or web provider support.
   NodeAssert.equal(CLIENT_COMPOSER_API.id, "t3.client/composer");
-  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.3.0");
+  NodeAssert.equal(CLIENT_COMPOSER_API.version, "1.4.0");
   NodeAssert.deepEqual(methodsOf(CLIENT_COMPOSER_API).insertMention.inputSchema.required, [
     "target",
     "threadId",
@@ -242,7 +300,14 @@ NodeTest.test("capability honesty output names per-op support and transport", ()
   for (const [definition, ops] of [
     [
       COMPOSER_CONTEXT_API,
-      ["insertContext", "getDraftState", "insertMention", "insertTerminalContext", "insertImage"],
+      [
+        "insertContext",
+        "getDraftState",
+        "insertMention",
+        "insertTerminalContext",
+        "insertImage",
+        "insertPreviewAnnotation",
+      ],
     ],
     [MESSAGES_ENRICHMENT_API, ["attachAnnotation", "listAnnotations", "removeAnnotation"]],
   ]) {

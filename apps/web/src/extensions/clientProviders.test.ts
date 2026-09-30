@@ -29,6 +29,7 @@ import {
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
 import { useComposerDraftStore, type ComposerContextInsertionHandler } from "../composerDraftStore";
+import { retainBrowserCaptureAnnotation } from "./browserCaptureAnnotations";
 import {
   createClientProviders,
   createComposerClientProvider,
@@ -51,6 +52,9 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { setLocalStorageItem } from "../hooks/useLocalStorage";
 import { useRightPanelStore } from "../rightPanelStore";
+import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { useBrowserSurfaceStore } from "../browser/browserSurfaceStore";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
 import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -165,6 +169,347 @@ function invokeCall(
     ...overrides,
   };
 }
+
+describe("browser SDK native parity seams", () => {
+  const threadRef = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
+  const previewState = { serverEpoch: "epoch-a", sessions: { "tab-a": {} } };
+  beforeEach(() =>
+    useBrowserSurfaceStore.setState({
+      extensionTargetsByResourceKey: {
+        [resourceKey(context().resource)]: {
+          installationId: INSTALL,
+          tabId: "tab-a",
+          serverEpoch: "epoch-a",
+          runtimeTabId: "runtime-a",
+        },
+      },
+    }),
+  );
+  afterEach(() => useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} }));
+
+  it("rejects sessions never held by this installation without changing another panel", () => {
+    useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} });
+    useRightPanelStore.getState().open(threadRef, "diff");
+    const provider = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels", "t3.browser/sessions"]),
+      () => previewState,
+      () => true,
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("setBrowserMiniPlayer", {
+            threadId: "thread-a",
+            tabId: "tab-a",
+            serverEpoch: "epoch-a",
+            open: true,
+          }),
+        ),
+      "client-target-denied",
+    );
+    expect(
+      Object.values(useRightPanelStore.getState().byThreadKey).some(
+        (panel) => panel.isOpen && panel.activeSurfaceId === "diff",
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["attach", "send"] as const)(
+    "only the trusted picker submission can request a native send: %s",
+    (submission) => {
+      const nativeSend = vi.fn();
+      const read = vi.fn(() => ({
+        annotation: {
+          id: "native-send",
+          pageUrl: "https://example.com",
+          pageTitle: "Page",
+          comment: "fix",
+          elements: [],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-09-30T00:00:00Z",
+        },
+        file: null,
+        artifactRef: null,
+        screenshotFailed: false,
+        submission,
+        consume: vi.fn(),
+      }));
+      const provider = createComposerClientProvider(
+        makeDeps(["t3.composer/write"]),
+        undefined,
+        undefined,
+        read,
+        nativeSend,
+      );
+      provider.invoke(
+        invokeCall("insertPreviewAnnotation", {
+          threadId: "thread-a",
+          annotationRef: "native-ref",
+        }),
+      );
+      expect(nativeSend).toHaveBeenCalledTimes(submission === "send" ? 1 : 0);
+    },
+  );
+
+  it("opens the native mini-player, preserves its geometry, and closes only the requested source", () => {
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+    useRightPanelStore.getState().openBrowser(threadRef, "tab-a");
+    const provider = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels", "t3.browser/sessions"]),
+      () => previewState,
+      () => true,
+    );
+    const input = { threadId: "thread-a", tabId: "tab-a", serverEpoch: "epoch-a", open: true };
+    expect(provider.invoke(invokeCall("setBrowserMiniPlayer", input))).toEqual({ tabId: "tab-a" });
+    expect(
+      Object.values(useRightPanelStore.getState().byThreadKey).find((panel) =>
+        panel.surfaces.some((surface) => surface.id === "browser:tab-a"),
+      )?.isOpen,
+    ).toBe(true);
+    usePreviewMiniPlayerStore.getState().move(threadRef, "browser:tab-a", { x: 32, y: 64 });
+    provider.invoke(invokeCall("setBrowserMiniPlayer", input));
+    expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)[0]?.position).toEqual({
+      x: 32,
+      y: 64,
+    });
+    expect(provider.invoke(invokeCall("getBrowserMiniPlayer", { threadId: "thread-a" }))).toEqual({
+      tabId: "tab-a",
+    });
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("setBrowserMiniPlayer", { ...input, tabId: "other", open: false }),
+        ),
+      "client-target-denied",
+    );
+    expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)).toHaveLength(1);
+    provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, open: false }));
+    expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
+  });
+
+  it("does not close a device player when closing a browser source", () => {
+    usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+    usePreviewMiniPlayerStore.getState().open(threadRef, {
+      kind: "device",
+      hostId: "host-a",
+      deviceId: "device-a",
+      platform: "ios",
+      name: "Phone",
+    });
+    const provider = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels", "t3.browser/sessions"]),
+      () => previewState,
+      () => true,
+    );
+    expect(
+      provider.invoke(
+        invokeCall("setBrowserMiniPlayer", {
+          threadId: "thread-a",
+          tabId: "tab-a",
+          serverEpoch: "epoch-a",
+          open: false,
+        }),
+      ),
+    ).toEqual({ tabId: null });
+    expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)[0]?.source.kind).toBe(
+      "device",
+    );
+    usePreviewMiniPlayerStore.getState().close(threadRef);
+  });
+
+  it("rejects mini-player requests without browser authority or with a stale or foreign session", () => {
+    const noBrowser = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels"]),
+      () => previewState,
+      () => true,
+    );
+    const provider = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels", "t3.browser/sessions"]),
+      () => previewState,
+      () => true,
+    );
+    const input = { threadId: "thread-a", tabId: "tab-a", serverEpoch: "epoch-a", open: true };
+    expectDenied(() => noBrowser.invoke(invokeCall("setBrowserMiniPlayer", input)));
+    expectDenied(() =>
+      provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, threadId: "other" })),
+    );
+    expectDenied(
+      () => provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, serverEpoch: "old" })),
+      "provider-rejected",
+    );
+    expectDenied(
+      () => provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, tabId: "other" })),
+      "client-target-denied",
+    );
+  });
+
+  it("inserts a native annotation chip without losing the user's prompt", () => {
+    useComposerDraftStore.setState({ draftsByThreadKey: {} });
+    useComposerDraftStore.getState().setPrompt(threadRef, "Please fix this");
+    const annotation = {
+      id: "pick-a",
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      comment: "make it blue",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-09-30T00:00:00Z",
+    };
+    const readAnnotation = vi.fn(() => ({
+      annotation,
+      file: null,
+      artifactRef: null,
+      screenshotFailed: false,
+      consume: vi.fn(),
+    }));
+    const provider = createComposerClientProvider(
+      makeDeps(["t3.composer/write"]),
+      undefined,
+      undefined,
+      readAnnotation,
+    );
+    expect(
+      provider.invoke(
+        invokeCall("insertPreviewAnnotation", { threadId: "thread-a", annotationRef: "pick-ref" }),
+      ),
+    ).toEqual({
+      inserted: true,
+      imageInserted: false,
+      screenshotFailed: false,
+      target: "env-a:thread-a",
+    });
+    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef)!;
+    expect(draft.previewAnnotations).toEqual([annotation]);
+    expect(draft.prompt).toContain("Please fix this");
+    expect(draft.prompt).not.toBe("Please fix this");
+    expect(readAnnotation).toHaveBeenCalledWith(ENV, "thread-a", INSTALL, "pick-ref");
+  });
+
+  it.each([false, true])(
+    "keeps native annotation text and geometry when the composer is full: %s",
+    (full) => {
+      useComposerDraftStore.setState({ draftsByThreadKey: {} });
+      const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "selection.png", {
+        type: "image/png",
+      });
+      if (full)
+        useComposerDraftStore.getState().addImages(
+          threadRef,
+          Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
+            type: "image" as const,
+            id: `existing-${index}`,
+            name: `existing-${index}.png`,
+            mimeType: "image/png",
+            sizeBytes: 4,
+            previewUrl: `blob:existing-${index}`,
+            file: new File([file], `existing-${index}.png`, { type: "image/png" }),
+          })),
+        );
+      const annotation = {
+        id: "selection-a",
+        pageUrl: "https://example.com",
+        pageTitle: "Example",
+        comment: "Move this region",
+        elements: [],
+        regions: [{ id: "region-a", rect: { x: 1, y: 2, width: 3, height: 4 } }],
+        strokes: [],
+        styleChanges: [],
+        screenshot: {
+          dataUrl: "data:image/png;base64,iVBORw==",
+          width: 3,
+          height: 4,
+          cropRect: { x: 1, y: 2, width: 3, height: 4 },
+        },
+        createdAt: "2026-09-30T00:00:00Z",
+      };
+      const lifetime = new AbortController();
+      const retained = retainBrowserCaptureAnnotation({
+        environmentId: ENV,
+        threadId: "thread-a",
+        installationId: INSTALL,
+        lifetime: lifetime.signal,
+        annotation,
+        file,
+        screenshotFailed: false,
+      });
+      retained.setArtifact("pending-selection");
+      const release = vi.fn();
+      const provider = createComposerClientProvider(
+        makeDeps(["t3.composer/write"]),
+        undefined,
+        release,
+      );
+      const input = { threadId: "thread-a", annotationRef: retained.annotationRef };
+      expect(provider.invoke(invokeCall("insertPreviewAnnotation", input))).toEqual({
+        inserted: true,
+        imageInserted: !full,
+        screenshotFailed: full,
+        target: "env-a:thread-a",
+      });
+      const draft = useComposerDraftStore.getState().getComposerDraft(threadRef)!;
+      expect(draft.previewAnnotations).toEqual([
+        { ...annotation, screenshot: full ? null : { ...annotation.screenshot, dataUrl: "" } },
+      ]);
+      expect(draft.images.some((image) => image.id === annotation.id)).toBe(!full);
+      expect(JSON.stringify(draft.previewAnnotations)).not.toContain("base64");
+      expect(release).toHaveBeenCalledExactlyOnceWith(ENV, "pending-selection");
+      expectDenied(
+        () => provider.invoke(invokeCall("insertPreviewAnnotation", input)),
+        "provider-rejected",
+      );
+      lifetime.abort();
+    },
+  );
+
+  it("does not insert an annotation without write authority or outside its owning scope", () => {
+    const lifetime = new AbortController();
+    const annotation = {
+      id: "private-pick",
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      comment: "private comment",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-09-30T00:00:00Z",
+    };
+    const retained = retainBrowserCaptureAnnotation({
+      environmentId: ENV,
+      threadId: "thread-a",
+      installationId: "other",
+      lifetime: lifetime.signal,
+      annotation,
+      file: null,
+      screenshotFailed: false,
+    });
+    const input = { threadId: "thread-a", annotationRef: retained.annotationRef };
+    expectDenied(() =>
+      createComposerClientProvider(makeDeps([])).invoke(
+        invokeCall("insertPreviewAnnotation", input),
+      ),
+    );
+    const provider = createComposerClientProvider(makeDeps(["t3.composer/write"]));
+    expectDenied(
+      () => provider.invoke(invokeCall("insertPreviewAnnotation", input)),
+      "provider-rejected",
+    );
+    expectDenied(() =>
+      provider.invoke(invokeCall("insertPreviewAnnotation", { ...input, threadId: "other" })),
+    );
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(threadRef)?.previewAnnotations ?? [],
+    ).toEqual([]);
+    lifetime.abort();
+  });
+});
 
 function expectDenied(fn: () => unknown, code = "client-target-denied") {
   try {
