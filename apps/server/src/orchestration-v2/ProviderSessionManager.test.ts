@@ -253,6 +253,8 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    /** Runs first on scope close, before the closeCount finalizer records it. */
+    readonly sessionScopeCloseFinalizer?: Effect.Effect<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -298,6 +300,10 @@ function makeProviderAdapter(
           // close before the closeCount finalizer, like a provider process
           // that never yields its message stream.
           yield* Effect.addFinalizer(() => Effect.never);
+        }
+        const sessionScopeCloseFinalizer = options.sessionScopeCloseFinalizer;
+        if (sessionScopeCloseFinalizer !== undefined) {
+          yield* Effect.addFinalizer(() => sessionScopeCloseFinalizer);
         }
 
         return {
@@ -368,6 +374,8 @@ function makeTestLayer(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly sessionScopeCloseFinalizer?: Effect.Effect<void>;
+  readonly configureMcp?: boolean;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -387,6 +395,9 @@ function makeTestLayer(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.sessionScopeCloseFinalizer === undefined
+        ? {}
+        : { sessionScopeCloseFinalizer: input.sessionScopeCloseFinalizer }),
     }),
   );
   const providerEventIngestorTestLayer = providerEventIngestorLayer.pipe(
@@ -400,6 +411,7 @@ function makeTestLayer(input: {
     providerSessionManagerLayerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
+      ...(input.configureMcp === undefined ? {} : { configureMcp: input.configureMcp }),
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -1703,6 +1715,135 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   }),
 );
 
+it.effect("ProviderSessionManagerV2 open during release waits for the old scope to close", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closeStarted = yield* Deferred.make<void>();
+    const closeGate = yield* Deferred.make<void>();
+    const closeCountAtOpen = yield* Ref.make<ReadonlyArray<number>>([]);
+    const beforeOpen = () =>
+      Ref.get(state).pipe(
+        Effect.flatMap((current) =>
+          Ref.update(closeCountAtOpen, (seen) => [...seen, current.closeCount]),
+        ),
+      );
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-open-during-release");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      // No workspace stat and no MCP prepare (configureMcp: false below): the
+      // reopen path must be synchronous up to openSession so the assertions
+      // below observe scheduling, not filesystem or crypto latency.
+      const open = manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: { ...runtimePolicy, cwd: null },
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* open;
+      const closeFiber = yield* manager.close(providerSessionId).pipe(Effect.forkScoped);
+      yield* Deferred.await(closeStarted);
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+
+      const reopenFiber = yield* open.pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+
+      yield* Deferred.succeed(closeGate, undefined);
+      yield* Fiber.join(closeFiber);
+      yield* Fiber.join(reopenFiber);
+      assert.deepEqual(yield* Ref.get(closeCountAtOpen), [0, 1]);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+    });
+
+    yield* effect.pipe(
+      // A failed assertion must not leave layer shutdown parked on the gate.
+      Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          beforeOpen,
+          configureMcp: false,
+          sessionScopeCloseFinalizer: Deferred.succeed(closeStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(closeGate)),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 concurrent closes share one teardown", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closeStarted = yield* Deferred.make<void>();
+    const closeGate = yield* Deferred.make<void>();
+    const completed = yield* Ref.make<ReadonlyArray<string>>([]);
+
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-concurrent-close");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const close = (label: string) =>
+        manager
+          .close(providerSessionId)
+          .pipe(Effect.tap(() => Ref.update(completed, (seen) => [...seen, label])));
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      const firstFiber = yield* close("first").pipe(Effect.forkScoped);
+      yield* Deferred.await(closeStarted);
+      const secondFiber = yield* close("second").pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.deepEqual(yield* Ref.get(completed), []);
+
+      yield* Deferred.succeed(closeGate, undefined);
+      yield* Fiber.join(firstFiber);
+      yield* Fiber.join(secondFiber);
+      assert.sameMembers([...(yield* Ref.get(completed))], ["first", "second"]);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+    });
+
+    yield* effect.pipe(
+      Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
+          sessionScopeCloseFinalizer: Deferred.succeed(closeStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(closeGate)),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -1975,27 +2116,29 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
       yield* Deferred.await(checkEntered);
 
       // close removes the map entry first, then waits to interrupt the idle
-      // fiber (still uninterruptible). That window lets a replacement open
-      // under the same providerSessionId before the stale probe finishes.
+      // fiber (still uninterruptible). The key stays owned by the release, so
+      // a replacement open under the same providerSessionId parks behind it
+      // until the stale probe finishes and the old scope closes.
       const closeFiber = yield* manager.close(providerSessionId).pipe(Effect.forkDetach);
+      const reopenFiber = yield* manager
+        .open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
       for (let i = 0; i < 20; i += 1) {
         yield* Effect.yieldNow;
       }
-      yield* manager.open({
-        threadId,
-        providerSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.equal((yield* Ref.get(state)).openCount, 2);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
 
-      // Stale probe reports pending work against the old runtime; the pin
-      // stamp must no-op on the replacement (runtime / generation mismatch).
+      // Stale probe reports pending work against the old runtime; its pin
+      // stamp finds no entry and no-ops, then the replacement opens.
       yield* Deferred.succeed(checkGate, undefined);
       yield* Fiber.join(closeFiber);
-      for (let i = 0; i < 10; i += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* Fiber.join(reopenFiber);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
 
       assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);

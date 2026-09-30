@@ -13,6 +13,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -211,6 +212,12 @@ interface LiveSessionEntry {
   readonly pinnedSinceMs: number | null;
 }
 
+/** A session whose entry left `sessions` while its scope is still closing. */
+interface ReleasingSession {
+  readonly instanceId: ProviderInstanceId;
+  readonly done: Deferred.Deferred<void>;
+}
+
 type ProviderSessionEventSignal =
   | { readonly type: "event"; readonly event: ProviderAdapterV2Event }
   | {
@@ -361,6 +368,30 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      /**
+       * Releases still tearing down their scope, keyed like `sessions`. A key
+       * moves here in the same synchronous step that removes its entry, so no
+       * caller ever sees it as both absent and not releasing. Opens, closes,
+       * detaches and thread attaches for the key wait on `done`, which resolves
+       * once the scope closed or the close timeout fired.
+       */
+      const releasing = new Map<string, ReleasingSession>();
+      const awaitRelease = (key: string): Effect.Effect<void> =>
+        Effect.suspend(() => {
+          const pending = releasing.get(key);
+          return pending === undefined
+            ? Effect.void
+            : Deferred.await(pending.done).pipe(Effect.andThen(awaitRelease(key)));
+        });
+      const finishRelease = (key: string) =>
+        Effect.suspend(() => {
+          const pending = releasing.get(key);
+          if (pending === undefined) {
+            return Effect.void;
+          }
+          releasing.delete(key);
+          return Deferred.succeed(pending.done, undefined);
+        });
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
@@ -717,25 +748,32 @@ export const layerWithOptions = (
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
-          Ref.modify(sessions, (current) => {
-            const key = sessionKey(input.providerSessionId);
-            const existing = current.get(key);
-            if (existing === undefined) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            if (
-              input.onlyIfIdleGeneration !== undefined &&
-              (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-            ) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(key);
-            return [Option.some(existing), updated] as const;
-          }),
+          Deferred.make<void>().pipe(
+            Effect.flatMap((done) =>
+              Ref.modify(sessions, (current) => {
+                const key = sessionKey(input.providerSessionId);
+                const existing = current.get(key);
+                if (existing === undefined) {
+                  return [Option.none<LiveSessionEntry>(), current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return [Option.none<LiveSessionEntry>(), current] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(key);
+                releasing.set(key, { instanceId: existing.runtime.instanceId, done });
+                return [Option.some(existing), updated] as const;
+              }),
+            ),
+          ),
           (entry) =>
             Option.match(entry, {
-              onNone: () => Effect.void,
+              // No entry to tear down; if another release owns this key, join
+              // it so a repeated close returns only once the process is gone.
+              onNone: () => awaitRelease(sessionKey(input.providerSessionId)),
               onSome: (entry) =>
                 Effect.gen(function* () {
                   if (input.cancelIdleFiber !== false) {
@@ -845,6 +883,9 @@ export const layerWithOptions = (
                       { discard: true },
                     ),
                   ),
+                  // Runs after the scope closed or its timeout fired, on every
+                  // exit, so waiters never hang on an abandoned release.
+                  Effect.ensuring(finishRelease(sessionKey(input.providerSessionId))),
                 ),
             }),
         ).pipe(
@@ -1019,18 +1060,24 @@ export const layerWithOptions = (
       }) =>
         withActivityError(
           input.providerSessionId,
-          Ref.modify(sessions, (current) => {
-            const entry = current.get(sessionKey(input.providerSessionId));
-            if (entry === undefined || entry.attachedThreadIds.has(input.threadId)) {
-              return [false, current] as const;
-            }
-            const updated = new Map(current);
-            updated.set(sessionKey(input.providerSessionId), {
-              ...entry,
-              attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
-            });
-            return [true, updated] as const;
-          }),
+          // A handle to a releasing session waits for the teardown instead of
+          // reporting the thread attached to a process that is shutting down.
+          awaitRelease(sessionKey(input.providerSessionId)).pipe(
+            Effect.andThen(
+              Ref.modify(sessions, (current) => {
+                const entry = current.get(sessionKey(input.providerSessionId));
+                if (entry === undefined || entry.attachedThreadIds.has(input.threadId)) {
+                  return [false, current] as const;
+                }
+                const updated = new Map(current);
+                updated.set(sessionKey(input.providerSessionId), {
+                  ...entry,
+                  attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
+                });
+                return [true, updated] as const;
+              }),
+            ),
+          ),
         );
 
       const removeThreadAttachment = (input: {
@@ -1564,6 +1611,10 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
+              // The previous owner of this key may still be closing its scope.
+              // Wait for it (or its close timeout) so the replacement process
+              // never starts while the old one is still shutting down.
+              yield* awaitRelease(key);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 if (
@@ -1742,9 +1793,16 @@ export const layerWithOptions = (
           ),
         closeInstance: (instanceId) =>
           Effect.gen(function* () {
-            const active = [...(yield* Ref.get(sessions)).values()].filter(
-              (entry) => entry.runtime.instanceId === instanceId,
-            );
+            // One synchronous read of both maps: a session leaving `sessions`
+            // for `releasing` between two reads would be missed by both.
+            const { active, pending } = yield* Effect.sync(() => ({
+              active: [...Ref.getUnsafe(sessions).values()].filter(
+                (entry) => entry.runtime.instanceId === instanceId,
+              ),
+              pending: [...releasing.values()]
+                .filter((release) => release.instanceId === instanceId)
+                .map((release) => Deferred.await(release.done)),
+            }));
             const outcomes = yield* Effect.forEach(
               active,
               (entry) =>
@@ -1755,6 +1813,7 @@ export const layerWithOptions = (
                 }).pipe(Effect.exit),
               { concurrency: "unbounded" },
             );
+            yield* Effect.all(pending, { concurrency: "unbounded", discard: true });
             const failure = outcomes.find(Exit.isFailure);
             if (failure !== undefined && Exit.isFailure(failure)) {
               return yield* Effect.failCause(failure.cause);
@@ -1866,6 +1925,9 @@ export const layerWithOptions = (
               yield* clearMcpSession(input.threadId);
             }
             if (Option.isNone(detached)) {
+              // The entry may be mid-release; a repeated detach joins that
+              // teardown rather than reporting done while the process lives.
+              yield* awaitRelease(key);
               return;
             }
             if (
