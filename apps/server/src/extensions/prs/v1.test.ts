@@ -11,7 +11,11 @@ import {
   type PullRequestListResult as NativePullRequestListResult,
   type PullRequestRef as NativePullRequestRef,
 } from "@t3tools/contracts";
-import { PRS_READ_API, type PrsDiffStreamEvent } from "@t3tools/extension-sdk/catalogue";
+import {
+  PRS_READ_API,
+  type PrsDiffStreamEvent,
+  type PrsFilesViewedResult,
+} from "@t3tools/extension-sdk/catalogue";
 import { Ajv } from "ajv";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
@@ -268,6 +272,7 @@ const activity: NativePullRequestActivity = {
 };
 
 type Deps = Parameters<typeof createPrsApiProvider>[0];
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const githubProviderApi = (
   overrides: Partial<PullRequestProviderApi["capabilities"]> = {},
@@ -352,6 +357,7 @@ const makeDeps = (
     summary: () => Effect.die("unused"),
     stack: () => Effect.die("unused"),
     detail: () => Effect.die("unused"),
+    filesViewed: () => Effect.succeed({ files: [], truncated: false }),
     activity: () => Effect.die("unused"),
     threadComments: () => Effect.die("unused"),
     diff: () => Effect.die("unused"),
@@ -475,9 +481,244 @@ it.layer(NodeServices.layer)("t3.prs/read adapter", (it) => {
       ).toBe(true);
       expect(result).toMatchObject({ title: detail.title, capabilities: detail.capabilities });
       expect(result).not.toHaveProperty("nativeOnly");
-      expect(result).not.toHaveProperty("capabilities.viewedFiles");
+      expect(result).toHaveProperty("capabilities.viewedFiles", "host");
       expect(nativeDetail.capabilities.viewedFiles).toBe("host");
       expect(nativeDetail.author.nativeId).toBe(123);
+    }),
+  );
+
+  it.effect("reads viewed states separately without charging detail for the read", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const filesViewed = {
+        files: [
+          { path: "src/a.ts", state: "viewed" as const },
+          { path: "src/b.ts", state: "dismissed" as const },
+        ],
+        truncated: true,
+      };
+      for (const store of ["host", "environment", undefined] as const) {
+        const provider = createPrsApiProvider(
+          makeDeps({
+            detail: () =>
+              Effect.succeed({
+                ...detail,
+                capabilities: { ...detail.capabilities, viewedFiles: store },
+              }),
+            filesViewed: (input) => {
+              calls.push(input);
+              return Effect.succeed(filesViewed);
+            },
+          }),
+        );
+        const result = yield* invoke(provider, "detail", REF, makeContext());
+        if (store === undefined) {
+          expect(result).not.toHaveProperty("filesViewed");
+          expect(result).not.toHaveProperty("capabilities.viewedFiles");
+        } else {
+          expect(result).toMatchObject({ capabilities: { viewedFiles: store } });
+        }
+        const schema = PRS_READ_API.methods!.find(
+          (method) => method.name === "detail",
+        )!.outputSchema;
+        expect(new Ajv({ strict: true, addUsedSchema: false }).compile(schema)(result)).toBe(true);
+        expect(result).not.toHaveProperty("filesViewed");
+        expect(result).not.toHaveProperty("filesViewedError");
+        expect(calls).toHaveLength(store === "host" ? 0 : store === "environment" ? 1 : 2);
+        if (store !== undefined) {
+          expect(yield* invoke(provider, "filesViewed", REF, makeContext())).toMatchObject({
+            ...filesViewed,
+            nextCursor: null,
+          });
+        }
+      }
+      expect(calls).toEqual([
+        { projectId: PROJECT_ID, repository: REF.repository, number: REF.number },
+        { projectId: PROJECT_ID, repository: REF.repository, number: REF.number },
+      ]);
+    }),
+  );
+
+  it.effect("advertises viewed reads only when the scoped provider supports them", () =>
+    Effect.gen(function* () {
+      for (const store of [undefined, "host", "environment"] as const) {
+        const provider = createPrsApiProvider(
+          makeDeps(
+            { list: () => Effect.succeed(listResult) },
+            {
+              registry: fromProviders([githubProviderApi({ viewedFiles: store })]),
+            },
+          ),
+        );
+        const capabilities = yield* invoke(provider, "getCapabilities", {}, makeContext());
+        expect(capabilities).toMatchObject({
+          operations: { "prs.filesViewed": store === "environment" },
+        });
+      }
+      const provider = createPrsApiProvider(
+        makeDeps(
+          { list: () => Effect.succeed(listResult) },
+          {
+            registry: fromProviders([
+              githubProviderApi(
+                { viewedFiles: "host" },
+                {
+                  getFilesViewed: () => Effect.succeed({ files: [], truncated: false }),
+                },
+              ),
+            ]),
+          },
+        ),
+      );
+      expect(yield* invoke(provider, "getCapabilities", {}, makeContext())).toMatchObject({
+        operations: { "prs.filesViewed": true },
+      });
+    }),
+  );
+
+  it.effect("keeps detail independent while a separate viewed-state read fails by name", () =>
+    Effect.gen(function* () {
+      const provider = createPrsApiProvider(
+        makeDeps({
+          detail: () =>
+            Effect.succeed({
+              ...detail,
+              capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+            }),
+          filesViewed: () =>
+            Effect.fail(new PullRequestUnavailableError({ reason: "cli-unauthenticated" })),
+        }),
+      );
+      const result = yield* invoke(provider, "detail", REF, makeContext());
+      expect(result).toHaveProperty("title", detail.title);
+      expect(result).not.toHaveProperty("filesViewed");
+      expect(result).not.toHaveProperty("filesViewedError");
+      const error = yield* invokeError(provider, "filesViewed", REF, makeContext());
+      expect(error.operation).toBe("prs.filesViewed");
+      expect(error.detail).toContain("authenticated");
+    }),
+  );
+
+  it.effect("pages all 500 viewed paths within their own envelope without truncating them", () =>
+    Effect.gen(function* () {
+      const filesViewed = {
+        files: Array.from({ length: 500 }, (_, index) => ({
+          path: `${index}/${"x".repeat(4090)}`,
+          state: "viewed" as const,
+        })),
+        truncated: false,
+      };
+      const provider = createPrsApiProvider(
+        makeDeps({
+          detail: () =>
+            Effect.succeed({
+              ...detail,
+              capabilities: { ...detail.capabilities, viewedFiles: "environment" as const },
+            }),
+          filesViewed: () => Effect.succeed(filesViewed),
+        }),
+      );
+      const delivered: typeof filesViewed.files = [];
+      let cursor: string | null = null;
+      do {
+        const result = (yield* invoke(
+          provider,
+          "filesViewed",
+          { ...REF, ...(cursor === null ? {} : { cursor }) },
+          makeContext(),
+        )) as { files: typeof filesViewed.files; truncated: boolean; nextCursor: string | null };
+        expect(result.truncated).toBe(false);
+        const encoded = yield* encodeJson(result);
+        expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(48 * 1024);
+        expect(
+          new Ajv({ strict: true, addUsedSchema: false }).compile(
+            PRS_READ_API.methods!.find((method) => method.name === "filesViewed")!.outputSchema,
+          )(result),
+        ).toBe(true);
+        delivered.push(...result.files);
+        cursor = result.nextCursor;
+      } while (cursor !== null);
+      expect(delivered).toEqual(filesViewed.files);
+      expect(filesViewed.files).toHaveLength(500);
+      expect(filesViewed.truncated).toBe(false);
+    }),
+  );
+
+  it.effect("identifies the whole viewed snapshot across pages and native cache turnover", () =>
+    Effect.gen(function* () {
+      const files = Array.from({ length: 20 }, (_, index) => ({
+        path: `${index}/${"x".repeat(4090)}`,
+        state: "viewed" as const,
+      }));
+      let result: { files: { path: string; state: "viewed" | "dismissed" }[]; truncated: boolean } =
+        {
+          files,
+          truncated: false,
+        };
+      const provider = createPrsApiProvider(
+        makeDeps({ filesViewed: () => Effect.succeed(result) }),
+      );
+      const first = (yield* invoke(
+        provider,
+        "filesViewed",
+        REF,
+        makeContext(),
+      )) as PrsFilesViewedResult;
+      expect(first.snapshot).toMatch(/^[a-f0-9]{64}$/);
+      expect(first.nextCursor).not.toBeNull();
+      const next = (yield* invoke(
+        provider,
+        "filesViewed",
+        { ...REF, cursor: first.nextCursor },
+        makeContext(),
+      )) as PrsFilesViewedResult;
+      expect(next.snapshot).toBe(first.snapshot);
+      for (const changed of [
+        { files: files.slice(1), truncated: false },
+        { files: files.toReversed(), truncated: false },
+        {
+          files: files.map((file, index) =>
+            index === 19 ? { ...file, state: "dismissed" as const } : file,
+          ),
+          truncated: false,
+        },
+        { files, truncated: true },
+      ]) {
+        result = changed;
+        const page = (yield* invoke(
+          provider,
+          "filesViewed",
+          { ...REF, cursor: first.nextCursor },
+          makeContext(),
+        )) as PrsFilesViewedResult;
+        expect(page.snapshot).not.toBe(first.snapshot);
+      }
+    }),
+  );
+
+  it.effect("a refresh can invalidate just viewed state through the native service", () =>
+    Effect.gen(function* () {
+      const calls: unknown[] = [];
+      const provider = createPrsApiProvider(
+        makeDeps({
+          invalidate: (input) => {
+            calls.push(input);
+            return Effect.void;
+          },
+        }),
+      );
+      yield* invoke(
+        provider,
+        "invalidate",
+        { reference: REF, filesViewedOnly: true },
+        makeContext(),
+      );
+      expect(calls).toEqual([
+        {
+          reference: { projectId: PROJECT_ID, repository: REF.repository, number: REF.number },
+          filesViewedOnly: true,
+        },
+      ]);
     }),
   );
 

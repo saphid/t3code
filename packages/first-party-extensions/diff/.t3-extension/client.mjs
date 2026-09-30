@@ -4867,12 +4867,53 @@ var __t3Client = (() => {
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1_1 = {
     ...prsDetailSchemaV1,
     properties: {
       ...prsDetailSchemaV1.properties,
       preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
       observedAt: prsObservedAtField
+    }
+  };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1_1,
+    properties: {
+      ...prsDetailSchemaV1_1.properties,
+      capabilities: {
+        ...prsCapabilitiesSchema,
+        properties: {
+          ...prsCapabilitiesSchema.properties,
+          viewedFiles: { enum: ["host", "environment"] }
+        }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5444,14 +5485,61 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
-      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
+  var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
   var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
@@ -6024,7 +6112,7 @@ var __t3Client = (() => {
       body: prsWriteBodySchema
     }
   };
-  var prsWriteApi = defineApi({
+  var prsWriteApiV1 = defineApi({
     id: PRS_WRITE,
     version: "1.0.0",
     methods: [
@@ -6236,6 +6324,60 @@ var __t3Client = (() => {
         outputSchema: prsEmptyOutputSchema
       }
     ]
+  });
+  var prsWriteApi = defineApi({
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsWriteCapabilitiesResultSchema,
+          properties: {
+            ...prsWriteCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsWriteOperationsSupportSchema,
+              properties: {
+                ...prsWriteOperationsSupportSchema.properties,
+                "prs.setFilesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
+                  viewed: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
@@ -8462,8 +8604,10 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1_1.definition,
     prsReadApiV1.definition,
     prsWriteApi.definition,
+    prsWriteApiV1.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
     messagesEnrichmentApiV1_1.definition,
@@ -10050,15 +10194,71 @@ ${prefix}`;
 
   // viewModel.ts
   function resolveDiffPath(raw) {
-    if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
-    return raw;
+    return unquoteGitPatchPath(raw);
+  }
+  var CHARACTER_BY_ESCAPE = {
+    '"': 34,
+    "\\": 92,
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11
+  };
+  var utf8 = new TextEncoder();
+  var fromUtf8 = new TextDecoder();
+  function unquoteGitPatchPath(token) {
+    const body = token.length >= 2 && token.startsWith('"') && token.endsWith('"') ? token.slice(1, -1) : token;
+    if (!body.includes("\\")) return body;
+    const bytes = [];
+    let literal = "";
+    const flush = () => {
+      if (literal.length === 0) return;
+      bytes.push(...utf8.encode(literal));
+      literal = "";
+    };
+    let at = 0;
+    while (at < body.length) {
+      const character = body.charAt(at);
+      if (character !== "\\") {
+        literal += character;
+        at += 1;
+        continue;
+      }
+      const escaped = body.charAt(at + 1);
+      if (escaped === "") {
+        flush();
+        bytes.push(92);
+        break;
+      }
+      const named = CHARACTER_BY_ESCAPE[escaped];
+      if (named !== void 0) {
+        flush();
+        bytes.push(named);
+        at += 2;
+        continue;
+      }
+      const octal = body.slice(at + 1, at + 4);
+      if (/^[0-7]{3}$/.test(octal)) {
+        flush();
+        bytes.push(Number.parseInt(octal, 8));
+        at += 4;
+        continue;
+      }
+      literal += escaped;
+      at += 2;
+    }
+    flush();
+    return fromUtf8.decode(new Uint8Array(bytes));
   }
   var DIFF_GIT_BOUNDARY = /^diff --git /gm;
   var BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
   var GIT_BINARY_MARKER = /^GIT binary patch$/m;
-  var BINARY_B_PATH = /^Binary files .+ and b\/(.+) differ$/m;
-  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" "b\/(.*)"$/;
-  var HEADER_B_PATH = /^diff --git a\/.* b\/(.*)$/;
+  var BINARY_B_PATH = /^Binary files .+ and ("b\/.*"|b\/.+) differ$/m;
+  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" ("b\/.*")$/;
+  var HEADER_B_PATH = /^diff --git a\/.* (b\/.*)$/;
   function binaryPathsFromPatch(diff) {
     const paths = /* @__PURE__ */ new Set();
     const boundaries = [...diff.matchAll(DIFF_GIT_BOUNDARY)].map((match) => match.index);
@@ -10068,11 +10268,11 @@ ${prefix}`;
       const section = diff.slice(start, end);
       if (BINARY_FILES_MARKER.test(section)) {
         const path3 = BINARY_B_PATH.exec(section)?.[1];
-        if (path3 !== void 0) paths.add(path3);
+        if (path3 !== void 0) paths.add(resolveDiffPath(path3).slice(2));
       } else if (GIT_BINARY_MARKER.test(section)) {
         const header = section.split("\n", 1)[0] ?? "";
         const path3 = HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-        if (path3 !== null) paths.add(path3);
+        if (path3 !== null) paths.add(resolveDiffPath(path3).slice(2));
       }
     }
     return paths;
