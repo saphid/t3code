@@ -11,7 +11,7 @@ const runtimeRequire = NodeModule.createRequire(
   new URL("../../extension-runtime/package.json", import.meta.url),
 );
 const { Ajv } = runtimeRequire("ajv");
-const { uiPanelsApi } = await import("../../extension-sdk/dist/catalogue.js");
+const { uiPanelsApi } = await import("@t3tools/extension-sdk/catalogue");
 const validator = new Ajv({ strict: true });
 const inputValidators = new Map(
   uiPanelsApi.definition.methods.map((method) => [

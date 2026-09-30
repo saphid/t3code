@@ -226,11 +226,7 @@ function EditableDocument(props: CodeViewEditorProps) {
     useRef<Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]>(null);
   const reportSelection = useStableCallback(
     (range: Parameters<NonNullable<CodeViewEditorProps["onSelectionChange"]>>[0]) => {
-      if (
-        lastSelection.current?.startLine === range?.startLine &&
-        lastSelection.current?.endLine === range?.endLine
-      )
-        return;
+      if (range === null && lastSelection.current === null) return;
       lastSelection.current = range;
       props.onSelectionChange?.(range);
     },
