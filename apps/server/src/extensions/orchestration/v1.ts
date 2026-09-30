@@ -174,10 +174,9 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
   ) => {
     signal.throwIfAborted();
     const scope = operate ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope;
-    if (
-      metadata.principal?.environmentId !== deps.environmentId ||
-      !metadata.principal.scopes.includes(scope)
-    )
+    if (metadata.principal?.environmentId !== deps.environmentId)
+      throw fail("OrchestrationEnvironmentMismatch");
+    if (!metadata.principal.scopes.includes(scope))
       throw fail(`OrchestrationAuthorityDenied: ${scope}`);
     if (!context.resource.threadId) throw fail("OrchestrationThreadScopeRequired");
     await Effect.runPromise(resolve(context), { signal });

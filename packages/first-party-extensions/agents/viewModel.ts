@@ -1078,6 +1078,8 @@ export function describeAgentsError(error: unknown, fallback: string): string {
   const denial = describeGrantDenial(error);
   if (denial) return denial.message;
   const text = error instanceof Error ? error.message : String(error);
+  if (/\bOrchestrationEnvironmentMismatch\b/.test(text))
+    return "This device's access does not match this environment.";
   const scope = /AuthorityDenied: ([\w:]+)/.exec(text)?.[1];
   return scope ? `This device's access does not include ${scope}.` : fallback;
 }

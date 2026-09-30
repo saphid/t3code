@@ -1316,6 +1316,18 @@ NodeTest.describe("session import", () => {
 });
 
 NodeTest.describe("actionable Agents errors", () => {
+  for (const wrapped of [false, true])
+    NodeTest.it(
+      `names a wrong-environment denial without missing scope guidance (wrapped=${wrapped})`,
+      () => {
+        const message =
+          "Failed to fetch private-url (ExtensionOperationError: OrchestrationEnvironmentMismatch).";
+        const error = wrapped ? new Error(message) : message;
+        const expected = "This device's access does not match this environment.";
+        NodeAssert.equal(describeAgentsError(error, "Could not complete the operation."), expected);
+        NodeAssert.equal(describeSessionsError(error), expected);
+      },
+    );
   for (const [code, scope] of [
     ["OrchestrationAuthorityDenied", "orchestration:operate"],
     ["OrchestrationAuthorityDenied", "orchestration:read"],

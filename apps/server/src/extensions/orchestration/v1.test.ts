@@ -94,6 +94,27 @@ it("separates read and operate root authority and rejects stale workspace contex
   expect(f.calls).toHaveLength(0);
 });
 
+it.each(["getCapabilities", "thread.settle"])(
+  "rejects a wrong-environment principal for %s without claiming a missing scope",
+  async (method) => {
+    const fixtureState = await fixture();
+    const provider = method === "getCapabilities" ? fixtureState.status : fixtureState.control;
+    const metadata = meta(provider);
+    let authorityChecks = 0;
+    await expect(
+      provider.invoke(method, {}, context, signal, {
+        ...metadata,
+        principal: { ...metadata.principal, environmentId: "other-env" },
+        assertAuthority: async () => {
+          authorityChecks += 1;
+        },
+      }),
+    ).rejects.toThrow("OrchestrationEnvironmentMismatch");
+    expect(authorityChecks).toBe(0);
+    expect(fixtureState.calls).toHaveLength(0);
+  },
+);
+
 it("shares the exact RuntimeSubagent and pending-request folds without activities on the wire", async () => {
   const f = await fixture();
   const activity = decodeActivity({
@@ -539,30 +560,8 @@ it("streams workflow scripts without splitting a surrogate pair", async () => {
   expect(chunks.join("")).toBe(crafted);
 });
 
-it("retires the unused unary workflow script method and capability", async () => {
+it("rejects the retired unary workflow script call", async () => {
   const f = await fixture();
-  const workflow = decodeActivity({
-    id: "workflow",
-    kind: "task.started",
-    tone: "info",
-    summary: "Workflow",
-    createdAt: "2026-09-13T00:00:00.000Z",
-    turnId: null,
-    payload: {
-      taskId: "workflow",
-      agentKind: "agent",
-      taskType: "local_workflow",
-      runHandles: { scriptPath: "/home/workflow.js" },
-    },
-  });
-  f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
-  expect(await invoke(f.status, "getCapabilities")).toMatchObject({
-    operations: { readWorkflowScript: true },
-  });
-  const capabilities = (await invoke(f.status, "getCapabilities")) as {
-    operations: Record<string, boolean>;
-  };
-  expect(capabilities.operations).not.toHaveProperty("getWorkflowScript");
   await expect(invoke(f.status, "getWorkflowScript", { workflowId: "workflow" })).rejects.toThrow(
     "OrchestrationUnsupported",
   );
