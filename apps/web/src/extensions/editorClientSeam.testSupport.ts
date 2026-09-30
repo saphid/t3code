@@ -62,7 +62,6 @@ export async function editorClientSeam(
   client: ClientLocalProvider,
   descriptors: readonly { id: string; version: string }[] = CLIENT_PROVIDER_DESCRIPTORS,
 ) {
-  // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- Files mounts and promise-based host invokes share one scoped server runtime.
   const runtime = ManagedRuntime.make(
     layer.pipe(
       Layer.provide(
