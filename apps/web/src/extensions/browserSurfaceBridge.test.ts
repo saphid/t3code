@@ -292,7 +292,7 @@ describe("browserSurfaceBridge", () => {
     const stale = await pending;
     expect(stale.ok).toBe(false);
     if (!stale.ok) expect(stale.denial.reason).toBe("epoch-changed");
-    expect(h.sessionRefreshes).toEqual([]);
+    expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
     expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
     expect(h.sessionListeners.size).toBe(0);
   });
@@ -307,7 +307,7 @@ describe("browserSurfaceBridge", () => {
       expect(h.syncMounts).toEqual([]);
 
       const pending = host.acquire({ context, session: freshSession });
-      expect(h.sessionRefreshes).toEqual([]);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
       expect(h.syncMounts).toEqual(["env-a/thread-a"]);
       expect(h.syncUnmounts).toEqual([]);
       expect(h.sessionListeners.size).toBe(1);
@@ -324,7 +324,7 @@ describe("browserSurfaceBridge", () => {
       if (!acquired.ok) throw new Error("expected refreshed session to acquire");
       expect(acquired.lease.state.kind).toBe("active");
       expect(h.syncMounts).toEqual(["env-a/thread-a"]);
-      expect(h.sessionRefreshes).toEqual([]);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
       acquired.lease.release();
       expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
       expect(h.sessionListeners.size).toBe(0);
@@ -389,7 +389,34 @@ describe("browserSurfaceBridge", () => {
       expect(h.nativeLeases).toEqual([]);
       expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
       expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
-      expect(h.sessionRefreshes).toEqual([]);
+      expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+    },
+  );
+
+  it.each(["scope", "install"])(
+    "honors %s cancellation after sync resolves but before acquire resumes",
+    async (cause) => {
+      const h = harness();
+      h.setPreviewState({ serverEpoch: "epoch-old", sessions: {}, listSeq: 1, listFailures: 0 });
+      const view = new AbortController();
+      const pending = h.host().acquire({ context, session: sessionRef, signal: view.signal });
+      h.setPreviewState({
+        serverEpoch: sessionRef.serverEpoch,
+        sessions: { [sessionRef.tabId]: {} },
+        listSeq: 2,
+        listFailures: 0,
+      });
+      h.fireSessions();
+      if (cause === "scope") view.abort();
+      else h.lifetime.abort();
+      const acquired = await pending;
+      expect(acquired.ok).toBe(false);
+      if (acquired.ok) throw new Error("expected a canceled attach");
+      expect(acquired.denial.reason).toBe(cause === "scope" ? "scope-invalid" : "host-unavailable");
+      expect(h.nativeLeases).toEqual([]);
+      expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
+      expect(h.sessionListeners.size).toBe(0);
+      expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
     },
   );
 

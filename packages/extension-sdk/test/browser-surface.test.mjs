@@ -203,7 +203,7 @@ function render(View, nodeMock) {
 
 NodeTest.test("t3.browser/surface contract surface is named, versioned and grant-scoped", () => {
   NodeAssert.equal(BROWSER_SURFACE, "t3.browser/surface");
-  NodeAssert.equal(BROWSER_SURFACE_VERSION, "1.0.0");
+  NodeAssert.equal(BROWSER_SURFACE_VERSION, "2.0.0");
   NodeAssert.deepEqual(BROWSER_SURFACE_REQUIRED_GRANTS, [
     "t3.browser/sessions",
     "t3.browser/surface",
@@ -253,6 +253,65 @@ NodeTest.test("useBrowserSurfaceSlot reports host-unavailable without the capabi
     NodeAssert.equal(slot.denial.reason, "host-unavailable");
     // A missing capability is not transient — no retry is scheduled.
     NodeAssert.equal(dom.timeouts.size, 0);
+    await TestRenderer.act(async () => renderer.unmount());
+  } finally {
+    dom.restore();
+  }
+});
+
+NodeTest.test("a synchronous 1.x consumer denies the async 2.x surface before acquiring", () => {
+  const { host, calls } = fakeLeaseHost();
+  const acquire = host.browserSurface.acquire;
+  host.browserSurface.acquire = async (request) => acquire(request);
+  function acquireWithV1Hook() {
+    const surface = host.browserSurface;
+    const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1)
+      return {
+        ok: false,
+        denial: {
+          reason: "host-unavailable",
+          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+        },
+      };
+    const acquired = surface.acquire({ context, session: sessionRef });
+    if (!acquired.ok && acquired.denial.reason === "host-unavailable") return acquired;
+    return acquired;
+  }
+  NodeAssert.deepEqual(acquireWithV1Hook(), {
+    ok: false,
+    denial: {
+      reason: "host-unavailable",
+      detail: "This host does not implement t3.browser/surface@1.x.",
+    },
+  });
+  NodeAssert.equal(calls.acquire.length, 0);
+});
+
+NodeTest.test("useBrowserSurfaceSlot denies a 1.x host before acquiring", async () => {
+  const dom = domStubs();
+  try {
+    const session = makeSession();
+    const { host, calls } = fakeLeaseHost();
+    host.browserSurface.version = "1.0.0";
+    let slot;
+    function View() {
+      const value = useBrowserSurfaceSlot(host, session, {
+        session: sessionRef,
+        visible: true,
+      });
+      React.useEffect(() => {
+        slot = value;
+      }, [value]);
+      return React.createElement("div", { ref: value.ref });
+    }
+    const renderer = render(View, fakeElement(rect, { document: dom.document }));
+    NodeAssert.equal(slot.lease, null);
+    NodeAssert.deepEqual(slot.denial, {
+      reason: "host-unavailable",
+      detail: "This host does not implement t3.browser/surface@2.x.",
+    });
+    NodeAssert.equal(calls.acquire.length, 0);
     await TestRenderer.act(async () => renderer.unmount());
   } finally {
     dom.restore();

@@ -105,15 +105,7 @@ export function usePreviewSession(threadRef: ScopedThreadRef): void {
  * Returns the unmount function; the atom's own idle TTL still applies.
  */
 export function mountPreviewSessionSync(threadRef: ScopedThreadRef): () => void {
-  const unmount = appAtomRegistry.mount(previewSessionSyncAtom(scopedThreadKey(threadRef)));
-  let mounted = true;
-  queueMicrotask(() => {
-    if (mounted) refreshPreviewSessionList(threadRef);
-  });
-  return () => {
-    mounted = false;
-    unmount();
-  };
+  return appAtomRegistry.mount(previewSessionSyncAtom(scopedThreadKey(threadRef)));
 }
 
 /**

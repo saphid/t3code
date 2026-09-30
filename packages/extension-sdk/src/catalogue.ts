@@ -7277,7 +7277,7 @@ export const BROWSER_FRAMES_API = browserFramesApi.definition;
  * ends presentation only — it never closes the browser session.
  * --------------------------------------------------------------------- */
 export const BROWSER_SURFACE = "t3.browser/surface";
-export const BROWSER_SURFACE_VERSION = "1.0.0";
+export const BROWSER_SURFACE_VERSION = "2.0.0";
 /** Both grants are required to acquire a presentation lease. */
 export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
 /**

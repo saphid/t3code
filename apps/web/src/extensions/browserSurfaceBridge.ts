@@ -1,5 +1,5 @@
 /**
- * Host bridge for `t3.browser/surface@1.0.0` — the client-local half of the
+ * Host bridge for `t3.browser/surface@2.0.0` — the client-local half of the
  * contract. `installedController` invokes the returned factory once per
  * installed client, so each `ClientHost.browserSurface` binds that
  * installation's grant set and lifetime.
@@ -246,6 +246,7 @@ export function createBrowserSurfaceBridge(
         const unmountSync = deps.mountSessionSync(threadRef);
         const synced = deps.readSessions(threadRef);
         if (synced.serverEpoch !== serverEpoch) {
+          deps.refreshSessions(threadRef);
           const failure = await new Promise<BrowserSurfaceDenialReason | null>((resolve) => {
             let unsubscribe = () => {};
             let cancelDeadline = () => {};

@@ -294,6 +294,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
   const [surfaceAttempt, setSurfaceAttempt] = useState(0);
+  const surfaceUnavailableRef = useRef(false);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
   const dropHeldSession = useCallback(() => {
@@ -417,6 +418,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 } else {
                   setLive(found);
                   heldRevision.current = value.revision;
+                  if (surfaceUnavailableRef.current) setSurfaceAttempt((attempt) => attempt + 1);
                 }
               }
               pending = null;
@@ -520,6 +522,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     visible: visible && held !== null,
     cornerRadius: 8,
   });
+  useEffect(() => {
+    surfaceUnavailableRef.current = surfaceDenial?.reason === "host-unavailable";
+  }, [surfaceDenial?.reason]);
   const epochChangedPresentation =
     isEpochChangedPresentation(surfaceLease?.state ?? null) ||
     surfaceDenial?.reason === "epoch-changed";

@@ -15,6 +15,8 @@ import {
 import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
+import { mountPreviewSessionSync } from "./usePreviewSession";
+
 // The preview transport is the only substituted seam: the sync atom, the
 // preview state store and the surface bridge all run their real code. List
 // atoms are writable so the test can replay the exact AsyncResult sequence a
@@ -231,7 +233,36 @@ describe("previewSessionSync arbitration", () => {
     const acquired = await pending;
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) throw new Error("expected the cold session to attach");
+    await Promise.resolve();
+    expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
     acquired.lease.release();
+  });
+
+  it("uses zero list requests when attaching to a warm matching sync", async () => {
+    const ref = { ...threadRef, threadId: "thread-warm" } as ScopedThreadRef;
+    const atom = listAtom(ref);
+    const unmount = mountPreviewSessionSync(ref);
+    const { acquire, lifetime } = bridgeHost({}, ref);
+    try {
+      await Promise.resolve();
+      appAtomRegistry.set(atom, AsyncResult.success(listResult(1, ["tab-new"])));
+      const baselineRequests = previewHarness.lists.get(ref.threadId)?.box.requests;
+      expect(baselineRequests).toBe(1);
+      for (const attempt of [1, 2]) {
+        const acquired = await acquire();
+        if (!acquired.ok) throw new Error(`expected warm attach ${attempt} to succeed`);
+        try {
+          await Promise.resolve();
+          expect(acquired.lease.state.kind).toBe("active");
+          expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(baselineRequests);
+        } finally {
+          acquired.lease.release();
+        }
+      }
+    } finally {
+      lifetime.abort();
+      unmount();
+    }
   });
 
   it("refreshes a reused sync after a failure without waiting for its idle TTL", async () => {

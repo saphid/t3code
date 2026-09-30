@@ -8844,12 +8844,12 @@ var __t3Client = (() => {
         return;
       const surface = host.browserSurface;
       const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
-      if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+      if (!surface || surface.id !== BROWSER_SURFACE || major !== 2) {
         setResult({
           ok: false,
           denial: {
             reason: "host-unavailable",
-            detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`
+            detail: `This host does not implement ${BROWSER_SURFACE}@2.x.`
           }
         });
         return;
@@ -18166,6 +18166,7 @@ ${ind(d)}}`;
     const [notice, setNotice] = (0, import_react8.useState)(null);
     const [visible, setVisible] = (0, import_react8.useState)(session.visible);
     const [surfaceAttempt, setSurfaceAttempt] = (0, import_react8.useState)(0);
+    const surfaceUnavailableRef = (0, import_react8.useRef)(false);
     const heldRef = (0, import_react8.useRef)(held);
     const historyRef = (0, import_react8.useRef)(history);
     const dropHeldSession = (0, import_react8.useCallback)(() => {
@@ -18258,6 +18259,7 @@ ${ind(d)}}`;
                   } else {
                     setLive(found);
                     heldRevision.current = value.revision;
+                    if (surfaceUnavailableRef.current) setSurfaceAttempt((attempt) => attempt + 1);
                   }
                 }
                 pending = null;
@@ -18337,6 +18339,9 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
+    (0, import_react8.useEffect)(() => {
+      surfaceUnavailableRef.current = surfaceDenial?.reason === "host-unavailable";
+    }, [surfaceDenial?.reason]);
     const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null) || surfaceDenial?.reason === "epoch-changed";
     (0, import_react8.useEffect)(() => {
       if (epochChangedPresentation) dropHeldSession();

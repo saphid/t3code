@@ -653,12 +653,12 @@ export function useBrowserSurfaceSlot(
     if (!element || !options.session) return;
     const surface = host.browserSurface;
     const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
-    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 2) {
       setResult({
         ok: false,
         denial: {
           reason: "host-unavailable",
-          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+          detail: `This host does not implement ${BROWSER_SURFACE}@2.x.`,
         },
       });
       return;

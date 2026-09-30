@@ -272,7 +272,7 @@ function restartingBackend() {
     },
     browserSurface: {
       id: "t3.browser/surface",
-      version: "1.0.0",
+      version: "2.0.0",
       presentation: { supported: true },
       acquire(request) {
         acquires.push({ tabId: request.session.tabId, serverEpoch: request.session.serverEpoch });
@@ -356,6 +356,13 @@ function restartingBackend() {
       up = false;
       const pending = drops;
       drops = new Set();
+      for (const resolve of pending) resolve();
+    },
+    resume() {
+      up = true;
+      syncSurface();
+      const pending = restarts;
+      restarts = new Set();
       for (const resolve of pending) resolve();
     },
     syncSurface,
@@ -825,6 +832,48 @@ NodeTest.test(
       NodeAssert.doesNotMatch(
         text(),
         /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+    });
+  },
+);
+
+NodeTest.test(
+  "a timed-out sync reattaches on a matching reconnect snapshot without navigation",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      backend.restart({ syncSurface: false, serverEpoch: "epoch-c" });
+      await settle();
+      backend.delaySurfaceSync(null);
+      await enter("https://b.test/");
+      await settle();
+      await act(async () => context.mock.timers.tick(30_000));
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-a");
+      NodeAssert.equal(backend.acquires.length, 2);
+      backend.drop();
+      await settle();
+      NodeAssert.match(text(), /Environment is not connected/);
+      backend.resume();
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.deepEqual(backend.presents.at(-1), {
+        tabId: "tab-b",
+        serverEpoch: "epoch-c",
+        visible: true,
+      });
+      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.equal(backend.serverSessions().length, 1);
+      NodeAssert.equal(backend.acquires.length, 3);
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing|not connected/,
       );
     });
   },
