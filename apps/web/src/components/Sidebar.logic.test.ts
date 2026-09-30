@@ -13,6 +13,9 @@ import {
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   deriveSidebarSubagentCounts,
+  selectSidebarSubagentBatch,
+  followSidebarSubagentBatches,
+  setSidebarSubagentTreeBatch,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
@@ -2165,6 +2168,8 @@ describe("deriveSidebarSubagentCounts", () => {
     environmentId,
     lineage: { parentThreadId: parentId, relationshipToParent, rootThreadId: parentId },
     createdAt,
+    archivedAt: null as string | null,
+    deletedAt: null as string | null,
     source: { status, activityRunStatus: null as "running" | null },
     runtime: null as { activityStartedAt: string } | null,
     latestRun: null as {
@@ -2187,7 +2192,12 @@ describe("deriveSidebarSubagentCounts", () => {
       child("cancelled", "2026-09-25T10:00:05.000Z"),
     ]);
     // Interrupted and cancelled subagents were stopped, not failed.
-    expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 1 });
+    expect(counts.get(parentKey)).toEqual({
+      working: 2,
+      done: 1,
+      failed: 1,
+      batchStartedAt: "2026-09-25T10:00:00.000Z",
+    });
   });
 
   it("times provider-run subagents, which have no run, by their shell times", () => {
@@ -2212,7 +2222,12 @@ describe("deriveSidebarSubagentCounts", () => {
         },
       },
     ]);
-    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 0 });
+    expect(counts.get(parentKey)).toEqual({
+      working: 1,
+      done: 1,
+      failed: 0,
+      batchStartedAt: "2026-09-25T10:00:00.000Z",
+    });
   });
 
   it("starts a resumed subagent's batch at its current run, not its creation", () => {
@@ -2240,7 +2255,7 @@ describe("deriveSidebarSubagentCounts", () => {
         },
       },
     ]);
-    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 0 });
+    expect(counts.get(parentKey)).toMatchObject({ working: 1, done: 1, failed: 0 });
   });
 
   it("times a run that has not started by its request", () => {
@@ -2268,7 +2283,114 @@ describe("deriveSidebarSubagentCounts", () => {
         },
       },
     ]);
-    expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 1 });
+    expect(counts.get(parentKey)).toMatchObject({ working: 1, done: 0, failed: 1 });
+  });
+
+  it("selects a batch's direct subagents with all of their descendants", () => {
+    const row = (id: string, depth: number, startedAt: string) => ({
+      id,
+      depth,
+      thread: {
+        createdAt: "2026-09-25T08:00:00.000Z",
+        source: { status: "completed" as const, activityRunStatus: null },
+        runtime: null,
+        latestRun: { startedAt, requestedAt: null, completedAt: null },
+      },
+    });
+    const rows = [
+      row("earlier", 0, "2026-09-25T09:00:00.000Z"),
+      row("earlier-child", 1, "2026-09-25T10:30:00.000Z"),
+      row("current", 0, "2026-09-25T10:00:00.000Z"),
+      row("current-child", 1, "2026-09-25T09:30:00.000Z"),
+    ];
+    expect(
+      selectSidebarSubagentBatch(rows, "2026-09-25T10:00:00.000Z").map((selected) => selected.id),
+    ).toEqual(["current", "current-child"]);
+  });
+
+  it("leaves out a subagent with no run and no reported status, and its descendants", () => {
+    const started = { startedAt: "2026-09-25T10:00:00.000Z", requestedAt: null, completedAt: null };
+    const row = (
+      id: string,
+      depth: number,
+      latestRun: typeof started | null,
+      source: {
+        status: "idle" | "running" | "completed";
+        activityRunStatus: "running" | null;
+        latestRunStartedAt?: DateTime.Utc;
+      },
+    ) => ({
+      id,
+      depth,
+      thread: { createdAt: "2026-09-25T10:00:00.000Z", source, runtime: null, latestRun },
+    });
+    const completed = { status: "completed" as const, activityRunStatus: null };
+    const rows = [
+      // Provider-run, from a server that does not report its root turn.
+      row("unreported", 0, null, { status: "idle", activityRunStatus: null }),
+      row("unreported-child", 1, started, completed),
+      // Provider-run, reported by the server.
+      row("provider-run", 0, null, {
+        status: "running",
+        activityRunStatus: "running",
+        latestRunStartedAt: DateTime.makeUnsafe("2026-09-25T10:00:00.000Z"),
+      }),
+      row("delegated", 0, started, completed),
+      row("delegated-child", 1, started, completed),
+    ];
+    expect(
+      selectSidebarSubagentBatch(rows, "2026-09-25T10:00:00.000Z").map((selected) => selected.id),
+    ).toEqual(["provider-run", "delegated", "delegated-child"]);
+  });
+
+  it("lists subagents with work still running under them first", () => {
+    const row = (id: string, depth: number, status: "completed" | "running") => ({
+      id,
+      depth,
+      thread: {
+        createdAt: "2026-09-25T10:00:00.000Z",
+        source: { status, activityRunStatus: null },
+        runtime: null,
+        latestRun: { startedAt: "2026-09-25T10:00:00.000Z", requestedAt: null, completedAt: null },
+      },
+    });
+    const rows = [
+      row("done", 0, "completed"),
+      row("done-with-working-child", 0, "completed"),
+      row("working-child", 1, "running"),
+      row("working", 0, "running"),
+      row("done-later", 0, "completed"),
+    ];
+    expect(
+      selectSidebarSubagentBatch(rows, "2026-09-25T10:00:00.000Z").map((selected) => selected.id),
+    ).toEqual(["done-with-working-child", "working-child", "working", "done", "done-later"]);
+  });
+
+  it("keeps an open tree on its parent's batch until it is closed", () => {
+    const liveCounts = (batchStartedAt: string) =>
+      new Map([[parentKey, { working: 1, done: 0, failed: 0, batchStartedAt }]]);
+    const first = "2026-09-25T10:00:00.000Z";
+    const second = "2026-09-25T11:00:00.000Z";
+
+    // Nothing is working, so there is no batch to open.
+    const closed = new Map<string, string>();
+    expect(setSidebarSubagentTreeBatch(closed, parentKey, undefined)).toBe(closed);
+
+    const opened = setSidebarSubagentTreeBatch(closed, parentKey, first);
+    expect(opened.get(parentKey)).toBe(first);
+    expect(followSidebarSubagentBatches(opened, liveCounts(first))).toBe(opened);
+
+    // A newer batch starts while the tree is open.
+    const moved = followSidebarSubagentBatches(opened, liveCounts(second));
+    expect(moved.get(parentKey)).toBe(second);
+
+    // The batch finishes: the tree keeps listing it.
+    expect(followSidebarSubagentBatches(moved, new Map())).toBe(moved);
+
+    // Closing works with nothing left working, and closing twice stays closed.
+    const closedAgain = setSidebarSubagentTreeBatch(moved, parentKey, undefined);
+    expect(closedAgain.has(parentKey)).toBe(false);
+    expect(setSidebarSubagentTreeBatch(closedAgain, parentKey, undefined)).toBe(closedAgain);
   });
 
   it("keeps a subagent that finished first in the batch it ran with", () => {
@@ -2304,7 +2426,12 @@ describe("deriveSidebarSubagentCounts", () => {
       child("running", "2026-09-25T10:01:00.000Z"),
     ]);
     // failedEarly overlapped finishedFirst, which overlapped the running one.
-    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 1 });
+    expect(counts.get(parentKey)).toEqual({
+      working: 1,
+      done: 1,
+      failed: 1,
+      batchStartedAt: "2026-09-25T09:59:00.000Z",
+    });
   });
 
   it("keeps a parent's counts object when nothing about it changed", () => {
@@ -2317,7 +2444,7 @@ describe("deriveSidebarSubagentCounts", () => {
       [...threads, child("running", "2026-09-25T10:00:01.000Z")],
       first,
     );
-    expect(changed.get(parentKey)).toEqual({ working: 2, done: 0, failed: 0 });
+    expect(changed.get(parentKey)).toMatchObject({ working: 2, done: 0, failed: 0 });
   });
 
   it("omits parents whose subagents have all finished", () => {
@@ -2335,7 +2462,16 @@ describe("deriveSidebarSubagentCounts", () => {
         source: { status: "completed", activityRunStatus: "running" },
       },
     ]);
-    expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 0 });
+    expect(counts.get(parentKey)).toMatchObject({ working: 1, done: 0, failed: 0 });
+  });
+
+  it("ignores archived and deleted subagents, as the tree does", () => {
+    const counts = deriveSidebarSubagentCounts([
+      child("running", "2026-09-25T10:00:00.000Z"),
+      { ...child("completed", "2026-09-25T10:00:01.000Z"), archivedAt: "2026-09-25T11:00:00.000Z" },
+      { ...child("failed", "2026-09-25T10:00:02.000Z"), deletedAt: "2026-09-25T11:00:00.000Z" },
+    ]);
+    expect(counts.get(parentKey)).toMatchObject({ working: 1, done: 0, failed: 0 });
   });
 
   it("ignores forks", () => {
