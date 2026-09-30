@@ -57,6 +57,45 @@ it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", (
   );
 });
 
+it.effect("sizes the page cache for large databases in the shared persistence setup", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+    assert.equal(rows[0]?.cache_size, -262144);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("gathers planner statistics for unanalyzed indexes when a database is reopened", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const open = makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer));
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE stats_probe(a INTEGER, b INTEGER)`;
+      yield* sql`CREATE INDEX stats_probe_a ON stats_probe(a)`;
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+        INSERT INTO stats_probe(a, b) SELECT i % 7, i FROM n
+      `;
+    }).pipe(Effect.provide(open));
+
+    const analyzed = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* sql<{ readonly idx: string }>`
+        SELECT idx FROM sqlite_stat1 WHERE tbl = 'stats_probe'
+      `;
+    }).pipe(Effect.provide(open));
+    assert.deepEqual(
+      analyzed.map((row) => row.idx),
+      ["stats_probe_a"],
+    );
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
 it.effect("applies busy_timeout in the shared persistence setup", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

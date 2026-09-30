@@ -16,7 +16,16 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // The default 2 MB page cache is smaller than the hot set of a database
+    // that has grown to tens of GB, so every read becomes a synchronous pread
+    // on the event loop. Negative values are KiB: this is a 256 MiB ceiling.
+    yield* sql`PRAGMA cache_size = -262144;`;
     yield* runMigrations();
+    // Planner statistics for tables the schema never analyzed. A bounded
+    // analysis_limit keeps this sampling work constant however large the
+    // tables are; optimize only re-analyzes tables whose stats look stale.
+    yield* sql`PRAGMA analysis_limit = 1000;`;
+    yield* sql`PRAGMA optimize;`;
   }),
 );
 

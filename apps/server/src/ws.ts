@@ -1599,14 +1599,37 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
-          const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
+          // Discoveries run side by side so the slowest one, not their sum, bounds
+          // the snapshot. Each degrades on timeout rather than failing it.
+          const {
+            availableEditors,
+            fileManagerRevealKind,
+            remoteOpenTargets: openTargets,
+          } = yield* Effect.all(
+            {
+              editors: resolveAvailableEditorsForConfig(
+                externalLauncher.resolveAvailableEditors(),
+              ).pipe(
+                Effect.flatMap((editors) =>
+                  (editors.includes("file-manager")
+                    ? resolveFileManagerRevealKindForConfig(
+                        externalLauncher.resolveFileManagerRevealKind(),
+                      )
+                    : Effect.succeed(undefined)
+                  ).pipe(Effect.map((kind) => ({ editors, kind }))),
+                ),
+              ),
+              // A slow probe must not stall server.getConfig, so it degrades to no targets.
+              targets: resolveAvailableEditorsForConfig(remoteOpenTargets.resolveTargets()),
+            },
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(({ editors, targets }) => ({
+              availableEditors: editors.editors as ReadonlyArray<EditorId>,
+              fileManagerRevealKind: editors.kind,
+              remoteOpenTargets: targets,
+            })),
           );
-          const fileManagerRevealKind = availableEditors.includes("file-manager")
-            ? yield* resolveFileManagerRevealKindForConfig(
-                externalLauncher.resolveFileManagerRevealKind(),
-              )
-            : undefined;
 
           return {
             environment,
@@ -1617,11 +1640,7 @@ const makeWsRpcLayer = (
             issues: keybindingsConfig.issues,
             providers,
             availableEditors,
-            // Same discovery-with-timeout treatment as editors: a slow probe
-            // must not stall server.getConfig, so it degrades to no targets.
-            remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-              remoteOpenTargets.resolveTargets(),
-            ),
+            remoteOpenTargets: openTargets,
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
