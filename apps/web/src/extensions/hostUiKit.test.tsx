@@ -937,7 +937,7 @@ it("mini-player kit and fallback controls track native open state and preserve t
         </TooltipProvider>,
       ),
     );
-    const button = container.querySelector<HTMLButtonElement>(
+    let button = container.querySelector<HTMLButtonElement>(
       '[aria-label="Float preview over chat"]',
     )!;
     if (native) {
@@ -947,11 +947,15 @@ it("mini-player kit and fallback controls track native open state and preserve t
       expect(button.hasAttribute("data-t3-browser-fallback-control")).toBe(true);
       expect(button.style.padding).toBe("4px");
     }
+    expect(button.disabled).toBe(false);
     await act(async () => button.click());
+    expect(toggle.mock.calls).toHaveLength(1);
+    button = container.querySelector<HTMLButtonElement>('[aria-label="Close floating preview"]')!;
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.getAttribute("aria-label")).toBe("Close floating preview");
     if (native) expect(button.classList.contains("bg-secondary")).toBe(true);
     await act(async () => button.click());
+    button = container.querySelector<HTMLButtonElement>('[aria-label="Float preview over chat"]')!;
     expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(
       toggle.mock.calls.filter(([request]) => request.method === "setBrowserMiniPlayer"),
