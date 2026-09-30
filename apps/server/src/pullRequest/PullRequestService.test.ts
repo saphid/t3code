@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
+  PullRequestFileViewed,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
   SourceControlProviderKind,
@@ -5450,11 +5451,209 @@ it.effect("names the signed-in account in the detail, and says nothing where the
   }),
 );
 
+const hostViewedPaths = [
+  "café-日本語.txt",
+  "cafe\u0301-日本語.txt",
+  "with spaces.txt",
+  'quote"and\\backslash.txt',
+  "b/nested.txt",
+];
+
+const hostViewedService = (
+  states: Map<string, PullRequestFileViewed["state"]>,
+  write: NonNullable<PullRequestProviderApi["setFilesViewed"]>,
+) =>
+  makeService({
+    projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+    providers: [
+      fakeProvider("github", {
+        capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+        getFilesViewed: () =>
+          Effect.sync(() => ({
+            files: [...states].map(([path, state]) => ({ path, state })),
+            truncated: false,
+          })),
+        setFilesViewed: write,
+      }),
+    ],
+  });
+
+const hostViewedRef = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+
+for (const path of hostViewedPaths) {
+  for (const viewed of [true, false]) {
+    it.effect(`host viewed writes reject a silent no-op: ${path}, viewed=${viewed}`, () =>
+      Effect.gen(function* () {
+        const states = new Map<string, PullRequestFileViewed["state"]>([
+          [path, viewed ? "unviewed" : "viewed"],
+        ]);
+        // GitHub returned { data: { f0: { clientMutationId: null } } }, exit 0,
+        // for the exact NFC path, but the next files read still said UNVIEWED.
+        const service = yield* hostViewedService(states, () => Effect.void);
+        const error = yield* Effect.flip(
+          service.setFilesViewed({ ...hostViewedRef, files: [{ path, viewed }] }),
+        );
+        assert.instanceOf(error, PullRequestOperationError);
+        if (error._tag !== "PullRequestOperationError") return;
+        assert.strictEqual(error.operation, "setFilesViewed");
+        assert.include(error.detail, "confirm");
+      }),
+    );
+  }
+}
+
+it.effect("host viewed writes preserve distinct provider paths and verify the last press", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>(
+      hostViewedPaths.map((path) => [path, "unviewed"]),
+    );
+    const written: unknown[] = [];
+    const service = yield* hostViewedService(states, (input) =>
+      Effect.sync(() => {
+        written.push(input.files);
+        for (const file of input.files) states.set(file.path, file.viewed ? "viewed" : "unviewed");
+      }),
+    );
+    const files = [
+      ...hostViewedPaths.map((path) => ({ path, viewed: true })),
+      { path: hostViewedPaths[0]!, viewed: false },
+    ];
+    yield* service.setFilesViewed({ ...hostViewedRef, files });
+    assert.deepStrictEqual(written, [files]);
+    assert.strictEqual(states.get("café-日本語.txt"), "unviewed");
+    assert.strictEqual(states.get("cafe\u0301-日本語.txt"), "viewed");
+  }),
+);
+
+it.effect(
+  "host viewed writes refuse paths absent from the provider instead of normalizing them",
+  () =>
+    Effect.gen(function* () {
+      const path = "café-日本語.txt";
+      const states = new Map<string, PullRequestFileViewed["state"]>([[path, "unviewed"]]);
+      let writes = 0;
+      const service = yield* hostViewedService(states, () =>
+        Effect.sync(() => {
+          writes++;
+        }),
+      );
+      for (const candidate of [
+        "cafe\u0301-日本語.txt",
+        `"${path}"`,
+        encodeURIComponent(path),
+        `./${path}`,
+        `${path} `,
+      ]) {
+        const error = yield* Effect.flip(
+          service.setFilesViewed({ ...hostViewedRef, files: [{ path: candidate, viewed: true }] }),
+        );
+        assert.instanceOf(error, PullRequestOperationError);
+      }
+      assert.strictEqual(writes, 0);
+    }),
+);
+
+it.effect("host viewed failures invalidate held state after a partially applied batch", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["b/nested.txt", "unviewed"],
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const service = yield* hostViewedService(states, () =>
+      Effect.sync(() => {
+        states.set("b/nested.txt", "viewed");
+      }),
+    );
+    yield* service.filesViewed(hostViewedRef);
+    yield* Effect.flip(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [...states.keys()].map((path) => ({ path, viewed: true })),
+      }),
+    );
+    assert.deepStrictEqual((yield* service.filesViewed(hostViewedRef)).files, [
+      { path: "b/nested.txt", state: "viewed" },
+      { path: "café-日本語.txt", state: "unviewed" },
+    ]);
+  }),
+);
+
+it.effect("host viewed writes serialize a later untick until the tick is confirmed", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const writes: boolean[] = [];
+    const service = yield* hostViewedService(states, (input) =>
+      Effect.gen(function* () {
+        const viewed = input.files[0]!.viewed;
+        writes.push(viewed);
+        states.set("café-日本語.txt", viewed ? "viewed" : "unviewed");
+        if (viewed) {
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+        }
+      }),
+    );
+    const tick = yield* Effect.forkChild(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: true }],
+      }),
+    );
+    yield* Deferred.await(started);
+    const untick = yield* Effect.forkChild(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: false }],
+      }),
+    );
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(tick);
+    yield* Fiber.join(untick);
+    assert.deepStrictEqual(writes, [true, false]);
+    assert.strictEqual(states.get("café-日本語.txt"), "unviewed");
+  }),
+);
+
+it.effect("host viewed writes cannot confirm a file omitted from a truncated readback", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const provider = fakeProvider("github", {
+      capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+      getFilesViewed: () =>
+        Effect.sync(() => ({
+          files: [...states].map(([path, state]) => ({ path, state })),
+          truncated: true,
+        })),
+      setFilesViewed: () =>
+        Effect.sync(() => {
+          states.clear();
+        }),
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+    const error = yield* Effect.flip(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: true }],
+      }),
+    );
+    assert.instanceOf(error, PullRequestOperationError);
+  }),
+);
+
 it.effect("keeps the diff cached across a file being ticked off", () =>
   Effect.gen(function* () {
     let diffReads = 0;
     let viewedReads = 0;
-    let state: "viewed" | "dismissed" = "viewed";
+    let state: "viewed" | "unviewed" | "dismissed" = "viewed";
     const service = yield* makeService({
       projects: [
         project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
@@ -5483,7 +5682,10 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
               truncated: false,
             });
           },
-          setFilesViewed: () => Effect.void,
+          setFilesViewed: (input) =>
+            Effect.sync(() => {
+              state = input.files[0]!.viewed ? "viewed" : "unviewed";
+            }),
         }),
       ],
     });
@@ -5497,7 +5699,7 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
 
     // The press forgets only the reader's own ticks; cached diffs survive it.
     assert.strictEqual(diffReads, 1);
-    assert.strictEqual(viewedReads, 2);
+    assert.strictEqual(viewedReads, 4);
 
     state = "dismissed";
     yield* service.invalidate({ reference, filesViewedOnly: true });
@@ -5506,7 +5708,7 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
       { path: "src/a.ts", state: "dismissed" },
     ]);
     assert.strictEqual(diffReads, 1);
-    assert.strictEqual(viewedReads, 3);
+    assert.strictEqual(viewedReads, 5);
   }),
 );
 
@@ -5578,15 +5780,25 @@ it.effect("delivers UTF-8 PR paths without changing quoted names or patch conten
     const inputPatch = written.map(section).join("");
     const expectedPatch = [names[0]!, ...written.slice(1)].map(section).join("");
     const writes: unknown[] = [];
+    const viewed = new Map<string, PullRequestFileViewed["state"]>(
+      names.map((path) => [path, "unviewed"]),
+    );
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
           getDiff: () => Effect.succeed({ patch: inputPatch, truncated: false, nextCursor: "2" }),
           capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+          getFilesViewed: () =>
+            Effect.sync(() => ({
+              files: [...viewed].map(([path, state]) => ({ path, state })),
+              truncated: false,
+            })),
           setFilesViewed: (input) =>
             Effect.sync(() => {
               writes.push(input.files);
+              for (const file of input.files)
+                viewed.set(file.path, file.viewed ? "viewed" : "unviewed");
             }),
         }),
       ],

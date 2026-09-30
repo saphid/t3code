@@ -143,6 +143,7 @@ const send = async (context) => {
 
 for (const [path, written] of [
   ["café-日本語.txt", '"caf\\303\\251-\\346\\227\\245\\346\\234\\254\\350\\252\\236.txt"'],
+  ["cafe\u0301-日本語.txt", "cafe\u0301-日本語.txt"],
   ["with spaces.txt", "with spaces.txt"],
   ['quote"and\\backslash.txt', '"quote\\"and\\\\backslash.txt"'],
   ["b/nested.txt", "b/nested.txt"],
@@ -547,6 +548,30 @@ NodeTest.test(
       await flush();
       NodeAssert.equal(checkbox(view).props.checked, true);
       NodeAssert.equal(reads, 2);
+    } finally {
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.test(
+  "a refused viewed batch reconciles files that the host did persist",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const view = mountViewed({
+      write: () => {
+        view.setSnapshot({
+          filesViewed: { files: [{ path: "a.ts", state: "viewed" }], truncated: false },
+        });
+        return Promise.reject(new Error("Host did not confirm the whole batch"));
+      },
+    });
+    try {
+      await flush();
+      await setViewed(view, true);
+      await send(context);
+      NodeAssert.match(view.text(), /Could not update viewed files/);
+      NodeAssert.equal(checkbox(view).props.checked, true);
     } finally {
       view.unmount();
     }

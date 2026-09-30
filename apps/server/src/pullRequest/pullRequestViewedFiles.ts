@@ -1,7 +1,8 @@
 /**
- * The marks a reader has ticked off, for a host that keeps none of its own, and the held record of
- * what the head has of those files. The revisions cache is filed here because this is its only
- * consumer: when a second one appears, export `makeFileRevisions` and split it into its own file.
+ * Host-confirmed viewed marks, or the marks a reader has ticked off for a host that keeps none
+ * of its own, and the held record of what the head has of those files. The revisions cache lives
+ * here because this is its only consumer: when another appears, export `makeFileRevisions` and
+ * split it into its own file.
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -395,13 +396,65 @@ export const make = (dependencies: Dependencies) => {
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
         const write = project.api.setFilesViewed;
         if (project.api.capabilities.viewedFiles === "host" && write) {
-          return write({
+          if (input.files.length === 0) return Effect.void;
+          const read = project.api.getFilesViewed;
+          if (read === undefined) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "setFilesViewed",
+                detail: "This host cannot confirm viewed file updates.",
+              }),
+            );
+          }
+          const reference = {
             cwd: project.project.workspaceRoot,
             repository: project.repository,
             host: project.host,
             number: input.number,
-            files: input.files,
-          }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")));
+          };
+          return inFilesViewedOrder(
+            project,
+            input.number,
+            Effect.gen(function* () {
+              // Use the provider's exact keys. NFC/NFD, quotes and whitespace can name distinct
+              // files; a diff header or a normalized display label is not a provider identity.
+              const before = yield* read(reference).pipe(
+                Effect.mapError(toPullRequestError("setFilesViewed")),
+              );
+              const byPath = new Map(before.files.map((file) => [file.path, file]));
+              const files: Array<{ path: string; viewed: boolean }> = [];
+              for (const file of input.files) {
+                const providerFile = byPath.get(file.path);
+                if (providerFile === undefined) {
+                  return yield* new PullRequestOperationError({
+                    operation: "setFilesViewed",
+                    detail: "This file was not found in the host's pull request files.",
+                  });
+                }
+                files.push({ path: providerFile.path, viewed: file.viewed });
+              }
+              yield* write({ ...reference, files }).pipe(
+                Effect.mapError(toPullRequestError("setFilesViewed")),
+              );
+              // GitHub can acknowledge the exact Unicode path without storing its mark. An
+              // exit-zero mutation is not confirmation; check the uncached provider readback.
+              const after = yield* read(reference).pipe(
+                Effect.mapError(toPullRequestError("setFilesViewed")),
+              );
+              const states = new Map(after.files.map((file) => [file.path, file.state]));
+              const expected = new Map(files.map((file) => [file.path, file.viewed]));
+              for (const [path, viewed] of expected) {
+                const state = states.get(path);
+                if (state === undefined || (state === "viewed") !== viewed) {
+                  return yield* new PullRequestOperationError({
+                    operation: "setFilesViewed",
+                    detail:
+                      "The host did not confirm the viewed file update. Refresh and try again.",
+                  });
+                }
+              }
+            }),
+          );
         }
         if (project.api.capabilities.viewedFiles === "environment") {
           return inFilesViewedOrder(
