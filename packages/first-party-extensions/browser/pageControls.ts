@@ -82,11 +82,17 @@ export function isRecoveryExhausted(session: BrowserSession | null): boolean {
   return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
 }
 
-/** The status line's engine clause, named exactly as the contract reports it. */
-export function engineStatusLabel(session: BrowserSession): string {
+/** A surface-capable client can await the owner claim before the first engine report. */
+export function engineStatusLabel(session: BrowserSession, surfaceCanAttach = false): string {
   const { engine, navigation } = session;
-  const engineText =
-    engine.state === "ready"
+  const awaitingEngine =
+    surfaceCanAttach &&
+    engine.state === "unavailable" &&
+    engine.generation === null &&
+    engine.reason === "desktop-required";
+  const engineText = awaitingEngine
+    ? "engine pending"
+    : engine.state === "ready"
       ? "engine ready"
       : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
   const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";

@@ -140,6 +140,7 @@ function restartingBackend() {
   let nextSurfaceDenial = null;
   let surfaceSyncDelayMs = 0;
   let navigateGate = null;
+  let nextOpenEngine = null;
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
 
@@ -212,6 +213,11 @@ function restartingBackend() {
         server.revision += 1;
         const tabId = opens.length === 1 ? "tab-b" : `tab-b-${opens.length}`;
         const session = browserSession(tabId, request.input.url, "Page B");
+        if (nextOpenEngine) {
+          session.engine = nextOpenEngine;
+          session.navigation = { kind: "pending", url: request.input.url, title: "" };
+          nextOpenEngine = null;
+        }
         server.sessions.push(session);
         for (const subscriber of subscribers) {
           subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
@@ -346,6 +352,18 @@ function restartingBackend() {
     presents,
     surfaceRefreshes,
     serverSessions: () => server.sessions,
+    reportSession(session) {
+      server.revision += 1;
+      const index = server.sessions.findIndex((current) => current.tabId === session.tabId);
+      server.sessions[index] = session;
+      for (const subscriber of subscribers) {
+        subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
+        subscriber.wake?.();
+      }
+    },
+    setNextOpenEngine(engine) {
+      nextOpenEngine = engine;
+    },
     denyNextSurface(reason) {
       nextSurfaceDenial = reason;
     },
@@ -445,21 +463,34 @@ async function settle() {
 }
 
 /** Mounts the real view on `backend`; `run` drives it, and the view unmounts after. */
-async function withView(backend, run) {
+async function withView(
+  backend,
+  run,
+  { initialStatus = "Page A — engine ready, navigation loaded" } = {},
+) {
   const view = viewSession();
   let renderer;
-  await act(async () => {
-    renderer = create(
-      React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
-      { createNodeMock: nodeMock },
-    );
-  });
+  const remoteElement = nodeMock();
+  const statusCommits = [];
   const status = () =>
     textOf(
       renderer.root.find(
         (node) => node.type === "div" && node.props["aria-label"] === "Browser status",
       ),
     );
+  await act(async () => {
+    renderer = create(
+      React.createElement(
+        React.Profiler,
+        { id: "Browser status", onRender: () => statusCommits.push(status()) },
+        React.createElement(bundle.BrowserView, { host: backend.host, session: view }),
+      ),
+      {
+        createNodeMock: (node) =>
+          node.props["aria-label"] === "Remote browser surface" ? remoteElement : nodeMock(),
+      },
+    );
+  });
   const hasSurface = () =>
     renderer.root.findAll(
       (node) => node.type === "div" && node.props["aria-label"] === "Browser surface",
@@ -483,14 +514,17 @@ async function withView(backend, run) {
   };
   try {
     await settle();
-    NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
-    NodeAssert.deepEqual(backend.presents.at(-1), {
-      tabId: "tab-a",
-      serverEpoch: "epoch-a",
-      visible: true,
-    });
+    if (initialStatus !== null) {
+      NodeAssert.equal(status(), initialStatus);
+      NodeAssert.deepEqual(backend.presents.at(-1), {
+        tabId: "tab-a",
+        serverEpoch: "epoch-a",
+        visible: true,
+      });
+    }
     await run({
       status,
+      statusCommits,
       hasSurface,
       enter,
       address: () => addressInput().props.value,
@@ -502,6 +536,116 @@ async function withView(backend, run) {
       renderer.unmount();
     });
   }
+}
+
+const unreportedEngine = {
+  state: "unavailable",
+  generation: null,
+  reason: "desktop-required",
+};
+
+function unreportedSession(backend) {
+  const session = backend.serverSessions()[0];
+  return {
+    ...session,
+    engine: unreportedEngine,
+    navigation: { kind: "pending", url: session.requestedUrl, title: "" },
+  };
+}
+
+NodeTest.test(
+  "surface-capable attach and re-attach never commit unavailable engine status before a claim",
+  async () => {
+    const backend = restartingBackend();
+    backend.reportSession(unreportedSession(backend));
+    await withView(
+      backend,
+      async ({ status, statusCommits, enter }) => {
+        NodeAssert.ok(statusCommits.length > 0);
+        NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+        NodeAssert.equal(status(), "https://a.test/ — engine pending, navigation pending");
+
+        backend.reportSession({
+          ...backend.serverSessions()[0],
+          engine: { state: "starting", generation: "gen-tab-a" },
+        });
+        await settle();
+        NodeAssert.equal(status(), "https://a.test/ — engine starting, navigation pending");
+        backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+        await settle();
+        NodeAssert.equal(status(), "Page A — engine ready, navigation loaded");
+
+        backend.drop();
+        await settle();
+        backend.reportSession(unreportedSession(backend));
+        backend.resume();
+        await settle();
+        NodeAssert.equal(status(), "https://a.test/ — engine pending, navigation pending");
+        NodeAssert.equal(backend.opens().length, 0);
+        backend.reportSession(browserSession("tab-a", "https://a.test/", "Page A"));
+        await settle();
+
+        backend.drop();
+        await settle();
+        backend.restart();
+        await settle();
+        backend.setNextOpenEngine(unreportedEngine);
+        await enter("https://b.test/");
+        await settle();
+        NodeAssert.equal(status(), "https://b.test/ — engine pending, navigation pending");
+        NodeAssert.equal(backend.opens().length, 1);
+        backend.reportSession(browserSession("tab-b", "https://b.test/", "Page B"));
+        await settle();
+        NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+        NodeAssert.doesNotMatch(statusCommits.join("\n"), /engine unavailable|desktop-required/);
+      },
+      { initialStatus: null },
+    );
+  },
+);
+
+for (const surface of [
+  "absent",
+  "unsupported",
+  "lease-unsupported",
+  "denied",
+  "reported-unavailable",
+]) {
+  NodeTest.test(`${surface} host retains honest unavailable engine status`, async () => {
+    const backend = restartingBackend();
+    const session = unreportedSession(backend);
+    if (surface === "absent" || surface === "unsupported")
+      backend.host.browserFrames = { id: "t3.browser/frames", version: "1.0.0" };
+    if (surface === "absent") delete backend.host.browserSurface;
+    if (surface === "unsupported")
+      backend.host.browserSurface.presentation = { supported: false, reason: "desktop-required" };
+    if (surface === "lease-unsupported") {
+      const acquire = backend.host.browserSurface.acquire;
+      backend.host.browserSurface.acquire = (request) => {
+        const acquired = acquire(request);
+        acquired.lease.state.presentation = { supported: false, reason: "desktop-required" };
+        return acquired;
+      };
+    }
+    if (surface === "denied")
+      backend.host.browserSurface.acquire = () => ({
+        ok: false,
+        denial: { reason: "host-unavailable", detail: "offline" },
+      });
+    if (surface === "reported-unavailable")
+      session.engine = { ...unreportedEngine, generation: "gen-tab-a" };
+    backend.reportSession(session);
+    await withView(
+      backend,
+      async ({ status }) => {
+        NodeAssert.equal(
+          status(),
+          "https://a.test/ — engine unavailable (desktop-required), navigation pending",
+        );
+      },
+      { initialStatus: null },
+    );
+  });
 }
 
 const presentingB = (backend, status) => {

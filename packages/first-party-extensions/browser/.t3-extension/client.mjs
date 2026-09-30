@@ -16186,9 +16186,10 @@ ${ind(d)}}`;
   function isRecoveryExhausted(session) {
     return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
   }
-  function engineStatusLabel(session) {
+  function engineStatusLabel(session, surfaceCanAttach = false) {
     const { engine, navigation } = session;
-    const engineText = engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
+    const awaitingEngine = surfaceCanAttach && engine.state === "unavailable" && engine.generation === null && engine.reason === "desktop-required";
+    const engineText = awaitingEngine ? "engine pending" : engine.state === "ready" ? "engine ready" : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
     const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
     return `${engineText}, navigation ${navigation.kind}${failure}`;
   }
@@ -18720,6 +18721,7 @@ ${titledTitle}`;
       localServers
     });
     const leaseState = surfaceLease?.state;
+    const surfaceCanAttach = host.browserSurface?.presentation.supported === true && surfaceDenial === null && (leaseState === void 0 || leaseState.kind === "active" && leaseState.presentation.supported);
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
@@ -18973,7 +18975,7 @@ ${titledTitle}`;
               role: "status",
               "aria-label": "Browser status",
               style: { padding: "6px 10px", color: muted6, fontSize: 11, flexShrink: 0 },
-              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live)}` : describeStatus(state2))
+              children: notice ?? (held && live ? `${live.navigation.title || live.navigation.url || "session"} \u2014 ${engineStatusLabel(live, surfaceCanAttach)}` : describeStatus(state2))
             }
           ),
           held ? /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { ref: setContentElement, style: { position: "relative", flex: 1, minHeight: 0 }, children: [

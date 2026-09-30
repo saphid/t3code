@@ -1032,6 +1032,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   });
 
   const leaseState = surfaceLease?.state;
+  const surfaceCanAttach =
+    host.browserSurface?.presentation.supported === true &&
+    surfaceDenial === null &&
+    (leaseState === undefined ||
+      (leaseState.kind === "active" && leaseState.presentation.supported));
   const remoteNotice =
     remote.status.kind === "connecting"
       ? "Connecting remote browser frames…"
@@ -1315,7 +1320,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       >
         {notice ??
           (held && live
-            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live)}`
+            ? `${live.navigation.title || live.navigation.url || "session"} — ${engineStatusLabel(live, surfaceCanAttach)}`
             : describeStatus(state))}
       </div>
       {held ? (
