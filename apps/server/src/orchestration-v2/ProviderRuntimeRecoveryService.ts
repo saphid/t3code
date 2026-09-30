@@ -17,7 +17,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { restartContinuationRun } from "./RestartContinuation.ts";
+import { interruptedRunToContinue, restartContinuationRun } from "./RestartContinuation.ts";
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -225,7 +225,7 @@ export const make = Effect.gen(function* () {
         );
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? (restartContinuationRun(projection) ?? interruptedRunToContinue(projection, runs))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [

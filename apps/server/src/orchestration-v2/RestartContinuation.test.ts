@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -14,7 +15,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
+import {
+  continueRestartedRun,
+  interruptedRunToContinue,
+  restartContinuationRun,
+} from "./RestartContinuation.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -311,5 +316,155 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       ),
     );
     assert.isFalse(dispatched);
+  }),
+);
+
+const queuedAfter = (projection: OrchestrationV2ThreadProjection, queueHeld: boolean) => ({
+  ...projection,
+  runs: [
+    ...projection.runs,
+    {
+      ...projection.runs[0]!,
+      id: RunId.make("run:queued-after"),
+      ordinal: 2,
+      status: "queued" as const,
+      ...(queueHeld ? { queueHeld } : {}),
+    },
+  ],
+});
+
+it("continues an interrupted run even when saved provider state is unusable", () => {
+  const projection = {
+    ...makeProjection(),
+    providerThreads: [],
+    providerSessions: [],
+    providerTurns: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  assert.isUndefined(restartContinuationRun(projection));
+  const interrupted = projection.runs;
+  assert.equal(interruptedRunToContinue(projection, interrupted)?.id, runId);
+  // Queued work after the interrupted run does not hide it.
+  assert.equal(interruptedRunToContinue(queuedAfter(projection, true), interrupted)?.id, runId);
+  for (const invalid of [
+    { ...projection, thread: { ...projection.thread, archivedAt: {} } },
+    {
+      ...projection,
+      thread: { ...projection.thread, providerInstanceId: ProviderInstanceId.make("other") },
+    },
+    // Waiting on the user: the request expired with the restart.
+    { ...projection, runs: [{ ...projection.runs[0]!, status: "waiting" }] },
+    { ...projection, runs: [{ ...projection.runs[0]!, status: "completed" }] },
+  ])
+    assert.isUndefined(
+      interruptedRunToContinue(invalid as OrchestrationV2ThreadProjection, interrupted),
+    );
+  // Running, but blocked on an unanswered question: answering is the user's move.
+  const nodeId = NodeId.make("node:question");
+  assert.isUndefined(
+    interruptedRunToContinue(
+      {
+        ...projection,
+        nodes: [{ id: nodeId, runId }],
+        runtimeRequests: [{ nodeId, status: "pending" }],
+      } as unknown as OrchestrationV2ThreadProjection,
+      interrupted,
+    ),
+  );
+  // The latest run must be one this reconcile interrupted.
+  assert.isUndefined(interruptedRunToContinue(projection, []));
+});
+
+it.effect("releases a held queue behind an interrupted run instead of prompting", () =>
+  Effect.gen(function* () {
+    let projection = queuedAfter(
+      {
+        ...makeProjection(),
+        runs: [{ ...makeProjection().runs[0]!, status: "cancelled" }],
+      } as unknown as OrchestrationV2ThreadProjection,
+      true,
+    );
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    const layer = Layer.merge(
+      Layer.mock(ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => {
+          commands.push(command);
+          return Effect.succeed({} as never);
+        },
+      }),
+      ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+    );
+
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(layer));
+    assert.lengthOf(commands, 1);
+    assert.equal(commands[0]!.type, "queue.resume");
+    assert.match(
+      String(commands[0]!.commandId),
+      new RegExp(`^command:restart-queue-resume:${runId}:\\d+$`),
+    );
+
+    // Nothing is held any more: no command, and still no automatic prompt.
+    projection = queuedAfter(
+      {
+        ...makeProjection(),
+        runs: [{ ...makeProjection().runs[0]!, status: "cancelled" }],
+      } as unknown as OrchestrationV2ThreadProjection,
+      false,
+    );
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(Effect.provide(layer));
+    assert.lengthOf(commands, 1);
+  }),
+);
+
+it.effect("schedules continuation for an interrupted run whose provider state is unusable", () =>
+  Effect.gen(function* () {
+    let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
+    const projection = queuedAfter(
+      {
+        ...makeProjection(),
+        providerThreads: [],
+        providerSessions: [],
+        providerTurns: [],
+      } as unknown as OrchestrationV2ThreadProjection,
+      false,
+    );
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committed = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(committed?.effects[0]?.request, {
+      type: "provider-runtime.continue",
+      sourceRunId: runId,
+    });
+    // The queue is still held in the same commit; delivery releases it.
+    assert.isTrue(
+      committed!.events.some(
+        (event) =>
+          event.type === "run.updated" &&
+          event.payload.status === "queued" &&
+          event.payload.queueHeld === true,
+      ),
+    );
   }),
 );
