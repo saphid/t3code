@@ -49,6 +49,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
+import { PrsMetadataPicker } from "./prsMetadataPickers.js";
 import {
   PRS_INVOLVEMENTS,
   PRS_LIST_STATES,
@@ -3247,10 +3248,37 @@ export function PullRequestsPanel(props: {
                         metaRow("Merged", formatRelativeTime(detail.mergedAt))}
                       {detail.closedAt !== null &&
                         metaRow("Closed", formatRelativeTime(detail.closedAt))}
-                      {detail.reviewers.length > 0 &&
-                        metaRow("Reviewers", detail.reviewers.map(prsActorLabel).join(", "))}
-                      {detail.labels.length > 0 &&
-                        metaRow("Labels", detail.labels.map((label) => label.name).join(", "))}
+                      {selected !== null &&
+                        metaRow(
+                          "Reviewers",
+                          <PrsMetadataPicker
+                            key={`${selectedKey}:reviewers`}
+                            kind="reviewers"
+                            host={host}
+                            session={session}
+                            reference={selected}
+                            detail={detail}
+                            readOperations={ops}
+                            writeOperations={writeOps}
+                            report={toasts.report}
+                          />,
+                        )}
+                      {selected !== null &&
+                        (detail.labels.length > 0 || detail.capabilities.labels === true) &&
+                        metaRow(
+                          "Labels",
+                          <PrsMetadataPicker
+                            key={`${selectedKey}:labels`}
+                            kind="labels"
+                            host={host}
+                            session={session}
+                            reference={selected}
+                            detail={detail}
+                            readOperations={ops}
+                            writeOperations={writeOps}
+                            report={toasts.report}
+                          />,
+                        )}
                     </div>
                     {detail.body !== "" && (
                       <pre

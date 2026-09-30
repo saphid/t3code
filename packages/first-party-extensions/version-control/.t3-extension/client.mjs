@@ -8782,7 +8782,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
 
   // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
@@ -9439,7 +9439,7 @@ var __t3Client = (() => {
   }
 
   // prsPanel.tsx
-  var import_react2 = __toESM(require_react(), 1);
+  var import_react3 = __toESM(require_react(), 1);
 
   // mutationToasts.ts
   var import_react = __toESM(require_react(), 1);
@@ -9610,6 +9610,9 @@ var __t3Client = (() => {
     };
     return { begin, report };
   }
+
+  // prsMetadataPickers.tsx
+  var import_react2 = __toESM(require_react(), 1);
 
   // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
@@ -11071,7 +11074,7 @@ ${ref.number}`;
   }
   function prsStackMergePlan(stack, number, mergeMethod) {
     const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
-    const selected = position > 0 ? stack.layers[position - 1] : void 0;
+    const selected2 = position > 0 ? stack.layers[position - 1] : void 0;
     const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
     const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
     const count = layers.length;
@@ -11085,8 +11088,8 @@ ${ref.number}`;
       )
     };
     return {
-      visible: selected?.state === "open",
-      disabled: selected?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
+      visible: selected2?.state === "open",
+      disabled: selected2?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
       layers,
       input,
       label: "Merge stack",
@@ -11163,10 +11166,613 @@ ${writeKey}`;
     return next;
   }
 
-  // prsPanel.tsx
+  // prsMetadataPickers.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+  var rowStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    flexWrap: "wrap"
+  };
+  var labelWords = {
+    trigger: "Change labels",
+    search: "Search labels",
+    permission: "Changing labels needs triage access on this repository",
+    empty: "This repository has no labels.",
+    noMatch: "No label matches that.",
+    error: "The labels could not be read.",
+    truncated: "This repository has more labels than are listed here. Apply the rest on the host."
+  };
+  var reviewerWords = {
+    trigger: "Request a review",
+    search: "Search people with access",
+    permission: "Asking someone to review needs write access on this repository",
+    empty: "Nobody else has access to this repository.",
+    noMatch: "Nobody with access matches that.",
+    error: "The people with access could not be read.",
+    truncated: "This repository has more people with access than are listed here. Ask for the rest on the host."
+  };
+  function labelColor(color) {
+    const hex = color?.trim().replace(/^#/, "") ?? "";
+    return /^[0-9a-fA-F]{6}$/.test(hex) ? `#${hex}` : null;
+  }
+  function matches(candidate, query) {
+    const needle = query.toLowerCase();
+    return candidate.name.toLowerCase().includes(needle) || (candidate.kind === "label" ? candidate.value.description : candidate.value.name)?.toLowerCase().includes(needle) === true;
+  }
+  function selected(candidate, detail) {
+    return candidate.kind === "label" ? detail.labels.some((label) => label.name === candidate.name) : detail.reviewers.some(
+      (reviewer) => reviewer.login.toLowerCase() === candidate.name.toLowerCase()
+    );
+  }
+  function toggleMetadata(detail, candidate, applied) {
+    if (candidate.kind === "label")
+      return {
+        ...detail,
+        labels: applied ? detail.labels.some((label) => label.name === candidate.name) ? detail.labels : [...detail.labels, { name: candidate.name, color: candidate.value.color }] : detail.labels.filter((label) => label.name !== candidate.name)
+      };
+    const reviewers = detail.reviewers.filter(
+      (reviewer) => reviewer.login.toLowerCase() !== candidate.name.toLowerCase()
+    );
+    return {
+      ...detail,
+      reviewers: applied ? [
+        ...reviewers,
+        {
+          login: candidate.value.login,
+          name: candidate.value.name,
+          avatarUrl: candidate.value.avatarUrl
+        }
+      ] : reviewers
+    };
+  }
+  function Dot({ color }) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "span",
+      {
+        "aria-hidden": true,
+        style: {
+          width: 8,
+          height: 8,
+          flexShrink: 0,
+          borderRadius: "50%",
+          background: labelColor(color) ?? muted
+        }
+      }
+    );
+  }
+  function ActorLabel({ actor, host }) {
+    const [failedAvatar, setFailedAvatar] = (0, import_react2.useState)(null);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsActorTooltip(actor), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { ...rowStyle, flexWrap: "nowrap", gap: 6, minWidth: 0, fontWeight: 500 }, children: [
+      actor.avatarUrl === null || failedAvatar === actor.avatarUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "span",
+        {
+          "aria-hidden": true,
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 16,
+            height: 16,
+            flexShrink: 0,
+            borderRadius: "50%",
+            background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
+            color: muted,
+            fontSize: 8
+          },
+          children: actor.login.slice(0, 1).toUpperCase()
+        }
+      ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "img",
+        {
+          "aria-hidden": true,
+          src: actor.avatarUrl,
+          alt: "",
+          loading: "lazy",
+          width: "16",
+          height: "16",
+          onError: () => setFailedAvatar(actor.avatarUrl),
+          style: { flexShrink: 0, borderRadius: "50%", objectFit: "cover" }
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: actor.login })
+    ] }) });
+  }
+  function LabelChip({ label }) {
+    const color = labelColor(label.color);
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "span",
+      {
+        className: `t3-prs-label-chip${color === null ? "" : " t3-prs-label-colored"}`,
+        style: { "--label": color ?? void 0 },
+        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: label.name })
+      }
+    );
+  }
+  function PickerIcon({ kind }) {
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      "svg",
+      {
+        "aria-hidden": true,
+        width: "14",
+        height: "14",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "2",
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        children: kind === "labels" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M20 8v6M23 11h-6" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "9", cy: "7", r: "4" })
+        ] })
+      }
+    );
+  }
+  function PrsMetadataPicker({
+    kind,
+    host,
+    session,
+    reference,
+    detail,
+    readOperations,
+    writeOperations,
+    report
+  }) {
+    const words = kind === "labels" ? labelWords : reviewerWords;
+    const supported = kind === "labels" ? detail.capabilities.labels === true : detail.capabilities.reviewers.request && detail.capabilities.reviewers.listCandidates;
+    const permitted = kind === "labels" ? detail.viewerPermissions.labels !== false : detail.viewerPermissions.requestReviewers;
+    const canRead = readOperations?.[kind === "labels" ? "prs.labelCandidates" : "prs.reviewerCandidates"] === true;
+    const canWrite = writeOperations?.[kind === "labels" ? "prs.setLabels" : "prs.requestReviewers"] === true;
+    const allowed = supported && permitted && canRead && canWrite;
+    const disabledReason = !permitted ? words.permission : !canRead ? `${words.search} is unavailable through t3.prs/read` : `${words.trigger} is unavailable through t3.prs/write`;
+    const [open, setOpen] = (0, import_react2.useState)(false);
+    const [query, setQuery] = (0, import_react2.useState)("");
+    const [highlight, setHighlight] = (0, import_react2.useState)(0);
+    const [list, setList] = (0, import_react2.useState)(null);
+    const [readError, setReadError] = (0, import_react2.useState)(null);
+    const [pending, setPending] = (0, import_react2.useState)(false);
+    const [optimistic, setOptimistic] = (0, import_react2.useState)(null);
+    const [receipt2, setReceipt] = (0, import_react2.useState)(null);
+    const detailRef = (0, import_react2.useRef)(detail);
+    const pendingRef = (0, import_react2.useRef)(false);
+    const mutation = (0, import_react2.useRef)(null);
+    const live = (0, import_react2.useRef)(true);
+    const trigger = (0, import_react2.useRef)(null);
+    const [anchor, setAnchor] = (0, import_react2.useState)(null);
+    const attachTrigger = (0, import_react2.useCallback)((element) => {
+      trigger.current = element;
+      setAnchor(element);
+    }, []);
+    const search = (0, import_react2.useRef)(null);
+    const popup = (0, import_react2.useRef)(null);
+    const [popupElement, setPopupElement] = (0, import_react2.useState)(null);
+    const attachPopup = (0, import_react2.useCallback)((element) => {
+      popup.current = element;
+      setPopupElement(element);
+    }, []);
+    const listId = (0, import_react2.useId)();
+    const shown = optimistic?.source === detail ? optimistic.value : pending && optimistic !== null ? toggleMetadata(detail, optimistic.candidate, optimistic.applied) : detail;
+    const candidates = (list?.candidates ?? []).filter((candidate) => matches(candidate, query));
+    const active = candidates[Math.min(highlight, candidates.length - 1)];
+    const isSelected = (candidate) => optimistic?.source === detail || pending && optimistic !== null || list?.source !== detail ? selected(candidate, shown) : candidate.kind === "label" ? candidate.value.isApplied : candidate.value.isRequested;
+    (0, import_react2.useEffect)(() => {
+      detailRef.current = detail;
+    }, [detail]);
+    (0, import_react2.useEffect)(() => {
+      live.current = true;
+      return () => {
+        live.current = false;
+        mutation.current?.abort();
+      };
+    }, []);
+    (0, import_react2.useEffect)(() => {
+      if (!allowed) setOpen(false);
+    }, [allowed]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || !allowed) return;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      const source = detailRef.current;
+      const api = bindApi(prsReadApi, host, session.context);
+      const read = async () => {
+        if (kind === "labels") {
+          const result2 = await api.invoke("labelCandidates", reference, signal);
+          return {
+            source,
+            truncated: result2.truncated,
+            candidates: result2.candidates.map((value) => ({
+              kind: "label",
+              key: value.name,
+              name: value.name,
+              value
+            }))
+          };
+        }
+        const result = await api.invoke("reviewerCandidates", reference, signal);
+        return {
+          source,
+          truncated: result.truncated,
+          candidates: result.candidates.map((value) => ({
+            kind: "reviewer",
+            key: `${value.kind}:${value.id}`,
+            name: value.login,
+            value
+          }))
+        };
+      };
+      void read().then(
+        (result) => {
+          if (!signal.aborted) setList(result);
+        },
+        (error) => {
+          if (!signal.aborted)
+            setReadError(error instanceof Error ? error.message : "Host read failed");
+        }
+      );
+      return () => controller.abort();
+    }, [open, allowed, kind, host, session, reference]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || popupElement === null) return;
+      const timer = setTimeout(() => search.current?.focus(), 0);
+      return () => clearTimeout(timer);
+    }, [open, popupElement]);
+    (0, import_react2.useEffect)(() => {
+      if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
+      const onPress = (event) => {
+        if (!trigger.current?.contains(event.target) && !popup.current?.contains(event.target))
+          setOpen(false);
+      };
+      document.addEventListener("mousedown", onPress);
+      return () => document.removeEventListener("mousedown", onPress);
+    }, [open]);
+    const close = () => {
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    const showReceipt = (patch) => {
+      const lost = () => {
+        if (live.current && !session.signal.aborted) setReceipt(patch);
+      };
+      if (!report(patch, lost)) lost();
+    };
+    const toggle = async (candidate) => {
+      if (!allowed || pendingRef.current || session.signal.aborted) return;
+      const applied = !isSelected(candidate);
+      const previous = optimistic;
+      pendingRef.current = true;
+      setPending(true);
+      setReceipt(null);
+      setOptimistic({
+        source: detail,
+        value: toggleMetadata(shown, candidate, applied),
+        candidate,
+        applied
+      });
+      const controller = new AbortController();
+      mutation.current = controller;
+      const signal = AbortSignal.any([controller.signal, session.signal]);
+      const api = bindApi(prsWriteApi, host, session.context);
+      try {
+        if (candidate.kind === "label")
+          await api.invoke("setLabels", { ...reference, labels: [candidate.name], applied }, signal);
+        else
+          await api.invoke(
+            "requestReviewers",
+            {
+              ...reference,
+              reviewers: [{ id: candidate.value.id, kind: candidate.value.kind }],
+              requested: applied
+            },
+            signal
+          );
+        if (signal.aborted) return;
+        setOptimistic(
+          (current) => current === null || current.source === detailRef.current ? current : {
+            ...current,
+            source: detailRef.current,
+            value: toggleMetadata(detailRef.current, candidate, applied)
+          }
+        );
+        if (candidate.kind === "reviewer")
+          showReceipt({
+            severity: "success",
+            title: applied ? `Review requested from ${candidate.name}` : `Review request to ${candidate.name} taken back`
+          });
+      } catch (error) {
+        if (signal.aborted) return;
+        setOptimistic(previous);
+        showReceipt({
+          severity: "error",
+          title: candidate.kind === "label" ? applied ? `Could not put ${candidate.name} on` : `Could not take ${candidate.name} off` : applied ? `Could not ask ${candidate.name} for a review` : `Could not take back the review request to ${candidate.name}`,
+          body: error instanceof Error ? error.message : candidate.kind === "label" ? "The host refused it. Check that you have triage access on this repository." : "The host refused it. Check that you have write access on this repository, and that they still have access to it."
+        });
+      } finally {
+        pendingRef.current = false;
+        if (!signal.aborted) setPending(false);
+      }
+    };
+    const surface = {
+      role: "dialog",
+      "aria-label": words.trigger,
+      onKeyDown: (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }
+      },
+      onBlur: (event) => {
+        if (event.relatedTarget !== null && !popup.current?.contains(event.relatedTarget) && !trigger.current?.contains(event.relatedTarget))
+          setOpen(false);
+      },
+      style: {
+        width: 288,
+        border,
+        borderRadius: 8,
+        fontSize: 14,
+        background: "var(--t3-version-control-popover, var(--popover, #fff))",
+        color: "var(--t3-version-control-foreground, var(--foreground, #111827))",
+        boxShadow: "0 4px 12px #0002"
+      }
+    };
+    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "div",
+        {
+          style: {
+            minWidth: 0,
+            margin: "10px 12px 0",
+            paddingBottom: 6,
+            position: "relative",
+            borderBottom: border
+          },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "svg",
+              {
+                "aria-hidden": true,
+                width: "16",
+                height: "16",
+                viewBox: "0 0 24 24",
+                fill: "none",
+                stroke: "currentColor",
+                strokeWidth: "2",
+                style: { position: "absolute", top: 6, left: 0, color: muted, opacity: 0.55 },
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "11", cy: "11", r: "8" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "m21 21-4.3-4.3" })
+                ]
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                ref: search,
+                role: "combobox",
+                "aria-label": words.search,
+                placeholder: words.search,
+                "aria-controls": listId,
+                "aria-expanded": true,
+                "aria-autocomplete": "list",
+                "aria-activedescendant": active === void 0 ? void 0 : `${listId}-${candidates.indexOf(active)}`,
+                value: query,
+                onChange: (event) => {
+                  setQuery(event.target.value);
+                  setHighlight(0);
+                },
+                onKeyDown: (event) => {
+                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setHighlight(
+                      (current) => candidates.length === 0 ? 0 : (Math.min(current, candidates.length - 1) + (event.key === "ArrowDown" ? 1 : -1) + candidates.length) % candidates.length
+                    );
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (active !== void 0) void toggle(active);
+                  }
+                },
+                style: {
+                  boxSizing: "border-box",
+                  width: "100%",
+                  font: "inherit",
+                  height: 26,
+                  lineHeight: "26px",
+                  padding: "0 0 0 20px",
+                  border: "none",
+                  background: "transparent",
+                  color: "inherit"
+                }
+              }
+            )
+          ]
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "div",
+        {
+          id: listId,
+          role: "listbox",
+          "aria-label": kind === "labels" ? "Repository labels" : "People with access",
+          "aria-multiselectable": true,
+          style: { maxHeight: 288, overflowY: "auto", padding: 4 },
+          children: [
+            list === null ? readError !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { margin: 0, padding: 8, color: muted, fontSize: 12 }, children: [
+              words.error,
+              " ",
+              readError
+            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { "aria-busy": true, "aria-label": "Loading candidates", style: { padding: 8 }, children: [0, 1, 2, 3].map((index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "div",
+              {
+                "aria-hidden": true,
+                style: {
+                  height: 16,
+                  width: "75%",
+                  margin: "4px 0",
+                  borderRadius: 4,
+                  background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))"
+                }
+              },
+              index
+            )) }) : candidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, padding: 8, color: muted, fontSize: 12 }, children: query.length > 0 ? words.noMatch : words.empty }) : candidates.map((candidate, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "button",
+              {
+                id: `${listId}-${index}`,
+                type: "button",
+                role: "option",
+                "aria-label": candidate.name,
+                "aria-selected": isSelected(candidate),
+                disabled: pending,
+                tabIndex: -1,
+                onMouseEnter: () => setHighlight(index),
+                onMouseDown: (event) => event.preventDefault(),
+                onClick: () => void toggle(candidate),
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  minHeight: 28,
+                  padding: "4px 8px",
+                  border: "none",
+                  borderRadius: 4,
+                  font: "inherit",
+                  textAlign: "left",
+                  cursor: pending ? "default" : "pointer",
+                  color: "inherit",
+                  background: active?.key === candidate.key ? "var(--t3-version-control-muted, var(--muted, #f4f5f7))" : "transparent",
+                  opacity: pending ? 0.5 : 1
+                },
+                children: [
+                  candidate.kind === "label" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Dot, { color: candidate.value.color }) : null,
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "span",
+                    {
+                      style: {
+                        minWidth: 0,
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
+                      },
+                      children: [
+                        candidate.kind === "label" ? candidate.name : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ActorLabel, { host, actor: candidate.value }),
+                        candidate.kind === "label" && candidate.value.description ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                          " \xB7 ",
+                          candidate.value.description
+                        ] }) : null
+                      ]
+                    }
+                  ),
+                  candidate.kind === "reviewer" && candidate.value.kind === "team" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted }, children: "team" }) : null,
+                  isSelected(candidate) ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "svg",
+                    {
+                      role: "img",
+                      "aria-label": candidate.kind === "label" ? "Applied" : "Already asked",
+                      width: "14",
+                      height: "14",
+                      viewBox: "0 0 24 24",
+                      fill: "none",
+                      stroke: "currentColor",
+                      strokeWidth: "2",
+                      children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "m20 6-11 11-5-5" })
+                    }
+                  ) : null
+                ]
+              },
+              candidate.key
+            )),
+            list?.truncated === true ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, padding: "6px 8px", color: muted, fontSize: 12 }, children: words.truncated }) : null
+          ]
+        }
+      )
+    ] });
+    const Popover = resolveFloatingLayer(host)?.Popover;
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: rowStyle, children: [
+      kind === "labels" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("style", { children: `
+        .t3-prs-label-chip { display: inline-flex; align-items: center; min-width: 22px; max-width: 192px; height: 22px; padding: 0 3px; border: 1px solid transparent; border-radius: 2px; font-size: 14px; font-weight: 500; background: var(--secondary, #f4f5f7); color: var(--secondary-foreground, #111827); }
+        .t3-prs-label-colored { background: color-mix(in srgb, var(--label) 8%, transparent); color: color-mix(in srgb, var(--label) 30%, var(--t3-version-control-foreground, var(--foreground, #111827))); }
+        .dark .t3-prs-label-colored { background: color-mix(in srgb, var(--label) 12%, transparent); color: color-mix(in srgb, var(--label) 45%, var(--t3-version-control-foreground, var(--foreground, #fff))); }
+        @media (min-width: 640px) { .t3-prs-label-chip { min-width: 18px; height: 18px; font-size: 12px; } }
+      ` }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "span",
+        {
+          "aria-label": `${kind === "labels" ? "Labels" : "Reviewers"} on pull request`,
+          style: rowStyle,
+          children: (kind === "labels" ? shown.labels.length : shown.reviewers.length) === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted }, children: "None" }) : kind === "labels" ? shown.labels.map((label) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(LabelChip, { label }, label.name)) : shown.reviewers.map((reviewer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ActorLabel, { host, actor: reviewer }, reviewer.login))
+        }
+      ),
+      supported ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "bottom", label: allowed ? words.trigger : disabledReason, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            ref: attachTrigger,
+            type: "button",
+            "aria-label": words.trigger,
+            "aria-haspopup": "dialog",
+            "aria-expanded": open && allowed,
+            disabled: !allowed,
+            onClick: () => {
+              if (allowed) {
+                setReadError(null);
+                setOpen((current) => !current);
+              }
+            },
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              height: 24,
+              border: "none",
+              borderRadius: 4,
+              background: "transparent",
+              color: "inherit",
+              cursor: allowed ? "pointer" : "default",
+              opacity: allowed ? 1 : 0.5
+            },
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PickerIcon, { kind })
+          }
+        ) }),
+        open && allowed ? Popover !== void 0 && anchor !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          Popover,
+          {
+            ...surface,
+            anchor,
+            side: "bottom",
+            align: "start",
+            offset: 4,
+            elementRef: attachPopup,
+            children: body
+          }
+        ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "div",
+          {
+            ...surface,
+            ref: attachPopup,
+            style: { ...surface.style, position: "absolute", left: 0, top: "100%", zIndex: 10 },
+            children: body
+          }
+        ) : null
+      ] }) : null,
+      receipt2 !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { role: receipt2.severity === "error" ? "alert" : "status", children: [
+        receipt2.title,
+        receipt2.body ? ` \u2014 ${receipt2.body}` : ""
+      ] }) : null
+    ] });
+  }
+
+  // prsPanel.tsx
+  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+  var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
   var control = {
     padding: "4px 8px",
@@ -11185,7 +11791,7 @@ ${writeKey}`;
     font: "inherit",
     fontSize: 14,
     padding: "3px 6px",
-    border,
+    border: border2,
     borderRadius: 5,
     background: "transparent",
     color: "inherit"
@@ -11202,13 +11808,13 @@ ${writeKey}`;
   };
   var oidStyle = {
     fontFamily: "var(--font-mono, ui-monospace, monospace)",
-    color: muted,
+    color: muted2,
     fontSize: 11
   };
   var noteStyle = {
     margin: 0,
     padding: "4px 10px",
-    color: muted,
+    color: muted2,
     fontSize: 12
   };
   var headingStyle = {
@@ -11216,7 +11822,7 @@ ${writeKey}`;
     padding: "2px 10px",
     fontSize: 12,
     fontWeight: 600,
-    color: muted,
+    color: muted2,
     textTransform: "uppercase",
     letterSpacing: 0.4
   };
@@ -11232,8 +11838,8 @@ ${writeKey}`;
   };
   var message = (error, fallback) => error instanceof Error ? error.message : fallback;
   function usePrsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11255,8 +11861,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function usePrsWriteCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [result, setResult] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11278,8 +11884,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useCheckoutSupport(host, session, enabled) {
-    const [supported, setSupported] = (0, import_react2.useState)({ checkout: false, handoff: false });
-    (0, import_react2.useEffect)(() => {
+    const [supported, setSupported] = (0, import_react3.useState)({ checkout: false, handoff: false });
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11300,8 +11906,8 @@ ${writeKey}`;
     return enabled ? supported : { checkout: false, handoff: false };
   }
   function useDefaultRefs(host, session, enabled, revision2) {
-    const [refs, setRefs] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [refs, setRefs] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11318,12 +11924,12 @@ ${writeKey}`;
     return enabled ? refs : null;
   }
   function usePrsRefreshes(host, session, enabled) {
-    const [state2, setState] = (0, import_react2.useState)({
+    const [state2, setState] = (0, import_react3.useState)({
       tick: 0,
       live: false,
       detail: null
     });
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11382,11 +11988,11 @@ ${writeKey}`;
     return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
   }
   function usePrsList(host, session, enabled, input, revision2) {
-    const inputKey = (0, import_react2.useMemo)(() => JSON.stringify(input), [input]);
+    const inputKey = (0, import_react3.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
-    const [state2, setState] = (0, import_react2.useState)(null);
-    const continuation = (0, import_react2.useRef)(null);
-    (0, import_react2.useEffect)(() => {
+    const [state2, setState] = (0, import_react3.useState)(null);
+    const continuation = (0, import_react3.useRef)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11488,8 +12094,8 @@ ${writeKey}`;
   function usePrsDetail(host, session, ref, operations, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [sections, setSections] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [sections, setSections] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (ref === null || refKey === null || key === null || operations === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11559,8 +12165,8 @@ ${writeKey}`;
   function usePrsDiff(host, session, ref, enabled, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [state2, setState] = (0, import_react2.useState)(null);
-    (0, import_react2.useEffect)(() => {
+    const [state2, setState] = (0, import_react3.useState)(null);
+    (0, import_react3.useEffect)(() => {
       if (!enabled || ref === null || key === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11641,8 +12247,8 @@ ${writeKey}`;
     return { diff: value, loadMore };
   }
   function useDebounced(value, delay) {
-    const [debounced, setDebounced] = (0, import_react2.useState)(value);
-    (0, import_react2.useEffect)(() => {
+    const [debounced, setDebounced] = (0, import_react3.useState)(value);
+    (0, import_react3.useEffect)(() => {
       const timer = setTimeout(() => setDebounced(value), delay);
       return () => clearTimeout(timer);
     }, [value, delay]);
@@ -11653,11 +12259,11 @@ ${writeKey}`;
       // `--success`/`--info` are host constants outside the theme contract's
       // role set — the native panel reads the same variables.
       open: "var(--success, #2da44e)",
-      closed: muted,
+      closed: muted2,
       merged: "var(--info, #8250df)",
-      muted
+      muted: muted2
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "span",
       {
         style: {
@@ -11674,7 +12280,7 @@ ${writeKey}`;
   }
   function stateBadge(host, entry) {
     const [text, tone] = entry.state === "open" && entry.isDraft ? ["Draft", "muted"] : entry.state === "open" ? ["Open", "open"] : entry.state === "merged" ? ["Merged", "merged"] : ["Closed", "closed"];
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: text, children: badge(text, tone) });
   }
   var CHECKS_TONES = {
     success: "var(--success, #2da44e)",
@@ -11706,23 +12312,23 @@ ${writeKey}`;
   function ChecksControl(props) {
     const { host, state: state2, checks, stale = false, loadChecks, onOpenLink } = props;
     const icon = prsChecksIcon(state2);
-    const [open, setOpen] = (0, import_react2.useState)(false);
-    const [lazy, setLazy] = (0, import_react2.useState)({ status: "loading" });
-    const trigger = (0, import_react2.useRef)(null);
-    const popup = (0, import_react2.useRef)(null);
-    const [popupElement, setPopupElement] = (0, import_react2.useState)(null);
-    const attachPopup = (0, import_react2.useCallback)((element) => {
+    const [open, setOpen] = (0, import_react3.useState)(false);
+    const [lazy, setLazy] = (0, import_react3.useState)({ status: "loading" });
+    const trigger = (0, import_react3.useRef)(null);
+    const popup = (0, import_react3.useRef)(null);
+    const [popupElement, setPopupElement] = (0, import_react3.useState)(null);
+    const attachPopup = (0, import_react3.useCallback)((element) => {
       popup.current = element;
       setPopupElement(element);
     }, []);
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (!open || popupElement === null) return;
       const timer = setTimeout(() => {
         (tabbablesIn(popupElement)[0] ?? popupElement).focus();
       }, 0);
       return () => clearTimeout(timer);
     }, [open, popupElement]);
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (!open || checks !== void 0 || loadChecks === void 0) return;
       const controller = new AbortController();
       setLazy({ status: "loading" });
@@ -11737,7 +12343,7 @@ ${writeKey}`;
       );
       return () => controller.abort();
     }, [open]);
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
       const onPress = (event) => {
         const target = event.target;
@@ -11790,7 +12396,7 @@ ${writeKey}`;
         width: 320,
         maxWidth: "calc(100vw - 24px)",
         padding: "8px 10px",
-        border,
+        border: border2,
         borderRadius: 6,
         fontSize: 12,
         textAlign: "left",
@@ -11800,17 +12406,17 @@ ${writeKey}`;
         boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
       }
     };
-    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", fontWeight: 600, fontSize: 13 }, children: icon.label }),
-      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 6px", color: muted }, children: summary }),
-      stale ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, color: muted }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    const body = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "0 0 6px", fontWeight: 600, fontSize: 13 }, children: icon.label }),
+      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "0 0 6px", color: muted2 }, children: summary }),
+      stale ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "li",
         {
           style: { display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted }, children: prsCheckStatusLabel(check.status) }),
-            check.url !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted2 }, children: prsCheckStatusLabel(check.status) }),
+            check.url !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "button",
               {
                 type: "button",
@@ -11825,8 +12431,8 @@ ${writeKey}`;
         `${index}:${check.name}`
       )) }) : null
     ] });
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "span",
         {
           ref: trigger,
@@ -11859,7 +12465,7 @@ ${writeKey}`;
           children: icon.glyph
         }
       ),
-      open && (Popover !== void 0 && trigger.current !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      open && (Popover !== void 0 && trigger.current !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         Popover,
         {
           ...popupProps,
@@ -11869,7 +12475,7 @@ ${writeKey}`;
           elementRef: attachPopup,
           children: body
         }
-      ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      ) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "div",
         {
           ...popupProps,
@@ -11890,8 +12496,8 @@ ${writeKey}`;
   };
   function CopyableCode(props) {
     const { host, value, copyLabel, copiedLabel, onError } = props;
-    const [copied, setCopied] = (0, import_react2.useState)(false);
-    (0, import_react2.useEffect)(() => {
+    const [copied, setCopied] = (0, import_react3.useState)(false);
+    (0, import_react3.useEffect)(() => {
       if (!copied) return;
       const timer = setTimeout(() => setCopied(false), 1600);
       return () => clearTimeout(timer);
@@ -11902,20 +12508,20 @@ ${writeKey}`;
         (error) => onError(message(error, "Copy failed"))
       );
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: `${copied ? "Copied" : copyLabel}: ${value}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: `${copied ? "Copied" : copyLabel}: ${value}`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "button",
       {
         type: "button",
         "aria-label": copied ? copiedLabel : copyLabel,
         onClick: copy,
         style: { ...linkButton, textDecoration: "none", minWidth: 0, maxWidth: "100%" },
-        children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, display: "block" }, children: copied ? "Copied" : value })
+        children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, display: "block" }, children: copied ? "Copied" : value })
       }
     ) });
   }
   function BranchChips(props) {
     const chips = prsBranchChips(props.detail, props.stacked);
-    const openControl = (text, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    const openControl = (text, url) => url === null ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host: props.host, side: "top", label: `Open ${text} on host`, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "button",
       {
         type: "button",
@@ -11925,14 +12531,14 @@ ${writeKey}`;
         children: "\u2197"
       }
     ) });
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
-        chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted2 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
+        chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
         chips.base.text
       ] }) }),
       openControl(chips.base.text, props.baseUrl),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { display: "inline-flex", flex: 1, minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { role: "img", "aria-label": chips.arrowLabel, style: { flexShrink: 0 }, children: "\u2190" }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { display: "inline-flex", flex: 1, minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         CopyableCode,
         {
           host: props.host,
@@ -11950,7 +12556,7 @@ ${writeKey}`;
     const { host, entry, viewers, onSelect, loadChecks, onOpenLink } = props;
     const review = prsReviewLabel(entry.reviewDecision);
     const stack = prsStackLabel(entry.stack);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("li", { children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "button",
       {
         type: "button",
@@ -11969,9 +12575,9 @@ ${writeKey}`;
           background: "transparent"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0 }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0 }, children: [
             stateBadge(host, entry),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "span",
               {
                 style: {
@@ -11984,7 +12590,7 @@ ${writeKey}`;
                 children: entry.title
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               ChecksControl,
               {
                 host,
@@ -11995,7 +12601,7 @@ ${writeKey}`;
             ),
             entry.viewerReviewRequested && badge("Review requested", "open")
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "span",
             {
               style: {
@@ -12005,13 +12611,13 @@ ${writeKey}`;
                 minWidth: 0,
                 marginTop: 2,
                 fontSize: 11,
-                color: muted,
+                color: muted2,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "span",
                   {
                     style: {
@@ -12026,17 +12632,17 @@ ${writeKey}`;
                     ]
                   }
                 ),
-                review !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
-                stack !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
+                review !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsReviewTooltip(entry.reviewDecision), children: badge(review, review === "Approved" ? "open" : "closed") }),
+                stack !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsStackTooltip(entry.stack), children: badge(stack, "merged") })
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted2 }, children: entry.headBranch }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted2, fontSize: 11 }, children: "\u2192" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted2, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
           ] }),
-          entry.labels.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          entry.labels.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "span",
             {
               style: {
@@ -12045,15 +12651,15 @@ ${writeKey}`;
                 marginTop: 3,
                 flexWrap: "wrap"
               },
-              children: entry.labels.map((label) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              children: entry.labels.map((label) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "span",
                 {
                   style: {
                     fontSize: 10,
                     padding: "0 5px",
                     borderRadius: 8,
-                    border,
-                    color: muted
+                    border: border2,
+                    color: muted2
                   },
                   children: label.name
                 },
@@ -12066,13 +12672,13 @@ ${writeKey}`;
     ) });
   }
   function metaRow(label, value) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", gap: 8, padding: "1px 0", fontSize: 12 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { width: 110, flexShrink: 0, color: muted }, children: label }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { minWidth: 0, overflowWrap: "anywhere" }, children: value })
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", gap: 8, padding: "1px 0", fontSize: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { width: 110, flexShrink: 0, color: muted2 }, children: label }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { minWidth: 0, overflowWrap: "anywhere" }, children: value })
     ] });
   }
   function CheckRow({ host, check }) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "li",
       {
         style: {
@@ -12083,23 +12689,23 @@ ${writeKey}`;
           fontSize: 12
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "span",
             {
               style: {
-                color: check.status === "success" ? "var(--success, #2da44e)" : check.status === "failure" || check.status === "action-required" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted,
+                color: check.status === "success" ? "var(--success, #2da44e)" : check.status === "failure" || check.status === "action-required" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted2,
                 flexShrink: 0
               },
               children: prsCheckStatusLabel(check.status)
             }
           ),
-          check.description === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          check.description === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }) }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsCheckTooltip(check), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "span",
               {
                 style: {
-                  color: muted,
+                  color: muted2,
                   fontSize: 12,
                   flexShrink: 1,
                   minWidth: 0,
@@ -12117,8 +12723,8 @@ ${writeKey}`;
   }
   function CommentRow({ comment }) {
     const verdict = prsReviewVerdictLabel(comment.reviewState);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "4px 10px", fontSize: 12, borderTop: hairline }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "4px 10px", fontSize: 12, borderTop: hairline }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted2, fontSize: 12 }, children: [
         prsActorLabel(comment.author),
         verdict !== null ? ` ${verdict}` : comment.kind === "review" ? " reviewed" : " commented",
         comment.path !== null ? ` on ${comment.path}` : "",
@@ -12127,36 +12733,36 @@ ${writeKey}`;
         formatRelativeTime(comment.createdAt),
         comment.url !== null ? ` \u2014 ${comment.url}` : ""
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 2 }, children: comment.body }),
-      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 2 }, children: comment.body }),
+      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
     ] });
   }
   function ReviewThreadSection(props) {
     const { thread, canPage, onLoadMore, paging, unrecoverable, pageError, write } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "section",
       {
         "aria-label": `Thread on ${prsThreadAnchor(thread)}`,
         style: { borderTop: hairline, paddingBottom: 4 },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h4", { style: { ...headingStyle, padding: "4px 10px 2px", textTransform: "none" }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontFamily: "var(--font-mono, ui-monospace, monospace)" }, children: prsThreadAnchor(thread) }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { fontWeight: 400 }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h4", { style: { ...headingStyle, padding: "4px 10px 2px", textTransform: "none" }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontFamily: "var(--font-mono, ui-monospace, monospace)" }, children: prsThreadAnchor(thread) }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { fontWeight: 400 }, children: [
               " \u2014 ",
               prsThreadStateLabel(thread)
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: thread.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "3px 10px", fontSize: 12 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: thread.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "3px 10px", fontSize: 12 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted2, fontSize: 12 }, children: [
               prsActorLabel(comment.author),
               " \xB7 ",
               formatRelativeTime(comment.createdAt),
               comment.url !== null ? ` \u2014 ${comment.url}` : ""
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 1 }, children: comment.body }),
-            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 1 }, children: comment.body }),
+            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
           ] }, comment.id)) }),
-          canPage && prsThreadMoreLabel(thread) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          canPage && prsThreadMoreLabel(thread) !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -12166,14 +12772,14 @@ ${writeKey}`;
               children: paging ? "Loading\u2026" : prsThreadMoreLabel(thread)
             }
           ),
-          canPage === false && thread.nextCommentsCursor !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "More comments exist; paging is not supported by this host." }),
-          pageError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: [
+          canPage === false && thread.nextCommentsCursor !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "More comments exist; paging is not supported by this host." }),
+          pageError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: [
             pageError,
             " \u2014 retry with the button above."
           ] }),
-          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." }),
-          write !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "2px 10px" }, children: [
-            write.canResolve && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          unrecoverable && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Some comments could not be shown \u2014 the host cut this thread's tail without a cursor." }),
+          write !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { padding: "2px 10px" }, children: [
+            write.canResolve && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "button",
               {
                 type: "button",
@@ -12183,8 +12789,8 @@ ${writeKey}`;
                 children: write.resolvePending ? "Working\u2026" : thread.isResolved ? "Unresolve thread" : "Resolve thread"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error: write.resolveError }),
-            write.canReply && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsWriteErrorLine, { error: write.resolveError }),
+            write.canReply && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               PrsComposer,
               {
                 label: "Reply",
@@ -12213,18 +12819,18 @@ ${writeKey}`;
     flexShrink: 0,
     textAlign: "right",
     paddingRight: 8,
-    color: muted,
+    color: muted2,
     userSelect: "none"
   };
   function PrsDiffRow({ row }) {
     if (row.kind === "gap") {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "div",
         {
           style: {
             ...diffRowBase,
             justifyContent: "center",
-            color: muted,
+            color: muted2,
             background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
             fontStyle: "italic"
           },
@@ -12238,7 +12844,7 @@ ${writeKey}`;
     }
     const addition = row.kind === "addition";
     const deletion = row.kind === "deletion";
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         style: {
@@ -12246,22 +12852,22 @@ ${writeKey}`;
           background: addition ? "color-mix(in srgb, var(--success, #2da44e) 14%, transparent)" : deletion ? "color-mix(in srgb, var(--t3-version-control-error, var(--destructive, #cf222e)) 12%, transparent)" : "transparent"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: gutter, children: deletion || row.kind === "context" ? row.oldLine : "" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: gutter, children: addition || row.kind === "context" ? row.newLine : "" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: gutter, children: deletion || row.kind === "context" ? row.oldLine : "" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: gutter, children: addition || row.kind === "context" ? row.newLine : "" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
         ]
       }
     );
   }
   function PrsFileSection({ row }) {
-    const [collapsed, setCollapsed] = (0, import_react2.useState)(false);
-    const rows = (0, import_react2.useMemo)(
+    const [collapsed, setCollapsed] = (0, import_react3.useState)(false);
+    const rows = (0, import_react3.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row),
       [collapsed, row]
     );
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": displayPath(row), style: { borderTop: hairline }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": displayPath(row), style: { borderTop: hairline }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "header",
         {
           style: {
@@ -12272,7 +12878,7 @@ ${writeKey}`;
             fontSize: 12
           },
           children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "button",
               {
                 type: "button",
@@ -12283,7 +12889,7 @@ ${writeKey}`;
                 children: collapsed ? "\u25B8" : "\u25BE"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "span",
               {
                 style: {
@@ -12295,7 +12901,7 @@ ${writeKey}`;
                 },
                 children: [
                   displayPath(row),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
                     " ",
                     "\u2014 ",
                     row.binary ? "binary" : changeTypeLabel(row.changeType),
@@ -12307,41 +12913,41 @@ ${writeKey}`;
           ]
         }
       ),
-      !collapsed && row.binary && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: noteStyle, children: [
+      !collapsed && row.binary && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "note", style: noteStyle, children: [
         row.path,
         " is a binary file \u2014 no text diff is available."
       ] }),
-      !collapsed && row.textless && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "note", style: noteStyle, children: [
+      !collapsed && row.textless && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "note", style: noteStyle, children: [
         "No textual changes in the patch for ",
         displayPath(row),
         "."
       ] }),
-      !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsDiffRow, { row: line }, line.ordinal))
+      !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsDiffRow, { row: line }, line.ordinal))
     ] });
   }
   function PrsDiffSection(props) {
     const { diff, supported, onLoadMore } = props;
     if (!supported) {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Diff streaming is not supported by this host (prs.streamDiff)." });
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Diff streaming is not supported by this host (prs.streamDiff)." });
     }
     if (diff.status === "loading") {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: "Streaming the verified diff\u2026" });
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: "Streaming the verified diff\u2026" });
     }
     if (diff.status === "error") {
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: diff.detail });
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: diff.detail });
     }
     const { delivery } = diff;
     const renderable = renderableFromPatch(delivery.patch);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { ...noteStyle, fontSize: 12 }, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { style: { ...noteStyle, fontSize: 12 }, children: [
         delivery.diffHashes[0] !== void 0 ? `sha256 ${delivery.diffHashes[0].slice(0, 12)} \xB7 ${delivery.byteLength} bytes` : "empty diff",
         delivery.diffHashes.length > 1 ? ` \xB7 ${delivery.diffHashes.length} verified segments` : "",
         delivery.truncated ? " \xB7 truncated by the host" : ""
       ] }),
-      renderable === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: "The delivered diff is empty." }),
-      renderable !== null && renderable.kind === "raw" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: renderable.reason }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      renderable === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: "The delivered diff is empty." }),
+      renderable !== null && renderable.kind === "raw" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: renderable.reason }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "pre",
           {
             style: {
@@ -12355,9 +12961,9 @@ ${writeKey}`;
           }
         )
       ] }),
-      renderable !== null && renderable.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsFileSection, { row }, row.key)) }),
-      delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
-      delivery.nextCursor !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      renderable !== null && renderable.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsFileSection, { row }, row.key)) }),
+      delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
+      delivery.nextCursor !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "button",
         {
           type: "button",
@@ -12371,21 +12977,21 @@ ${writeKey}`;
   }
   function PrsWriteErrorLine({ error }) {
     if (error === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: error });
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: error });
   }
   function PrsActionButton(props) {
     const { host, offer, disabled, pendingAction, method, onMethodChange, onRun } = props;
     const choices = offer.methods ?? offer.updateMethods ?? [];
     const presentation = prsActionPresentation(offer.action, method, pendingAction);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "inline-flex", alignItems: "center", gap: 4 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         Tooltip,
         {
           host,
           side: "top",
           label: presentation.tooltip,
           showWhenDisabled: presentation.hoverWhileDisabled,
-          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -12400,24 +13006,24 @@ ${writeKey}`;
           )
         }
       ),
-      choices.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      choices.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "select",
         {
           "aria-label": `${offer.label} method`,
           value: method,
           onChange: (event) => onMethodChange(event.target.value),
           style: { ...control, padding: "2px 4px" },
-          children: choices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: choice, children: choice }, choice))
+          children: choices.map((choice) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: choice, children: choice }, choice))
         }
       )
     ] });
   }
   function CheckoutMenu(props) {
     const { host, pending, disabled, options, onPick } = props;
-    const [open, setOpen] = (0, import_react2.useState)(null);
-    const trigger = (0, import_react2.useRef)(null);
-    const items = (0, import_react2.useRef)([]);
-    (0, import_react2.useEffect)(() => {
+    const [open, setOpen] = (0, import_react3.useState)(null);
+    const trigger = (0, import_react3.useRef)(null);
+    const items = (0, import_react3.useRef)([]);
+    (0, import_react3.useEffect)(() => {
       if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
     }, [open]);
     const close = () => {
@@ -12430,8 +13036,8 @@ ${writeKey}`;
       const count = options.length;
       items.current[(at + step + count) % count]?.focus();
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Check out this pull request", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: "Check out this pull request", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "button",
         {
           ref: trigger,
@@ -12447,14 +13053,14 @@ ${writeKey}`;
               setOpen(event.key === "ArrowDown" ? "first" : "last");
             }
           },
-          style: { ...control, fontSize: 12, border },
+          style: { ...control, fontSize: 12, border: border2 },
           children: [
             prsCheckoutLabel(pending),
             " \u25BE"
           ]
         }
       ) }),
-      open !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      open !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "div",
         {
           role: "menu",
@@ -12484,12 +13090,12 @@ ${writeKey}`;
             minWidth: 260,
             marginTop: 4,
             padding: 4,
-            border,
+            border: border2,
             borderRadius: 6,
             background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
             boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
           },
-          children: options.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          children: options.map((option, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "button",
             {
               ref: (element) => {
@@ -12511,8 +13117,8 @@ ${writeKey}`;
                 fontSize: 13
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: option.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { fontSize: 12, color: muted }, children: option.description })
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: option.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 12, color: muted2 }, children: option.description })
               ]
             },
             option.mode
@@ -12523,14 +13129,14 @@ ${writeKey}`;
   }
   function ConfirmDialog(props) {
     const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
-    const titleId = (0, import_react2.useId)();
-    const descriptionId = (0, import_react2.useId)();
-    const cancel = (0, import_react2.useRef)(null);
-    const confirm = (0, import_react2.useRef)(null);
-    const opener = (0, import_react2.useRef)(anchor);
+    const titleId = (0, import_react3.useId)();
+    const descriptionId = (0, import_react3.useId)();
+    const cancel = (0, import_react3.useRef)(null);
+    const confirm = (0, import_react3.useRef)(null);
+    const opener = (0, import_react3.useRef)(anchor);
     const HostDialog = resolveFloatingDialog(host);
     const hosted = HostDialog !== null;
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       if (hosted) return;
       cancel.current?.focus();
       const returnTo = opener.current;
@@ -12562,39 +13168,39 @@ ${writeKey}`;
       width: 360,
       maxWidth: "calc(100vw - 24px)",
       padding: "10px 12px",
-      border,
+      border: border2,
       borderRadius: 8,
       fontSize: 12,
       color: "var(--t3-version-control-text, var(--foreground, #20252d))",
       background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
       boxShadow: "0 8px 28px rgba(0, 0, 0, 0.18)"
     };
-    const actions = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    const actions = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "button",
         {
           ref: cancel,
           type: "button",
           disabled: pending,
           onClick: onCancel,
-          style: { ...control, fontSize: 12, border },
+          style: { ...control, fontSize: 12, border: border2 },
           children: "Cancel"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "button",
         {
           ref: confirm,
           type: "button",
           disabled: pending,
           onClick: onConfirm,
-          style: { ...control, fontSize: 12, border },
+          style: { ...control, fontSize: 12, border: border2 },
           children: pending ? "Working\u2026" : confirmLabel
         }
       )
     ] });
     if (HostDialog !== null)
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         HostDialog,
         {
           title,
@@ -12606,16 +13212,16 @@ ${writeKey}`;
           children: props.children
         }
       );
-    const body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted }, children: description }),
+    const body = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted2 }, children: description }),
       props.children,
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: actions })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: actions })
     ] });
     const Popover = resolveFloatingLayer(host)?.Popover;
     if (Popover !== void 0 && anchor !== null)
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Popover, { ...dialogProps, anchor, side: "bottom", align: "start", style: surface, children: body });
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Popover, { ...dialogProps, anchor, side: "bottom", align: "start", style: surface, children: body });
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "div",
       {
         ...dialogProps,
@@ -12633,8 +13239,8 @@ ${writeKey}`;
   }
   function ReceiptLine({ receipt: receipt2 }) {
     if (receipt2 === null) return null;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: receipt2.tone === "error" ? "alert" : "status", style: { ...noteStyle, fontSize: 12 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: receipt2.tone === "error" ? "alert" : "status", style: { ...noteStyle, fontSize: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "strong",
         {
           style: {
@@ -12648,8 +13254,8 @@ ${writeKey}`;
   }
   function PrsComposer(props) {
     const { label, placeholder, value, pending, error, onChange, onSubmit } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { padding: "4px 10px" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "textarea",
         {
           "aria-label": label,
@@ -12660,7 +13266,7 @@ ${writeKey}`;
           style: { ...inputStyle, width: "100%", resize: "vertical" }
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "button",
         {
           type: "button",
@@ -12670,13 +13276,13 @@ ${writeKey}`;
           children: pending ? `${label}\u2026` : label
         }
       ) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsWriteErrorLine, { error })
     ] });
   }
   function PrsReviewComposer(props) {
     const { verdicts, verdict, body, pending, error, onVerdictChange, onBodyChange, onSubmit } = props;
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { padding: "4px 10px" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "textarea",
         {
           "aria-label": "Review body",
@@ -12687,18 +13293,18 @@ ${writeKey}`;
           style: { ...inputStyle, width: "100%", resize: "vertical" }
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "select",
           {
             "aria-label": "Review verdict",
             value: verdict,
             onChange: (event) => onVerdictChange(event.target.value),
             style: { ...control, padding: "2px 4px" },
-            children: verdicts.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+            children: verdicts.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "button",
           {
             type: "button",
@@ -12709,15 +13315,15 @@ ${writeKey}`;
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PrsWriteErrorLine, { error })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsWriteErrorLine, { error })
     ] });
   }
   var MERGE_METHODS = ["merge", "squash", "rebase"];
   function useRememberedMergeMethod(host) {
     const preferences = resolvePullRequestPreferences(host);
-    const [local, setLocal] = (0, import_react2.useState)(null);
-    const [, setChanged] = (0, import_react2.useState)(0);
-    (0, import_react2.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+    const [local, setLocal] = (0, import_react3.useState)(null);
+    const [, setChanged] = (0, import_react3.useState)(0);
+    (0, import_react3.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
     return {
       last: preferences === null ? local : preferences.lastMergeMethod(),
       legacy: (project) => preferences?.legacyProjectMergeMethod(project) ?? void 0,
@@ -12730,15 +13336,15 @@ ${writeKey}`;
     };
   }
   function PullRequestsPanel(props) {
-    const { host, session, visible, selected, onSelect } = props;
-    const [tick, setTick] = (0, import_react2.useState)(0);
-    const [listState, setListState] = (0, import_react2.useState)("open");
-    const [involvement, setInvolvement] = (0, import_react2.useState)("all");
-    const [query, setQuery] = (0, import_react2.useState)("");
-    const [refreshError, setRefreshError] = (0, import_react2.useState)(null);
-    const [pagingThreads, setPagingThreads] = (0, import_react2.useState)(/* @__PURE__ */ new Map());
-    const [pagedThreads, setPagedThreads] = (0, import_react2.useState)(null);
-    const pagedGeneration = (0, import_react2.useRef)({
+    const { host, session, visible, selected: selected2, onSelect } = props;
+    const [tick, setTick] = (0, import_react3.useState)(0);
+    const [listState, setListState] = (0, import_react3.useState)("open");
+    const [involvement, setInvolvement] = (0, import_react3.useState)("all");
+    const [query, setQuery] = (0, import_react3.useState)("");
+    const [refreshError, setRefreshError] = (0, import_react3.useState)(null);
+    const [pagingThreads, setPagingThreads] = (0, import_react3.useState)(/* @__PURE__ */ new Map());
+    const [pagedThreads, setPagedThreads] = (0, import_react3.useState)(null);
+    const pagedGeneration = (0, import_react3.useRef)({
       scope: null,
       activity: null,
       generation: 0
@@ -12750,16 +13356,16 @@ ${writeKey}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [drafts, setDrafts] = (0, import_react2.useState)({});
-    const [writeState, setWriteState] = (0, import_react2.useState)(null);
+    const [drafts, setDrafts] = (0, import_react3.useState)({});
+    const [writeState, setWriteState] = (0, import_react3.useState)(null);
     const rememberedMergeMethod = useRememberedMergeMethod(host);
-    const [openError, setOpenError] = (0, import_react2.useState)(null);
-    const [stackConfirm, setStackConfirm] = (0, import_react2.useState)(null);
-    const stackMergeOpener = (0, import_react2.useRef)(null);
-    const stackRebaseOpener = (0, import_react2.useRef)(null);
-    const [stackReceipt, setStackReceipt] = (0, import_react2.useState)(null);
-    const [handoff, setHandoff] = (0, import_react2.useState)(null);
-    const [handoffReceipt, setHandoffReceipt] = (0, import_react2.useState)(null);
+    const [openError, setOpenError] = (0, import_react3.useState)(null);
+    const [stackConfirm, setStackConfirm] = (0, import_react3.useState)(null);
+    const stackMergeOpener = (0, import_react3.useRef)(null);
+    const stackRebaseOpener = (0, import_react3.useRef)(null);
+    const [stackReceipt, setStackReceipt] = (0, import_react3.useState)(null);
+    const [handoff, setHandoff] = (0, import_react3.useState)(null);
+    const [handoffReceipt, setHandoffReceipt] = (0, import_react3.useState)(null);
     const openOnHost = (url) => {
       setOpenError(null);
       void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
@@ -12779,7 +13385,7 @@ ${writeKey}`;
     );
     const revision2 = `${tick}:${refreshes.tick}`;
     const debouncedQuery = useDebounced(query, 250);
-    const listInput = (0, import_react2.useMemo)(
+    const listInput = (0, import_react3.useMemo)(
       () => prsListInput(listState, involvement, debouncedQuery),
       [listState, involvement, debouncedQuery]
     );
@@ -12790,12 +13396,12 @@ ${writeKey}`;
       listInput,
       revision2
     );
-    const sections = usePrsDetail(host, session, selected, ops, revision2);
+    const sections = usePrsDetail(host, session, selected2, ops, revision2);
     const { diff, loadMore } = usePrsDiff(
       host,
       session,
-      selected,
-      visible && ready && selected !== null && ops?.["prs.streamDiff"] === true,
+      selected2,
+      visible && ready && selected2 !== null && ops?.["prs.streamDiff"] === true,
       revision2
     );
     const runInvalidate = () => {
@@ -12803,8 +13409,8 @@ ${writeKey}`;
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
       const invalidations = [api.invoke("invalidate", {}, signal)];
-      if (selected !== null)
-        invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+      if (selected2 !== null)
+        invalidations.push(api.invoke("invalidate", { reference: selected2 }, signal));
       void Promise.all(invalidations).then(
         () => {
           if (signal.aborted) return;
@@ -12816,12 +13422,12 @@ ${writeKey}`;
         }
       ).finally(() => controller.abort());
     };
-    const selectedKey = selected === null ? null : prsRefKey(selected);
-    const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected !== null);
+    const selectedKey = selected2 === null ? null : prsRefKey(selected2);
+    const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected2 !== null);
     const defaultRefs = useDefaultRefs(
       host,
       session,
-      visible && ready && selected !== null,
+      visible && ready && selected2 !== null,
       revision2
     );
     const toasts = useMutationToasts(host, session, visible && ready);
@@ -12929,13 +13535,13 @@ ${writeKey}`;
     const writeError = (key) => writeState !== null && !writeState.pending && writeState.key === key ? writeState.error : null;
     const writePending = (key) => writeState !== null && writeState.pending && writeState.key === key;
     const runPrAction = (offer, method) => {
-      if (selected === null) return;
+      if (selected2 === null) return;
       runWrite(
         `action:${offer.action}`,
         (signal) => writeApi().invoke(
           "runAction",
           {
-            ...selected,
+            ...selected2,
             action: offer.action,
             ...(offer.action === "merge" || offer.action === "enable-auto-merge") && method !== void 0 ? { mergeMethod: method } : {},
             ...offer.action === "update-branch" && method !== void 0 ? { updateMethod: method } : {}
@@ -12946,8 +13552,8 @@ ${writeKey}`;
       );
     };
     const threadWrite = (thread) => {
-      if (selected === null || write.kind !== "ready") return null;
-      const ref = selected;
+      if (selected2 === null || write.kind !== "ready") return null;
+      const ref = selected2;
       const replyKey = `reply:${thread.id}`;
       return {
         canReply: write.operations["prs.replyToThread"],
@@ -12971,7 +13577,7 @@ ${writeKey}`;
     };
     const pagedScope = selectedKey === null ? null : `${revision2}
 ${selectedKey}`;
-    (0, import_react2.useEffect)(() => {
+    (0, import_react3.useEffect)(() => {
       const current = pagedGeneration.current;
       if (current.scope !== pagedScope || current.activity !== sections.activity)
         pagedGeneration.current = {
@@ -12981,7 +13587,7 @@ ${selectedKey}`;
         };
     }, [pagedScope, sections.activity]);
     const loadThreadComments = (thread) => {
-      if (selected === null || pagedScope === null || sections.activity === null || thread.nextCommentsCursor === void 0)
+      if (selected2 === null || pagedScope === null || sections.activity === null || thread.nextCommentsCursor === void 0)
         return;
       const cursor = thread.nextCommentsCursor;
       const scope = pagedScope;
@@ -12993,7 +13599,7 @@ ${thread.id}`;
       setPagingThreads((prev) => new Map(prev).set(pendingKey, head));
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected, threadId: thread.id, cursor }, signal).then(
+      void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected2, threadId: thread.id, cursor }, signal).then(
         (page) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
@@ -13071,7 +13677,7 @@ ${thread.id}`;
       setDraft("method:merge", value);
       rememberedMergeMethod.remember(value);
     };
-    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, mergeMethod) : null;
+    const stackMerge = detail !== null && selected2 !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected2.number, mergeMethod) : null;
     const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
     const openStackConfirm = (action) => {
       if (selectedKey === null) return;
@@ -13082,9 +13688,9 @@ ${thread.id}`;
     const confirming = confirmPlan !== null ? stackConfirm : null;
     const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
     const runStackAction = () => {
-      if (selected === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
+      if (selected2 === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
         return;
-      const ref = selected;
+      const ref = selected2;
       const refKey = selectedKey;
       const { action } = confirming;
       setStackConfirm({ ...confirming, running: confirmPlan });
@@ -13104,7 +13710,7 @@ ${thread.id}`;
     };
     const commitUrl = (oid) => detail === null ? null : prsCommitUrl(detail.provider, repositoryUrl, oid);
     const closeConfirmation = () => setStackConfirm(null);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
       "div",
       {
         "aria-label": "Pull requests",
@@ -13116,7 +13722,7 @@ ${thread.id}`;
           position: "relative"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
             "div",
             {
               inert: confirming !== null,
@@ -13130,8 +13736,8 @@ ${thread.id}`;
                 flexWrap: "wrap"
               },
               children: [
-                selected === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { role: "group", "aria-label": "State filter", style: { display: "flex", gap: 2 }, children: PRS_LIST_STATES.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                selected2 === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { role: "group", "aria-label": "State filter", style: { display: "flex", gap: 2 }, children: PRS_LIST_STATES.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "button",
                     {
                       type: "button",
@@ -13146,17 +13752,17 @@ ${thread.id}`;
                     },
                     option.value
                   )) }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "select",
                     {
                       "aria-label": "Involvement",
                       value: involvement,
                       onChange: (event) => setInvolvement(event.target.value),
                       style: { ...control, padding: "2px 4px" },
-                      children: PRS_INVOLVEMENTS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+                      children: PRS_INVOLVEMENTS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "input",
                     {
                       "aria-label": "Search pull requests",
@@ -13166,7 +13772,7 @@ ${thread.id}`;
                       style: { ...inputStyle, maxWidth: 160 }
                     }
                   )
-                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: "Back to pull requests", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: "Back to pull requests", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -13176,31 +13782,31 @@ ${thread.id}`;
                     children: "\u2190 Pull requests"
                   }
                 ) }),
-                ready && ops?.["prs.invalidate"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: runInvalidate, style: control, children: "Refresh" })
+                ready && ops?.["prs.invalidate"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: runInvalidate, style: control, children: "Refresh" })
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { inert: confirming !== null, style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
-            gate.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Reading pull-request capabilities\u2026" }),
-            gate.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { inert: confirming !== null, style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
+            gate.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Reading pull-request capabilities\u2026" }),
+            gate.kind === "error" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: noteStyle, children: [
               "Pull requests unavailable \u2014 ",
               gate.detail
             ] }),
-            gate.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
+            gate.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: noteStyle, children: [
                 prsUnavailableLabel(gate.reason),
                 gate.detail !== null ? ` \u2014 ${gate.detail}` : ""
               ] }),
-              gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host))
+              gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host))
             ] }),
-            ready && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-              refreshError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: refreshError }),
-              refreshes.detail !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: refreshes.detail }),
-              selected === null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                ops !== null && ops["prs.list"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Listing pull requests is not supported by this host (prs.list)." }),
-                gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host)),
-                list.error !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: noteStyle, children: list.error }),
-                list.result !== null && list.result.errors.map((entryError) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            ready && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+              refreshError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: refreshError }),
+              refreshes.detail !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: refreshes.detail }),
+              selected2 === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+                ops !== null && ops["prs.list"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Listing pull requests is not supported by this host (prs.list)." }),
+                gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host)),
+                list.error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: list.error }),
+                list.result !== null && list.result.errors.map((entryError) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "p",
                   {
                     role: "alert",
@@ -13213,8 +13819,8 @@ ${thread.id}`;
                   },
                   entryError.projectId
                 )),
-                list.result !== null && list.result.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Results truncated by the host \u2014 narrow the search to see more." }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: "2px 4px" }, children: list.entries.map((prEntry) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                list.result !== null && list.result.truncated && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Results truncated by the host \u2014 narrow the search to see more." }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: "2px 4px" }, children: list.entries.map((prEntry) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   PrListRow,
                   {
                     host,
@@ -13238,7 +13844,7 @@ ${thread.id}`;
                   },
                   prsRefKey(prEntry)
                 )) }),
-                !list.pending && list.error === null && list.result !== null && list.result.errors.length === 0 && list.entries.length === 0 && ops?.["prs.list"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: noteStyle, children: [
+                !list.pending && list.error === null && list.result !== null && list.result.errors.length === 0 && list.entries.length === 0 && ops?.["prs.list"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { style: noteStyle, children: [
                   "No ",
                   listState === "all" ? "" : `${listState} `,
                   "pull requests",
@@ -13246,8 +13852,8 @@ ${thread.id}`;
                   debouncedQuery.trim() !== "" ? ` matching \u201C${debouncedQuery.trim()}\u201D` : "",
                   "."
                 ] }),
-                list.pending && list.entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: "Reading pull requests\u2026" }),
-                prsListHasMore(list.result) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                list.pending && list.entries.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: "Reading pull requests\u2026" }),
+                prsListHasMore(list.result) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "button",
                   {
                     type: "button",
@@ -13258,16 +13864,16 @@ ${thread.id}`;
                   }
                 )
               ] }),
-              selected !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                ops !== null && ops["prs.detail"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: noteStyle, children: "Pull-request detail is not supported by this host (prs.detail)." }),
-                detail === null && sections.detailError === null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: noteStyle, children: "Reading pull request\u2026" }),
-                sections.detailError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { role: "alert", style: noteStyle, children: [
+              selected2 !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+                ops !== null && ops["prs.detail"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Pull-request detail is not supported by this host (prs.detail)." }),
+                detail === null && sections.detailError === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: "Reading pull request\u2026" }),
+                sections.detailError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: noteStyle, children: [
                   sections.detailError,
                   detail !== null ? " \u2014 showing the last successful read." : ""
                 ] }),
-                detail !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "6px 10px 2px" }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                detail !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { padding: "6px 10px 2px" }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                       "div",
                       {
                         style: {
@@ -13278,25 +13884,25 @@ ${thread.id}`;
                         },
                         children: [
                           stateBadge(host, detail),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: detail.title, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("strong", { style: { fontSize: 14, overflowWrap: "anywhere" }, children: detail.title }) }),
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                             Tooltip,
                             {
                               host,
                               side: "top",
                               label: repositoryUrl !== null ? `Open ${detail.repository} repository` : detail.repository,
-                              children: repositoryUrl !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                              children: repositoryUrl !== null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                 "button",
                                 {
                                   type: "button",
                                   onClick: () => openOnHost(repositoryUrl),
-                                  style: { ...linkButton, color: muted, fontSize: 12 },
+                                  style: { ...linkButton, color: muted2, fontSize: 12 },
                                   children: detail.repository
                                 }
-                              ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: detail.repository })
+                              ) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: detail.repository })
                             }
                           ),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsOpenOnHostLabel(detail.provider), children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsOpenOnHostLabel(detail.provider), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                             "button",
                             {
                               type: "button",
@@ -13310,7 +13916,7 @@ ${thread.id}`;
                               ]
                             }
                           ) }),
-                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                             ChecksControl,
                             {
                               host,
@@ -13320,8 +13926,8 @@ ${thread.id}`;
                               onOpenLink: openOnHost
                             }
                           ),
-                          (checkoutSupport.checkout || resolveConflicts.visible) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { marginLeft: "auto", display: "inline-flex", gap: 4 }, children: [
-                            checkoutSupport.checkout && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          (checkoutSupport.checkout || resolveConflicts.visible) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { marginLeft: "auto", display: "inline-flex", gap: 4 }, children: [
+                            checkoutSupport.checkout && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                               CheckoutMenu,
                               {
                                 host,
@@ -13331,14 +13937,14 @@ ${thread.id}`;
                                 onPick: (mode) => startCheckout(detail.url, mode)
                               }
                             ),
-                            resolveConflicts.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            resolveConflicts.visible && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                               Tooltip,
                               {
                                 host,
                                 side: "top",
                                 label: resolveConflicts.label,
                                 showWhenDisabled: true,
-                                children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                                children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                                   "button",
                                   {
                                     type: "button",
@@ -13360,23 +13966,23 @@ ${thread.id}`;
                         ]
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 2 }, children: detail.url }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                       ReceiptLine,
                       {
                         receipt: handoffReceipt?.refKey === selectedKey ? handoffReceipt.receipt : null
                       }
                     ),
-                    openError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, padding: "2px 0", fontSize: 12 }, children: openError })
+                    openError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, padding: "2px 0", fontSize: 12 }, children: openError })
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { padding: "4px 10px" }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { padding: "4px 10px" }, children: [
                     metaRow(
                       "Author",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsActorTooltip(detail.author), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: prsActorLabel(detail.author) }) })
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsActorTooltip(detail.author), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: prsActorLabel(detail.author) }) })
                     ),
                     metaRow(
                       "Branches",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         BranchChips,
                         {
                           host,
@@ -13403,7 +14009,7 @@ ${thread.id}`;
                     ),
                     metaRow(
                       "Mergeability",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "top", label: prsConflictTooltip(detail), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: prsMergeabilityLabel(detail.mergeability) }) })
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsConflictTooltip(detail), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: prsMergeabilityLabel(detail.mergeability) }) })
                     ),
                     detail.baseComparison !== void 0 && metaRow(
                       "Base",
@@ -13411,13 +14017,13 @@ ${thread.id}`;
                     ),
                     detail.autoMergeEnabled === true && metaRow(
                       "Auto-merge",
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         Tooltip,
                         {
                           host,
                           side: "top",
                           label: prsArmedAutoMergeTooltip(detail.autoMergeMethod),
-                          children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: detail.autoMergeMethod ?? "enabled" })
+                          children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: detail.autoMergeMethod ?? "enabled" })
                         }
                       )
                     ),
@@ -13429,10 +14035,42 @@ ${thread.id}`;
                     metaRow("Updated", formatRelativeTime(detail.updatedAt)),
                     detail.mergedAt !== null && metaRow("Merged", formatRelativeTime(detail.mergedAt)),
                     detail.closedAt !== null && metaRow("Closed", formatRelativeTime(detail.closedAt)),
-                    detail.reviewers.length > 0 && metaRow("Reviewers", detail.reviewers.map(prsActorLabel).join(", ")),
-                    detail.labels.length > 0 && metaRow("Labels", detail.labels.map((label) => label.name).join(", "))
+                    selected2 !== null && metaRow(
+                      "Reviewers",
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        PrsMetadataPicker,
+                        {
+                          kind: "reviewers",
+                          host,
+                          session,
+                          reference: selected2,
+                          detail,
+                          readOperations: ops,
+                          writeOperations: writeOps,
+                          report: toasts.report
+                        },
+                        `${selectedKey}:reviewers`
+                      )
+                    ),
+                    selected2 !== null && (detail.labels.length > 0 || detail.capabilities.labels === true) && metaRow(
+                      "Labels",
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        PrsMetadataPicker,
+                        {
+                          kind: "labels",
+                          host,
+                          session,
+                          reference: selected2,
+                          detail,
+                          readOperations: ops,
+                          writeOperations: writeOps,
+                          report: toasts.report
+                        },
+                        `${selectedKey}:labels`
+                      )
+                    )
                   ] }),
-                  detail.body !== "" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  detail.body !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "pre",
                     {
                       style: {
@@ -13449,9 +14087,9 @@ ${thread.id}`;
                       children: detail.body
                     }
                   ),
-                  detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
+                  detail.bodyTruncated === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Description truncated by the contract bound \u2014 read the rest on the host." })
                 ] }),
-                detail !== null && write.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                detail !== null && write.kind === "ready" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                   "section",
                   {
                     "aria-label": "Pull request actions",
@@ -13464,8 +14102,8 @@ ${thread.id}`;
                       borderTop: "1px solid var(--border, #f0f2f5)"
                     },
                     children: [
-                      writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, padding: 0 }, children: "This host takes no pull-request actions." }),
-                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      writeOps !== null && writeOps["prs.runAction"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, padding: 0 }, children: "This host takes no pull-request actions." }),
+                      writeOps?.["prs.runAction"] === true && prsWriteActionOffers(detail, write, { singleMergeAllowed }).map((offer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         PrsActionButton,
                         {
                           host,
@@ -13478,7 +14116,7 @@ ${thread.id}`;
                         },
                         offer.action
                       )),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         PrsWriteErrorLine,
                         {
                           error: writeState !== null && !writeState.pending && writeState.key.startsWith("action:") ? writeState.error : null
@@ -13487,32 +14125,32 @@ ${thread.id}`;
                     ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   ReceiptLine,
                   {
                     receipt: stackReceipt?.refKey === selectedKey ? stackReceipt.receipt : null
                   }
                 ),
-                sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.stackError }),
-                ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Stack information is not supported by this host (prs.stack)." }),
-                sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
+                sections.stackError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.stackError }),
+                ops !== null && ops["prs.stack"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Stack information is not supported by this host (prs.stack)." }),
+                sections.stack !== null && sections.stack.layers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Stack", style: { paddingBottom: 4 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { style: headingStyle, children: [
                     "Stack \u2014 base ",
                     sections.stack.base,
                     " (",
                     sections.stack.layers.length,
                     ")"
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.stack.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.stack.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "li",
                     {
-                      style: { padding: "2px 10px", fontSize: 12, color: muted },
+                      style: { padding: "2px 10px", fontSize: 12, color: muted2 },
                       children: [
                         "#",
                         layer.number,
                         " ",
                         layer.title ?? "",
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { children: [
                           " \u2014 ",
                           layer.isDraft === true ? "draft" : layer.state
                         ] })
@@ -13520,7 +14158,7 @@ ${thread.id}`;
                     },
                     layer.number
                   )) }),
-                  (stackMerge !== null && stackMerge.visible || stackRebase !== null) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  (stackMerge !== null && stackMerge.visible || stackRebase !== null) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "div",
                     {
                       style: {
@@ -13531,27 +14169,27 @@ ${thread.id}`;
                         padding: "2px 10px"
                       },
                       children: [
-                        stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        stackMerge !== null && stackMerge.visible && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                           Tooltip,
                           {
                             host,
                             side: "top",
                             label: stackMerge.tooltip,
                             showWhenDisabled: true,
-                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                               "button",
                               {
                                 type: "button",
                                 disabled: stackMerge.disabled || writeState?.pending === true,
                                 ref: stackMergeOpener,
                                 onClick: () => openStackConfirm("merge"),
-                                style: { ...control, fontSize: 12, border },
+                                style: { ...control, fontSize: 12, border: border2 },
                                 children: stackMerge.label
                               }
                             )
                           }
                         ),
-                        stackMerge !== null && stackMerge.visible && allowedMergeMethods.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        stackMerge !== null && stackMerge.visible && allowedMergeMethods.length > 1 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                           "select",
                           {
                             "aria-label": "Merge stack method",
@@ -13559,32 +14197,32 @@ ${thread.id}`;
                             disabled: writeState?.pending === true,
                             onChange: (event) => pickMergeMethod(event.target.value),
                             style: { ...control, fontSize: 12, padding: "2px 4px" },
-                            children: allowedMergeMethods.map((method) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: method, children: method }, method))
+                            children: allowedMergeMethods.map((method) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: method, children: method }, method))
                           }
                         ),
-                        stackRebase !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                        stackRebase !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                           "button",
                           {
                             type: "button",
                             disabled: stackRebase.disabled || writeState?.pending === true,
                             ref: stackRebaseOpener,
                             onClick: () => openStackConfirm("rebase"),
-                            style: { ...control, fontSize: 12, border },
+                            style: { ...control, fontSize: 12, border: border2 },
                             children: stackRebase.label
                           }
                         ),
-                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
+                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: stackMerge.blockedNote })
                       ]
                     }
                   )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Checks", style: { paddingBottom: 4 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Checks", style: { paddingBottom: 4 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { style: headingStyle, children: [
                     "Checks",
                     checksHeading !== null ? ` \u2014 ${checksHeading}` : ""
                   ] }),
-                  detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No checks reported." }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  detail !== null && detail.checks.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No checks reported." }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: detail?.checks.map((check) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     CheckRow,
                     {
                       host,
@@ -13593,31 +14231,31 @@ ${thread.id}`;
                     `${check.name}:${check.status}:${check.url ?? ""}`
                   )) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Linked threads", style: { paddingBottom: 4 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Linked threads" }),
-                  ops !== null && ops["prs.linkedThreads"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked threads are not supported by this host." }),
-                  sections.linkedError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.linkedError }),
-                  sections.linked !== null && sections.linked.threads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No linked threads." }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.linked?.threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Linked threads", style: { paddingBottom: 4 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { style: headingStyle, children: "Linked threads" }),
+                  ops !== null && ops["prs.linkedThreads"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked threads are not supported by this host." }),
+                  sections.linkedError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.linkedError }),
+                  sections.linked !== null && sections.linked.threads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No linked threads." }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.linked?.threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
                     thread.title,
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2, fontSize: 12 }, children: [
                       " ",
                       "\u2014 ",
                       thread.id,
                       thread.archivedAt !== null ? " \xB7 archived" : ""
                     ] })
                   ] }, thread.id)) }),
-                  sections.linked?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked-thread list truncated." })
+                  sections.linked?.truncated === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Linked-thread list truncated." })
                 ] }),
-                ops !== null && ops["prs.activity"] !== true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Review threads and comments are not supported by this host (prs.activity)." }),
-                sections.activityError !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.activityError }),
-                activity !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Review threads", style: { paddingBottom: 4 }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
+                ops !== null && ops["prs.activity"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Review threads and comments are not supported by this host (prs.activity)." }),
+                sections.activityError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: sections.activityError }),
+                activity !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Review threads", style: { paddingBottom: 4 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { style: headingStyle, children: [
                       "Review threads",
                       activity.reviewThreads.length > 0 ? ` (${activity.reviewThreads.length})` : ""
                     ] }),
-                    activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No review threads." }),
+                    activity.reviewThreads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No review threads." }),
                     activity.reviewThreads.map((thread) => {
                       const paged = pagedThreads !== null && pagedThreads.scope === pagedScope && pagedThreads.activity === activity ? pagedThreads.map.get(thread.id) : void 0;
                       const merged = paged === void 0 ? thread : {
@@ -13625,7 +14263,7 @@ ${thread.id}`;
                         comments: mergeThreadComments(thread.comments, paged.comments),
                         nextCommentsCursor: paged.nextCursor ?? void 0
                       };
-                      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         ReviewThreadSection,
                         {
                           thread: merged,
@@ -13641,15 +14279,15 @@ ${thread.id}`) === activity,
                       );
                     })
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Comments", style: { paddingBottom: 4 }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Comments", style: { paddingBottom: 4 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { style: headingStyle, children: [
                       "Comments",
                       activity.commentCount > 0 ? ` (${activity.commentCount})` : ""
                     ] }),
-                    activity.comments.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No comments." }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CommentRow, { comment }, comment.id)) }),
-                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Comment list truncated by the host." }),
-                    writeOps?.["prs.comment"] === true && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    activity.comments.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No comments." }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(CommentRow, { comment }, comment.id)) }),
+                    activity.commentsTruncated && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Comment list truncated by the host." }),
+                    writeOps?.["prs.comment"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                       PrsComposer,
                       {
                         label: "Comment",
@@ -13660,15 +14298,15 @@ ${thread.id}`) === activity,
                         onChange: (value) => setDraft("comment", value),
                         onSubmit: (body) => runWrite(
                           "comment",
-                          (signal) => writeApi().invoke("comment", { ...selected, body }, signal),
+                          (signal) => writeApi().invoke("comment", { ...selected2, body }, signal),
                           [{ key: "comment", submitted: body }]
                         )
                       }
                     )
                   ] }),
-                  write.kind === "ready" && writeOps?.["prs.submitReview"] === true && write.verdicts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Submit a review", style: { paddingBottom: 4 }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Submit a review" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  write.kind === "ready" && writeOps?.["prs.submitReview"] === true && write.verdicts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Submit a review", style: { paddingBottom: 4 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { style: headingStyle, children: "Submit a review" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                       PrsReviewComposer,
                       {
                         verdicts: prsWriteVerdictOptions(write.verdicts),
@@ -13685,7 +14323,7 @@ ${thread.id}`) === activity,
                           "review",
                           (signal) => writeApi().invoke(
                             "submitReview",
-                            { ...selected, verdict, body, comments: [] },
+                            { ...selected2, verdict, body, comments: [] },
                             signal
                           ),
                           [
@@ -13696,23 +14334,23 @@ ${thread.id}`) === activity,
                       }
                     )
                   ] }),
-                  activity.commits.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Commits", style: { paddingBottom: 4 }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("h3", { style: headingStyle, children: [
+                  activity.commits.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Commits", style: { paddingBottom: 4 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("h3", { style: headingStyle, children: [
                       "Commits (",
                       activity.commits.length,
                       ")"
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => {
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: activity.commits.map((commit) => {
                       const url = commitUrl(commit.oid);
                       const short = commit.oid.slice(0, 8);
-                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
-                        url === null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { style: oidStyle, children: short }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
+                        url === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: oidStyle, children: short }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                           Tooltip,
                           {
                             host,
                             side: "top",
                             label: prsOpenOnHostLabel(detail?.provider ?? "unknown"),
-                            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                               "button",
                               {
                                 type: "button",
@@ -13726,7 +14364,7 @@ ${thread.id}`) === activity,
                         ),
                         " ",
                         commit.messageHeadline,
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2, fontSize: 11 }, children: [
                           " ",
                           "\xB7 ",
                           formatRelativeTime(commit.committedDate)
@@ -13734,11 +14372,11 @@ ${thread.id}`) === activity,
                       ] }, commit.oid);
                     }) })
                   ] }),
-                  activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
+                  activity.truncated && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: "Activity truncated \u2014 some comments, threads, or commits were not delivered." })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Diff", style: { paddingBottom: 4 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { style: headingStyle, children: "Diff" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Diff", style: { paddingBottom: 4 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h3", { style: headingStyle, children: "Diff" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     PrsDiffSection,
                     {
                       diff,
@@ -13747,11 +14385,11 @@ ${thread.id}`) === activity,
                     }
                   )
                 ] }),
-                prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
+                prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
             ] })
           ] }),
-          confirming !== null && confirmPlan !== null && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          confirming !== null && confirmPlan !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             ConfirmDialog,
             {
               host,
@@ -13762,7 +14400,7 @@ ${thread.id}`) === activity,
               pending: stackActionPending,
               onCancel: closeConfirmation,
               onConfirm: runStackAction,
-              children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: confirmPlan.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+              children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: "4px 0", padding: 0 }, children: confirmPlan.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { children: [
                 "#",
                 layer.number,
                 " ",
@@ -13776,7 +14414,7 @@ ${thread.id}`) === activity,
   }
 
   // extension.tsx
-  var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
+  var import_jsx_runtime3 = __toESM(require_jsx_runtime(), 1);
   var manifestId = "t3.version-control";
   var REPOSITORY_API_RANGE = "^1.0.0";
   var CHANGES_API_RANGE = "^1.0.0";
@@ -13791,8 +14429,8 @@ ${thread.id}`) === activity,
     ) && (record.selectedPath === void 0 || typeof record.selectedPath === "string") && (record.selectedLane === void 0 || typeof record.selectedLane === "string" && LANES.has(record.selectedLane)) && (record.view === void 0 || typeof record.view === "string" && VIEWS.has(record.view)) && (record.prHost === void 0 || typeof record.prHost === "string") && (record.prRepository === void 0 || typeof record.prRepository === "string") && (record.prNumber === void 0 || typeof record.prNumber === "number");
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13814,8 +14452,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusStream(host, session, visible, tick) {
-    const [model, setModel] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [model, setModel] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13872,8 +14510,8 @@ ${thread.id}`) === activity,
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
   function useVcsActionsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13895,8 +14533,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useChangesList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13922,8 +14560,8 @@ ${thread.id}`) === activity,
     return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13946,8 +14584,8 @@ ${thread.id}`) === activity,
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   function useRemotesList(host, session, visible, enabled, revision2) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible || !enabled || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -13970,8 +14608,8 @@ ${thread.id}`) === activity,
     return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [vars, setVars] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14013,8 +14651,8 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
-  var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+  var border3 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+  var muted3 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var control2 = {
     padding: "4px 8px",
     border: "1px solid transparent",
@@ -14027,48 +14665,48 @@ ${thread.id}`) === activity,
   };
   function VersionControlView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react3.useState)(session.visible);
-    const [tick, setTick] = (0, import_react3.useState)(0);
-    const [refreshError, setRefreshError] = (0, import_react3.useState)(null);
-    const [mutation, setMutation] = (0, import_react3.useState)(IDLE_MUTATION);
-    const [mutationSerial, setMutationSerial] = (0, import_react3.useState)(0);
-    const [commitMessage, setCommitMessage] = (0, import_react3.useState)("");
-    const [stackedChoice, setStackedChoice] = (0, import_react3.useState)(null);
-    const [featureBranch, setFeatureBranch] = (0, import_react3.useState)(false);
-    const [pendingConfirm, setPendingConfirm] = (0, import_react3.useState)(null);
-    const [pendingDiscard, setPendingDiscard] = (0, import_react3.useState)(null);
-    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react3.useState)(null);
-    const [stacked, setStacked] = (0, import_react3.useState)(null);
-    const [newRefName, setNewRefName] = (0, import_react3.useState)("");
-    const [newWorktreeName, setNewWorktreeName] = (0, import_react3.useState)("");
-    const [publishOpen, setPublishOpen] = (0, import_react3.useState)(false);
-    const [publishProvider, setPublishProvider] = (0, import_react3.useState)("github");
-    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react3.useState)("");
-    const [publishVisibility, setPublishVisibility] = (0, import_react3.useState)("private");
-    const [publishRemoteName, setPublishRemoteName] = (0, import_react3.useState)("origin");
-    const [publishProtocol, setPublishProtocol] = (0, import_react3.useState)("ssh");
-    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react3.useState)(false);
-    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react3.useState)(
+    const [visible, setVisible] = (0, import_react4.useState)(session.visible);
+    const [tick, setTick] = (0, import_react4.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react4.useState)(null);
+    const [mutation, setMutation] = (0, import_react4.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react4.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react4.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react4.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react4.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react4.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react4.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react4.useState)(null);
+    const [stacked, setStacked] = (0, import_react4.useState)(null);
+    const [newRefName, setNewRefName] = (0, import_react4.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react4.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react4.useState)(false);
+    const [publishProvider, setPublishProvider] = (0, import_react4.useState)("github");
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react4.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react4.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react4.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react4.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react4.useState)(false);
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react4.useState)(
       /* @__PURE__ */ new Set()
     );
-    const inFlight = (0, import_react3.useRef)(false);
-    (0, import_react3.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const inFlight = (0, import_react4.useRef)(false);
+    (0, import_react4.useEffect)(() => session.onVisibility(setVisible), [session]);
     const themeVars = useThemeVars(host, session, visible);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [selection, setSelection] = (0, import_react3.useState)(
+    const [selection, setSelection] = (0, import_react4.useState)(
       () => restored?.selectedPath && restored.selectedLane && LANES.has(restored.selectedLane) ? { path: restored.selectedPath, lane: restored.selectedLane } : null
     );
-    const [view, setView] = (0, import_react3.useState)(
+    const [view, setView] = (0, import_react4.useState)(
       restored?.view === "repository" ? "repository" : "pull-requests"
     );
-    const [selectedPr, setSelectedPr] = (0, import_react3.useState)(
+    const [selectedPr, setSelectedPr] = (0, import_react4.useState)(
       () => restored?.prRepository !== void 0 && typeof restored.prNumber === "number" ? {
         repository: restored.prRepository,
         number: restored.prNumber,
         ...restored.prHost !== void 0 && restored.prHost !== "" ? { host: restored.prHost } : {}
       } : null
     );
-    const savedState = (0, import_react3.useRef)({ ...restored });
+    const savedState = (0, import_react4.useRef)({ ...restored });
     const persist = (patch) => {
       const next = { ...savedState.current, ...patch };
       for (const key of Object.keys(next)) if (next[key] === void 0) delete next[key];
@@ -14076,7 +14714,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const runFollowUpRef = (0, import_react3.useRef)(() => {
+    const runFollowUpRef = (0, import_react4.useRef)(() => {
     });
     const { begin: beginToast } = useMutationToasts(
       host,
@@ -14111,15 +14749,15 @@ ${thread.id}`) === activity,
       isRepo && ops?.["repository.listRemotes"] === true,
       listRevision
     );
-    const lanes = (0, import_react3.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    const lanes = (0, import_react4.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
-    const selected = retainSelection(selection, lanes);
-    const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
-    const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
-    const rows = (0, import_react3.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const remoteList = (0, import_react3.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
-    const worktrees = (0, import_react3.useMemo)(() => worktreeRows(rows), [rows]);
+    const selected2 = retainSelection(selection, lanes);
+    const selectedEntry = selected2 === null ? null : lanes[selected2.lane].find((e) => e.path === selected2.path) ?? null;
+    const selectedStat = selected2 === null ? null : numstatFor(status.local, selected2.path);
+    const rows = (0, import_react4.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const remoteList = (0, import_react4.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react4.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
@@ -14142,7 +14780,7 @@ ${thread.id}`) === activity,
       repository: publishRepositoryPath,
       remoteName: publishRemoteName
     });
-    const stackedOffers = (0, import_react3.useMemo)(
+    const stackedOffers = (0, import_react4.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
     );
@@ -14406,7 +15044,7 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       runFollowUpRef.current = (action) => {
         switchView("repository");
         setStackedChoice(action);
@@ -14421,7 +15059,7 @@ ${thread.id}`) === activity,
         else runStacked(offer);
       };
     });
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+    return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
       "section",
       {
         "aria-label": "Version Control",
@@ -14437,20 +15075,20 @@ ${thread.id}`) === activity,
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("style", { children: `[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("style", { children: `[data-t3-version-control-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-version-control-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
             "header",
             {
               style: {
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: border2,
+                borderBottom: border3,
                 flexShrink: 0,
                 alignItems: "center"
               },
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "span",
                   {
                     role: "group",
@@ -14459,7 +15097,7 @@ ${thread.id}`) === activity,
                     children: [
                       ["pull-requests", "Pull requests"],
                       ["repository", "Repository"]
-                    ].map(([value, label]) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    ].map(([value, label]) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14478,12 +15116,12 @@ ${thread.id}`) === activity,
                     ))
                   }
                 ),
-                view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
-                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? headerStatus })
+                view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
+                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: refreshError ?? headerStatus })
               ]
             }
           ),
-          view === "pull-requests" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          view === "pull-requests" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
             PullRequestsPanel,
             {
               host,
@@ -14493,13 +15131,13 @@ ${thread.id}`) === activity,
               onSelect: selectPr
             }
           ),
-          view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
-            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+          view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
+            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
               "Repository status unavailable \u2014 ",
               repo.detail
             ] }),
-            mutation.kind !== "idle" && mutation.receipt === "inline" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            mutation.kind !== "idle" && mutation.receipt === "inline" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
               "output",
               {
                 "aria-label": "Mutation status",
@@ -14507,17 +15145,17 @@ ${thread.id}`) === activity,
                 style: {
                   display: "block",
                   padding: "4px 10px",
-                  color: mutation.kind === "failed" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted2,
+                  color: mutation.kind === "failed" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted3,
                   fontSize: 12
                 },
                 children: describeMutation(mutation)
               }
             ),
-            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
               "This workspace is not a repository",
               repo.detail ? ` \u2014 ${repo.detail}` : "",
               ".",
-              canInit && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+              canInit && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                 "button",
                 {
                   type: "button",
@@ -14529,20 +15167,20 @@ ${thread.id}`) === activity,
               ),
               !canInit && " Repository init is not supported by the detected drivers."
             ] }),
-            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
               "Unsupported repository driver: ",
               repo.driverKind,
               ". ",
               repo.detail
             ] }),
-            repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
-              (canPull || canPush || publish.offered) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+            repo.kind === "ready" && isRepo && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 6 }, children: [
+              (canPull || canPush || publish.offered) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                 "section",
                 {
                   "aria-label": "Sync",
                   style: { display: "flex", alignItems: "center", gap: 6, padding: "2px 6px 6px" },
                   children: [
-                    canPull && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    canPull && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14552,7 +15190,7 @@ ${thread.id}`) === activity,
                         children: pull.label
                       }
                     ),
-                    canPush && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    canPush && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14562,7 +15200,7 @@ ${thread.id}`) === activity,
                         children: push.label
                       }
                     ),
-                    publish.offered && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    publish.offered && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                       "button",
                       {
                         type: "button",
@@ -14572,7 +15210,7 @@ ${thread.id}`) === activity,
                         children: "Publish repository\u2026"
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: syncBlockReasons([
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 11 }, children: syncBlockReasons([
                       canPull ? pull.disabled : null,
                       canPush ? push.disabled : null,
                       publish.offered ? publish.disabled : null
@@ -14580,7 +15218,7 @@ ${thread.id}`) === activity,
                   ]
                 }
               ),
-              publish.offered && publishOpen && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              publish.offered && publishOpen && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                 "section",
                 {
                   "aria-label": "Publish repository",
@@ -14592,8 +15230,8 @@ ${thread.id}`) === activity,
                     fontSize: 11
                   },
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "select",
                         {
                           "aria-label": "Publish provider",
@@ -14601,10 +15239,10 @@ ${thread.id}`) === activity,
                           disabled: busy,
                           onChange: (event) => setPublishProvider(event.target.value),
                           style: { ...control2, padding: "2px 4px" },
-                          children: PUBLISH_PROVIDERS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
+                          children: PUBLISH_PROVIDERS.map((option) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: option.value, children: option.label }, option.value))
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "input",
                         {
                           "aria-label": "Repository path",
@@ -14621,14 +15259,14 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border2,
+                            border: border3,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "select",
                         {
                           "aria-label": "Repository visibility",
@@ -14637,14 +15275,14 @@ ${thread.id}`) === activity,
                           onChange: (event) => setPublishVisibility(event.target.value),
                           style: { ...control2, padding: "2px 4px" },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "private", children: "Private" }),
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "public", children: "Public" })
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "private", children: "Private" }),
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "public", children: "Public" })
                           ]
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { marginTop: 2 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { marginTop: 2 }, children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -14655,12 +15293,12 @@ ${thread.id}`) === activity,
                             padding: "1px 0",
                             fontSize: 11,
                             border: "none",
-                            color: muted2
+                            color: muted3
                           },
                           children: "Advanced"
                         }
                       ),
-                      publishAdvancedOpen && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      publishAdvancedOpen && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "div",
                         {
                           style: {
@@ -14671,7 +15309,7 @@ ${thread.id}`) === activity,
                             flexWrap: "wrap"
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                               "input",
                               {
                                 "aria-label": "Remote name",
@@ -14684,14 +15322,14 @@ ${thread.id}`) === activity,
                                   font: "inherit",
                                   fontSize: 12,
                                   padding: "3px 6px",
-                                  border: border2,
+                                  border: border3,
                                   borderRadius: 5,
                                   background: "transparent",
                                   color: "inherit"
                                 }
                               }
                             ),
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                               "select",
                               {
                                 "aria-label": "Remote protocol",
@@ -14700,8 +15338,8 @@ ${thread.id}`) === activity,
                                 onChange: (event) => setPublishProtocol(event.target.value),
                                 style: { ...control2, padding: "2px 4px" },
                                 children: [
-                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "ssh", children: "SSH" }),
-                                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "https", children: "HTTPS" })
+                                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "ssh", children: "SSH" }),
+                                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("option", { value: "https", children: "HTTPS" })
                                 ]
                               }
                             )
@@ -14709,7 +15347,7 @@ ${thread.id}`) === activity,
                         }
                       )
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                       "div",
                       {
                         style: {
@@ -14720,7 +15358,7 @@ ${thread.id}`) === activity,
                           flexWrap: "wrap"
                         },
                         children: [
-                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                             "button",
                             {
                               type: "button",
@@ -14730,7 +15368,7 @@ ${thread.id}`) === activity,
                               children: "Publish"
                             }
                           ),
-                          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                             "button",
                             {
                               type: "button",
@@ -14740,22 +15378,22 @@ ${thread.id}`) === activity,
                               children: "Cancel"
                             }
                           ),
-                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: publishPlan.disabled })
+                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 11 }, children: publishPlan.disabled })
                         ]
                       }
                     )
                   ]
                 }
               ),
-              changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+              changes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                 "output",
                 {
                   "aria-label": "Changes status",
-                  style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
+                  style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
                   children: changes.error
                 }
               ),
-              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { padding: "4px 6px", color: muted2, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
+              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { padding: "4px 6px", color: muted3, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
               CHANGE_LANES.map((lane) => {
                 const bulk = laneMutation(lane);
                 const rowAction = entryMutation(lane);
@@ -14763,8 +15401,8 @@ ${thread.id}`) === activity,
                 const rowAllowed = rowAction !== null && (rowAction.op === "stage" ? canStage : canUnstage);
                 const discard = canDiscard ? discardAction(lane) : null;
                 const discardConfirm = pendingDiscard?.lane === lane ? planDiscard(lanes, pendingDiscard) : null;
-                return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                return lanes[lane].length === 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": laneTitle(lane), style: { marginBottom: 8 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                     "h3",
                     {
                       style: {
@@ -14772,7 +15410,7 @@ ${thread.id}`) === activity,
                         padding: "2px 6px",
                         fontSize: 12,
                         fontWeight: 600,
-                        color: muted2,
+                        color: muted3,
                         textTransform: "uppercase",
                         letterSpacing: 0.4,
                         display: "flex",
@@ -14781,14 +15419,14 @@ ${thread.id}`) === activity,
                         gap: 6
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
                           laneTitle(lane),
                           " (",
                           lanes[lane].length,
                           ")"
                         ] }),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", gap: 4 }, children: [
-                          discard !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { display: "flex", gap: 4 }, children: [
+                          discard !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                             "button",
                             {
                               type: "button",
@@ -14801,7 +15439,7 @@ ${thread.id}`) === activity,
                               children: discard.bulk
                             }
                           ),
-                          bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          bulkAllowed && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                             "button",
                             {
                               type: "button",
@@ -14819,7 +15457,7 @@ ${thread.id}`) === activity,
                       ]
                     }
                   ),
-                  pendingDiscard !== null && discardConfirm !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  pendingDiscard !== null && discardConfirm !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                     "div",
                     {
                       role: "alertdialog",
@@ -14832,8 +15470,8 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { marginBottom: 4 }, children: discardConfirm.prompt }),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { marginBottom: 4 }, children: discardConfirm.prompt }),
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                           "div",
                           {
                             style: {
@@ -14843,7 +15481,7 @@ ${thread.id}`) === activity,
                               flexWrap: "wrap"
                             },
                             children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -14856,7 +15494,7 @@ ${thread.id}`) === activity,
                                   children: discardConfirm.confirmLabel
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -14866,23 +15504,23 @@ ${thread.id}`) === activity,
                                   children: "Cancel"
                                 }
                               ),
-                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2 }, children: discardConfirm.disabled })
+                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3 }, children: discardConfirm.disabled })
                             ]
                           }
                         )
                       ]
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: lanes[lane].map((entry) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                     "li",
                     {
                       style: { display: "flex", alignItems: "center", gap: 4 },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                           "button",
                           {
                             type: "button",
-                            "aria-current": selected?.path === entry.path && selected.lane === lane ? "true" : void 0,
+                            "aria-current": selected2?.path === entry.path && selected2.lane === lane ? "true" : void 0,
                             onClick: () => select(entry.path, lane),
                             style: {
                               flex: 1,
@@ -14895,21 +15533,21 @@ ${thread.id}`) === activity,
                               borderRadius: 5,
                               cursor: "pointer",
                               color: "var(--t3-version-control-text, var(--foreground, #20252d))",
-                              background: selected?.path === entry.path && selected.lane === lane ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))" : "transparent",
+                              background: selected2?.path === entry.path && selected2.lane === lane ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))" : "transparent",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap"
                             },
                             children: [
                               entry.path,
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
                                 " \u2014 ",
                                 describeEntry(entry)
                               ] })
                             ]
                           }
                         ),
-                        rowAllowed && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        rowAllowed && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                           "button",
                           {
                             type: "button",
@@ -14928,7 +15566,7 @@ ${thread.id}`) === activity,
                             children: rowAction.label
                           }
                         ),
-                        discard !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        discard !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                           "button",
                           {
                             type: "button",
@@ -14949,8 +15587,8 @@ ${thread.id}`) === activity,
                   )) })
                 ] }, lane);
               }),
-              (canCommit || canRunActions) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+              (canCommit || canRunActions) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Commit", style: { marginTop: 4, marginBottom: 8 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "h3",
                   {
                     style: {
@@ -14958,14 +15596,14 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted2,
+                      color: muted3,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
                     children: "Commit"
                   }
                 ),
-                status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                status.local?.isDefaultRef === true && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "p",
                   {
                     style: {
@@ -14977,7 +15615,7 @@ ${thread.id}`) === activity,
                     children: "Warning: committing on the default branch"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "textarea",
                   {
                     "aria-label": "Commit message",
@@ -14994,7 +15632,7 @@ ${thread.id}`) === activity,
                       padding: "4px 6px",
                       font: "inherit",
                       fontSize: 14,
-                      border: border2,
+                      border: border3,
                       borderRadius: 5,
                       background: "transparent",
                       color: "inherit",
@@ -15002,8 +15640,8 @@ ${thread.id}`) === activity,
                     }
                   }
                 ),
-                canCommit && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                canCommit && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                     "button",
                     {
                       type: "button",
@@ -15013,9 +15651,9 @@ ${thread.id}`) === activity,
                       children: commit.label
                     }
                   ),
-                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: commit.disabled })
+                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: commit.disabled })
                 ] }),
-                canRunActions && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                canRunActions && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "div",
                   {
                     style: {
@@ -15026,7 +15664,7 @@ ${thread.id}`) === activity,
                       flexWrap: "wrap"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "select",
                         {
                           "aria-label": "Stacked action",
@@ -15037,7 +15675,7 @@ ${thread.id}`) === activity,
                             setPendingConfirm(null);
                           },
                           style: { ...control2, padding: "2px 4px" },
-                          children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                          children: stackedOffers.map((offer) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                             "option",
                             {
                               value: offer.action,
@@ -15048,7 +15686,7 @@ ${thread.id}`) === activity,
                           ))
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15058,7 +15696,7 @@ ${thread.id}`) === activity,
                           children: busy && mutation.kind === "running" && mutation.op === "stacked" ? `${chosenOffer.label}\u2026` : "Run"
                         }
                       ),
-                      status.local?.isDefaultRef === true && stackedActionCommits(chosenOffer.action) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      status.local?.isDefaultRef === true && stackedActionCommits(chosenOffer.action) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "label",
                         {
                           style: {
@@ -15066,10 +15704,10 @@ ${thread.id}`) === activity,
                             alignItems: "center",
                             gap: 4,
                             fontSize: 12,
-                            color: muted2
+                            color: muted3
                           },
                           children: [
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                               "input",
                               {
                                 type: "checkbox",
@@ -15085,7 +15723,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: chooserReason })
+                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: chooserReason })
                     ]
                   }
                 ),
@@ -15096,7 +15734,7 @@ ${thread.id}`) === activity,
                   if (pending === void 0 || pending.disabled !== null) return null;
                   const branchName = status.local?.refName ?? "the default ref";
                   const canFeatureBranch = stackedActionCommits(pending.action);
-                  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                     "div",
                     {
                       role: "alertdialog",
@@ -15109,14 +15747,14 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { marginBottom: 4 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { style: { marginBottom: 4 }, children: [
                           pending.label,
                           ' on default ref "',
                           branchName,
                           '"?',
                           canFeatureBranch ? " You can continue on this ref or create a feature ref and run the same action there." : " Continue on this ref or cancel."
                         ] }),
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                           "div",
                           {
                             style: {
@@ -15126,7 +15764,7 @@ ${thread.id}`) === activity,
                               flexWrap: "wrap"
                             },
                             children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                                 "button",
                                 {
                                   type: "button",
@@ -15140,7 +15778,7 @@ ${thread.id}`) === activity,
                                   ]
                                 }
                               ),
-                              canFeatureBranch && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              canFeatureBranch && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -15153,7 +15791,7 @@ ${thread.id}`) === activity,
                                   children: "New feature branch"
                                 }
                               ),
-                              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                                 "button",
                                 {
                                   type: "button",
@@ -15170,7 +15808,7 @@ ${thread.id}`) === activity,
                     }
                   );
                 })(),
-                stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                stacked !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "div",
                   {
                     "aria-label": "Action progress",
@@ -15182,15 +15820,15 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: describeStackedProgress(stacked.model) }),
-                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2 }, children: stacked.model.phases.map((phase) => {
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { children: describeStackedProgress(stacked.model) }),
+                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { color: muted3 }, children: stacked.model.phases.map((phase) => {
                         const startedAt = stacked.model.started.findIndex(
                           (entry) => entry.phase === phase
                         );
                         const mark = startedAt === -1 ? "\u25CB" : stacked.model.result !== null || stacked.model.failure !== null || startedAt < stacked.model.started.length - 1 ? "\u2713" : "\u2026";
                         return `${mark} ${phase}`;
                       }).join(" \xB7 ") }),
-                      stacked.model.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      stacked.model.failure !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "p",
                         {
                           role: "alert",
@@ -15203,13 +15841,13 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "2px 0 0", color: muted2 }, children: describeStackedResult(stacked.model.result) })
+                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: "2px 0 0", color: muted3 }, children: describeStackedResult(stacked.model.result) })
                     ]
                   }
                 )
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Refs", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "h3",
                   {
                     style: {
@@ -15217,7 +15855,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted2,
+                      color: muted3,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
@@ -15227,7 +15865,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateRef && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                canCreateRef && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "div",
                   {
                     style: {
@@ -15237,7 +15875,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px 4px"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "input",
                         {
                           "aria-label": "New branch name",
@@ -15254,14 +15892,14 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border2,
+                            border: border3,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15274,25 +15912,25 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateRef && create.disabled !== null && newRefName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                canCreateRef && create.disabled !== null && newRefName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "output",
                   {
                     "aria-label": "Branch create status",
-                    style: { display: "block", padding: "0 6px 4px", color: muted2, fontSize: 12 },
+                    style: { display: "block", padding: "0 6px 4px", color: muted3, fontSize: 12 },
                     children: create.disabled
                   }
                 ),
-                refs.error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                refs.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "output",
                   {
                     "aria-label": "Refs status",
-                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
+                    style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
                     children: refs.error
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => {
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: rows.map((row) => {
                   const switchState = refSwitchState(row, currentBranch);
-                  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                     "li",
                     {
                       style: {
@@ -15303,7 +15941,7 @@ ${thread.id}`) === activity,
                         fontSize: 12
                       },
                       children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                        /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                           "span",
                           {
                             style: {
@@ -15315,15 +15953,15 @@ ${thread.id}`) === activity,
                             },
                             children: [
                               row.name,
-                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
+                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
                                 " \u2014 ",
                                 describeRef(row)
                               ] })
                             ]
                           }
                         ),
-                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
-                        canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
+                        canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                           "button",
                           {
                             type: "button",
@@ -15333,7 +15971,7 @@ ${thread.id}`) === activity,
                             children: "Switch"
                           }
                         ),
-                        canCreateWorktree && canWorktreeRef(row) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                        canCreateWorktree && canWorktreeRef(row) && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                           "button",
                           {
                             type: "button",
@@ -15349,8 +15987,8 @@ ${thread.id}`) === activity,
                   );
                 }) })
               ] }),
-              (canCreateWorktree || canRemoveWorktree) && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Worktrees", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              (canCreateWorktree || canRemoveWorktree) && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Worktrees", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "h3",
                   {
                     style: {
@@ -15358,7 +15996,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted2,
+                      color: muted3,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
@@ -15368,7 +16006,7 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateWorktree && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                canCreateWorktree && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "div",
                   {
                     style: {
@@ -15378,7 +16016,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px 4px"
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "input",
                         {
                           "aria-label": "New worktree branch",
@@ -15400,14 +16038,14 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border2,
+                            border: border3,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
                           }
                         }
                       ),
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15427,21 +16065,21 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                canCreateWorktree && worktreePlan.disabled !== null && newWorktreeName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                canCreateWorktree && worktreePlan.disabled !== null && newWorktreeName.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "output",
                   {
                     "aria-label": "Worktree create status",
                     style: {
                       display: "block",
                       padding: "0 6px 4px",
-                      color: muted2,
+                      color: muted3,
                       fontSize: 12
                     },
                     children: worktreePlan.disabled
                   }
                 ),
-                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No additional worktrees." }),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted3, fontSize: 12 }, children: "No additional worktrees." }),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "li",
                   {
                     style: {
@@ -15452,7 +16090,7 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "span",
                         {
                           style: {
@@ -15464,14 +16102,14 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             worktree.refName,
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
                               " \u2014 ",
                               worktree.path
                             ] })
                           ]
                         }
                       ),
-                      canRemoveWorktree && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      canRemoveWorktree && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15481,7 +16119,7 @@ ${thread.id}`) === activity,
                           children: "Remove"
                         }
                       ),
-                      canRemoveWorktree && worktreeRemoveFailures.has(worktree.path) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      canRemoveWorktree && worktreeRemoveFailures.has(worktree.path) && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15502,8 +16140,8 @@ ${thread.id}`) === activity,
                   worktree.path
                 )) })
               ] }),
-              canListRemotes && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { "aria-label": "Remotes", style: { marginTop: 4 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              canListRemotes && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("section", { "aria-label": "Remotes", style: { marginTop: 4 }, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "h3",
                   {
                     style: {
@@ -15511,7 +16149,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted2,
+                      color: muted3,
                       textTransform: "uppercase",
                       letterSpacing: 0.4,
                       display: "flex",
@@ -15520,11 +16158,11 @@ ${thread.id}`) === activity,
                       gap: 6
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { children: [
                         "Remotes",
                         remoteList.length > 0 ? ` (${remoteList.length})` : ""
                       ] }),
-                      canFetch && remoteList.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      canFetch && remoteList.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15537,16 +16175,16 @@ ${thread.id}`) === activity,
                     ]
                   }
                 ),
-                remotes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                remotes.error !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                   "output",
                   {
                     "aria-label": "Remotes status",
-                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
+                    style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
                     children: remotes.error
                   }
                 ),
-                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No remotes configured." }),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted3, fontSize: 12 }, children: "No remotes configured." }),
+                /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "li",
                   {
                     style: {
@@ -15557,7 +16195,7 @@ ${thread.id}`) === activity,
                       fontSize: 12
                     },
                     children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+                      /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                         "span",
                         {
                           style: {
@@ -15569,7 +16207,7 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             remote.name,
-                            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
                               " ",
                               "\u2014 ",
                               remote.url,
@@ -15578,7 +16216,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      canFetch && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                      canFetch && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                         "button",
                         {
                           type: "button",
@@ -15594,19 +16232,19 @@ ${thread.id}`) === activity,
                 )) })
               ] })
             ] }),
-            selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+            selected2 !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
               "output",
               {
                 "aria-label": "Selection",
                 style: {
                   padding: "6px 10px",
-                  color: muted2,
+                  color: muted3,
                   fontSize: 12,
-                  borderTop: border2,
+                  borderTop: border3,
                   flexShrink: 0
                 },
                 children: [
-                  selected.path,
+                  selected2.path,
                   " \u2014 ",
                   describeEntry(selectedEntry),
                   selectedStat !== null ? ` (+${selectedStat.insertions} \u2212${selectedStat.deletions})` : ""
@@ -15614,15 +16252,15 @@ ${thread.id}`) === activity,
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
             "output",
             {
               "aria-label": "Slice notice",
               style: {
                 padding: "6px 10px",
-                color: muted2,
+                color: muted3,
                 fontSize: 12,
-                borderTop: border2,
+                borderTop: border3,
                 flexShrink: 0
               },
               children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions). Clone/discovery, stash, and per-hunk diff expansion are deferred slices."
@@ -15659,7 +16297,7 @@ ${thread.id}`) === activity,
         stateVersion: 2,
         validateRestore: restoreState,
         createView(host, session) {
-          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(VersionControlView, { host, session }) };
+          return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(VersionControlView, { host, session }) };
         }
       }
     ]
