@@ -100,6 +100,12 @@
       "repository": "saphid/t3code",
       "sha": "6f6ae98244eb5ad3260ecf9e0261cde0ce3d221d",
       "name": "fix(web): detect Fork Nightly servers that are behind the client"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "2b93a34875c61d7afdc1a28a4670dc74f564207d",
+      "name": "fix(server): back up the database with a clone and refuse updates that cannot fit"
     }
   ]
 }
