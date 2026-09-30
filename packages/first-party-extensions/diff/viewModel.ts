@@ -44,6 +44,8 @@ export function resolveDiffPath(raw: string): string {
   return unquoteGitPatchPath(raw);
 }
 
+/* ---------------- binary detection ---------------- */
+
 const DIFF_GIT_BOUNDARY = /^diff --git /gm;
 const BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
 const GIT_BINARY_MARKER = /^GIT binary patch$/m;
