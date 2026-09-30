@@ -27,6 +27,38 @@ const editableSurface = (path, contents) => ({
 });
 
 NodeTest.describe("useEditorSelection", () => {
+  NodeTest.it(
+    "keeps an empty last-line selection and avoids repeated selection renders",
+    async () => {
+      let selection;
+      let renders = 0;
+      function SelectionProbe() {
+        const current = useEditorSelection(editableSurface("a.ts", "alpha\n"), "a.ts");
+        React.useEffect(() => {
+          renders++;
+          selection = current;
+        });
+        return null;
+      }
+      let root;
+      try {
+        await act(async () => {
+          root = create(e(SelectionProbe));
+        });
+        const initialRenders = renders;
+        await act(async () => selection.clearSelection());
+        await act(async () => selection.clearSelection());
+        NodeAssert.equal(renders, initialRenders);
+        await act(async () => selection.setSelection({ path: "a.ts", startLine: 2, endLine: 2 }));
+        NodeAssert.deepEqual(selection.selectionRange, { startLine: 2, endLine: 2 });
+        const selectedRenders = renders;
+        await act(async () => selection.setSelection({ path: "a.ts", startLine: 2, endLine: 2 }));
+        NodeAssert.equal(renders, selectedRenders);
+      } finally {
+        if (root) await act(async () => root.unmount());
+      }
+    },
+  );
   let latest;
   function Probe(props) {
     const current = useEditorSelection(props.surface, props.selected);
@@ -48,7 +80,7 @@ NodeTest.describe("useEditorSelection", () => {
         );
       });
       await act(async () => {
-        latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+        latest.setSelection({ path: "a.ts", startLine: 2, endLine: 3 });
       });
       NodeAssert.deepEqual(latest.selectionRange, { startLine: 2, endLine: 3 });
 
@@ -73,7 +105,7 @@ NodeTest.describe("useEditorSelection", () => {
 
       // The way back in is a real selection in the reopened buffer.
       await act(async () => {
-        latest.setSelection({ path: "a.ts", start: 0, end: 5 });
+        latest.setSelection({ path: "a.ts", startLine: 1, endLine: 1 });
       });
       NodeAssert.deepEqual(latest.selectionRange, { startLine: 1, endLine: 1 });
     } finally {
@@ -93,7 +125,7 @@ NodeTest.describe("useEditorSelection", () => {
         );
       });
       await act(async () => {
-        latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+        latest.setSelection({ path: "a.ts", startLine: 2, endLine: 3 });
       });
       NodeAssert.notEqual(latest.selectionRange, null);
 
@@ -122,7 +154,7 @@ NodeTest.describe("useEditorSelection", () => {
           );
         });
         await act(async () => {
-          latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+          latest.setSelection({ path: "a.ts", startLine: 2, endLine: 3 });
         });
         NodeAssert.deepEqual(latest.selectionRange, { startLine: 2, endLine: 3 });
 
@@ -163,7 +195,7 @@ NodeTest.describe("useEditorSelection", () => {
         root = create(e(Probe, { selected: "a.ts", surface: editableSurface("a.ts", contents) }));
       });
       await act(async () => {
-        latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+        latest.setSelection({ path: "a.ts", startLine: 2, endLine: 3 });
       });
       NodeAssert.deepEqual(latest.selectionRange, { startLine: 2, endLine: 3 });
 
@@ -204,7 +236,7 @@ NodeTest.describe("useEditorSelection", () => {
         root = create(e(Probe, { selected: "a.ts", surface }));
       });
       await act(async () => {
-        latest.setSelection({ path: "a.ts", start: 6, end: 12 });
+        latest.setSelection({ path: "a.ts", startLine: 2, endLine: 3 });
       });
       NodeAssert.notEqual(latest.selectionRange, null);
       await act(async () => {
@@ -352,7 +384,7 @@ NodeTest.describe("useEditorSelection memoization", () => {
         root = create(e(Probe, { selected: "big.ts", surface, bump: 0 }));
       });
       await act(async () => {
-        latest.setSelection({ path: "big.ts", start: 90, end: 100 });
+        latest.setSelection({ path: "big.ts", startLine: 13, endLine: 14 });
       });
       const held = latest.selectionRange;
       // Lines 1-9 are 7 chars ("line N\n"), line 10 on are 8: offset 90
@@ -370,7 +402,7 @@ NodeTest.describe("useEditorSelection memoization", () => {
 
       // A real input change legitimately recomputes.
       await act(async () => {
-        latest.setSelection({ path: "big.ts", start: 0, end: 8 });
+        latest.setSelection({ path: "big.ts", startLine: 1, endLine: 2 });
       });
       NodeAssert.ok(latest.selectionRange !== held);
       NodeAssert.deepEqual(latest.selectionRange, { startLine: 1, endLine: 2 });

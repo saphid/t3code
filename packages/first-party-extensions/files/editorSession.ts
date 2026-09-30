@@ -1,7 +1,7 @@
 /**
  * Editor session for one workspace path. A package-owned
  * FileEditCoordinator drives debounced autosave through the revisioned
- * `t3.workspace/text-edits@1.1.0` contract: the textarea renders the buffered
+ * `t3.workspace/text-edits@1.1.0` contract: the host editor renders the buffered
  * contents optimistically, saves compare-and-swap on the confirmed base
  * revision, conflicts halt autosave until the user resolves them, and the
  * session flushes pending edits when the file changes or the view unmounts —
