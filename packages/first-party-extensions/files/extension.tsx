@@ -8,6 +8,7 @@ import {
   resourcesLeaseApi,
   textEditsApi,
   uiKeybindingsApi,
+  uiEditorApi,
   uiNavigationApi,
   uiNotificationsApi,
   uiPreferencesApi,
@@ -61,6 +62,7 @@ import {
   usePostedComments,
 } from "./commentSession.js";
 import { useAddToChat } from "./composerBridge.js";
+import { useExternalEditor } from "./editorBridge.js";
 import { parseMarkdown, type MarkdownBlock, type MarkdownInline } from "./markdown.js";
 import { EditableFileBody, ReadOnlyFileBody } from "./codeView.js";
 import {
@@ -1196,6 +1198,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
   );
   const themeVars = useThemeVars(host, session, visible);
   const preferences = useFilePreferences(host, session, visible);
+  const externalEditor = useExternalEditor(host, session);
   const wordWrap = preferences.wordWrap;
   // Native parity (FileBrowserPanel): one control opens every folder, or
   // closes them all once they are open. While expand-all stands, folders
@@ -2296,6 +2299,46 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
+          {externalEditor.visible && (
+            <>
+              <button
+                type="button"
+                disabled={
+                  externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                }
+                onClick={() => externalEditor.openInEditor(selected)}
+              >
+                Open in{" "}
+                {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
+                  ?.label ?? "editor"}
+              </button>
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) externalEditor.markHintShown();
+                }}
+              >
+                <summary>Choose editor</summary>
+                {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
+                {externalEditor.editors.map((editor) => (
+                  <button
+                    key={editor.id}
+                    type="button"
+                    disabled={
+                      externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                    }
+                    onClick={() => externalEditor.openInEditor(selected, editor.id)}
+                  >
+                    {editor.label}
+                  </button>
+                ))}
+              </details>
+            </>
+          )}
+          {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (
+            <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>
+              {externalEditor.state.message}
+            </span>
+          )}
           {browserPreview && opensInPreviewBrowser(selected) && (
             <button type="button" onClick={() => openSelected("browser")}>
               Open file in preview browser
@@ -2713,6 +2756,7 @@ export default defineExtension({
     requireApi(uiNotificationsApi),
     requireApi(uiPreferencesApi),
     requireApi(uiNavigationApi),
+    requireApi(uiEditorApi, "^1.1.0"),
     requireApi(messagesEnrichmentApi),
     requireApi(composerContextApi),
   ],

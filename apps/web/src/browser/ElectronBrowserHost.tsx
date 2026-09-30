@@ -34,6 +34,7 @@ export function ElectronBrowserHost() {
               pictureInPicture:
                 previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
               remoteLive: previewState.desktopByTabId[snapshot.tabId]?.remoteLive ?? false,
+              controller: previewState.desktopByTabId[snapshot.tabId]?.controller ?? "none",
               zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
             }))
           : [];
@@ -94,6 +95,7 @@ export function ElectronBrowserHost() {
           runtimeTabId,
           pictureInPicture,
           remoteLive,
+          controller,
           zoomFactor,
         }) => {
           const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -108,6 +110,10 @@ export function ElectronBrowserHost() {
               viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
               pictureInPicture={pictureInPicture}
               remoteLive={remoteLive}
+              controller={controller}
+              showAgentCursor={
+                snapshot.navStatus._tag !== "Idle" && snapshot.navStatus._tag !== "LoadFailed"
+              }
               profileId={snapshot.profileId}
               zoomFactor={zoomFactor}
             />

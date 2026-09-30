@@ -13,6 +13,11 @@ import {
   type BrowserSurfaceBridgeDeps,
   type BrowserSurfaceBinding,
 } from "./browserSurfaceBridge";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { shouldRenderPreviewMiniPlayer } from "~/components/ChatView.logic";
+import { extensionPanelSurface } from "~/rightPanelStore";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 const context = {
   client: "web",
@@ -179,6 +184,71 @@ function harness({ composites = true }: { composites?: boolean } = {}) {
 }
 
 describe("browserSurfaceBridge", () => {
+  it("keeps the mini-player from superseding an async surface-2 lease after a reconnect remount", async () => {
+    const setup = harness();
+    const { acquireNative: _mockAcquire, ...deps } = setup.deps;
+    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    const bind = createBrowserSurfaceBridge("env-a", {
+      ...deps,
+      ownerOf: (runtimeTabId) =>
+        useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner ?? null,
+      subscribeStore: useBrowserSurfaceStore.subscribe,
+    });
+    const host = bind({
+      grants: { capabilities: [BROWSER_SESSIONS, BROWSER_SURFACE], projectIds: ["project-a"] },
+      lifetime: setup.lifetime.signal,
+    });
+    const threadRef = {
+      environmentId: EnvironmentId.make("env-a"),
+      threadId: ThreadId.make("thread-a"),
+    };
+    const panel = extensionPanelSurface(threadRef, {
+      version: 1,
+      surfaceId: "test.plugin/panel",
+      placement: "side-panel",
+      stateVersion: 1,
+      restoreState: {},
+      fallback: "Browser",
+      context,
+    });
+    expect(panel).not.toBeNull();
+    setup.setPreviewState({ serverEpoch: null, sessions: {}, listSeq: 0, listFailures: 0 });
+    const session = { ...sessionRef, serverEpoch: "epoch-2" };
+    const runtimeTabId = previewRuntimeTabId(threadRef, session.serverEpoch, session.tabId);
+    const pending = host.acquire({ context, session });
+    expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]).toBeUndefined();
+    setup.setPreviewState({
+      serverEpoch: "epoch-2",
+      sessions: { "tab-1": {} },
+      listSeq: 1,
+      listFailures: 0,
+    });
+    setup.fireSessions();
+    const acquired = await pending;
+    if (!acquired.ok) throw new Error("expected reconnect lease");
+    try {
+      const source = { kind: "browser", tabId: session.tabId } as const;
+      const isFloating = (extensionPanelOpen = true) =>
+        shouldRenderPreviewMiniPlayer(source, panel, {
+          extensionPanelOpen,
+          browserSurface: useBrowserSurfaceStore.getState().byTabId[runtimeTabId],
+        });
+      const owner = useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner;
+      expect(isFloating()).toBe(false);
+      expect(acquired.lease.present({ x: 0, y: 0, width: 900, height: 700 }, false)).toBe(
+        "accepted",
+      );
+      setup.flush();
+      expect(isFloating()).toBe(false);
+      expect(isFloating(false)).toBe(true);
+      expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner).toBe(owner);
+      expect(acquired.lease.state.kind).toBe("active");
+    } finally {
+      acquired.lease.release();
+      useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    }
+  });
+
   it("denies by name when a required grant is missing", async () => {
     const h = harness();
     const noSurface = h.host({ capabilities: [BROWSER_SESSIONS] });

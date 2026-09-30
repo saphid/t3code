@@ -51,6 +51,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { setLocalStorageItem } from "../hooks/useLocalStorage";
 import { useRightPanelStore } from "../rightPanelStore";
+import {
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { resolveRemoteOpenState } from "../remoteOpen";
+import { getLocalStorageItem } from "../hooks/useLocalStorage";
+import * as Schema from "effect/Schema";
 
 // Base UI keeps ToastStore internal; tests drive the real store to cover its timer rules.
 const requireFromHere = NodeModule.createRequire(import.meta.url);
@@ -1803,9 +1811,137 @@ describe("editor provider", () => {
     const openInEditor = vi.fn(async (_value: unknown) =>
       fail ? AsyncResult.failure(Cause.fail(fail)) : AsyncResult.success(undefined),
     );
-    return { availableEditors: () => availableEditors, openInEditor };
+    return {
+      availableEditors: () => availableEditors,
+      openInEditor,
+      remoteState: () =>
+        resolveRemoteOpenState({
+          target: null,
+          sshAlias: null,
+          remoteOpenTargets: undefined,
+          isDesktopRenderer: false,
+        }),
+      remoteEditors: vi.fn(async () => [EditorId.make("vscode")]),
+      openRemoteUrl: vi.fn(async (_url: string) => true),
+    };
   };
   const openPath = (path: string) => invokeCall("openPath", { path, cwd: "/ws/root" });
+
+  it.each([
+    {
+      name: "local",
+      target: new PrimaryConnectionTarget({
+        environmentId: EnvironmentId.make(ENV),
+        label: "local",
+        httpBaseUrl: "http://127.0.0.1:8000",
+        wsBaseUrl: "ws://127.0.0.1:8000",
+      }),
+      sshAlias: null,
+      editor: EditorId.make("vscode"),
+    },
+    {
+      name: "ssh-remote",
+      target: new SshConnectionTarget({
+        environmentId: EnvironmentId.make(ENV),
+        label: "ssh",
+        connectionId: "ssh-1",
+      }),
+      sshAlias: "dev alias",
+      editor: EditorId.make("cursor"),
+    },
+    {
+      name: "tunnel",
+      target: new RelayConnectionTarget({
+        environmentId: EnvironmentId.make(ENV),
+        label: "tunnel",
+      }),
+      sshAlias: null,
+      editor: EditorId.make("zed"),
+    },
+  ])("keeps native explicit-cwd execution for $name", async ({ target, sshAlias, editor }) => {
+    const state = resolveRemoteOpenState({
+      target,
+      sshAlias,
+      remoteOpenTargets: [
+        { kind: "tailscale", host: "dev.tail.ts.net" },
+        { kind: "mdns", host: "dev.local" },
+      ],
+      isDesktopRenderer: false,
+    });
+    const fake = {
+      ...launcher([editor]),
+      remoteState: () => state,
+      remoteEditors: vi.fn(async () => [editor]),
+    };
+    setLocalStorageItem("t3code:last-editor", editor, EditorId);
+    const result = await createEditorClientProvider(makeDeps(EDITOR), fake).invoke(
+      openPath("src/my file.ts:3:5"),
+    );
+    const path = "/ws/root/src/my file.ts:3:5";
+    expect(result).toEqual({ status: "opened", path, editor });
+    expect(fake.openInEditor).toHaveBeenCalledWith({
+      environmentId: ENV,
+      input: { cwd: path, editor },
+    });
+    expect(fake.openRemoteUrl).not.toHaveBeenCalled();
+    expect(fake.remoteEditors).not.toHaveBeenCalled();
+  });
+
+  it("uses the environment's editors for explicit-cwd calls even in remote mode", async () => {
+    const fake = {
+      ...launcher([EditorId.make("trae")]),
+      remoteState: () => ({
+        mode: "remote-links" as const,
+        host: { kind: "ssh-alias" as const, host: "dev" },
+      }),
+    };
+    setLocalStorageItem("t3code:last-editor", EditorId.make("trae"), EditorId);
+    await expect(
+      createEditorClientProvider(makeDeps(EDITOR), fake).invoke(openPath("file.ts")),
+    ).resolves.toMatchObject({
+      status: "opened",
+      editor: "trae",
+    });
+    expect(getLocalStorageItem("t3code:last-editor", EditorId)).toBe("trae");
+    expect(getLocalStorageItem("t3code:remote-open-hint-seen", Schema.Boolean)).toBeNull();
+    expect(fake.openInEditor).toHaveBeenCalled();
+  });
+
+  it("keeps explicit-cwd execution when no SSH target was advertised", async () => {
+    const fake = {
+      ...launcher([EditorId.make("vscode")]),
+      remoteState: () => ({ mode: "remote-unavailable" as const }),
+    };
+    await expect(
+      createEditorClientProvider(makeDeps(EDITOR), fake).invoke(openPath("file.ts")),
+    ).resolves.toMatchObject({ status: "opened", editor: "vscode" });
+    expect(fake.openInEditor).toHaveBeenCalled();
+    expect(fake.openRemoteUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([false, new Error("shell refused")])(
+    "does not use remote fallback editors for an explicit-cwd call (%s)",
+    async (outcome) => {
+      const fake = {
+        ...launcher([]),
+        remoteState: () => ({
+          mode: "remote-links" as const,
+          host: { kind: "ssh-alias" as const, host: "dev" },
+        }),
+        openRemoteUrl: vi.fn(async () => {
+          if (outcome instanceof Error) throw outcome;
+          return outcome;
+        }),
+      };
+      setLocalStorageItem("t3code:last-editor", EditorId.make("trae"), EditorId);
+      await expect(
+        createEditorClientProvider(makeDeps(EDITOR), fake).invoke(openPath("file.ts")),
+      ).resolves.toMatchObject({ status: "refused", reason: "no-editor" });
+      expect(getLocalStorageItem("t3code:last-editor", EditorId)).toBe("trae");
+      expect(getLocalStorageItem("t3code:remote-open-hint-seen", Schema.Boolean)).toBeNull();
+      expect(fake.openInEditor).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects callers without the editor-open grant", async () => {
     const fake = launcher([EditorId.make("vscode")]);

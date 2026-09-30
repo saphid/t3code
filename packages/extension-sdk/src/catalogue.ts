@@ -35,6 +35,9 @@ import {
   uiExternalLinkInputProperties,
   uiExternalLinkReceiptSchema,
   uiEditorOpenReceiptSchema,
+  uiEditorOpenReceiptV11Schema,
+  editorOptionsSchema,
+  editorWorkspaceInputSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
   uiNavigationFileInputPropertiesV1_1,
@@ -3392,6 +3395,7 @@ export type PrsLinkedThreadsResult = {
   readonly truncated: boolean;
 };
 export type PrsCapabilities = {
+  readonly viewedFiles?: "host" | "environment";
   readonly diff: boolean;
   readonly comment: boolean;
   readonly actions: readonly string[];
@@ -3562,7 +3566,10 @@ export type PrsLabelCandidateList = {
   readonly candidates: readonly PrsLabelCandidate[];
   readonly truncated: boolean;
 };
-export type PrsInvalidateInput = { readonly reference?: PrsRef };
+export type PrsInvalidateInput = {
+  readonly reference?: PrsRef;
+  readonly filesViewedOnly?: boolean;
+};
 export type PrsDiffInput = PrsRef & {
   /** One commit's own changes, rather than the whole change request. */
   readonly commit?: string;
@@ -3615,6 +3622,7 @@ export type PrsRefreshedEvent =
   | { readonly kind: "closed"; readonly reason: "overflow" | "refresh-error" };
 /** Per-operation support flags keyed by `prs.<method>`/`prs.<stream>`. */
 export type PrsOperationsSupport = {
+  readonly "prs.filesViewed"?: boolean;
   readonly "prs.list": boolean;
   readonly "prs.listStats": boolean;
   readonly "prs.summary": boolean;
@@ -4037,12 +4045,61 @@ const prsDetailSchemaV1 = {
   },
 } as const;
 /** 1.1.0 adds `preferredMergeMethod` and `observedAt`. */
-const prsDetailSchema = {
+const prsDetailSchemaV1_1 = {
   ...prsDetailSchemaV1,
   properties: {
     ...prsDetailSchemaV1.properties,
     preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
     observedAt: prsObservedAtField,
+  },
+} as const;
+export type PrsFileViewedState = "unviewed" | "viewed" | "dismissed";
+export type PrsFilesViewedInput = PrsRef & { readonly cursor?: string };
+export type PrsFilesViewedResult = {
+  readonly files: readonly { readonly path: string; readonly state: PrsFileViewedState }[];
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly snapshot?: string;
+};
+const prsFilesViewedSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["files", "truncated", "nextCursor"],
+  properties: {
+    files: {
+      type: "array",
+      maxItems: 500,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "state"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          state: { enum: ["unviewed", "viewed", "dismissed"] },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+    snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+    nextCursor: {
+      type: ["string", "null"],
+      minLength: 1,
+      maxLength: 3,
+      pattern: "^[1-9][0-9]{0,2}$",
+    },
+  },
+} as const;
+const prsDetailSchema = {
+  ...prsDetailSchemaV1_1,
+  properties: {
+    ...prsDetailSchemaV1_1.properties,
+    capabilities: {
+      ...prsCapabilitiesSchema,
+      properties: {
+        ...prsCapabilitiesSchema.properties,
+        viewedFiles: { enum: ["host", "environment"] },
+      },
+    },
   },
 } as const;
 const prsCommentSchema = {
@@ -4451,6 +4508,7 @@ type PrsReadApi = TypedApi<{
   listStats: { input: PrsListStatsInput; output: PrsListStatsResult };
   summary: { input: PrsRef; output: PrsSummary };
   detail: { input: PrsRef; output: PrsDetail };
+  filesViewed: { input: PrsFilesViewedInput; output: PrsFilesViewedResult };
   activity: { input: PrsRef; output: PrsActivity };
   threadComments: { input: PrsThreadCommentsInput; output: PrsThreadCommentsResult };
   stack: { input: PrsRef; output: PrsStack | null };
@@ -4657,20 +4715,76 @@ function prsReadDefinition(
  * (HTTP-routed natively) as `t3.vcs/diff@1.1.0`-family frames so payload
  * size never matters; `subscribeRefreshes` mirrors the native refresh
  * counter so a plugin re-reads exactly when the native client would.
- * 1.1.0 only adds optional outputs (`detail.preferredMergeMethod`, and
- * `observedAt` on list entries and the detail), so consumers still default to
- * `^1.0.0` and must treat them as absent on a 1.0.0 host.
+ * 1.1.0 adds optional merge preferences and observation times; 1.2.0 adds
+ * optional viewed-file capabilities and a separate, paged `filesViewed` read.
+ * Consumers still default to `^1.0.0` and must treat newer outputs as absent
+ * on older hosts.
  */
 export const prsReadApi: PrsReadApi = defineStreamApi<PrsReadStreams>(
-  prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema),
+  {
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods!.map((method) =>
+        method.name === "getCapabilities"
+          ? {
+              ...method,
+              outputSchema: {
+                ...prsCapabilitiesResultSchema,
+                properties: {
+                  ...prsCapabilitiesResultSchema.properties,
+                  operations: {
+                    ...prsOperationsSupportSchema,
+                    properties: {
+                      ...prsOperationsSupportSchema.properties,
+                      "prs.filesViewed": { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            }
+          : method.name === "invalidate"
+            ? {
+                ...method,
+                inputSchema: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    reference: prsRefInputSchema,
+                    filesViewedOnly: { type: "boolean" },
+                  },
+                },
+              }
+            : method,
+      ),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" },
+          },
+        },
+        outputSchema: prsFilesViewedSchema,
+      },
+    ],
+  },
   {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
       { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" },
     ],
   },
+);
+export const prsReadApiV1_1: PrsReadApi = defineStreamApi<PrsReadStreams>(
+  prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1),
 );
 /** Frozen published 1.0.0 definition; shared definitions are immutable per version. */
 export const prsReadApiV1: PrsReadApi = defineStreamApi<PrsReadStreams>(
@@ -5361,6 +5475,7 @@ export const PRS_WRITE = "t3.prs/write";
 
 /** Per-write-operation support flags keyed by `prs.<method>`. */
 export type PrsWriteOperationsSupport = {
+  readonly "prs.setFilesViewed"?: boolean;
   readonly "prs.runAction": boolean;
   readonly "prs.update": boolean;
   readonly "prs.comment": boolean;
@@ -5473,6 +5588,9 @@ export type PrsWriteLabelsInput = PrsRef & {
   readonly applied: boolean;
 };
 export type PrsWriteEmptyResult = Record<string, never>;
+export type PrsWriteSetFilesViewedInput = PrsRef & {
+  readonly files: readonly { readonly path: string; readonly viewed: boolean }[];
+};
 
 const prsWriteBodySchema = { type: "string", minLength: 1, maxLength: 65536 } as const;
 const prsWriteOperationsSupportSchema = {
@@ -5620,7 +5738,7 @@ const prsWriteReviewCommentDraftSchema = {
   },
 } as const;
 
-export const prsWriteApi = defineApi<{
+type PrsWriteMethods = {
   getCapabilities: { input: Record<string, never>; output: PrsWriteCapabilitiesResult };
   runAction: { input: PrsWriteActionInput; output: PrsWriteEmptyResult };
   update: { input: PrsWriteUpdateInput; output: PrsWriteEmptyResult };
@@ -5632,7 +5750,8 @@ export const prsWriteApi = defineApi<{
   setReaction: { input: PrsWriteReactionInput; output: PrsWriteEmptyResult };
   requestReviewers: { input: PrsWriteReviewerRequestInput; output: PrsWriteEmptyResult };
   setLabels: { input: PrsWriteLabelsInput; output: PrsWriteEmptyResult };
-}>({
+};
+export const prsWriteApiV1 = defineApi<PrsWriteMethods>({
   id: PRS_WRITE,
   version: "1.0.0",
   methods: [
@@ -5845,6 +5964,71 @@ export const prsWriteApi = defineApi<{
     },
   ],
 });
+export const prsWriteApi = defineApi<
+  PrsWriteMethods & {
+    setFilesViewed: { input: PrsWriteSetFilesViewedInput; output: PrsWriteEmptyResult };
+  }
+>(
+  {
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods!.map((method) =>
+        method.name === "getCapabilities"
+          ? {
+              ...method,
+              outputSchema: {
+                ...prsWriteCapabilitiesResultSchema,
+                properties: {
+                  ...prsWriteCapabilitiesResultSchema.properties,
+                  operations: {
+                    ...prsWriteOperationsSupportSchema,
+                    properties: {
+                      ...prsWriteOperationsSupportSchema.properties,
+                      "prs.setFilesViewed": { type: "boolean" },
+                    },
+                  },
+                },
+              },
+            }
+          : method,
+      ),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
+                  viewed: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+        outputSchema: prsEmptyOutputSchema,
+      },
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }],
+  },
+);
 export const PRS_WRITE_API = prsWriteApi.definition;
 
 /* ------------------------------------------------------------------------
@@ -9624,7 +9808,12 @@ export const UI_EDITOR_OPEN = "t3.ui/editor.open";
 export type UiEditorRefusalReason = "no-editor" | "open-failed";
 
 export type UiEditorOpenReceipt =
-  | { readonly status: "opened"; readonly path: string; readonly editor: string }
+  | {
+      readonly status: "opened";
+      readonly path: string;
+      readonly editor: string;
+      readonly url?: string;
+    }
   | {
       readonly status: "refused";
       readonly reason: UiEditorRefusalReason;
@@ -9637,9 +9826,10 @@ export type UiEditorOpenReceipt =
  * relative to `cwd`, with an optional `:line` or `:line:column` suffix the
  * editor honors. The caller's own client resolves the path and its saved
  * editor, then launches it in the caller's environment. A refusal is a typed
- * receipt; a missing `t3.ui/editor.open` grant fails the invoke.
+ * receipt; a missing `t3.ui/editor.open` grant fails the invoke. This is the
+ * frozen published 1.0.0 definition.
  */
-export const uiEditorApi = defineApi<{
+export const uiEditorApiV1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
   openPath: { input: { path: string; cwd: string }; output: UiEditorOpenReceipt };
 }>({
@@ -9670,6 +9860,70 @@ export const uiEditorApi = defineApi<{
     },
   ],
 });
+
+export type UiEditorCapabilities = UiCapabilities & {
+  readonly editor?: {
+    readonly visible: boolean;
+    readonly editors: readonly { readonly id: string; readonly label: string }[];
+    readonly preferredEditor: string | null;
+    readonly remoteHint: string | null;
+  };
+};
+
+export type UiEditorOpenInput = { path: string; editor?: string; hintShown?: true } & (
+  | { cwd: string }
+  | { workspace: true }
+);
+
+/**
+ * Version 1.1.0 adds workspace opens, native editor choices and SSH hints.
+ * `workspace: true` resolves the scoped thread checkout (or project root),
+ * not path confinement; absolute and parent-relative paths remain supported.
+ * Do not supply cwd with workspace. Only workspace opens use client-local SSH
+ * links; explicit cwd calls retain the native environment launch behavior.
+ * Remote URLs omit line/column positions, like the native remote picker.
+ * Pass hintShown only after displaying remoteHint. ClientHost.openEditorPath
+ * preserves browser click activation after getCapabilities warms the host.
+ */
+export const uiEditorApi = defineApi<{
+  getCapabilities: { input: Record<string, never>; output: UiEditorCapabilities };
+  openPath: {
+    input: UiEditorOpenInput;
+    output: UiEditorOpenReceipt;
+  };
+}>(
+  {
+    ...uiEditorApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      {
+        ...uiEditorApiV1.definition.methods![0]!,
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema,
+          },
+        },
+      },
+      {
+        ...uiEditorApiV1.definition.methods![1]!,
+        inputSchema: editorWorkspaceInputSchema,
+        outputSchema: uiEditorOpenReceiptV11Schema,
+      },
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openPath", input: "workspace" },
+      { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" },
+    ],
+  },
+);
 
 export const UI_NAVIGATION = "t3.ui/navigation";
 export const UI_NAVIGATION_OPEN = "t3.ui/navigation.open";
@@ -10070,8 +10324,10 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   resourcesLeaseApiV1.definition,
   workspaceResourcesApi.definition,
   prsReadApi.definition,
+  prsReadApiV1_1.definition,
   prsReadApiV1.definition,
   prsWriteApi.definition,
+  prsWriteApiV1.definition,
   composerContextApi.definition,
   messagesEnrichmentApi.definition,
   messagesEnrichmentApiV1_1.definition,
@@ -10085,6 +10341,7 @@ export const GENERIC_API_CATALOGUE: readonly ApiDefinition[] = [
   uiExternalApi.definition,
   uiExternalApiV1.definition,
   uiEditorApi.definition,
+  uiEditorApiV1.definition,
   uiNavigationApi.definition,
   uiNavigationApiV1_1.definition,
   uiNavigationApiV1.definition,

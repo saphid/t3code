@@ -18,6 +18,8 @@ import {
   type BrowserFramesHost,
   type BrowserSurfaceHost,
   type UiKeybindingsHost,
+  type UiEditorOpenInput,
+  type UiEditorOpenReceipt,
 } from "./catalogue.js";
 import type * as React from "react";
 import {
@@ -459,6 +461,11 @@ export interface ClientHost {
   /** Use this React identity; a client entry must not bundle or import another React runtime. */
   readonly React: typeof React;
   invokeApi(request: ApiInvocation, signal: AbortSignal): Promise<Json>;
+  openEditorPath?(
+    input: UiEditorOpenInput,
+    context: ViewContext,
+    signal: AbortSignal,
+  ): Promise<UiEditorOpenReceipt>;
   subscribeApi(request: ApiStreamInvocation, signal: AbortSignal): AsyncIterable<ApiStreamFrame>;
   discoverApis(context: ViewContext, signal: AbortSignal): Promise<readonly ApiDiscovery[]>;
   readAsset?(
