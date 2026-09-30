@@ -33,6 +33,7 @@ import {
   isSafeRepositoryIdentifier,
   isSafeRepositoryRemote,
   providerRepositoryHost,
+  providerRepositoryPath,
   repositoryRemoteHost,
 } from "./remoteValidation.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -236,12 +237,8 @@ export const make = Effect.gen(function* () {
       !isConfiguredRepositoryHost(providerKind, repository, discovery)
     )
       return yield* invalid();
-    const qualified = providerRepositoryHost(providerKind, repository) !== null;
-    const repositoryPath = repository.includes("://")
-      ? decodeURIComponent(new URL(repository).pathname.slice(1))
-      : qualified
-        ? repository.split("/").slice(1).join("/")
-        : repository;
+    const repositoryPath = providerRepositoryPath(providerKind, repository);
+    if (repositoryPath === null) return yield* invalid();
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
       repository: providerKind === "forgejo" ? `https://${host}/${repositoryPath}` : repositoryPath,

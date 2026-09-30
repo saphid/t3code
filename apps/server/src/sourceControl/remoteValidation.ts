@@ -34,17 +34,8 @@ export function isSafeRepositoryIdentifier(
   repository: string,
 ): boolean {
   if (repository !== repository.trim() || repository.startsWith("-")) return false;
-  let locator = repository;
-  if (repository.includes("://")) {
-    if (!isSafeRepositoryRemote(repository)) return false;
-    try {
-      locator = decodeURIComponent(new URL(repository).pathname.slice(1));
-    } catch {
-      return false;
-    }
-  }
-  if (!repository.includes("://") && providerRepositoryHost(provider, repository) !== null)
-    locator = repository.split("/").slice(1).join("/");
+  const locator = providerRepositoryPath(provider, repository);
+  if (locator === null) return false;
   const segments = locator.split("/");
   const segmentPattern =
     provider === "azure-devops" ? /^[\p{L}\p{N}_.-][\p{L}\p{N} ._()&-]*$/u : /^[A-Za-z0-9._-]+$/;
@@ -84,12 +75,33 @@ export function providerRepositoryHost(
   provider: SourceControlProviderKind,
   repository: string,
 ): string | null {
-  if (repository.includes("://")) return repositoryRemoteHost(repository);
-  const segments = repository.split("/");
+  if (repository.includes("://") || repository.includes("@"))
+    return repositoryRemoteHost(repository);
+  const segments = repository.replace(/\/$/, "").split("/");
   return (provider === "github" && segments.length === 3) ||
     (segments.length >= 3 && /[.]/.test(segments[0] ?? ""))
     ? (segments[0] ?? "").toLowerCase()
     : null;
+}
+
+export function providerRepositoryPath(
+  provider: SourceControlProviderKind,
+  repository: string,
+): string | null {
+  let path = repository;
+  if (repository.includes("://") || repository.includes("@")) {
+    if (!isSafeRepositoryRemote(repository)) return null;
+    try {
+      path = repository.includes("://")
+        ? decodeURIComponent(new URL(repository).pathname.slice(1))
+        : repository.slice(repository.indexOf(":") + 1);
+    } catch {
+      return null;
+    }
+  } else if (providerRepositoryHost(provider, repository) !== null) {
+    path = repository.split("/").slice(1).join("/");
+  }
+  return path.replace(/\/$/, "");
 }
 
 export function isConfiguredRepositoryHost(

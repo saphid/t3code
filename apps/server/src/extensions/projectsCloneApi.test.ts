@@ -305,6 +305,8 @@ it.each([
   ["github", "alex/.github"],
   ["github", "alex/-repo"],
   ["github", "https://github.com/alex/.github"],
+  ["github", "git@github.com:alex/repo"],
+  ["github", "https://github.com/alex/repo/"],
   ["gitlab", "group/subgroup/repo"],
   ["forgejo", "alex/.config"],
   ["azure-devops", "My Repo"],

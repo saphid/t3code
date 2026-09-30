@@ -279,7 +279,13 @@ it.effect.each(["github", "gitlab"] as const)(
   (kind) =>
     Effect.gen(function* () {
       const host = "enterprise.example";
-      for (const repository of [`${host}/o/n`, `https://${host}/o/n`, `ssh://${host}/o/n`]) {
+      for (const repository of [
+        `${host}/o/n`,
+        `https://${host}/o/n`,
+        `ssh://${host}/o/n`,
+        `git@${host}:o/n`,
+        `https://${host}/o/n/`,
+      ]) {
         const calls: Parameters<
           SourceControlProvider.SourceControlProvider["Service"]["getRepositoryCloneUrls"]
         >[0][] = [];
