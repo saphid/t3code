@@ -4,6 +4,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import { ensureClientSettingsHydrated } from "~/hooks/useSettings";
 
@@ -60,9 +62,19 @@ vi.mock("~/components/preview/previewBridge", () => ({
   },
 }));
 
-vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { set: registrySet },
-}));
+vi.mock("~/rpc/atomRegistry", async (importOriginal) => {
+  const original = await importOriginal<typeof import("~/rpc/atomRegistry")>();
+  const set = original.appAtomRegistry.set.bind(original.appAtomRegistry);
+  return {
+    ...original,
+    appAtomRegistry: Object.assign(original.appAtomRegistry, {
+      set: (...args: Parameters<typeof set>) => {
+        registrySet(args[0], args[1] as { readonly tabIds: ReadonlySet<string> });
+        return set(...args);
+      },
+    }),
+  };
+});
 
 vi.mock("~/hooks/useSettings", () => ({
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
@@ -88,6 +100,8 @@ import {
 import { createBrowserCaptureBridge } from "~/extensions/browserCaptureBridge";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { BrowserRecordingControls } from "./BrowserRecordingControls";
 
 class FakeMediaRecorder {
   static readonly instances: FakeMediaRecorder[] = [];
@@ -153,6 +167,10 @@ describe("browser recording", () => {
     clientSettings.browserRecordingFrameRate = 30;
     animationFrameCount = 0;
     vi.stubGlobal("window", globalThis);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("Element", class extends EventTarget {});
+    vi.stubGlobal("addEventListener", vi.fn());
+    vi.stubGlobal("removeEventListener", vi.fn());
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       animationFrameCount += 1;
       callback(animationFrameCount);
@@ -170,7 +188,7 @@ describe("browser recording", () => {
         throw new Error(`No pending display-media capture for ${tabId}.`);
       }
     });
-    vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
+    vi.stubGlobal("navigator", { platform: "MacIntel", mediaDevices: { getDisplayMedia } });
     useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
   });
 
@@ -185,6 +203,91 @@ describe("browser recording", () => {
 
     await stopBrowserRecording("recording-tab");
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
+  });
+
+  it.each(["native", "agent"])("does not add host controls for %s recordings", async (source) => {
+    const tabId = `${source}-recording-tab`;
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(AppAtomRegistryProvider, null, createElement(BrowserRecordingControls)),
+        );
+        await startBrowserRecording(tabId);
+      });
+      expect(readBrowserRecordingPhase(tabId)).toBe("recording");
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        await stopBrowserRecording(tabId);
+        renderer.unmount();
+      });
+    }
+  });
+
+  it("shows a clickable, transparent workspace-anchored control only for a bridge recording", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("control-env"),
+      threadId: ThreadId.make("control-thread"),
+    };
+    const context = {
+      client: "desktop",
+      resource: {
+        namespace: "test.browser",
+        id: "view",
+        ...threadRef,
+        projectId: "control-project",
+      },
+    };
+    const lifetime = new AbortController();
+    const host = createBrowserCaptureBridge(threadRef.environmentId, {
+      resolveThreadScope: () => ({ projectId: "control-project", authoritative: true }),
+      serverEpoch: () => "epoch-1",
+      presented: () => true,
+      userActivation: () => true,
+      platform: () => "MacIntel",
+    })({
+      grants: {
+        capabilities: ["t3.browser/sessions", "t3.browser/capture", "t3.browser/recording"],
+        projectIds: ["control-project"],
+      },
+      lifetime: lifetime.signal,
+    });
+    const request = { context, session: { tabId: "control-tab", serverEpoch: "epoch-1" } };
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(AppAtomRegistryProvider, null, createElement(BrowserRecordingControls)),
+        );
+      });
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+      await act(async () => {
+        expect(await host.startRecording!(request)).toMatchObject({ ok: true });
+      });
+      const controls = renderer.root.findAllByType("button");
+      expect(controls).toHaveLength(1);
+      expect(controls[0]!.props["aria-label"]).toBe("Stop recording");
+      const overlay = renderer.root.findByType("div");
+      expect(overlay.props.className).toContain("[-webkit-app-region:no-drag]");
+      expect(overlay.props.className).toContain("top-[var(--workspace-controls-top)]");
+      expect(overlay.props.className).toContain("h-[var(--workspace-topbar-height)]");
+      expect(overlay.props.className).toContain(
+        "right-[calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem))]",
+      );
+      expect(overlay.props.className).not.toMatch(/bg-background|shadow|\bborder\b/);
+      await act(async () => {
+        controls[0]!.props.onClick({ shiftKey: false });
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        await host.stopRecording!(request);
+        lifetime.abort();
+        renderer.unmount();
+      });
+    }
   });
 
   it("saves and reveals SDK recordings over 50 MiB through the native recorder, joining both stop callers", async () => {
