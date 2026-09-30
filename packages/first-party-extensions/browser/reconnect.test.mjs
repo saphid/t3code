@@ -134,11 +134,19 @@ function restartingBackend() {
   const presents = [];
   const navigates = [];
   const opens = [];
+  const surfaceRefreshes = [];
   // The host's synced epoch trails the server's until `syncSurface()`.
   let hostEpoch = server.epoch;
+  let nextSurfaceDenial = null;
+  let surfaceSyncDelayMs = 0;
   let navigateGate = null;
   const socketClosed = () => new Error("SocketCloseError: 1006");
   const hang = (signal) => new Promise((resolve) => onAbort(signal, resolve));
+
+  function syncSurface() {
+    hostEpoch = server.epoch;
+    for (const watch of surfaceWatchers) watch();
+  }
 
   function snapshotFrames() {
     const snapshotId = `snapshot-${server.epoch}`;
@@ -202,7 +210,8 @@ function restartingBackend() {
       if (request.method === "open") {
         opens.push(request.input.url);
         server.revision += 1;
-        const session = browserSession("tab-b", request.input.url, "Page B");
+        const tabId = opens.length === 1 ? "tab-b" : `tab-b-${opens.length}`;
+        const session = browserSession(tabId, request.input.url, "Page B");
         server.sessions.push(session);
         for (const subscriber of subscribers) {
           subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
@@ -224,6 +233,24 @@ function restartingBackend() {
       }
       if (request.method === "navigate" && request.input.serverEpoch !== server.epoch)
         throw new Error("BrowserStaleServerEpoch: the request epoch does not match");
+      if (request.method === "navigate") {
+        const index = server.sessions.findIndex((session) => session.tabId === request.input.tabId);
+        if (index === -1) throw new Error("session not found");
+        server.revision += 1;
+        const session = browserSession(request.input.tabId, request.input.url, "Page B");
+        server.sessions[index] = session;
+        for (const subscriber of subscribers) {
+          subscriber.queue.push({ kind: "session-upsert", revision: server.revision, session });
+          subscriber.wake?.();
+        }
+        return {
+          commandId: `navigate-${server.revision}`,
+          outcome: "accepted",
+          serverEpoch: server.epoch,
+          revision: server.revision,
+          session,
+        };
+      }
       throw new Error("API unavailable");
     },
     subscribeApi(request, signal) {
@@ -245,53 +272,70 @@ function restartingBackend() {
     },
     browserSurface: {
       id: "t3.browser/surface",
-      version: "1.0.0",
+      version: "2.0.0",
       presentation: { supported: true },
       acquire(request) {
         acquires.push({ tabId: request.session.tabId, serverEpoch: request.session.serverEpoch });
-        // Like the real bridge, any mismatch with the synced epoch is denied,
-        // including a newer epoch the host has not caught up to.
-        if (request.session.serverEpoch !== hostEpoch)
-          return {
-            ok: false,
-            denial: {
-              reason: "epoch-changed",
-              detail: "the session's epoch does not match the synced server epoch",
+        if (nextSurfaceDenial) {
+          const reason = nextSurfaceDenial;
+          nextSurfaceDenial = null;
+          if (reason === "epoch-changed") server.sessions = [];
+          return { ok: false, denial: { reason, detail: "presentation denied" } };
+        }
+        if (request.session.serverEpoch !== hostEpoch) {
+          surfaceRefreshes.push(request.session.serverEpoch);
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              if (surfaceSyncDelayMs === null) {
+                resolve({ ok: false, denial: { reason: "host-unavailable", detail: "offline" } });
+                return;
+              }
+              syncSurface();
+              resolve(
+                request.session.serverEpoch === hostEpoch
+                  ? attach()
+                  : { ok: false, denial: { reason: "epoch-changed", detail: "stale session" } },
+              );
+            }, surfaceSyncDelayMs ?? 30_000);
+          });
+        }
+        return attach();
+        function attach() {
+          const listeners = new Set();
+          const lease = {
+            session: request.session,
+            state: { kind: "active", presentation: { supported: true } },
+            onDidChangeState(listener) {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+            present(rect, visible) {
+              if (lease.state.kind === "ended") return "ended";
+              presents.push({
+                tabId: request.session.tabId,
+                serverEpoch: request.session.serverEpoch,
+                visible,
+              });
+              return "accepted";
+            },
+            release() {
+              end("released");
             },
           };
-        const listeners = new Set();
-        const lease = {
-          session: request.session,
-          state: { kind: "active", presentation: { supported: true } },
-          onDidChangeState(listener) {
-            listeners.add(listener);
-            return () => listeners.delete(listener);
-          },
-          present(rect, visible) {
-            if (lease.state.kind === "ended") return "ended";
-            presents.push({
-              tabId: request.session.tabId,
-              serverEpoch: request.session.serverEpoch,
-              visible,
-            });
-            return "accepted";
-          },
-          release() {
-            end("released");
-          },
-        };
-        const end = (reason) => {
-          if (lease.state.kind === "ended") return;
-          lease.state = { kind: "ended", reason };
-          surfaceWatchers.delete(watch);
-          for (const listener of listeners) listener(lease.state);
-        };
-        // The host's synced sessions: a new epoch ends every older lease.
-        const watch = () => {
-          if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
-        };
-        surfaceWatchers.add(watch);
-        return { ok: true, lease };
+          const end = (reason) => {
+            if (lease.state.kind === "ended") return;
+            lease.state = { kind: "ended", reason };
+            surfaceWatchers.delete(watch);
+            for (const listener of listeners) listener(lease.state);
+          };
+          // The host's synced sessions: a new epoch ends every older lease.
+          const watch = (reason) => {
+            if (reason) end(reason);
+            else if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
+          };
+          surfaceWatchers.add(watch);
+          return { ok: true, lease };
+        }
       },
     },
   };
@@ -300,15 +344,30 @@ function restartingBackend() {
     host,
     acquires,
     presents,
+    surfaceRefreshes,
+    serverSessions: () => server.sessions,
+    denyNextSurface(reason) {
+      nextSurfaceDenial = reason;
+    },
+    delaySurfaceSync(ms) {
+      surfaceSyncDelayMs = ms;
+    },
     drop() {
       up = false;
       const pending = drops;
       drops = new Set();
       for (const resolve of pending) resolve();
     },
-    syncSurface() {
-      hostEpoch = server.epoch;
-      for (const watch of surfaceWatchers) watch();
+    resume() {
+      up = true;
+      syncSurface();
+      const pending = restarts;
+      restarts = new Set();
+      for (const resolve of pending) resolve();
+    },
+    syncSurface,
+    endSurface(reason) {
+      for (const watch of surfaceWatchers) watch(reason);
     },
     navigates: () => navigates,
     opens: () => opens,
@@ -334,8 +393,8 @@ function restartingBackend() {
      * stays active) until `syncSurface()`, as when an address is entered
      * right as the server comes back.
      */
-    restart({ syncSurface = true } = {}) {
-      server.epoch = "epoch-b";
+    restart({ syncSurface = true, serverEpoch = "epoch-b" } = {}) {
+      server.epoch = serverEpoch;
       server.revision = 1;
       server.sessions = [];
       up = true;
@@ -512,8 +571,7 @@ NodeTest.test(
       const release = backend.holdSnapshot();
       backend.restart();
       await settle();
-      // The host ended the lease on the new epoch; the hold drops only when
-      // the snapshot completes. Native drops it silently, so nothing flashes.
+      // The host ended the lease on the new epoch; native drops it silently.
       NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed/);
       release();
       await settle();
@@ -529,7 +587,7 @@ NodeTest.test(
   "an address entered as the server returns stays in the bar and opens once the restart is synced",
   async () => {
     const backend = restartingBackend();
-    await withView(backend, async ({ status, enter, address, text }) => {
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
       backend.drop();
       await settle();
       const release = backend.holdSnapshot();
@@ -543,8 +601,8 @@ NodeTest.test(
       // No session is opened for an epoch the host has not synced: its
       // surface would be denied for good.
       NodeAssert.deepEqual(backend.opens(), []);
-      NodeAssert.match(text(), /Press Enter to open this address again/);
-      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch/);
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|restarted|again/);
       backend.syncSurface();
       release();
       await settle();
@@ -587,6 +645,287 @@ NodeTest.test(
       await settle();
       NodeAssert.deepEqual(backend.opens(), ["https://newer.test/"]);
       presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "an epoch-ended presentation drops silently without a sessions reconnect",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.match(status(), /^Requested https:\/\/a\.test\/ /);
+      NodeAssert.deepEqual(backend.opens(), []);
+      NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed|restarted/);
+
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "a genuinely stale acquisition drops silently and the next Enter opens one fresh session",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      backend.denyNextSurface("epoch-changed");
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(backend.serverSessions(), []);
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.equal(backend.acquires.length, 2, "no automatic retry of an epoch denial");
+      NodeAssert.doesNotMatch(text(), /Native presentation is unavailable|epoch-changed/);
+      await enter();
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/", "https://b.test/"]);
+      NodeAssert.equal(backend.serverSessions().length, 1, "no orphaned stale session");
+    });
+  },
+);
+
+NodeTest.test(
+  "host-unavailable is silent and the next Enter reattaches without another open",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      backend.denyNextSurface("host-unavailable");
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-a");
+      await enter();
+      await settle();
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-b");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-b"]);
+      NodeAssert.equal(backend.serverSessions().length, 1);
+      NodeAssert.equal(
+        backend.acquires.length,
+        3,
+        "one attach per Enter, without automatic retries",
+      );
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+    });
+  },
+);
+
+NodeTest.test(
+  "a fresh session survives a stale host epoch after back-to-back restarts",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
+      backend.restart();
+      await settle();
+      NodeAssert.equal(hasSurface(), false);
+      backend.restart({ syncSurface: false, serverEpoch: "epoch-c" });
+      await settle();
+      backend.delaySurfaceSync(6_000);
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.equal(hasSurface(), true, "a newly opened live session must stay held");
+      NodeAssert.deepEqual(backend.acquires.at(-1), { tabId: "tab-b", serverEpoch: "epoch-c" });
+      NodeAssert.deepEqual(backend.surfaceRefreshes, ["epoch-c"]);
+      NodeAssert.equal(address(), "https://b.test/");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"], "one open for one Enter");
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.doesNotMatch(
+        text(),
+        /Native presentation is unavailable|host-unavailable|epoch-changed|restarted|refreshing/,
+      );
+      await act(async () => context.mock.timers.tick(5_999));
+      await settle();
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-a");
+      NodeAssert.doesNotMatch(
+        text(),
+        /Native presentation is unavailable|host-unavailable|epoch|refreshing/,
+      );
+      await act(async () => context.mock.timers.tick(1));
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+      NodeAssert.deepEqual(backend.presents.at(-1), {
+        tabId: "tab-b",
+        serverEpoch: "epoch-c",
+        visible: true,
+      });
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(
+        backend.serverSessions().map((session) => session.tabId),
+        ["tab-b"],
+      );
+      NodeAssert.doesNotMatch(text(), /Native presentation is unavailable|epoch-changed/);
+      NodeAssert.equal(backend.acquires.length, 2, "the pending attach is not retried");
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-c"]);
+      NodeAssert.deepEqual(
+        backend.opens(),
+        ["https://b.test/"],
+        "Enter navigates the held session",
+      );
+      NodeAssert.deepEqual(
+        backend.serverSessions().map((session) => session.tabId),
+        ["tab-b"],
+      );
+      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+    });
+  },
+);
+
+NodeTest.test(
+  "a timed-out sync stays silent and the next Enter reattaches after recovery",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const backend = restartingBackend();
+    await withView(backend, async ({ hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      backend.restart({ syncSurface: false, serverEpoch: "epoch-c" });
+      await settle();
+      backend.delaySurfaceSync(null);
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+      await act(async () => context.mock.timers.tick(30_000));
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-a");
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+      backend.delaySurfaceSync(0);
+      await enter();
+      await act(async () => context.mock.timers.tick(0));
+      await settle();
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-b");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-c"]);
+      NodeAssert.equal(backend.serverSessions().length, 1);
+      NodeAssert.equal(backend.acquires.length, 3);
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing/,
+      );
+    });
+  },
+);
+
+NodeTest.test(
+  "a timed-out sync reattaches on a matching reconnect snapshot without navigation",
+  async (context) => {
+    context.mock.timers.enable({ apis: ["setTimeout"] });
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      backend.restart({ syncSurface: false, serverEpoch: "epoch-c" });
+      await settle();
+      backend.delaySurfaceSync(null);
+      await enter("https://b.test/");
+      await settle();
+      await act(async () => context.mock.timers.tick(30_000));
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.equal(backend.presents.at(-1).tabId, "tab-a");
+      NodeAssert.equal(backend.acquires.length, 2);
+      backend.drop();
+      await settle();
+      NodeAssert.match(text(), /Environment is not connected/);
+      backend.resume();
+      await settle();
+      NodeAssert.equal(hasSurface(), true);
+      NodeAssert.deepEqual(backend.presents.at(-1), {
+        tabId: "tab-b",
+        serverEpoch: "epoch-c",
+        visible: true,
+      });
+      NodeAssert.equal(status(), "Page B — engine ready, navigation loaded");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.equal(backend.serverSessions().length, 1);
+      NodeAssert.equal(backend.acquires.length, 3);
+      NodeAssert.doesNotMatch(
+        text(),
+        /host-unavailable|epoch|Native presentation is unavailable|refreshing|not connected/,
+      );
+    });
+  },
+);
+
+NodeTest.test(
+  "a stale navigation drops its session without retrying or waiting for reconnect",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
+      backend.restart({ syncSurface: false });
+      await settle();
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-a"]);
+      NodeAssert.deepEqual(backend.opens(), [], "a stale rejection opens no session");
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.equal(address(), "https://b.test/");
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|epoch-changed|restarted|again/);
+
+      backend.syncSurface();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), []);
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "a late stale-navigation rejection leaves a freshly opened session alone",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, address, text }) => {
+      backend.restart({ syncSurface: false });
+      const releaseOlder = backend.holdNavigate();
+      await enter("https://older.test/");
+      await settle();
+      backend.syncSurface();
+      await settle();
+      await enter("https://newer.test/");
+      await settle();
+      presentingB(backend, status);
+
+      releaseOlder();
+      await settle();
+      NodeAssert.equal(address(), "https://newer.test/");
+      NodeAssert.deepEqual(backend.opens(), ["https://newer.test/"]);
+      presentingB(backend, status);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|epoch-changed|restarted|again/);
     });
   },
 );
