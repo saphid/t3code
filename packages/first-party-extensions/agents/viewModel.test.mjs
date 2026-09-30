@@ -23,6 +23,7 @@ import {
   checkpointLabel,
   claimableTerminal,
   collectDiffStream,
+  collectWorkflowScriptStream,
   countAnsweredQuestions,
   createDiffAssembly,
   deriveAgentsPanelModel,
@@ -1215,6 +1216,11 @@ NodeTest.describe("workflow launch", () => {
 });
 
 NodeTest.describe("session import", () => {
+  NodeTest.it("D1: session errors hide remote endpoint and operation details", () => {
+    const rawError =
+      "Failed to fetch remote environment endpoint http://localhost:5790/api/extensions/api/invoke (ExtensionOperationError: private detail).";
+    NodeAssert.equal(describeSessionsError(new Error(rawError)), "Session import is unavailable.");
+  });
   NodeTest.it("names the sequence of an imported session and every rejection", () => {
     NodeAssert.equal(
       describeSessionImport({
@@ -1254,9 +1260,9 @@ NodeTest.describe("session import", () => {
       describeSessionsError(new Error("API capability denied: t3.agents/scan-sessions")),
       "Needs permission t3.agents/scan-sessions. Grant it in Settings → Extensions.",
     );
-    NodeAssert.match(
+    NodeAssert.equal(
       describeSessionsError(new Error("AgentSessionsAuthorityDenied: orchestration:operate")),
-      /unavailable — AgentSessionsAuthorityDenied/,
+      "Session import needs orchestration:operate permission.",
     );
     NodeAssert.match(describeSessionsError(new Error("AgentSessionScanTimedOut")), /time limit/);
   });
@@ -1290,6 +1296,92 @@ NodeTest.describe("session import", () => {
       empty: null,
       note: null,
     });
+  });
+});
+
+NodeTest.describe("workflow script transfer", () => {
+  const contents = `${"a".repeat(8_191)}🦀${"z".repeat(16_000)}`;
+  const frames = [
+    {
+      type: "snapshot",
+      value: {
+        kind: "manifest",
+        byteLength: new TextEncoder().encode(contents).byteLength,
+        chunkCount: 2,
+        truncated: false,
+      },
+    },
+    { type: "data", value: { kind: "chunk", chunkIndex: 0, data: contents.slice(0, 8_191) } },
+    { type: "data", value: { kind: "chunk", chunkIndex: 1, data: contents.slice(8_191) } },
+  ];
+  const stream = async function* (events) {
+    yield* events;
+  };
+  NodeTest.it("rejects transport failures without displaying remote endpoint details", async () => {
+    const result = await collectDiffStream(
+      {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              Promise.reject(new Error("Failed to fetch remote environment endpoint private-url")),
+          };
+        },
+      },
+      new AbortController().signal,
+    );
+    NodeAssert.equal(result.detail, "Could not load the diff.");
+  });
+  for (const [name, events] of [
+    ["missing manifest", [frames[1]]],
+    [
+      "out-of-order chunks",
+      [frames[0], { ...frames[1], value: { ...frames[1].value, chunkIndex: 1 } }],
+    ],
+    ["oversized chunks", frames],
+    ["incomplete transfer", [frames[0], frames[1]]],
+    [
+      "over-native manifest",
+      [{ ...frames[0], value: { ...frames[0].value, byteLength: 256 * 1024 + 3 } }],
+    ],
+  ])
+    NodeTest.it(`rejects ${name}`, async () => {
+      await NodeAssert.rejects(
+        collectWorkflowScriptStream(stream(events), new AbortController().signal),
+      );
+    });
+  NodeTest.it("verifies a complete script and preserves native truncation", async () => {
+    const text = "export default '🦀';";
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    const sha256 = [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const complete = [
+      {
+        type: "snapshot",
+        value: {
+          kind: "manifest",
+          byteLength: new TextEncoder().encode(text).byteLength,
+          chunkCount: 1,
+          truncated: true,
+        },
+      },
+      { type: "data", value: { kind: "chunk", chunkIndex: 0, data: text } },
+      { type: "closed", value: { kind: "complete", sha256 } },
+    ];
+    NodeAssert.deepEqual(
+      await collectWorkflowScriptStream(stream(complete), new AbortController().signal),
+      { contents: text, truncated: true },
+    );
+    await NodeAssert.rejects(
+      collectWorkflowScriptStream(
+        stream([
+          ...complete.slice(0, -1),
+          { type: "closed", value: { kind: "complete", sha256: "0".repeat(64) } },
+        ]),
+        new AbortController().signal,
+      ),
+      /checksum/,
+    );
   });
 });
 

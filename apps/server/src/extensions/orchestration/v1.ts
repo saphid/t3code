@@ -15,6 +15,8 @@ import {
   ORCHESTRATION_STATUS_API,
   ORCHESTRATION_CONTROL_API,
   WORKFLOW_NAME_PATTERN,
+  splitWorkspaceResourceChunks,
+  WORKFLOW_SCRIPT_MAX_BYTES,
   type AgentsState,
   type OrchestrationReceipt,
 } from "@t3tools/extension-sdk/catalogue";
@@ -203,6 +205,9 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"].includes(
         probe.value.info.driverKind,
       );
+    const hasWorkflowScript = projectAgents(state).agents.some(
+      (agent) => agent.kind === "workflow" && agent.runHandles?.scriptPath !== undefined,
+    );
     return {
       streamEpoch: epoch,
       revision: state.snapshotSequence,
@@ -211,9 +216,8 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
         subscribeAgents: true,
         getTurnDiff: true,
         getThreadDiff: true,
-        getWorkflowScript: projectAgents(state).agents.some(
-          (agent) => agent.kind === "workflow" && agent.runHandles?.scriptPath !== undefined,
-        ),
+        getWorkflowScript: hasWorkflowScript,
+        readWorkflowScript: hasWorkflowScript,
         "turn.start": known,
         "turn.interrupt": known,
         "session.stop": known,
@@ -231,6 +235,28 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
       },
     };
   });
+
+  const loadWorkflowScript = async (
+    input: Parameters<HostApiProvider["invoke"]>[1],
+    context: ViewContext,
+    signal: AbortSignal,
+    metadata: HostApiInvocationMetadata,
+  ) => {
+    await guard(context, signal, metadata);
+    const safe = workflowInput(input);
+    const state = await Effect.runPromise(snapshot(context.resource.threadId!), { signal });
+    const workflow = projectAgents(state).agents.find(
+      (agent) => agent.id === safe.workflowId && agent.kind === "workflow",
+    );
+    if (!workflow?.runHandles?.scriptPath)
+      throw fail("OrchestrationUnsupported: getWorkflowScript");
+    const script = await Effect.runPromise(
+      deps.readScript({ scriptPath: workflow.runHandles.scriptPath }),
+      { signal },
+    );
+    await guard(context, signal, metadata);
+    return script;
+  };
   const control: HostApiProvider = {
     providerId: "t3.host-orchestration-control",
     definition: ORCHESTRATION_CONTROL_API,
@@ -385,33 +411,55 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
     definition: ORCHESTRATION_STATUS_API,
     requiresRootAuthority: true,
     async invoke(method, input, context, signal, metadata) {
+      if (method === "getWorkflowScript") {
+        const script = await loadWorkflowScript(input, context, signal, metadata);
+        const contents = boundedPrefix(script.contents, workflowScriptUnitsCap);
+        return {
+          contents,
+          truncated: script.truncated || contents.length < script.contents.length,
+        };
+      }
       await guard(context, signal, metadata);
       const state = await Effect.runPromise(snapshot(context.resource.threadId!), { signal });
       if (method === "getCapabilities") {
         empty(input);
         return json(await Effect.runPromise(capabilities(state), { signal }));
       }
-      if (method !== "getWorkflowScript") throw fail(`OrchestrationUnsupported: ${method}`);
-      const safe = workflowInput(input);
-      const workflow = projectAgents(state).agents.find(
-        (agent) => agent.id === safe.workflowId && agent.kind === "workflow",
-      );
-      if (!workflow?.runHandles?.scriptPath)
-        throw fail("OrchestrationUnsupported: getWorkflowScript");
-      const script = await Effect.runPromise(
-        deps.readScript({ scriptPath: workflow.runHandles.scriptPath }),
-        { signal },
-      );
-      await guard(context, signal, metadata);
-      const contents = boundedPrefix(script.contents, workflowScriptUnitsCap);
-      return {
-        contents,
-        truncated: script.truncated || contents.length < script.contents.length,
-      };
+      throw fail(`OrchestrationUnsupported: ${method}`);
     },
     subscribe(name, input, context, signal, metadata, cursor) {
       if (cursor !== undefined)
         throw fail("OrchestrationUnsupported: resumeCursor; resubscribe for a snapshot");
+      if (name === "readWorkflowScript")
+        return (async function* (): AsyncIterable<ApiStreamEvent> {
+          const script = await loadWorkflowScript(input, context, signal, metadata);
+          const chunks = splitWorkspaceResourceChunks(script.contents);
+          const byteLength = Buffer.byteLength(script.contents, "utf8");
+          if (byteLength > WORKFLOW_SCRIPT_MAX_BYTES + 2)
+            throw fail("Workflow script exceeds native read limit.");
+          yield {
+            type: "snapshot",
+            value: {
+              kind: "manifest",
+              byteLength,
+              chunkCount: chunks.length,
+              truncated: script.truncated,
+            },
+          };
+          for (const [chunkIndex, data] of chunks.entries()) {
+            if (signal.aborted) return;
+            await metadata.assertAuthority?.();
+            yield { type: "data", value: { kind: "chunk", chunkIndex, data } };
+          }
+          await guard(context, signal, metadata);
+          yield {
+            type: "closed",
+            value: {
+              kind: "complete",
+              sha256: NodeCrypto.createHash("sha256").update(script.contents, "utf8").digest("hex"),
+            },
+          };
+        })();
       if (name === "getTurnDiff" || name === "getThreadDiff")
         return (async function* () {
           await guard(context, signal, metadata);

@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { foldSubagentActivities } from "@t3tools/client-runtime/state/subagentRuntime";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { ORCHESTRATION_CONTROL_OPS } from "@t3tools/extension-sdk/catalogue";
+import {
+  ORCHESTRATION_CONTROL_OPS,
+  type WorkflowScriptStreamEvent,
+} from "@t3tools/extension-sdk/catalogue";
+import type { ApiStreamEvent } from "@t3tools/extension-sdk/capabilities";
 import type { HostApiProvider } from "@t3tools/extension-runtime";
 import * as Schema from "effect/Schema";
 import * as NodeCrypto from "node:crypto";
@@ -547,7 +551,7 @@ it("resolves workflow scripts only from this thread's folded workflow handles", 
   });
   f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
   expect(await invoke(f.status, "getCapabilities")).toMatchObject({
-    operations: { getWorkflowScript: true },
+    operations: { getWorkflowScript: true, readWorkflowScript: true },
   });
   expect(await invoke(f.status, "getWorkflowScript", { workflowId: "workflow" })).toEqual({
     contents: "export default 1;",
@@ -559,6 +563,108 @@ it("resolves workflow scripts only from this thread's folded workflow handles", 
   await expect(
     invoke(f.status, "getWorkflowScript", { workflowId: "workflow", scriptPath: "/arbitrary.js" }),
   ).rejects.toThrow();
+});
+
+it.each([16_087, 256 * 1024])(
+  "D2: streams the whole native-sized %i-byte workflow script",
+  async (length) => {
+    const f = await fixture();
+    const workflow = decodeActivity({
+      id: "workflow",
+      kind: "task.started",
+      tone: "info",
+      summary: "Workflow",
+      createdAt: "2026-09-30T00:00:00.000Z",
+      turnId: null,
+      payload: {
+        taskId: "workflow",
+        agentKind: "agent",
+        taskType: "local_workflow",
+        runHandles: { scriptPath: "/home/workflow.js" },
+      },
+    });
+    f.setState({ ...f.state, thread: { ...f.state.thread, activities: [workflow] } });
+    const contents = "a".repeat(length);
+    f.setScriptContents(contents);
+    const frames: (Omit<ApiStreamEvent, "value"> & {
+      readonly value: WorkflowScriptStreamEvent;
+    })[] = [];
+    for await (const frame of f.status.subscribe!(
+      "readWorkflowScript",
+      { workflowId: "workflow" },
+      context,
+      signal,
+      meta(f.status),
+    ))
+      frames.push(
+        frame as Omit<ApiStreamEvent, "value"> & { readonly value: WorkflowScriptStreamEvent },
+      );
+    expect(frames[0]).toMatchObject({
+      type: "snapshot",
+      value: { kind: "manifest", byteLength: length, truncated: false },
+    });
+    const chunks = frames.flatMap((frame) =>
+      frame.value.kind === "chunk" ? [frame.value.data] : [],
+    );
+    expect(chunks.join("")).toBe(contents);
+    expect(frames.at(-1)).toMatchObject({
+      type: "closed",
+      value: {
+        kind: "complete",
+        sha256: NodeCrypto.createHash("sha256").update(contents).digest("hex"),
+      },
+    });
+    expect(frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) < 64 * 1024)).toBe(
+      true,
+    );
+  },
+);
+
+it("workflow script streams share read authority and contained handle resolution", async () => {
+  const f = await fixture();
+  await expect(
+    Array.fromAsync(
+      f.status.subscribe!(
+        "readWorkflowScript",
+        { workflowId: "other" },
+        context,
+        signal,
+        meta(f.status),
+      ),
+    ),
+  ).rejects.toThrow("OrchestrationUnsupported");
+  await expect(
+    Array.fromAsync(
+      f.status.subscribe!(
+        "readWorkflowScript",
+        { workflowId: "workflow", scriptPath: "/arbitrary.js" },
+        context,
+        signal,
+        meta(f.status),
+      ),
+    ),
+  ).rejects.toThrow();
+  await expect(
+    Array.fromAsync(
+      f.status.subscribe!(
+        "readWorkflowScript",
+        { workflowId: "workflow" },
+        context,
+        signal,
+        meta(f.status, ["orchestration:operate"]),
+      ),
+    ),
+  ).rejects.toThrow("orchestration:read");
+  expect(() =>
+    f.status.subscribe!(
+      "readWorkflowScript",
+      { workflowId: "workflow" },
+      context,
+      signal,
+      meta(f.status),
+      "cursor",
+    ),
+  ).toThrow("resumeCursor");
 });
 
 it("accepts either turn ID or count for checkpoint diffs and refuses nonexistent turns", async () => {

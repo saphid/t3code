@@ -478,10 +478,12 @@ var __t3Client = (() => {
       }
     ]
   });
+  var WORKFLOW_SCRIPT_MAX_BYTES = 256 * 1024;
+  var WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
   function defineOrchestrationStatusApi(diffEventSchema) {
     return defineStreamApi({
       id: ORCHESTRATION_STATUS,
-      version: "1.0.0",
+      version: "1.1.0",
       methods: [
         {
           name: "getCapabilities",
@@ -504,6 +506,30 @@ var __t3Client = (() => {
       ],
       streams: [
         {
+          name: "readWorkflowScript",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          eventSchema: {
+            oneOf: [
+              obj({
+                kind: { const: "manifest" },
+                byteLength: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_BYTES + 2 },
+                chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
+                truncated: bool
+              }),
+              obj({
+                kind: { const: "chunk" },
+                chunkIndex: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS - 1 },
+                data: { type: "string", maxLength: 8192 }
+              }),
+              obj({
+                kind: { const: "complete" },
+                sha256: { type: "string", pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }
+              })
+            ]
+          }
+        },
+        {
           name: "subscribeAgents",
           requiredGrants: [ORCHESTRATION_READ],
           inputSchema: empty,
@@ -522,7 +548,7 @@ var __t3Client = (() => {
           eventSchema: diffEventSchema
         }
       ]
-    });
+    }, { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "readWorkflowScript" }] });
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
   var logSource = { enum: ["output"] };

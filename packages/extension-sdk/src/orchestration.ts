@@ -496,58 +496,97 @@ type StatusMethods = {
     output: { readonly contents: string; readonly truncated: boolean };
   };
 };
+export const WORKFLOW_SCRIPT_MAX_BYTES = 256 * 1024;
+export const WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
+export type WorkflowScriptStreamEvent =
+  | {
+      readonly kind: "manifest";
+      readonly byteLength: number;
+      readonly chunkCount: number;
+      readonly truncated: boolean;
+    }
+  | { readonly kind: "chunk"; readonly chunkIndex: number; readonly data: string }
+  | { readonly kind: "complete"; readonly sha256: string };
 type StatusStreams = {
   subscribeAgents: { input: Record<string, never>; event: AgentsEvent };
+  readWorkflowScript: { input: { readonly workflowId: string }; event: WorkflowScriptStreamEvent };
   getTurnDiff: { input: TurnDiffInput; event: VcsDiffPreviewStreamEvent };
   getThreadDiff: { input: Record<string, never>; event: VcsDiffPreviewStreamEvent };
 };
 export function defineOrchestrationStatusApi(
   diffEventSchema: JsonObject,
 ): TypedApi<StatusMethods> & TypedStreamApi<StatusStreams> {
-  return defineStreamApi<StatusStreams>({
-    id: ORCHESTRATION_STATUS,
-    version: "1.0.0",
-    methods: [
-      {
-        name: "getCapabilities",
-        effect: "read",
-        requiredGrants: [ORCHESTRATION_READ],
-        inputSchema: empty,
-        outputSchema: obj({
-          operations: { type: "object", additionalProperties: bool },
-          streamEpoch: id,
-          revision: num,
-        }),
-      },
-      {
-        name: "getWorkflowScript",
-        effect: "read",
-        requiredGrants: [ORCHESTRATION_READ],
-        inputSchema: obj({ workflowId: id }),
-        outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool }),
-      },
-    ],
-    streams: [
-      {
-        name: "subscribeAgents",
-        requiredGrants: [ORCHESTRATION_READ],
-        inputSchema: empty,
-        eventSchema,
-      },
-      {
-        name: "getTurnDiff",
-        requiredGrants: [ORCHESTRATION_READ],
-        inputSchema: { oneOf: [obj({ turnId: id }), obj({ turnCount: { ...num, minimum: 1 } })] },
-        eventSchema: diffEventSchema,
-      },
-      {
-        name: "getThreadDiff",
-        requiredGrants: [ORCHESTRATION_READ],
-        inputSchema: empty,
-        eventSchema: diffEventSchema,
-      },
-    ],
-  });
+  return defineStreamApi<StatusStreams>(
+    {
+      id: ORCHESTRATION_STATUS,
+      version: "1.1.0",
+      methods: [
+        {
+          name: "getCapabilities",
+          effect: "read",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          outputSchema: obj({
+            operations: { type: "object", additionalProperties: bool },
+            streamEpoch: id,
+            revision: num,
+          }),
+        },
+        {
+          name: "getWorkflowScript",
+          effect: "read",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool }),
+        },
+      ],
+      streams: [
+        {
+          name: "readWorkflowScript",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          eventSchema: {
+            oneOf: [
+              obj({
+                kind: { const: "manifest" },
+                byteLength: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_BYTES + 2 },
+                chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
+                truncated: bool,
+              }),
+              obj({
+                kind: { const: "chunk" },
+                chunkIndex: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS - 1 },
+                data: { type: "string", maxLength: 8192 },
+              }),
+              obj({
+                kind: { const: "complete" },
+                sha256: { type: "string", pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 },
+              }),
+            ],
+          },
+        },
+        {
+          name: "subscribeAgents",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          eventSchema,
+        },
+        {
+          name: "getTurnDiff",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: { oneOf: [obj({ turnId: id }), obj({ turnCount: { ...num, minimum: 1 } })] },
+          eventSchema: diffEventSchema,
+        },
+        {
+          name: "getThreadDiff",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: empty,
+          eventSchema: diffEventSchema,
+        },
+      ],
+    },
+    { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "readWorkflowScript" }] },
+  );
 }
 export const ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
 

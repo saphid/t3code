@@ -7,7 +7,7 @@ terminal.
 
 - `t3.agents/view` — `side-panel`, `thread` scope, `web`/`desktop` clients,
   null-only restore state. Same surface registration as the native manifest.
-- `t3.orchestration/status@^1.0.0` — under the `t3.orchestration/read` grant:
+- `t3.orchestration/status@^1.1.0` — under the `t3.orchestration/read` grant:
   `subscribeAgents` streams the server-folded projection (agents, pending
   approvals and user inputs, checkpoints, session, turn, receipts) as bounded
   snapshot/update frames; `getCapabilities` drives per-operation gating and
@@ -16,8 +16,11 @@ terminal.
   available mid-session light up without reopening the panel. Provider changes
   made from another client produce no thread-scoped feed event, so the session
   controls carry an explicit Refresh button as the recovery path for those;
-  `getWorkflowScript` and the `getTurnDiff`/`getThreadDiff` chunked streams
-  serve the script viewer and checkpoint diffs. Diff frames are reassembled
+  `readWorkflowScript` and the `getTurnDiff`/`getThreadDiff` chunked streams
+  serve the script viewer and checkpoint diffs. Scripts use native's 256 KiB
+  read limit, with chunk-order, byte-length, and SHA-256 verification. The
+  Script toggle and Close hide the view without refetching cached contents.
+  Diff frames are reassembled
   and verified end-to-end (chunk order, byte lengths, per-source and
   whole-payload sha256) before a byte renders — the same verification the
   diff panel performs. A server `closed` frame (queue overflow) resubscribes
