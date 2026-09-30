@@ -66,7 +66,7 @@ export function AgentsHeaderBadge({ count, ...scope }: AgentsEntryScope & { coun
       aria-label={label}
       data-agents-header-badge
       onClick={openAgents}
-      className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 cursor-pointer items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white [-webkit-app-region:no-drag]"
+      className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 cursor-pointer items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold tabular-nums text-white [-webkit-app-region:no-drag]"
     >
       {count}
     </button>

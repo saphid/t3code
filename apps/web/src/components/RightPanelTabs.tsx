@@ -1195,7 +1195,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // before it however many controls it hosts; the anchor already
           // includes the WCO native inset. 5px is the cluster's mr-px plus gap-1.
           sharesTitlebarOverlay
-            ? "pr-[calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem)+5px)]"
+            ? "[--right-panel-tabbar-end:calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem)+5px)] pr-(--right-panel-tabbar-end)"
             : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar &&

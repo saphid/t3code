@@ -498,7 +498,7 @@ export const ChatHeader = memo(function ChatHeader({
           // two panel toggles, for before the cluster first measures.
           rightPanelOpen
             ? "pr-0"
-            : "pr-[calc(var(--workspace-titlebar-panel-controls-width,4.25rem)+5px)] sm:pr-[calc(var(--workspace-titlebar-panel-controls-width,3.75rem)-3px)]",
+            : "[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,4.25rem)+5px)] sm:[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,3.75rem)-3px)] pr-(--chat-header-actions-end)",
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
