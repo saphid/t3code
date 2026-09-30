@@ -359,15 +359,15 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each([
-    { webLoginPresent: false, sshPort: undefined },
-    { webLoginPresent: true, sshPort: undefined },
-    { webLoginPresent: false, sshPort: 2222 },
-    { webLoginPresent: true, sshPort: 2222 },
+    { profile: "ssh.gitlab.corp.example", webLoginPresent: false, sshPort: undefined },
+    { profile: "ssh.gitlab.corp.example", webLoginPresent: true, sshPort: undefined },
+    { profile: "ssh.gitlab.corp.example", webLoginPresent: false, sshPort: 2222 },
+    { profile: "ssh.gitlab.corp.example", webLoginPresent: true, sshPort: 2222 },
+    { profile: "gitlab.corp.example", webLoginPresent: false, sshPort: 2222 },
   ])(
-    "preserves the Git hostname's authenticated API-host profile (web login: $webLoginPresent, SSH port: $sshPort)",
-    ({ webLoginPresent, sshPort }) =>
+    "preserves the Git hostname's authenticated API-host profile (Git host: $profile, web login: $webLoginPresent, SSH port: $sshPort)",
+    ({ profile, webLoginPresent, sshPort }) =>
       Effect.gen(function* () {
-        const profile = "ssh.gitlab.corp.example";
         const host = "gitlab.corp.example";
         const requests = fakeGlab({
           profiles: {
@@ -390,7 +390,9 @@ layer("GitLabCli.layer", (it) => {
         expect(result.sshUrl).toBe(`git@${profile}:alex/repo.git`);
         expect(requests).toEqual([{ profile, apiHost: host }]);
         expect(mockedRun.mock.calls.map(([call]) => ({ args: call.args, env: call.env }))).toEqual([
-          { args: ["config", "get", "api_host", "--host", profile], env: undefined },
+          ...(profile === host
+            ? []
+            : [{ args: ["config", "get", "api_host", "--host", profile], env: undefined }]),
           { args: ["api", "projects/alex%2Frepo"], env: { GITLAB_HOST: profile } },
         ]);
       }),
