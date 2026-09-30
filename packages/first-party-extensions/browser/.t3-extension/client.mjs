@@ -6413,21 +6413,13 @@ var __t3Client = (() => {
     required: [...browserSessionObjectV1.required, "devToolsOpen"],
     properties: { ...browserSessionObjectV1.properties, devToolsOpen: { type: ["boolean", "null"] } }
   };
-  var browserSessionObjectV1_2 = {
+  var browserSessionObject = {
     ...browserSessionObjectV1_1,
     required: [...browserSessionObjectV1_1.required, "pictureInPicture"],
     properties: {
       ...browserSessionObjectV1_1.properties,
       pictureInPicture: { type: ["boolean", "null"] },
       faviconRef: browserSessionFaviconRef
-    }
-  };
-  var browserSessionObject = {
-    ...browserSessionObjectV1_2,
-    properties: {
-      ...browserSessionObjectV1_2.properties,
-      controller: { enum: ["human", "agent", "none", null] },
-      remoteLive: { type: ["boolean", "null"] }
     }
   };
   var browserSessionReceiptOf = (session) => ({
@@ -6723,32 +6715,13 @@ var __t3Client = (() => {
       }
     }
   };
-  var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.3.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
-    ...browserSessionDevToolsMethods(receipt2),
-    browserSessionCommandMethod(receipt2, "setPictureInPicture", { open: { type: "boolean" } }, ["open"], [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE])
-  ], [browserSessionGetFaviconMethod]), {
-    baseline: "1.2.0",
-    additions: [
-      { version: "1.3.0", method: "list", output: "sessions[].controller" },
-      { version: "1.3.0", method: "list", output: "sessions[].remoteLive" },
-      { version: "1.3.0", method: "events", output: "sessions[].controller" },
-      { version: "1.3.0", method: "events", output: "sessions[].remoteLive" },
-      { version: "1.3.0", method: "events", output: "session.controller" },
-      { version: "1.3.0", method: "events", output: "session.remoteLive" },
-      ...["open", "navigate", ...BROWSER_SESSION_COMMANDS].flatMap((method) => [
-        { version: "1.3.0", method, output: "session.controller" },
-        { version: "1.3.0", method, output: "session.remoteLive" }
-      ])
-    ]
-  });
-  var browserSessionsApiV1_2 = defineStreamApi(browserSessionsDefinition("1.2.0", BROWSER_SESSION_COMMANDS, browserSessionObjectV1_2, (receipt2) => [
+  var browserSessionsApi = defineStreamApi(browserSessionsDefinition("1.2.0", BROWSER_SESSION_COMMANDS, browserSessionObject, (receipt2) => [
     ...browserSessionDevToolsMethods(receipt2),
     browserSessionCommandMethod(receipt2, "setPictureInPicture", { open: { type: "boolean" } }, ["open"], [BROWSER_SESSIONS, BROWSER_PICTURE_IN_PICTURE])
   ], [browserSessionGetFaviconMethod]));
   var browserSessionsApiV1_1 = defineStreamApi(browserSessionsDefinition("1.1.0", BROWSER_SESSION_COMMANDS_V1_1, browserSessionObjectV1_1, browserSessionDevToolsMethods));
   var browserSessionsApiV1 = defineStreamApi(browserSessionsDefinition("1.0.0", BROWSER_SESSION_COMMANDS_V1, browserSessionObjectV1));
   var BROWSER_SESSIONS_API = browserSessionsApi.definition;
-  var BROWSER_SESSIONS_API_V1_2 = browserSessionsApiV1_2.definition;
   var BROWSER_SESSIONS_API_V1_1 = browserSessionsApiV1_1.definition;
   var BROWSER_SESSIONS_API_V1 = browserSessionsApiV1.definition;
   var BROWSER_PROFILES = "t3.browser/profiles";
@@ -8443,7 +8416,6 @@ var __t3Client = (() => {
     browserLocalServersApi.definition,
     browserHistoryApi.definition,
     browserSessionsApi.definition,
-    browserSessionsApiV1_2.definition,
     browserSessionsApiV1_1.definition,
     browserSessionsApiV1.definition,
     browserProfilesApi.definition,
@@ -19010,8 +18982,6 @@ ${titledTitle}`;
               {
                 ref: surfaceSlotRef,
                 "aria-label": "Browser surface",
-                "data-browser-controller": live?.controller ?? "none",
-                "data-browser-remote-live": live?.remoteLive ?? false,
                 style: { position: "absolute", inset: 0 }
               },
               surfaceAttempt

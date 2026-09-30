@@ -81,19 +81,6 @@ describe("preview automation open readiness", () => {
 });
 
 describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () => {
-  it("keeps an extension-presented engine session in its existing surface", () => {
-    expect(shouldOpenPreviewMiniPlayer({}, true, true)).toBe(false);
-    expect(shouldOpenPreviewMiniPlayer({ open: true }, false, true)).toBe(false);
-    expect(
-      shouldAutoShowPreviewForAutomationUse({
-        operation: "click",
-        autoShowFloatingPreview: true,
-        presentationSuppressed: false,
-        alreadyPresented: true,
-      }),
-    ).toBe(false);
-  });
-
   it("honours the preference when the agent said nothing either way", () => {
     // `preview_open` no longer arrives with `open` pre-filled, so an agent
     // that omitted it leaves the decision to the user's setting.

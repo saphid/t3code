@@ -1,5 +1,5 @@
 /**
- * `t3.browser/sessions@1.3.0` (serving the frozen 1.2.0, 1.1.0 and 1.0.0 consumers
+ * `t3.browser/sessions@1.2.0` (serving the frozen 1.1.0 and 1.0.0 consumers
  * too) — public browser-session metadata capability.
  *
  * This adapter projects the server's native `PreviewManager` state through
@@ -304,8 +304,6 @@ export const projectSession = (
     audible: status?.audible ?? null,
     devToolsOpen: status?.devToolsOpen ?? null,
     pictureInPicture: status?.pictureInPicture ?? null,
-    controller: status?.controller ?? null,
-    remoteLive: status?.remoteLive ?? null,
     ...(faviconRef === null ? {} : { faviconRef }),
   };
 };

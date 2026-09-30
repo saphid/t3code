@@ -1324,8 +1324,6 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             key={surfaceAttempt}
             ref={surfaceSlotRef}
             aria-label="Browser surface"
-            data-browser-controller={live?.controller ?? "none"}
-            data-browser-remote-live={live?.remoteLive ?? false}
             style={{ position: "absolute", inset: 0 }}
           />
           {remoteEligible && remote.status.kind !== "unsupported" && (

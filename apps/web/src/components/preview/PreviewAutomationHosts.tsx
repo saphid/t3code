@@ -411,8 +411,6 @@ function PreviewAutomationHostInner(props: {
               shouldAutoShowPreviewForAutomationUse({
                 operation: request.operation,
                 autoShowFloatingPreview,
-                alreadyPresented:
-                  useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible ?? false,
                 presentationSuppressed:
                   presentationSuppressedRuntimeTabsRef.current
                     .get(request.threadId)
@@ -523,11 +521,6 @@ function PreviewAutomationHostInner(props: {
               input,
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
-            const shouldShowMiniPlayer = shouldOpenPreviewMiniPlayer(
-              input,
-              shouldPresentPreview,
-              useBrowserSurfaceStore.getState().byTabId[activeRuntimeTabId]?.visible ?? false,
-            );
             const explicitlySuppressed = explicitlySuppressesPreviewMiniPlayer(input);
             const suppressedTabs = presentationSuppressedRuntimeTabsRef.current.get(
               request.threadId,
@@ -554,7 +547,7 @@ function PreviewAutomationHostInner(props: {
                 presentationSuppressedRuntimeTabsRef.current.delete(request.threadId);
               }
             }
-            if (shouldShowMiniPlayer) {
+            if (shouldPresentPreview) {
               usePreviewMiniPlayerStore
                 .getState()
                 .open(threadRef, browserMiniPlayerSource(activeTabId));

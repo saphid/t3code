@@ -207,6 +207,7 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+import { useBrowserSurfaceStore } from "../browser/browserSurfaceStore";
 import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
@@ -1533,9 +1534,28 @@ export default function ChatView(props: ChatViewProps) {
     ? rightPanelState.surfaces
     : (rightPanelPresence.value?.surfaces ?? []);
   const mountRightPanel = rightPanelPresent || retainedExtensionSidePanel !== null;
+  const miniPlayerBrowserSurface = useBrowserSurfaceStore(
+    useShallow((state) => {
+      const source = activePreviewMiniPlayer?.source;
+      const runtimeTabId =
+        source?.kind === "browser" ? resolvePreviewRuntimeTabId?.(source.tabId) : undefined;
+      const surface = runtimeTabId ? state.byTabId[runtimeTabId] : undefined;
+      return {
+        owner: surface?.owner ?? null,
+        extensionResourceKey: surface?.extensionResourceKey ?? null,
+      };
+    }),
+  );
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
     activePreviewMiniPlayer?.source ?? null,
     renderedRightPanelSurface,
+    {
+      extensionPanelOpen:
+        rightPanelOpen &&
+        activeRightPanelSurface?.kind === "extension" &&
+        activeRightPanelSurface.id === renderedRightPanelSurface?.id,
+      browserSurface: miniPlayerBrowserSurface,
+    },
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =

@@ -109,7 +109,7 @@ describe("HostedBrowserWebview settings hydration", () => {
     const runtimeTabId = "extension-presented-tab";
     const surfaceStore = useBrowserSurfaceStore.getState();
     const owner = Symbol("extension");
-    surfaceStore.claim(runtimeTabId, owner, false, false);
+    surfaceStore.claim(runtimeTabId, owner, false, false, "extension");
     surfaceStore.present(
       runtimeTabId,
       owner,
@@ -169,6 +169,20 @@ describe("HostedBrowserWebview settings hydration", () => {
     expect(cursor().props.style.opacity).toBe(0.18);
     mocks.activeRecordings.add(runtimeTabId);
     await act(() => renderer!.update(render("agent")));
+    expect(renderer!.root.findAllByProps({ "data-agent-browser-cursor": true })).toHaveLength(0);
+    mocks.activeRecordings.clear();
+    await act(() => {
+      surfaceStore.claim(runtimeTabId, Symbol("native-without-toolbar"), false, false);
+      surfaceStore.present(
+        runtimeTabId,
+        useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner!,
+        { x: 30, y: 50, width: 900, height: 700 },
+        true,
+        0,
+        30,
+      );
+      renderer!.update(render("agent"));
+    });
     expect(renderer!.root.findAllByProps({ "data-agent-browser-cursor": true })).toHaveLength(0);
   });
 

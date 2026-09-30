@@ -63,22 +63,6 @@ describe("BrowserEngineCommand", () => {
 });
 
 describe("BrowserEngineHostReportInput", () => {
-  it("accepts optional automation observations, not a caller-issued control lease", () => {
-    const input = {
-      hostConnectionId: "host-1",
-      target,
-      engineGeneration: "42",
-      status: { ...status, controller: "agent", remoteLive: true },
-    };
-    expect(decodeReport(input)).toEqual(input);
-    expect(() =>
-      decodeReport({ ...input, status: { ...input.status, controller: "extension" } }),
-    ).toThrow();
-    expect(() =>
-      decodeReport({ ...input, status: { ...input.status, remoteLive: "true" } }),
-    ).toThrow();
-  });
-
   it("carries the page status fields", () => {
     const input = {
       hostConnectionId: "host-1",

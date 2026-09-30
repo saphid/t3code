@@ -9,8 +9,6 @@ import {
   BROWSER_SESSIONS_API,
   BROWSER_SESSIONS_API_V1,
   BROWSER_SESSIONS_API_V1_1,
-  BROWSER_SESSIONS_API_V1_2,
-  browserSessionsApi,
   BROWSER_SESSION_COMMANDS,
   GENERIC_API_CATALOGUE,
   HOST_CAPABILITY_GRANTS,
@@ -25,83 +23,39 @@ const addedOver = (next, previous) =>
   Object.keys(methodsOf(next)).filter((name) => !(name in methodsOf(previous)));
 
 NodeTest.test(
-  "agent observations are optional versioned outputs on the existing sessions read grant",
+  "t3.browser/sessions is 1.2.0 with the shipped 1.1.0 and 1.0.0 frozen alongside",
   () => {
-    NodeAssert.equal(browserSessionsApi.baseline, "1.2.0");
+    NodeAssert.equal(BROWSER_SESSIONS_API.version, "1.2.0");
+    NodeAssert.equal(BROWSER_SESSIONS_API_V1_1.version, "1.1.0");
+    NodeAssert.equal(BROWSER_SESSIONS_API_V1.version, "1.0.0");
+    NodeAssert.deepEqual(
+      GENERIC_API_CATALOGUE.filter((d) => d.id === BROWSER_SESSIONS),
+      [BROWSER_SESSIONS_API, BROWSER_SESSIONS_API_V1_1, BROWSER_SESSIONS_API_V1],
+    );
+    // Content-hash pins of the definitions as published.
+    NodeAssert.equal(
+      sha256(BROWSER_SESSIONS_API_V1),
+      "0de05ead6937c3e46f9b6b010fa6479f5718d04201022945ab3789ce87ca61e6",
+    );
+    NodeAssert.equal(
+      sha256(BROWSER_SESSIONS_API_V1_1),
+      "6cb3066f9941f168f198ab9628449243681c7b3e570e3cf1b6ac571cc72a986e",
+    );
+    NodeAssert.deepEqual(addedOver(BROWSER_SESSIONS_API_V1_1, BROWSER_SESSIONS_API_V1), [
+      "openDevTools",
+      "closeDevTools",
+    ]);
+    NodeAssert.deepEqual(addedOver(BROWSER_SESSIONS_API, BROWSER_SESSIONS_API_V1_1), [
+      "getFavicon",
+      "setPictureInPicture",
+    ]);
+    // Superset: every 1.1.0 method survives into 1.2.0 with the same grants.
     const current = methodsOf(BROWSER_SESSIONS_API);
-    const previous = methodsOf(BROWSER_SESSIONS_API_V1_2);
-    NodeAssert.deepEqual(addedOver(BROWSER_SESSIONS_API, BROWSER_SESSIONS_API_V1_2), []);
-    const session = current.list.outputSchema.properties.sessions.items;
-    NodeAssert.deepEqual(session.properties.controller, { enum: ["human", "agent", "none", null] });
-    NodeAssert.deepEqual(session.properties.remoteLive, { type: ["boolean", "null"] });
-    NodeAssert.equal(session.required.includes("controller"), false);
-    NodeAssert.equal(session.required.includes("remoteLive"), false);
-    NodeAssert.equal(
-      "controller" in previous.list.outputSchema.properties.sessions.items.properties,
-      false,
-    );
-    NodeAssert.equal(
-      "remoteLive" in previous.list.outputSchema.properties.sessions.items.properties,
-      false,
-    );
-    NodeAssert.deepEqual(current.list.requiredGrants, [BROWSER_SESSIONS]);
-    NodeAssert.deepEqual(BROWSER_SESSIONS_API.streams[0].requiredGrants, [BROWSER_SESSIONS]);
-    NodeAssert.ok(
-      browserSessionsApi.additions.some(
-        (addition) =>
-          addition.method === "events" &&
-          addition.output === "session.controller" &&
-          addition.version === "1.3.0",
-      ),
-    );
-    for (const [name, method] of Object.entries(previous)) {
-      NodeAssert.deepEqual(current[name].inputSchema, method.inputSchema);
-      NodeAssert.deepEqual(current[name].requiredGrants, method.requiredGrants);
+    for (const method of BROWSER_SESSIONS_API_V1_1.methods) {
+      NodeAssert.deepEqual(current[method.name].requiredGrants, method.requiredGrants, method.name);
     }
   },
 );
-
-NodeTest.test("t3.browser/sessions is 1.3.0 with the shipped definitions frozen alongside", () => {
-  NodeAssert.equal(BROWSER_SESSIONS_API.version, "1.3.0");
-  NodeAssert.equal(BROWSER_SESSIONS_API_V1_2.version, "1.2.0");
-  NodeAssert.equal(BROWSER_SESSIONS_API_V1_1.version, "1.1.0");
-  NodeAssert.equal(BROWSER_SESSIONS_API_V1.version, "1.0.0");
-  NodeAssert.deepEqual(
-    GENERIC_API_CATALOGUE.filter((d) => d.id === BROWSER_SESSIONS),
-    [
-      BROWSER_SESSIONS_API,
-      BROWSER_SESSIONS_API_V1_2,
-      BROWSER_SESSIONS_API_V1_1,
-      BROWSER_SESSIONS_API_V1,
-    ],
-  );
-  // Content-hash pins of the definitions as published.
-  NodeAssert.equal(
-    sha256(BROWSER_SESSIONS_API_V1),
-    "0de05ead6937c3e46f9b6b010fa6479f5718d04201022945ab3789ce87ca61e6",
-  );
-  NodeAssert.equal(
-    sha256(BROWSER_SESSIONS_API_V1_1),
-    "6cb3066f9941f168f198ab9628449243681c7b3e570e3cf1b6ac571cc72a986e",
-  );
-  NodeAssert.equal(
-    sha256(BROWSER_SESSIONS_API_V1_2),
-    "6bb1bf87e9218019c3867bcd82a3c45cf2cc2c7cf1de8fad86782d1e7bc4c7f0",
-  );
-  NodeAssert.deepEqual(addedOver(BROWSER_SESSIONS_API_V1_1, BROWSER_SESSIONS_API_V1), [
-    "openDevTools",
-    "closeDevTools",
-  ]);
-  NodeAssert.deepEqual(addedOver(BROWSER_SESSIONS_API, BROWSER_SESSIONS_API_V1_1), [
-    "getFavicon",
-    "setPictureInPicture",
-  ]);
-  // Superset: every 1.1.0 method survives into 1.2.0 with the same grants.
-  const current = methodsOf(BROWSER_SESSIONS_API);
-  for (const method of BROWSER_SESSIONS_API_V1_1.methods) {
-    NodeAssert.deepEqual(current[method.name].requiredGrants, method.requiredGrants, method.name);
-  }
-});
 
 NodeTest.test("DevTools open and close are distinct operations on their own grant", () => {
   NodeAssert.equal(BROWSER_DEVTOOLS, "t3.browser/devtools");
@@ -133,8 +87,6 @@ NodeTest.test("DevTools open and close are distinct operations on their own gran
       .map((operation) => `${api.id}@${api.version}:${operation.name}`),
   );
   NodeAssert.deepEqual(holders, [
-    "t3.browser/sessions@1.3.0:openDevTools",
-    "t3.browser/sessions@1.3.0:closeDevTools",
     "t3.browser/sessions@1.2.0:openDevTools",
     "t3.browser/sessions@1.2.0:closeDevTools",
     "t3.browser/sessions@1.1.0:openDevTools",
@@ -172,10 +124,7 @@ NodeTest.test("1.2.0 keeps picture-in-picture and favicons on their own grants",
       .filter((operation) => operation.requiredGrants.includes(BROWSER_PICTURE_IN_PICTURE))
       .map((operation) => `${api.id}@${api.version}:${operation.name}`),
   );
-  NodeAssert.deepEqual(holders, [
-    "t3.browser/sessions@1.3.0:setPictureInPicture",
-    "t3.browser/sessions@1.2.0:setPictureInPicture",
-  ]);
+  NodeAssert.deepEqual(holders, ["t3.browser/sessions@1.2.0:setPictureInPicture"]);
   const session = methodsOf(BROWSER_SESSIONS_API).list.outputSchema.properties.sessions.items;
   NodeAssert.ok(session.required.includes("devToolsOpen"));
   NodeAssert.ok(session.required.includes("pictureInPicture"));

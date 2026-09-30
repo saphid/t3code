@@ -11,7 +11,11 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 
-import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import {
+  isExtensionPresented,
+  resolveBrowserSurfacePanelRect,
+  useBrowserSurfaceStore,
+} from "./browserSurfaceStore";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
@@ -103,6 +107,8 @@ export function HostedBrowserWebview(props: {
         fitSourceContent: current?.fitSourceContent ?? false,
         fittedSourceContent: current?.fittedSourceContent ?? null,
         hostViewportControls: current?.hostViewportControls ?? true,
+        owner: current?.owner ?? null,
+        extensionResourceKey: current?.extensionResourceKey ?? null,
         rect: resolveBrowserSurfacePanelRect(state.byTabId, runtimeTabId),
         visible: current?.visible ?? false,
         zIndex: current?.zIndex ?? 30,
@@ -405,7 +411,7 @@ export function HostedBrowserWebview(props: {
       </div>
       {active &&
       lastRect &&
-      !presentation.hostViewportControls &&
+      isExtensionPresented(presentation) &&
       showAgentCursor &&
       !recordingActive ? (
         <div

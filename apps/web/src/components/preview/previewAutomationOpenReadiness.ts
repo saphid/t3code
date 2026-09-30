@@ -26,22 +26,17 @@ export const DEFAULT_PREVIEW_AUTOMATION_VIEWPORT = {
 export function shouldOpenPreviewMiniPlayer(
   input: PreviewAutomationOpenInput,
   autoShowFloatingPreview = true,
-  alreadyPresented = false,
 ): boolean {
-  return !alreadyPresented && (input.open ?? input.show ?? autoShowFloatingPreview);
+  return input.open ?? input.show ?? autoShowFloatingPreview;
 }
 
 export function shouldAutoShowPreviewForAutomationUse(input: {
   readonly operation: PreviewAutomationOperation;
   readonly autoShowFloatingPreview: boolean;
   readonly presentationSuppressed: boolean;
-  readonly alreadyPresented?: boolean;
 }): boolean {
   return (
-    input.operation !== "open" &&
-    input.autoShowFloatingPreview &&
-    !input.presentationSuppressed &&
-    !input.alreadyPresented
+    input.operation !== "open" && input.autoShowFloatingPreview && !input.presentationSuppressed
   );
 }
 

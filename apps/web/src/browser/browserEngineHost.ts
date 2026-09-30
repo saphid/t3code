@@ -118,8 +118,6 @@ export function toEnginePageStatus(state: DesktopPreviewTabState): BrowserEngine
     audible: state.audible,
     devToolsOpen: state.devToolsOpen,
     pictureInPicture: state.pictureInPicture,
-    controller: state.controller,
-    remoteLive: state.remoteLive,
     favicon,
   };
 }

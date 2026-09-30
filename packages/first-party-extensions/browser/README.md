@@ -8,13 +8,6 @@ The panel renders through public contracts only:
 - `t3.browser/sessions` (brokered, `requires`) opens/navigates/drives the
   session; the `events` stream is the only source of engine and navigation
   truth — receipts are dispatch records, never load confirmations.
-- Agent automation targets the shared engine session, not this panel. A shown
-  surface keeps its presentation lease when `preview_*` tools operate on it;
-  hidden sessions retain native's floating-preview fallback. The desktop host
-  draws the existing native agent cursor over this slot, including its zoom,
-  scroll and recording rules. Sessions 1.3.0 exposes optional `controller` and
-  `remoteLive` observations through the same grant-scoped event stream; these
-  fields do not authorize automation or change human-input priority.
 - `t3.browser/surface` (host capability on `ClientHost.browserSurface`,
   reached through `useBrowserSurfaceSlot`) composites the native webview
   into the plugin-owned slot element. Both `t3.browser/sessions` and
