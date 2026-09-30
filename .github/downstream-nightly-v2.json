@@ -100,6 +100,12 @@
       "repository": "saphid/t3code",
       "sha": "6f6ae98244eb5ad3260ecf9e0261cde0ce3d221d",
       "name": "fix(web): detect Fork Nightly servers that are behind the client"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "1084a0664dc3032e8d4afd29f61c08e2816a60c7",
+      "name": "fix(client-runtime): give the server config snapshot its own connect budget"
     }
   ]
 }
