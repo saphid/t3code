@@ -2,6 +2,10 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeTest from "node:test";
 import * as catalogue from "../dist/catalogue.js";
 
+NodeTest.test("host-local capture does not advertise a phantom brokered recording stream", () => {
+  NodeAssert.equal(catalogue.BROWSER_CAPTURE_ADDITIONS, undefined);
+});
+
 NodeTest.test("recording and artifact actions have independent installable grants", () => {
   for (const grant of ["t3.browser/recording", "t3.browser/artifact-actions"])
     NodeAssert.ok(catalogue.HOST_CAPABILITY_GRANTS.includes(grant));
@@ -12,25 +16,38 @@ NodeTest.test("recording and artifact actions have independent installable grant
   ]);
 });
 
-NodeTest.test("recording uses ApiAddition metadata and refuses older or incomplete hosts", () => {
-  NodeAssert.ok(
-    catalogue.BROWSER_CAPTURE_ADDITIONS.some(
-      (addition) => addition.method === "startRecording" && addition.version === "1.2.0",
-    ),
-  );
-  const capture = {
-    version: "1.2.0",
-    startRecording() {},
-    stopRecording() {},
-    subscribeRecording() {},
-    recordingSupport: { supported: true },
-  };
-  NodeAssert.equal(catalogue.resolveBrowserRecording(capture), capture);
-  for (const version of ["1.1.0", "2.0.0", "invalid"])
-    NodeAssert.equal(catalogue.resolveBrowserRecording({ ...capture, version }), null);
-  NodeAssert.equal(
-    catalogue.resolveBrowserRecording({ ...capture, stopRecording: undefined }),
-    null,
-  );
-  NodeAssert.equal(catalogue.resolveBrowserRecording(undefined), null);
-});
+NodeTest.test(
+  "recording grants describe video recording and saved recording actions honestly",
+  () => {
+    NodeAssert.equal(
+      catalogue.HOST_CAPABILITY_GRANT_DESCRIPTIONS?.["t3.browser/recording"],
+      "Record the browser panel as video",
+    );
+    NodeAssert.equal(
+      catalogue.HOST_CAPABILITY_GRANT_DESCRIPTIONS?.["t3.browser/artifact-actions"],
+      "Reveal saved recordings and copy their file paths",
+    );
+  },
+);
+
+NodeTest.test(
+  "recording requires its minimum version and refuses older or incomplete hosts",
+  () => {
+    NodeAssert.equal(catalogue.BROWSER_RECORDING_MIN_VERSION, "1.2.0");
+    const capture = {
+      version: "1.2.0",
+      startRecording() {},
+      stopRecording() {},
+      subscribeRecording() {},
+      recordingSupport: { supported: true },
+    };
+    NodeAssert.equal(catalogue.resolveBrowserRecording(capture), capture);
+    for (const version of ["1.1.0", "2.0.0", "invalid"])
+      NodeAssert.equal(catalogue.resolveBrowserRecording({ ...capture, version }), null);
+    NodeAssert.equal(
+      catalogue.resolveBrowserRecording({ ...capture, stopRecording: undefined }),
+      null,
+    );
+    NodeAssert.equal(catalogue.resolveBrowserRecording(undefined), null);
+  },
+);

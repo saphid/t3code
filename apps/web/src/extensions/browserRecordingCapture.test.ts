@@ -14,7 +14,7 @@ const context = {
 };
 const session = { tabId: "tab-1", serverEpoch: "epoch-1" };
 const runtimeTabId = JSON.stringify(["env-a", "thread-a", "epoch-1", "tab-1"]);
-const artifactRef = "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
+const artifactRef = "recording-recording-1";
 const artifact: DesktopPreviewRecordingArtifact = {
   id: "recording-1",
   tabId: runtimeTabId,
@@ -78,6 +78,7 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
   };
   const uploadRecording = vi.fn(async () => artifactRef);
   const writeClipboardText = vi.fn(async () => {});
+  const showSavedRecording = vi.fn();
   const lifetime = new AbortController();
   const deps = {
     preview: () => preview,
@@ -88,6 +89,9 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
     uploadRecording,
     writeClipboardText,
     platform: () => "MacIntel",
+    userActivation: () => true,
+    subscribeThread: () => () => {},
+    showSavedRecording,
     ...overrides,
   };
   const bind = createBrowserCaptureBridge("env-a", deps);
@@ -95,11 +99,108 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}, capabilities
     grants: { capabilities, projectIds: ["project-a"] },
     lifetime: lifetime.signal,
   });
-  return { host, bind, recording, uploadRecording, preview, writeClipboardText, lifetime, publish };
+  return {
+    host,
+    bind,
+    recording,
+    uploadRecording,
+    preview,
+    writeClipboardText,
+    lifetime,
+    publish,
+    showSavedRecording,
+  };
 }
 
 describe("browser recording capture", () => {
-  it("starts the native scoped session, saves and uploads once, and exposes only an artifact ref", async () => {
+  it("saves and reveals a recording over 50 MiB without attempting a transfer", async () => {
+    const fixture = harness();
+    fixture.recording.stop.mockResolvedValue({ ...artifact, sizeBytes: 51 * 1024 * 1024 });
+    fixture.uploadRecording.mockRejectedValue(new Error("Transfer unavailable"));
+    await fixture.host.startRecording!({ context, session });
+    const result = await fixture.host.stopRecording!({ context, session });
+    expect(result).toMatchObject({
+      ok: true,
+      artifact: { saved: true, sizeBytes: 51 * 1024 * 1024 },
+    });
+    if (!result.ok || !result.artifact) throw new Error("Expected a saved recording");
+    expect(
+      await fixture.host.revealArtifact!({ context, artifactRef: result.artifact.artifactRef }),
+    ).toEqual({ ok: true });
+    expect(fixture.preview.revealArtifact).toHaveBeenCalledWith(artifact.path);
+    expect(fixture.uploadRecording).not.toHaveBeenCalled();
+    expect(fixture.recording.stopForUpload).not.toHaveBeenCalled();
+  });
+
+  it("requires live user activation before starting native recording", async () => {
+    const fixture = harness({ userActivation: () => false });
+    expect(await fixture.host.startRecording!({ context, session })).toMatchObject({
+      ok: false,
+      failure: { reason: "user-activation-required" },
+    });
+    expect(fixture.recording.start).not.toHaveBeenCalled();
+  });
+
+  it("keeps a transient subscription and republishes when the shell becomes live", () => {
+    let authoritative = false;
+    let shellChanged = () => {};
+    const fixture = harness({
+      resolveThreadScope: () => ({ projectId: "project-a", authoritative }),
+      subscribeThread: (_threadRef, listener) => {
+        shellChanged = listener;
+        return () => {};
+      },
+    });
+    fixture.publish("recording");
+    const listener = vi.fn();
+    fixture.host.subscribeRecording!({ context, session }, listener);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
+    authoritative = true;
+    shellChanged();
+    expect(listener).toHaveBeenLastCalledWith({ ok: true, phase: "recording" });
+    fixture.publish("stopping");
+    expect(listener).toHaveBeenLastCalledWith({ ok: true, phase: "stopping" });
+  });
+
+  it("shows the native saved toast when its installation unloads", async () => {
+    const fixture = harness();
+    await fixture.host.startRecording!({ context, session });
+    fixture.lifetime.abort();
+    await fixture.recording.stop.mock.results[0]!.value;
+    expect(fixture.showSavedRecording).toHaveBeenCalledWith(artifact);
+  });
+
+  it("disposes shell subscriptions once across abort and explicit cleanup", () => {
+    const cleanup = vi.fn();
+    const fixture = harness({ subscribeThread: () => cleanup });
+    const unsubscribe = fixture.host.subscribeRecording!({ context, session }, () => {});
+    fixture.lifetime.abort();
+    unsubscribe();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("both callers joining a native stop receive a saved and revealable recording", async () => {
+    const fixture = harness();
+    let finishStop!: (saved: DesktopPreviewRecordingArtifact) => void;
+    const pending = new Promise<DesktopPreviewRecordingArtifact>((resolve) => {
+      finishStop = resolve;
+    });
+    fixture.recording.stop.mockReturnValue(pending);
+    await fixture.host.startRecording!({ context, session });
+    const first = fixture.host.stopRecording!({ context, session });
+    const second = fixture.host.stopRecording!({ context, session });
+    finishStop(artifact);
+    for (const result of await Promise.all([first, second])) {
+      expect(result).toMatchObject({ ok: true, artifact: { saved: true } });
+      if (!result.ok || !result.artifact) throw new Error("Expected a saved recording");
+      expect(
+        await fixture.host.revealArtifact!({ context, artifactRef: result.artifact.artifactRef }),
+      ).toEqual({ ok: true });
+    }
+    expect(fixture.uploadRecording).not.toHaveBeenCalled();
+  });
+
+  it("starts the native scoped session, saves locally, and exposes only an artifact ref", async () => {
     const fixture = harness();
     expect(await fixture.host.startRecording!({ context, session })).toEqual({
       ok: true,
@@ -121,7 +222,8 @@ describe("browser recording capture", () => {
         saved: true,
       },
     });
-    expect(fixture.uploadRecording).toHaveBeenCalledTimes(1);
+    expect(fixture.recording.stop).toHaveBeenCalledTimes(1);
+    expect(fixture.uploadRecording).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(artifact.path);
     expect(await fixture.host.revealArtifact!({ context, artifactRef })).toEqual({ ok: true });
     expect(await fixture.host.copyArtifactPath!({ context, artifactRef })).toEqual({ ok: true });
@@ -190,10 +292,7 @@ describe("browser recording capture", () => {
     shown = false;
     epoch = "epoch-2";
     expect(await fixture.host.stopRecording!({ context, session })).toMatchObject({ ok: true });
-    expect(fixture.recording.stopForUpload).toHaveBeenCalledWith(
-      runtimeTabId,
-      expect.any(Function),
-    );
+    expect(fixture.recording.stop).toHaveBeenCalledWith(runtimeTabId);
   });
 
   it("reports idle stops and cancels starts before native dispatch", async () => {
@@ -238,12 +337,13 @@ describe("browser recording capture", () => {
     expect(JSON.stringify(result)).not.toContain(artifact.path);
   });
 
-  it("reports failed transfers as upload failures without leaking the local artifact", async () => {
+  it("does not let a failed transfer hide a saved local artifact", async () => {
     const fixture = harness();
     await fixture.host.startRecording!({ context, session });
     fixture.uploadRecording.mockRejectedValue(new Error(artifact.path));
     const result = await fixture.host.stopRecording!({ context, session });
-    expect(result).toMatchObject({ ok: false, failure: { reason: "upload-failed" } });
+    expect(result).toMatchObject({ ok: true, artifact: { saved: true } });
+    expect(fixture.uploadRecording).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain(artifact.path);
   });
 
@@ -256,7 +356,7 @@ describe("browser recording capture", () => {
     expect(fixture.recording.stop).not.toHaveBeenCalled();
   });
 
-  it("keeps recording upload independent of the artifact-actions grant", async () => {
+  it("keeps local recording saves independent of the artifact-actions grant", async () => {
     const fixture = harness(
       {},
       grants.filter((grant) => grant !== "t3.browser/artifact-actions"),
@@ -283,25 +383,19 @@ describe("browser recording capture", () => {
     expect(fixture.recording.subscribe).not.toHaveBeenCalled();
   });
 
-  it("retains ownership of a new recording while an earlier recording finishes uploading", async () => {
+  it("retains ownership of a new recording while an earlier local save completes", async () => {
     const fixture = harness();
-    let completeUpload!: (value: string) => void;
-    let uploadStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      uploadStarted = resolve;
-    });
-    fixture.uploadRecording.mockImplementation(() => {
-      uploadStarted();
-      return new Promise<string>((resolve) => {
-        completeUpload = resolve;
+    let completeSave!: (value: DesktopPreviewRecordingArtifact) => void;
+    fixture.recording.stop.mockImplementationOnce(() => {
+      return new Promise<DesktopPreviewRecordingArtifact>((resolve) => {
+        completeSave = resolve;
       });
     });
     await fixture.host.startRecording!({ context, session });
     const stopped = fixture.host.stopRecording!({ context, session });
-    await started;
     fixture.publish("idle");
     await fixture.host.startRecording!({ context, session });
-    completeUpload(artifactRef);
+    completeSave(artifact);
     await stopped;
     fixture.publish("recording");
     fixture.lifetime.abort();

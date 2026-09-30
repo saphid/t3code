@@ -55,10 +55,9 @@ import {
   readBrowserRecordingPhase,
   startBrowserRecording,
   stopBrowserRecording,
-  stopBrowserRecordingForUpload,
   subscribeBrowserRecording,
 } from "~/browser/browserRecording";
-import { uploadBrowserRecording } from "~/browser/browserRecordingUpload";
+import { showBrowserRecordingSavedToast } from "~/browser/browserRecordingToast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { revealInFileExplorerLabel } from "~/components/preview/fileExplorerLabel";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -90,6 +89,9 @@ export interface BrowserCaptureBridgeDeps {
   > | null;
   readonly writeClipboardText: (text: string) => Promise<void>;
   readonly platform: () => string;
+  readonly userActivation: () => boolean;
+  readonly showSavedRecording: (artifact: DesktopPreviewRecordingArtifact) => void;
+  readonly subscribeThread: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
   /** Thread → project, trusted only from a live shell (see the surface bridge). */
   readonly resolveThreadScope: (threadRef: ScopedThreadRef) => {
     readonly projectId: string | null;
@@ -105,17 +107,10 @@ export interface BrowserCaptureBridgeDeps {
   readonly recording: {
     readonly start: typeof startBrowserRecording;
     readonly stop: typeof stopBrowserRecording;
-    readonly stopForUpload: typeof stopBrowserRecordingForUpload;
     readonly find: typeof findActiveBrowserRecordingRuntimeTabId;
     readonly phase: typeof readBrowserRecordingPhase;
     readonly subscribe: typeof subscribeBrowserRecording;
   };
-  readonly uploadRecording: (
-    threadRef: ScopedThreadRef,
-    artifact: DesktopPreviewRecordingArtifact,
-    blob: Blob,
-    deadlineMs: number,
-  ) => Promise<string>;
 }
 
 const PICKED_ELEMENTS_MAX = 16;
@@ -185,12 +180,14 @@ export function createBrowserCaptureBridge(
     recording: {
       start: startBrowserRecording,
       stop: stopBrowserRecording,
-      stopForUpload: stopBrowserRecordingForUpload,
       find: findActiveBrowserRecordingRuntimeTabId,
       phase: readBrowserRecordingPhase,
       subscribe: subscribeBrowserRecording,
     },
-    uploadRecording: uploadBrowserRecording,
+    userActivation: () => navigator.userActivation?.isActive === true,
+    showSavedRecording: showBrowserRecordingSavedToast,
+    subscribeThread: (threadRef, listener) =>
+      appAtomRegistry.subscribe(environmentShell.stateValueAtom(threadRef.environmentId), listener),
     writeClipboardText: async (text) => {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable.");
       await navigator.clipboard.writeText(text);
@@ -208,7 +205,7 @@ export function createBrowserCaptureBridge(
       : ({ supported: false, reason: "desktop-required" } as const);
     /**
      * artifactRef → the saved file and the project it was captured in, for
-     * this installation's page captures only.
+     * this installation's page captures and recordings only.
      */
     const saved = new Map<
       string,
@@ -222,12 +219,26 @@ export function createBrowserCaptureBridge(
       }
     };
     const recordingOwned = new Map<string, () => void>();
+    const stops = new Map<string, Promise<DesktopPreviewRecordingArtifact | null>>();
+    const stop = (runtimeTabId: string) => {
+      const existing = stops.get(runtimeTabId);
+      if (existing) return existing;
+      const pending = deps.recording
+        .stop(runtimeTabId)
+        .then((artifact) => {
+          if (artifact && binding.lifetime.aborted) deps.showSavedRecording(artifact);
+          return artifact;
+        })
+        .finally(() => stops.delete(runtimeTabId));
+      stops.set(runtimeTabId, pending);
+      return pending;
+    };
     binding.lifetime.addEventListener(
       "abort",
       () => {
         for (const [runtimeTabId, unsubscribe] of recordingOwned) {
           unsubscribe();
-          void deps.recording.stop(runtimeTabId).catch(() => {});
+          void stop(runtimeTabId).catch(() => {});
         }
         recordingOwned.clear();
         saved.clear();
@@ -364,11 +375,7 @@ export function createBrowserCaptureBridge(
       ok: false,
       failure: { reason, detail },
     });
-    const actionSupport: BrowserCaptureActionSupport = !support.supported
-      ? support
-      : binding.grants.capabilities.includes(BROWSER_CAPTURE_ARTIFACT_ACTIONS)
-        ? support
-        : { supported: false, reason: "grant-denied", grant: BROWSER_CAPTURE_ARTIFACT_ACTIONS };
+    const actionSupport = support;
     const missingRecordingGrant = BROWSER_RECORDING_REQUIRED_GRANTS.find(
       (grant) => !binding.grants.capabilities.includes(grant),
     );
@@ -377,6 +384,11 @@ export function createBrowserCaptureBridge(
       : missingRecordingGrant
         ? { supported: false, reason: "grant-denied", grant: missingRecordingGrant }
         : support;
+    const recordingActionSupport: BrowserCaptureActionSupport = !recordingSupport.supported
+      ? recordingSupport
+      : binding.grants.capabilities.includes(BROWSER_CAPTURE_ARTIFACT_ACTIONS)
+        ? support
+        : { supported: false, reason: "grant-denied", grant: BROWSER_CAPTURE_ARTIFACT_ACTIONS };
 
     /** Authorizes one artifact action and resolves the file it acts on. */
     const savedCapture = (
@@ -391,7 +403,7 @@ export function createBrowserCaptureBridge(
             "the installation's client lifetime has already ended.",
           ),
         };
-      for (const grant of [...BROWSER_CAPTURE_REQUIRED_GRANTS, BROWSER_CAPTURE_ARTIFACT_ACTIONS])
+      for (const grant of BROWSER_CAPTURE_REQUIRED_GRANTS)
         if (!binding.grants.capabilities.includes(grant))
           return {
             failure: actionFail(
@@ -438,6 +450,21 @@ export function createBrowserCaptureBridge(
             "No page capture this installation saved in this project on this client has that artifactRef.",
           ),
         };
+      if (!entry.image) {
+        for (const grant of [
+          ...BROWSER_RECORDING_REQUIRED_GRANTS,
+          BROWSER_CAPTURE_ARTIFACT_ACTIONS,
+        ]) {
+          if (!binding.grants.capabilities.includes(grant))
+            return {
+              failure: actionFail(
+                "grant-denied",
+                "Saved recording actions require an installation grant.",
+                grant,
+              ),
+            };
+        }
+      }
       return { path: entry.path, image: entry.image };
     };
 
@@ -492,9 +519,19 @@ export function createBrowserCaptureBridge(
           deps.preview()!.revealArtifact(path),
         ),
       recordingSupport,
+      recordingArtifactActions: {
+        copyPath: recordingActionSupport,
+        reveal: recordingActionSupport,
+        revealLabel: revealInFileExplorerLabel(deps.platform()),
+      },
       async startRecording(request): Promise<BrowserRecordingStartResult> {
         const authorized = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, true);
         if (!authorized.ok) return authorized;
+        if (!deps.userActivation())
+          return recordingFail(
+            "user-activation-required",
+            "Click a recording control to start recording the browser panel.",
+          );
         const { runtimeTabId, threadRef } = authorized;
         if (
           recordingOwned.has(runtimeTabId) ||
@@ -542,49 +579,34 @@ export function createBrowserCaptureBridge(
         if (!authorized.ok) return authorized;
         const runtimeTabId = deps.recording.find(authorized.threadRef, request.session.tabId);
         if (runtimeTabId === null) return { ok: true, artifact: null };
-        let transferFailed = false;
         try {
-          const artifact = await deps.recording.stopForUpload(
-            runtimeTabId,
-            async (savedArtifact, blob) => {
-              try {
-                return await deps.uploadRecording(
-                  authorized.threadRef,
-                  savedArtifact,
-                  blob,
-                  Date.now() + 120_000,
-                );
-              } catch (error) {
-                transferFailed = true;
-                throw error;
-              }
-            },
-          );
+          const artifact = await stop(runtimeTabId);
           if (!artifact) return { ok: true, artifact: null };
+          const artifactRef = `recording-${artifact.id}`;
           if (!binding.lifetime.aborted)
-            remember(artifact.uploadedAttachmentId, artifact.path, authorized.projectId, false);
+            remember(artifactRef, artifact.path, authorized.projectId, false);
           return {
             ok: true,
             artifact: {
-              artifactRef: artifact.uploadedAttachmentId,
+              artifactRef,
               mimeType: artifact.mimeType,
               sizeBytes: artifact.sizeBytes,
               createdAt: artifact.createdAt,
-              saved: !binding.lifetime.aborted,
+              saved: true,
             },
           };
         } catch {
-          return recordingFail(
-            transferFailed ? "upload-failed" : "recording-failed",
-            transferFailed
-              ? "The recording could not be uploaded; the saved file remains on the desktop."
-              : "The desktop could not save the recording.",
-          );
+          return recordingFail("recording-failed", "The desktop could not save the recording.");
         }
       },
       subscribeRecording(request, listener) {
         const authorized = authorizeSession(request, BROWSER_RECORDING_REQUIRED_GRANTS, false);
-        if (!authorized.ok) {
+        if (
+          !authorized.ok &&
+          (authorized.failure.reason !== "host-unavailable" ||
+            binding.lifetime.aborted ||
+            request.signal?.aborted)
+        ) {
           listener(authorized);
           return () => {};
         }
@@ -601,8 +623,17 @@ export function createBrowserCaptureBridge(
           });
         };
         const unsubscribe = deps.recording.subscribe(publish);
+        const resource = validateContext(request.context).resource;
+        const unsubscribeThread = deps.subscribeThread(
+          { environmentId: resource.environmentId, threadId: resource.threadId } as ScopedThreadRef,
+          publish,
+        );
+        let disposed = false;
         const dispose = () => {
+          if (disposed) return;
+          disposed = true;
           unsubscribe();
+          unsubscribeThread();
           binding.lifetime.removeEventListener("abort", dispose);
           request.signal?.removeEventListener("abort", dispose);
         };

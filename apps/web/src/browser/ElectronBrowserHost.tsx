@@ -10,6 +10,7 @@ import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { BrowserEngineHostConnection } from "./BrowserEngineHostConnection";
+import { BrowserRecordingControls } from "./BrowserRecordingControls";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
@@ -86,6 +87,7 @@ export function ElectronBrowserHost() {
   return (
     <div className="contents" data-electron-browser-host>
       <BrowserEngineHostConnection />
+      <BrowserRecordingControls />
       {sessions.map(
         ({
           threadRef,

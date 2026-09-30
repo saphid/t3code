@@ -91,7 +91,7 @@ The panel renders through public contracts only:
   session shown on a desktop client; elsewhere the buttons stay disabled.
   A page capture's "Screenshot saved" toast offers native's Copy path,
   Reveal and Copy image through the capability's artifact actions
-  (`t3.browser/artifact-actions` grant),
+  with the original sessions and capture grants,
   which act on the copy the desktop saved beside native screenshots; the
   toast stays open and a copy reads "Copied!" briefly
   (`t3.ui/notifications` 1.1.0 `keepOpen` actions and `flashAction`). The
@@ -99,12 +99,17 @@ The panel renders through public contracts only:
   version, and offers the actions only for a capture the desktop saved;
   otherwise the plain toast goes out.
   On a capture 1.2.0 desktop host, Shift-click starts the native recorder
-  (`t3.browser/recording` grant). Click again to stop, save the video locally
-  and upload it to the selected environment as a pending file artifact.
+  (`t3.browser/recording` grant and a live user click). Click again to stop
+  and save the video locally, with no upload or attachment size limit.
   The recording indicator follows the native recorder, including recordings
-  started outside the pack; stopping stays available when the page is hidden.
-  The "Recording saved" toast offers Reveal and Copy path with the same
-  artifact-actions grant. Older hosts and web clients do not offer recording.
+  started outside the pack. The desktop host also owns an always-visible native
+  recording control, independent of what the pack renders; stopping stays available
+  when the page is hidden. Unloading an installation saves and shows the native toast.
+  The "Recording saved" toast offers Reveal as its primary action and Copy path
+  with the recording artifact-actions grant. Recording refs are host-local, not
+  pending composer attachments. The native toolbar has no recording-upload action,
+  so the SDK offers none; native automation's explicit transfer remains separate.
+  Older hosts and web clients do not offer recording.
   Unlike the native pick, the picked elements' text context is not added to
   the draft yet — the composer contract has no preview-annotation insert.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills

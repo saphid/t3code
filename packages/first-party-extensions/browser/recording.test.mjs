@@ -147,6 +147,7 @@ NodeTest.test(
     await runBrowserRecording(fixture.host, fixture.session, held, true);
     const toast = fixture.calls.find(([method]) => method === "notify")[1];
     NodeAssert.equal(toast.title, "Recording saved");
+    NodeAssert.equal(toast.actions[0].variant, "primary");
     NodeAssert.deepEqual(
       toast.actions.map((action) => action.id),
       ["reveal", "copy-path"],
@@ -159,6 +160,40 @@ NodeTest.test(
       recordingToastActions(fixture.host.browserCapture).map((action) => action.id),
       ["reveal", "copy-path"],
     );
+  },
+);
+
+NodeTest.test(
+  "a transient subscription failure does not turn a running recording into a start control",
+  async () => {
+    const fixture = harness();
+    let controls;
+    function Probe() {
+      const current = useBrowserRecording(fixture.host, fixture.session, held, "shown");
+      React.useEffect(() => {
+        controls = current;
+      });
+      return null;
+    }
+    let renderer;
+    await act(async () => {
+      renderer = create(React.createElement(Probe));
+    });
+    await act(async () => {
+      fixture.publish("recording");
+    });
+    await act(async () => {
+      for (const listener of fixture.listeners)
+        listener({ ok: false, failure: { reason: "host-unavailable" } });
+    });
+    NodeAssert.equal(controls.phase, "recording");
+    await act(async () => {
+      await controls.toggle();
+    });
+    NodeAssert.equal(fixture.calls.find(([method]) => method === "stop")[0], "stop");
+    await act(async () => {
+      renderer.unmount();
+    });
   },
 );
 

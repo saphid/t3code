@@ -133,6 +133,7 @@ export function ScreenshotButton(props: {
         {recording && (
           <span
             aria-hidden
+            className="animate-status-pulse"
             style={{
               position: "absolute",
               right: 2,

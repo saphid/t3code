@@ -14,6 +14,7 @@ const {
   registrySet,
   requestDisplayMediaCapture,
   save,
+  revealArtifact,
   startScreencast,
   stopScreencast,
 } = vi.hoisted(() => {
@@ -28,23 +29,25 @@ const {
         value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
       );
     }),
-    save: vi.fn(async (tabId: string) => ({
+    save: vi.fn(async (tabId: string, _mimeType: string, data: Uint8Array) => ({
       id: "recording-test",
       tabId,
       path: "/tmp/recording-test.webm",
       mimeType: "video/webm" as const,
-      sizeBytes: 0,
+      sizeBytes: data.byteLength,
       createdAt: "2026-06-26T00:00:00.000Z",
     })),
     startScreencast: vi.fn(async (_tabId: string) => {
       events.push("start-screencast");
     }),
     stopScreencast: vi.fn(async () => undefined),
+    revealArtifact: vi.fn(async (_path: string) => {}),
   };
 });
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
+    revealArtifact,
     recording: {
       onFrame: vi.fn(),
       save,
@@ -119,6 +122,14 @@ class FakeMediaRecorder {
     this.state = "recording";
   }
 
+  emitData(data: Blob): void {
+    const event = Object.assign(new Event("dataavailable"), { data });
+    for (const listener of this.listeners.get("dataavailable") ?? []) {
+      if (typeof listener === "function") listener(event);
+      else listener.handleEvent(event);
+    }
+  }
+
   stop(): void {
     if (FakeMediaRecorder.stopError !== undefined) throw FakeMediaRecorder.stopError;
     this.state = "inactive";
@@ -176,7 +187,7 @@ describe("browser recording", () => {
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
   });
 
-  it("runs SDK capture through the native recorder and transfers the saved artifact once", async () => {
+  it("saves and reveals SDK recordings over 50 MiB through the native recorder, joining both stop callers", async () => {
     const threadRef = {
       environmentId: EnvironmentId.make("sdk-env"),
       threadId: ThreadId.make("sdk-thread"),
@@ -192,23 +203,21 @@ describe("browser recording", () => {
         threadId: threadRef.threadId,
       },
     };
-    const upload = vi.fn(async (_threadRef, artifact, blob: Blob) => {
-      expect(save).toHaveBeenCalledOnce();
-      expect(artifact.path).toBe("/tmp/recording-test.webm");
-      expect(blob.type).toBe("video/webm;codecs=vp9");
-      expect(readBrowserRecordingPhase(runtimeTabId)).toBe("idle");
-      return "pending-0f1e2d3c-4b5a-4968-8776-655443322110";
-    });
     const lifetime = new AbortController();
     const host = createBrowserCaptureBridge(threadRef.environmentId, {
       resolveThreadScope: () => ({ projectId: "sdk-project", authoritative: true }),
       serverEpoch: () => "epoch-1",
       presented: () => true,
-      uploadRecording: upload,
+      userActivation: () => true,
       platform: () => "MacIntel",
     })({
       grants: {
-        capabilities: ["t3.browser/sessions", "t3.browser/capture", "t3.browser/recording"],
+        capabilities: [
+          "t3.browser/sessions",
+          "t3.browser/capture",
+          "t3.browser/recording",
+          "t3.browser/artifact-actions",
+        ],
         projectIds: ["sdk-project"],
       },
       lifetime: lifetime.signal,
@@ -220,6 +229,9 @@ describe("browser recording", () => {
     const request = { context, session: { tabId: "sdk-tab", serverEpoch: "epoch-1" } };
     expect(await host.startRecording!(request)).toMatchObject({ ok: true });
     expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    FakeMediaRecorder.instances[0]!.emitData(
+      new Blob([new Uint8Array(51 * 1024 * 1024)], { type: "video/webm" }),
+    );
     const [first, second] = await Promise.all([
       host.stopRecording!(request),
       host.stopRecording!(request),
@@ -227,9 +239,17 @@ describe("browser recording", () => {
     expect(first).toEqual(second);
     expect(first).toMatchObject({
       ok: true,
-      artifact: { artifactRef: "pending-0f1e2d3c-4b5a-4968-8776-655443322110", saved: true },
+      artifact: {
+        artifactRef: "recording-recording-test",
+        saved: true,
+        sizeBytes: 51 * 1024 * 1024,
+      },
     });
-    expect(upload).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledOnce();
+    expect(
+      await host.revealArtifact!({ context, artifactRef: "recording-recording-test" }),
+    ).toEqual({ ok: true });
+    expect(revealArtifact).toHaveBeenCalledWith("/tmp/recording-test.webm");
     expect(phases).toEqual(["idle", "starting", "recording", "stopping", "idle"]);
     expect(JSON.stringify(first)).not.toContain("/tmp/");
     unsubscribe();

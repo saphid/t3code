@@ -7104,15 +7104,13 @@ var __t3Client = (() => {
   var BROWSER_SURFACE_Z_INDEX = 30;
   var BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
   var BROWSER_RECORDING = "t3.browser/recording";
-  var BROWSER_CAPTURE_ADDITIONS = [
-    { version: "1.1.0", method: "copyArtifactToClipboard" },
-    { version: "1.1.0", method: "copyArtifactPath" },
-    { version: "1.1.0", method: "revealArtifact" },
-    { version: "1.2.0", method: "startRecording" },
-    { version: "1.2.0", method: "stopRecording" },
-    { version: "1.2.0", stream: "recording" }
-  ];
+  var BROWSER_RECORDING_MIN_VERSION = "1.2.0";
+  var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    [BROWSER_RECORDING]: "Record the browser panel as video",
+    [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
+  };
   var BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE];
   var BROWSER_RECORDING_REQUIRED_GRANTS = [
     ...BROWSER_CAPTURE_REQUIRED_GRANTS,
@@ -7121,8 +7119,7 @@ var __t3Client = (() => {
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   function resolveBrowserRecording(capture) {
     const version2 = capture && parseVersion(capture.version);
-    const addition = BROWSER_CAPTURE_ADDITIONS.find((member) => "method" in member && member.method === "startRecording");
-    const minimum = addition && parseVersion(addition.version);
+    const minimum = parseVersion(BROWSER_RECORDING_MIN_VERSION);
     return capture && version2 && minimum && version2[0] === minimum[0] && compareVersions(version2, minimum) >= 0 && capture.startRecording && capture.stopRecording && capture.subscribeRecording && capture.recordingSupport ? capture : null;
   }
   var COMPOSER_CONTEXT = "t3.composer/context";
@@ -9420,18 +9417,18 @@ var __t3Client = (() => {
         };
     }
   }
-  function copyFailureBody(reason) {
+  function copyFailureBody(reason, kind) {
     switch (reason) {
       case "artifact-not-found":
-        return "This screenshot is no longer available to copy.";
+        return kind === "recording" ? "This recording is no longer available to copy." : "This screenshot is no longer available to copy.";
       case "desktop-required":
-        return "Saved screenshots live in the T3 Code desktop app.";
+        return kind === "recording" ? "Saved recordings live in the T3 Code desktop app." : "Saved screenshots live in the T3 Code desktop app.";
       case "grant-denied":
       case "scope-invalid":
       case "host-unavailable":
-        return "This panel can no longer reach the saved screenshot.";
+        return kind === "recording" ? "This panel can no longer reach the saved recording." : "This panel can no longer reach the saved screenshot.";
       case "action-failed":
-        return "The saved screenshot could not be copied.";
+        return kind === "recording" ? "The saved recording could not be copied." : "The saved screenshot could not be copied.";
     }
   }
   async function runCaptureToastAction(notifications, capture, request, notificationId, actionId, signal, kind = "screenshot") {
@@ -9439,7 +9436,10 @@ var __t3Client = (() => {
       await capture.revealArtifact?.(request);
       return;
     }
-    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? { run: capture.copyArtifactPath, failTitle: `Unable to copy ${kind} path` } : null;
+    const copy = actionId === "copy-image" ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" } : actionId === "copy-path" ? {
+      run: capture.copyArtifactPath,
+      failTitle: kind === "recording" ? "Unable to copy recording path" : "Unable to copy screenshot path"
+    } : null;
     if (!copy?.run) return;
     const result2 = await copy.run(request);
     if (signal.aborted) return;
@@ -9455,7 +9455,7 @@ var __t3Client = (() => {
         notificationId,
         severity: "error",
         title: copy.failTitle,
-        body: copyFailureBody(result2.failure.reason).replaceAll("screenshot", kind)
+        body: copyFailureBody(result2.failure.reason, kind)
       },
       signal
     );
@@ -9618,8 +9618,14 @@ var __t3Client = (() => {
     return null;
   }
   function recordingToastActions(capture) {
-    const actions = captureToastActions(capture);
-    return ["reveal", "copy-path"].flatMap((id2) => actions.filter((action) => action.id === id2));
+    const support = capture.recordingArtifactActions ?? capture.artifactActions;
+    if (!support) return [];
+    const actions = [];
+    if (support.reveal.supported && capture.revealArtifact)
+      actions.push({ id: "reveal", label: support.revealLabel, variant: "primary", keepOpen: true });
+    if (support.copyPath.supported && capture.copyArtifactPath)
+      actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+    return actions;
   }
   async function runBrowserRecording(host, session, held, stopping) {
     const capture = resolveBrowserRecording(host.browserCapture);
@@ -9719,8 +9725,8 @@ var __t3Client = (() => {
       const unsubscribe = capture.subscribeRecording(
         { context: context2, session: { tabId, serverEpoch }, signal },
         (state3) => {
-          if (!signal.aborted)
-            setState({ context: context2, tabId, serverEpoch, phase: state3.ok ? state3.phase : "idle" });
+          if (!signal.aborted && state3.ok)
+            setState({ context: context2, tabId, serverEpoch, phase: state3.phase });
         }
       );
       return () => {
@@ -9844,6 +9850,7 @@ var __t3Client = (() => {
                 "span",
                 {
                   "aria-hidden": true,
+                  className: "animate-status-pulse",
                   style: {
                     position: "absolute",
                     right: 2,

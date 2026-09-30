@@ -12,7 +12,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   CAPTURE_TOAST_DURATION_MS,
   NOTIFY_ACK_TIMEOUT_MS,
-  captureToastActions,
   serveCaptureToastActions,
   type CapturePageView,
   type CaptureSessionRef,
@@ -37,8 +36,14 @@ export function recordingUnavailableReason(
 }
 
 export function recordingToastActions(capture: BrowserCaptureHost): readonly CaptureToastAction[] {
-  const actions = captureToastActions(capture);
-  return ["reveal", "copy-path"].flatMap((id) => actions.filter((action) => action.id === id));
+  const support = capture.recordingArtifactActions ?? capture.artifactActions;
+  if (!support) return [];
+  const actions: CaptureToastAction[] = [];
+  if (support.reveal.supported && capture.revealArtifact)
+    actions.push({ id: "reveal", label: support.revealLabel, variant: "primary", keepOpen: true });
+  if (support.copyPath.supported && capture.copyArtifactPath)
+    actions.push({ id: "copy-path", label: "Copy path", keepOpen: true });
+  return actions;
 }
 
 export async function runBrowserRecording(
@@ -165,8 +170,8 @@ export function useBrowserRecording(
     const unsubscribe = capture.subscribeRecording(
       { context, session: { tabId, serverEpoch }, signal },
       (state) => {
-        if (!signal.aborted)
-          setState({ context, tabId, serverEpoch, phase: state.ok ? state.phase : "idle" });
+        if (!signal.aborted && state.ok)
+          setState({ context, tabId, serverEpoch, phase: state.phase });
       },
     );
     return () => {

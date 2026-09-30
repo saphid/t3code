@@ -127,6 +127,25 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
 }
 
 describe("browser capture bridge", () => {
+  it("preserves the 1.1.0 screenshot actions with only the original grants", async () => {
+    const fixture = harness();
+    const host = fixture.host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE] });
+    const result = await host.capture({ context, session, target: "page" });
+    expect(result.ok).toBe(true);
+    expect(host.artifactActions).toMatchObject({
+      copyImage: { supported: true },
+      copyPath: { supported: true },
+      reveal: { supported: true },
+    });
+    for (const action of [
+      host.revealArtifact!,
+      host.copyArtifactPath!,
+      host.copyArtifactToClipboard!,
+    ]) {
+      expect(await action({ context, artifactRef: ARTIFACT_REF })).toEqual({ ok: true });
+    }
+  });
+
   it("captures the page into the store and hands back only an artifactRef", async () => {
     const h = harness();
     const result = await h.host().capture({ context, session, target: "page" });
@@ -353,20 +372,17 @@ describe("browser capture bridge", () => {
   describe("artifact actions", () => {
     const request = { context, artifactRef: ARTIFACT_REF };
 
-    it("requires the artifact-actions grant without denying screenshot capture", async () => {
+    it("does not require a new grant for saved screenshot actions", async () => {
       const h = harness();
       const host = h.host({ capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE] });
       expect(await host.capture({ context, session, target: "page" })).toMatchObject({ ok: true });
-      expect(await host.revealArtifact!(request)).toMatchObject({
-        ok: false,
-        failure: { reason: "grant-denied", grant: "t3.browser/artifact-actions" },
-      });
-      expect(await host.copyArtifactToClipboard!(request)).toMatchObject({ ok: false });
-      expect(await host.copyArtifactPath!(request)).toMatchObject({ ok: false });
-      expect(host.artifactActions?.reveal.supported).toBe(false);
-      expect(h.preview.revealArtifact).not.toHaveBeenCalled();
-      expect(h.preview.copyArtifactToClipboard).not.toHaveBeenCalled();
-      expect(h.clipboardText).toEqual([]);
+      expect(await host.revealArtifact!(request)).toEqual({ ok: true });
+      expect(await host.copyArtifactToClipboard!(request)).toEqual({ ok: true });
+      expect(await host.copyArtifactPath!(request)).toEqual({ ok: true });
+      expect(host.artifactActions?.reveal.supported).toBe(true);
+      expect(h.preview.revealArtifact).toHaveBeenCalledWith(SAVED_PATH);
+      expect(h.preview.copyArtifactToClipboard).toHaveBeenCalledWith(SAVED_PATH);
+      expect(h.clipboardText).toEqual([SAVED_PATH]);
     });
 
     it("acts on the file its own page capture saved, through the desktop bridge", async () => {

@@ -9,7 +9,6 @@ import {
   defineApi,
   defineStreamApi,
   type ApiClient,
-  type ApiAddition,
   type ApiDefinition,
   type ApiMethod,
   type TypedApi,
@@ -7590,25 +7589,22 @@ export interface BrowserFramesHost {
  * `revealArtifact`. They act on the copy the desktop app saved beside the
  * built-in browser's own screenshots, so the plugin never sees a filesystem
  * path. `artifactActions` says which ones work here; web clients report
- * `desktop-required`. 1.2.0 gates those actions with the separate
- * `t3.browser/artifact-actions` grant and adds native start/stop recording
- * with `t3.browser/recording`. Recording phase subscriptions are client-local;
- * a stop saves the video and uploads it as a pending file artifact, without
- * exposing bytes or local paths. Recording refs support reveal and copy path,
- * not copy image. They are not accepted by composer `insertImage`.
+ * `desktop-required`. 1.2.0 preserves those grants and adds native start/stop
+ * recording with `t3.browser/recording`. Starting requires live user activation.
+ * Recording phase subscriptions are client-local; a stop saves the video locally
+ * without uploading it or exposing bytes or local paths. `recordingArtifactActions`
+ * requires `t3.browser/artifact-actions` for reveal and copy path, not copy image.
+ * Recording refs are host-local, not pending uploads or composer attachments.
  * --------------------------------------------------------------------- */
 export const BROWSER_CAPTURE = "t3.browser/capture";
 export const BROWSER_CAPTURE_VERSION = "1.2.0";
 export const BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
 export const BROWSER_RECORDING = "t3.browser/recording";
-export const BROWSER_CAPTURE_ADDITIONS: readonly ApiAddition[] = [
-  { version: "1.1.0", method: "copyArtifactToClipboard" },
-  { version: "1.1.0", method: "copyArtifactPath" },
-  { version: "1.1.0", method: "revealArtifact" },
-  { version: "1.2.0", method: "startRecording" },
-  { version: "1.2.0", method: "stopRecording" },
-  { version: "1.2.0", stream: "recording" },
-];
+export const BROWSER_RECORDING_MIN_VERSION = "1.2.0";
+export const HOST_CAPABILITY_GRANT_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  [BROWSER_RECORDING]: "Record the browser panel as video",
+  [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths",
+};
 /** Both grants are required to capture. */
 export const BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE] as const;
 export const BROWSER_RECORDING_REQUIRED_GRANTS = [
@@ -7746,7 +7742,7 @@ export type BrowserCaptureArtifactActionFailureReason =
 export interface BrowserCaptureArtifactActionRequest {
   /** The calling view's own context. */
   readonly context: ViewContext;
-  /** A ref this installation's `capture` returned for a page target. */
+  /** A saved ref this installation's page capture or recording stop returned. */
   readonly artifactRef: string;
 }
 
@@ -7777,7 +7773,7 @@ export interface BrowserRecordingArtifact {
   readonly saved: boolean;
 }
 export interface BrowserRecordingFailure {
-  readonly reason: BrowserCaptureFailureReason | "recording-failed";
+  readonly reason: BrowserCaptureFailureReason | "recording-failed" | "user-activation-required";
   readonly detail: string;
   readonly grant?: string;
 }
@@ -7813,6 +7809,10 @@ export interface BrowserCaptureHost {
     request: BrowserCaptureArtifactActionRequest,
   ): Promise<BrowserCaptureArtifactActionResult>;
   readonly recordingSupport?: BrowserCaptureActionSupport;
+  readonly recordingArtifactActions?: Pick<
+    BrowserCaptureArtifactActions,
+    "copyPath" | "reveal" | "revealLabel"
+  >;
   startRecording?(request: BrowserRecordingRequest): Promise<BrowserRecordingStartResult>;
   stopRecording?(request: BrowserRecordingRequest): Promise<BrowserRecordingStopResult>;
   subscribeRecording?(
@@ -7833,10 +7833,7 @@ export function resolveBrowserRecording(
       >)
   | null {
   const version = capture && parseVersion(capture.version);
-  const addition = BROWSER_CAPTURE_ADDITIONS.find(
-    (member) => "method" in member && member.method === "startRecording",
-  );
-  const minimum = addition && parseVersion(addition.version);
+  const minimum = parseVersion(BROWSER_RECORDING_MIN_VERSION);
   return capture &&
     version &&
     minimum &&
