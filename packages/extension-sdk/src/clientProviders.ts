@@ -1,4 +1,3 @@
-import { CLIENT_PROVIDER_VERSIONS } from "./clientProviderVersions.js";
 import { validateApiDefinition, type ApiDefinition } from "./capabilities.js";
 import {
   browserMiniPlayerInputProperties,
@@ -156,7 +155,7 @@ export const terminalAppearanceSchema = {
 
 export const CLIENT_THEME_API = validateApiDefinition({
   id: "t3.client/theme",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/theme"],
+  version: "1.0.0",
   methods: [
     {
       name: "getState",
@@ -255,7 +254,7 @@ const notificationBodySchema = {
 
 export const CLIENT_NOTIFICATIONS_API = validateApiDefinition({
   id: "t3.client/notifications",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/notifications"],
+  version: "1.1.0",
   methods: [
     {
       name: "notify",
@@ -362,7 +361,7 @@ export const commandResultSchema = {
 
 export const CLIENT_KEYBINDINGS_API = validateApiDefinition({
   id: "t3.client/keybindings",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/keybindings"],
+  version: "1.0.0",
   methods: [
     {
       name: "registerCommands",
@@ -442,7 +441,7 @@ const panelThreadInput = {
 
 export const CLIENT_PANELS_API = validateApiDefinition({
   id: "t3.client/panels",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/panels"],
+  version: "1.1.0",
   methods: [
     {
       name: "getCapabilities",
@@ -682,7 +681,7 @@ export const listAnnotationsIncludeSchema = {
 
 export const CLIENT_COMPOSER_API = validateApiDefinition({
   id: "t3.client/composer",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/composer"],
+  version: "1.4.0",
   methods: [
     {
       name: "insertPreviewAnnotation",
@@ -911,7 +910,7 @@ export const CLIENT_COMPOSER_API = validateApiDefinition({
 
 export const CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
   id: "t3.client/terminal-appearance",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/terminal-appearance"],
+  version: "1.0.0",
   methods: [
     {
       name: "getAppearance",
@@ -995,7 +994,7 @@ export const clientPreferencesReceiptSchema = {
 
 export const CLIENT_PREFERENCES_API = validateApiDefinition({
   id: "t3.client/preferences",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/preferences"],
+  version: "1.2.0",
   methods: [
     {
       name: "getPreferences",
@@ -1086,7 +1085,7 @@ export const uiExternalLinkInputProperties = {
  */
 export const CLIENT_EXTERNAL_API = validateApiDefinition({
   id: "t3.client/external",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/external"],
+  version: "1.1.0",
   methods: [
     {
       name: "open",
@@ -1212,7 +1211,7 @@ export const editorCapabilitiesSchema = {
 /** Backs `t3.ui/editor`: the client owns the preferred editor and opens through its environment. */
 export const CLIENT_EDITOR_API = validateApiDefinition({
   id: "t3.client/editor",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/editor"],
+  version: "1.1.0",
   methods: [
     {
       name: "openPath",
@@ -1274,7 +1273,7 @@ const historyUrl = { type: "string", minLength: 1, maxLength: 4096 } as const;
  */
 export const CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
   id: "t3.client/browser-history",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/browser-history"],
+  version: "1.1.0",
   methods: [
     {
       name: "list",
@@ -1430,7 +1429,7 @@ export const uiNavigationSessionReceiptSchema = {
  */
 export const CLIENT_NAVIGATION_API = validateApiDefinition({
   id: "t3.client/navigation",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/navigation"],
+  version: "1.2.0",
   methods: [
     {
       name: "openThread",
@@ -1549,7 +1548,7 @@ export const prHandoffResultSchema = {
  */
 export const CLIENT_PR_HANDOFF_API = validateApiDefinition({
   id: "t3.client/pr-handoff",
-  version: CLIENT_PROVIDER_VERSIONS["t3.client/pr-handoff"],
+  version: "1.0.0",
   methods: [
     {
       name: "start",

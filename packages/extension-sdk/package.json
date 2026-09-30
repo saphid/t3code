@@ -75,10 +75,6 @@
       "types": "./dist/authoring.d.ts",
       "default": "./dist/authoring.js"
     },
-    "./clientProviderVersions": {
-      "types": "./dist/clientProviderVersions.d.ts",
-      "default": "./dist/clientProviderVersions.js"
-    },
     "./clientProviders": {
       "types": "./dist/clientProviders.d.ts",
       "default": "./dist/clientProviders.js"

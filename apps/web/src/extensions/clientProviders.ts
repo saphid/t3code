@@ -35,11 +35,11 @@ import {
   type UiNavigationRefusalReason,
 } from "@t3tools/extension-sdk/catalogue";
 import {
+  CLIENT_PROVIDER_APIS,
   CLIENT_PR_HANDOFF_MODES,
   CLIENT_PR_HANDOFF_TASKS,
   LISTED_ANNOTATION_TEXT_MAX,
 } from "@t3tools/extension-sdk/clientProviders";
-import { CLIENT_PROVIDER_VERSIONS } from "@t3tools/extension-sdk/clientProviderVersions";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -2417,9 +2417,9 @@ export function createClientProviders(
   ]);
 }
 
-// Share versions with the SDK/server without loading their validation schemas.
-export const CLIENT_PROVIDER_DESCRIPTORS = Object.entries(CLIENT_PROVIDER_VERSIONS).map(
-  ([id, version]) => ({ id, version }),
+// SDK version bumps require the matching client handler in the same change.
+export const CLIENT_PROVIDER_DESCRIPTORS = [...CLIENT_PROVIDER_APIS.values()].map(
+  ({ id, version }) => ({ id, version }),
 );
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";
