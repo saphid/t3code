@@ -61,7 +61,7 @@ export function filePresentationRequest(
  * names, or null when no provider is selected and the native panel presents.
  * Rejects when the provider cannot present it.
  */
-export async function presentSelected(
+async function presentSelected(
   request: PresentationRequest,
   context: ViewContext,
   signal: AbortSignal,

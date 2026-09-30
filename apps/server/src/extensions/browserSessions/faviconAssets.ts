@@ -1,6 +1,6 @@
 /**
  * Bounded favicon assets behind `t3.browser/sessions` `faviconRef`
- * (P08-FAVICON-REF). The owner host's fenced page report carries the
+ * The owner host's fenced page report carries the
  * captured favicon; the sessions projection stores it here and ships only a
  * content-addressed ref, so favicon bytes never ride the session stream.
  *
@@ -15,9 +15,9 @@ import { BROWSER_ENGINE_FAVICON_MAX_LENGTH } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 
 /** Native parity: `BROWSER_FAVICON_MAX_ENTRIES` in the native favicon store. */
-export const FAVICON_ASSETS_PER_PROJECT = 40;
+const FAVICON_ASSETS_PER_PROJECT = 40;
 /** Worst case ~3.2 MiB of data URLs. */
-export const FAVICON_ASSETS_TOTAL = 400;
+const FAVICON_ASSETS_TOTAL = 400;
 
 const FAVICON_DATA_URL =
   /^data:image\/(?:png|x-icon|vnd\.microsoft\.icon|gif|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;

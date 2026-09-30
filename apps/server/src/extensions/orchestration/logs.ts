@@ -67,21 +67,21 @@ const tailInput = Schema.decodeUnknownSync(
  * cut is redacted whole. A line that starts before them is withheld rather
  * than delivered unclassified (`shapeLogTail`).
  */
-export const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
+const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
 /**
  * Bytes before the delivered lines read to learn whether they start inside a
  * private key (`keyStateBefore`). Keys are far smaller, so a BEGIN in them
  * without its END means the window starts inside one; with no marker at all,
  * the state is unknown and leading key-like lines are withheld.
  */
-export const AGENT_LOG_KEY_SCAN_BYTES = 256 * 1024;
+const AGENT_LOG_KEY_SCAN_BYTES = 256 * 1024;
 
 /**
  * Directories the Claude harness writes agent output under: transcripts in
  * `~/.claude/projects`, task `.output` files (often symlinks into the former)
  * in `/tmp/claude-<uid>`. Missing roots are skipped.
  */
-export function defaultAgentLogRoots(): readonly string[] {
+function defaultAgentLogRoots(): readonly string[] {
   const roots = [NodePath.join(NodeOS.homedir(), ".claude", "projects")];
   if (typeof process.getuid === "function") roots.push(`/tmp/claude-${process.getuid()}`);
   return roots;
