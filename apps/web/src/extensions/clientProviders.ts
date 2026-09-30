@@ -39,6 +39,7 @@ import {
   CLIENT_PR_HANDOFF_TASKS,
   LISTED_ANNOTATION_TEXT_MAX,
 } from "@t3tools/extension-sdk/clientProviders";
+import { CLIENT_PROVIDER_VERSIONS } from "@t3tools/extension-sdk/clientProviderVersions";
 import type { Json } from "@t3tools/extension-sdk/contracts";
 import {
   applyThemeColorPreview,
@@ -2416,19 +2417,9 @@ export function createClientProviders(
   ]);
 }
 
-export const CLIENT_PROVIDER_DESCRIPTORS = [
-  { id: "t3.client/theme", version: "1.0.0" },
-  { id: "t3.client/notifications", version: "1.1.0" },
-  { id: "t3.client/keybindings", version: "1.0.0" },
-  { id: "t3.client/panels", version: "1.1.0" },
-  { id: "t3.client/composer", version: "1.4.0" },
-  { id: "t3.client/terminal-appearance", version: "1.0.0" },
-  { id: "t3.client/preferences", version: "1.2.0" },
-  { id: "t3.client/external", version: "1.1.0" },
-  { id: "t3.client/editor", version: "1.0.0" },
-  { id: "t3.client/browser-history", version: "1.1.0" },
-  { id: "t3.client/navigation", version: "1.2.0" },
-  { id: "t3.client/pr-handoff", version: "1.0.0" },
-] as const;
+// Share versions with the SDK/server without loading their validation schemas.
+export const CLIENT_PROVIDER_DESCRIPTORS = Object.entries(CLIENT_PROVIDER_VERSIONS).map(
+  ([id, version]) => ({ id, version }),
+);
 
 export const CLIENT_PROVIDER_CLIENT_TAG = isElectron ? "desktop" : "web";

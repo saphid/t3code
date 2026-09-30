@@ -8,10 +8,13 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as React from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { persistPreferredEditor } from "../editorPreferences";
+import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EditorId, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { filePresentationApi, uiNavigationApi } from "@t3tools/extension-sdk/catalogue";
 import type { ApiInvocation, ApiStreamInvocation } from "@t3tools/extension-sdk/capabilities";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
@@ -20,11 +23,28 @@ import type { ClientUiKit, UiButtonProps, UiTreeRowProps } from "@t3tools/extens
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
-import { createNavigationClientProvider } from "./clientProviders";
+import {
+  CLIENT_PROVIDER_DESCRIPTORS,
+  createEditorClientProvider,
+  createNavigationClientProvider,
+  type EditorLauncher,
+} from "./clientProviders";
+import { editorClientSeam } from "./editorClientSeam.testSupport";
+import type { InstalledPackage } from "./installedController";
+import { uiEditorApi, type UiEditorCapabilities } from "@t3tools/extension-sdk/catalogue";
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
 import { installedWorkspaceContext } from "./installedContext";
 import { NativeRightPanel } from "./nativePanels";
 import { registerWorkspaceExtension } from "./workspaceRegistry";
+
+// Only the server's environment tag is needed; its implementation owns unrelated services.
+vi.mock("../../../server/src/environment/ServerEnvironment", async () => {
+  const { Service } = await import("effect/Context");
+  class ServerEnvironment extends Service<ServerEnvironment, unknown>()(
+    "t3/environment/ServerEnvironment",
+  ) {}
+  return { ServerEnvironment };
+});
 
 vi.mock("./terminal/PersistentThreadTerminal", () => ({
   PersistentThreadTerminalDrawer: () => null,
@@ -176,6 +196,7 @@ interface Disk {
   readonly files: Record<string, string>;
   readonly uiKit?: ClientUiKit;
   readonly externalEditor?: boolean;
+  readonly editorInvoke?: (request: ApiInvocation, signal: AbortSignal) => Promise<unknown>;
   /** Directory entries the tree snapshot lists next to the files. */
   readonly directories?: readonly string[];
   /** The selected presentation provider's version; the pack's own by default. */
@@ -271,6 +292,8 @@ function packHost(disk: Disk, calls: Calls) {
       if (request.id === "t3.file/presentation")
         return filesServer.apis[0]!.methods[0]!.invoke(request.input, { signal });
       if (request.id === "t3.ui/navigation") return navigation.invoke(request, signal);
+      if (disk.editorInvoke && request.id === "t3.ui/editor")
+        return disk.editorInvoke(request, signal);
       if (disk.externalEditor && request.id === "t3.ui/editor")
         return request.method === "getCapabilities"
           ? {
@@ -1816,4 +1839,108 @@ it("keeps browser-default fallback file actions and conflict recovery controls",
   } finally {
     await panel.unmount();
   }
+});
+
+describe("Files editor controls through the real client registration and server gate", () => {
+  it.each([
+    { name: "local primary", primary: true, visible: true, openPath: true, legacy: false },
+    {
+      name: "local secondary (native hides the picker)",
+      primary: false,
+      visible: false,
+      openPath: false,
+      legacy: false,
+    },
+    { name: "legacy client", primary: true, visible: false, openPath: false, legacy: true },
+  ])("$name", async ({ primary, visible, openPath, legacy }) => {
+    const installed = {
+      id: "t3.files",
+      contentHash: "h",
+      installationGeneration: 1,
+      enabled: true,
+      grants: { capabilities: ["t3.ui/editor.open"], projectIds: [ProjectId.make("p")] },
+      package: files.package,
+    } as InstalledPackage;
+    const previousEditor = getLocalStorageItem("t3code:last-editor", EditorId);
+    persistPreferredEditor(EditorId.make("vscode"));
+    const launches: unknown[] = [];
+    const launcher: EditorLauncher = {
+      availableEditors: () => [EditorId.make("vscode"), EditorId.make("cursor")],
+      isPrimaryEnvironment: () => primary,
+      remoteState: () => ({ mode: "local-exec" }),
+      remoteEditors: async () => [],
+      openRemoteUrl: async () => false,
+      openInEditor: async (value) => {
+        launches.push(value);
+        return AsyncResult.success(undefined);
+      },
+    };
+    const client = createEditorClientProvider(
+      {
+        environmentId: ref.environmentId,
+        client: "web",
+        emit: () => {},
+        installations: () => [installed],
+      },
+      launcher,
+    );
+    const descriptors = legacy
+      ? CLIENT_PROVIDER_DESCRIPTORS.map((entry) =>
+          entry.id === "t3.client/editor" ? { ...entry, version: "1.0.0" } : entry,
+        )
+      : CLIENT_PROVIDER_DESCRIPTORS;
+    const seam = await editorClientSeam(ref.environmentId, client, descriptors);
+    let panel: Awaited<ReturnType<typeof mountPanel>> | undefined;
+    try {
+      const capabilities = (await seam.invoke(
+        {
+          id: uiEditorApi.definition.id,
+          versionRange: "^1.1.0",
+          method: "getCapabilities",
+          input: {},
+          context,
+        },
+        new AbortController().signal,
+      )) as UiEditorCapabilities;
+      expect(capabilities.operations.openPath).toBe(openPath);
+      if (legacy) expect(capabilities.editor).toBeUndefined();
+      else
+        expect(capabilities.editor).toMatchObject({
+          visible,
+          remoteHint: null,
+          preferredEditor: "vscode",
+          editors: [
+            { id: "cursor", label: "Cursor" },
+            { id: "vscode", label: "VS Code" },
+          ],
+        });
+      panel = await mountPanel({
+        files: { "a.txt": "file" },
+        uiKit: alternateKit,
+        editorInvoke: seam.invoke,
+      });
+      await act(async () => useRightPanelStore.getState().openFile(ref, "a.txt"));
+      expect(panel.labelled("Choose editor") !== undefined).toBe(visible);
+      const open = panel
+        .labelled("File actions")!
+        .findAllByType("button")
+        .find((button) => button.children.join("") === "Open in VS Code");
+      expect(open !== undefined).toBe(visible);
+      if (visible) {
+        await act(async () => {
+          open!.props.onClick();
+          await seam.opened;
+        });
+        expect(launches).toEqual([
+          { environmentId: ref.environmentId, input: { cwd: "/fixture/a.txt", editor: "vscode" } },
+        ]);
+        expect(panel.calls.log).toContainEqual(["t3.ui/editor", "openPath"]);
+      }
+    } finally {
+      await panel?.unmount();
+      await seam.dispose();
+      if (previousEditor === null) removeLocalStorageItem("t3code:last-editor");
+      else persistPreferredEditor(previousEditor);
+    }
+  });
 });

@@ -1462,6 +1462,22 @@ var __t3Client = (() => {
     open: { type: "boolean" }
   };
 
+  // node_modules/@t3tools/extension-sdk/dist/clientProviderVersions.js
+  var CLIENT_PROVIDER_VERSIONS = {
+    "t3.client/theme": "1.0.0",
+    "t3.client/notifications": "1.1.0",
+    "t3.client/keybindings": "1.0.0",
+    "t3.client/panels": "1.1.0",
+    "t3.client/composer": "1.4.0",
+    "t3.client/terminal-appearance": "1.0.0",
+    "t3.client/preferences": "1.2.0",
+    "t3.client/external": "1.1.0",
+    "t3.client/editor": "1.1.0",
+    "t3.client/browser-history": "1.1.0",
+    "t3.client/navigation": "1.2.0",
+    "t3.client/pr-handoff": "1.0.0"
+  };
+
   // node_modules/@t3tools/extension-sdk/dist/clientProviders.js
   var targetSchema = {
     type: "object",
@@ -1585,7 +1601,7 @@ var __t3Client = (() => {
   };
   var CLIENT_THEME_API = validateApiDefinition({
     id: "t3.client/theme",
-    version: "1.0.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/theme"],
     methods: [
       {
         name: "getState",
@@ -1675,7 +1691,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NOTIFICATIONS_API = validateApiDefinition({
     id: "t3.client/notifications",
-    version: "1.1.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/notifications"],
     methods: [
       {
         name: "notify",
@@ -1773,7 +1789,7 @@ var __t3Client = (() => {
   };
   var CLIENT_KEYBINDINGS_API = validateApiDefinition({
     id: "t3.client/keybindings",
-    version: "1.0.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/keybindings"],
     methods: [
       {
         name: "registerCommands",
@@ -1845,7 +1861,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PANELS_API = validateApiDefinition({
     id: "t3.client/panels",
-    version: "1.1.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/panels"],
     methods: [
       {
         name: "getCapabilities",
@@ -2056,7 +2072,7 @@ var __t3Client = (() => {
   };
   var CLIENT_COMPOSER_API = validateApiDefinition({
     id: "t3.client/composer",
-    version: "1.4.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/composer"],
     methods: [
       {
         name: "insertPreviewAnnotation",
@@ -2260,7 +2276,7 @@ var __t3Client = (() => {
   });
   var CLIENT_TERMINAL_APPEARANCE_API = validateApiDefinition({
     id: "t3.client/terminal-appearance",
-    version: "1.0.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/terminal-appearance"],
     methods: [
       {
         name: "getAppearance",
@@ -2319,7 +2335,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PREFERENCES_API = validateApiDefinition({
     id: "t3.client/preferences",
-    version: "1.2.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/preferences"],
     methods: [
       {
         name: "getPreferences",
@@ -2390,7 +2406,7 @@ var __t3Client = (() => {
   };
   var CLIENT_EXTERNAL_API = validateApiDefinition({
     id: "t3.client/external",
-    version: "1.1.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/external"],
     methods: [
       {
         name: "open",
@@ -2504,7 +2520,7 @@ var __t3Client = (() => {
   };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
-    version: "1.1.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/editor"],
     methods: [
       {
         name: "openPath",
@@ -2550,7 +2566,7 @@ var __t3Client = (() => {
   var historyUrl = { type: "string", minLength: 1, maxLength: 4096 };
   var CLIENT_BROWSER_HISTORY_API = validateApiDefinition({
     id: "t3.client/browser-history",
-    version: "1.1.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/browser-history"],
     methods: [
       {
         name: "list",
@@ -2674,7 +2690,7 @@ var __t3Client = (() => {
   };
   var CLIENT_NAVIGATION_API = validateApiDefinition({
     id: "t3.client/navigation",
-    version: "1.2.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/navigation"],
     methods: [
       {
         name: "openThread",
@@ -2760,7 +2776,7 @@ var __t3Client = (() => {
   };
   var CLIENT_PR_HANDOFF_API = validateApiDefinition({
     id: "t3.client/pr-handoff",
-    version: "1.0.0",
+    version: CLIENT_PROVIDER_VERSIONS["t3.client/pr-handoff"],
     methods: [
       {
         name: "start",
