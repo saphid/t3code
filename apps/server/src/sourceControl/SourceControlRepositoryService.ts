@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
@@ -27,6 +28,13 @@ import {
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import {
+  isConfiguredRepositoryHost,
+  isSafeRepositoryIdentifier,
+  isSafeRepositoryRemote,
+  providerRepositoryHost,
+  repositoryRemoteHost,
+} from "./remoteValidation.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 export class SourceControlRepositoryService extends Context.Service<
@@ -116,6 +124,12 @@ function toRepositoryInfo(
  * original.
  */
 function redactRemoteUrl(remoteUrl: string): string {
+  if (
+    !remoteUrl.includes("://") &&
+    /^[^@]+@[^:]+:/.test(remoteUrl) &&
+    !remoteUrl.startsWith("git@")
+  )
+    return remoteUrl.slice(remoteUrl.indexOf("@") + 1);
   try {
     const url = new URL(remoteUrl);
     // Clone URLs have no legitimate query; when one is present it is a token.
@@ -186,10 +200,66 @@ export const make = Effect.gen(function* () {
       provider: input.provider,
     });
     const provider = yield* providers.get(providerKind);
+    const repository = input.repository.trim();
+    const discovery = yield* providers.discover;
+    const configured = discovery.find(
+      (item) =>
+        item.kind === providerKind &&
+        item.status === "available" &&
+        item.auth.status === "authenticated",
+    );
+    const configuredHost = configured
+      ? Option.getOrNull(configured.auth.host)?.toLowerCase()
+      : null;
+    const host =
+      providerRepositoryHost(providerKind, repository) ??
+      configuredHost ??
+      (
+        {
+          github: "github.com",
+          gitlab: "gitlab.com",
+          "azure-devops": "dev.azure.com",
+          bitbucket: "bitbucket.org",
+          forgejo: null,
+        } as const
+      )[providerKind];
+    const invalid = () =>
+      new SourceControlRepositoryError({
+        operation: "lookupRepository",
+        provider: providerKind,
+        detail:
+          "Choose a repository on a configured provider host with safe HTTPS or SSH clone URLs.",
+      });
+    if (
+      !host ||
+      !isSafeRepositoryIdentifier(providerKind, repository) ||
+      !isConfiguredRepositoryHost(providerKind, repository, discovery)
+    )
+      return yield* invalid();
+    const qualified = providerRepositoryHost(providerKind, repository) !== null;
+    const repositoryPath = repository.includes("://")
+      ? decodeURIComponent(new URL(repository).pathname.slice(1))
+      : qualified
+        ? repository.split("/").slice(1).join("/")
+        : repository;
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
-      repository: input.repository.trim(),
+      repository: providerKind === "forgejo" ? `https://${host}/${repositoryPath}` : repositoryPath,
+      ...(providerKind === "github" || providerKind === "gitlab" ? { host } : {}),
     });
+    for (const remote of [urls.url, urls.sshUrl]) {
+      const remoteHost = repositoryRemoteHost(remote);
+      if (
+        !isSafeRepositoryRemote(remote) ||
+        (remoteHost !== host &&
+          !(
+            providerKind === "azure-devops" &&
+            host === "dev.azure.com" &&
+            remoteHost === "ssh.dev.azure.com"
+          ))
+      )
+        return yield* invalid();
+    }
     return toRepositoryInfo(providerKind, urls);
   });
 

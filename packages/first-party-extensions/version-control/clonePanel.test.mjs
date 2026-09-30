@@ -123,6 +123,35 @@ NodeTest.test("repository lists stay cached across source and visibility changes
   }
 });
 
+NodeTest.test("a successful rescan invalidates cached repository listings", async () => {
+  let lists = 0;
+  const panel = mount(render, {
+    "t3.source-control/discovery#listRepositories": () => ({
+      repositories: [{ ...repository, nameWithOwner: lists++ === 0 ? "old/repo" : "new/repo" }],
+      truncated: false,
+    }),
+  });
+  try {
+    change(panel, "Clone source", "github");
+    await flush();
+    NodeAssert.match(panel.text(), /old\/repo/);
+    panel.update((host, session) =>
+      React.createElement(CloneRepositoryPanel, {
+        host,
+        session,
+        discovery: { ...discovery, providers: [...discovery.providers] },
+        visible: true,
+      }),
+    );
+    await flush();
+    NodeAssert.equal(lists, 2);
+    NodeAssert.match(panel.text(), /new\/repo/);
+    NodeAssert.doesNotMatch(panel.text(), /old\/repo/);
+  } finally {
+    panel.unmount();
+  }
+});
+
 NodeTest.test("unready providers remain visible with setup guidance", async () => {
   const panel = mount(render);
   try {
@@ -176,6 +205,39 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.test("enterprise provider clone keeps the host-qualified input after lookup", async () => {
+  const enterprise = {
+    ...repository,
+    url: "https://ghe.corp/alex/repo",
+    sshUrl: "git@ghe.corp:alex/repo.git",
+  };
+  const panel = mount(render, {
+    "t3.source-control/discovery#listRepositories": () => ({ repositories: [], truncated: false }),
+    "t3.source-control/discovery#lookupRepository": () => enterprise,
+    "t3.projects/clone#start": () => ({
+      projectId: "project",
+      cwd: "/managed/repo",
+      remoteUrl: enterprise.sshUrl,
+      repository: enterprise,
+    }),
+  });
+  try {
+    change(panel, "Clone source", "github");
+    await flush();
+    change(panel, "Clone repository input", "ghe.corp/alex/repo");
+    click(panel, "Next");
+    await flush();
+    click(panel, "Clone repository");
+    await flush();
+    NodeAssert.equal(
+      panel.calls.find((call) => call.method === "start").input.repository,
+      "ghe.corp/alex/repo",
+    );
+  } finally {
+    panel.unmount();
+  }
+});
 
 NodeTest.test(
   "provider clone discovers repositories and resolves the choice through the native SDK seam",

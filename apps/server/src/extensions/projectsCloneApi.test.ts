@@ -2,6 +2,7 @@ import { it, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -40,6 +41,24 @@ function fixture(stream: Stream.Stream<readonly ProjectCloneSnapshot[]> = Stream
   const calls: unknown[] = [];
   const provider = createProjectsCloneApiProvider({
     environmentId: "env",
+    discovery: {
+      discover: Effect.succeed([
+        {
+          kind: "github" as const,
+          label: "GitHub",
+          status: "available" as const,
+          installHint: "Install gh",
+          version: Option.none(),
+          detail: Option.none(),
+          auth: {
+            status: "authenticated" as const,
+            host: Option.some("github.com"),
+            account: Option.some("alex"),
+            detail: Option.none(),
+          },
+        },
+      ]),
+    },
     destinationPath: (name) => Effect.succeed(`/managed/projects/${name}`),
     tracker: {
       start: (input) => {
@@ -101,6 +120,7 @@ it("keeps clone snapshots below the stream broker's byte limit", async () => {
   });
   const provider = createProjectsCloneApiProvider({
     environmentId: "env",
+    discovery: { discover: Effect.succeed([]) },
     destinationPath: () => Effect.succeed("/managed/repo"),
     tracker: {
       start: (input) => {
@@ -161,6 +181,51 @@ it("starts the native tracked clone with host-minted project identity and manage
   expect(result).toMatchObject({ cwd: "/managed/projects/repo" });
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ title: "Repo", destinationPath: "/managed/projects/repo" });
+});
+
+it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
+  "refuses unconfigured %s repository hosts before native clone effects",
+  async (source) => {
+    for (const repository of [
+      "attacker.tld/o/n",
+      "1.2.3.4/o/n",
+      "https://attacker.tld/o/n",
+      "ssh://attacker.tld/o/n",
+    ]) {
+      const { provider, calls } = fixture();
+      await expect(
+        provider.invoke(
+          "start",
+          { title: "Repo", destinationName: "repo", provider: source, repository },
+          context,
+          signal,
+          metadata(provider),
+        ),
+      ).rejects.toThrow();
+      expect(calls).toEqual([]);
+    }
+  },
+);
+
+it.each([
+  "ssh://ho\nst/x",
+  "\tssh://host/x",
+  "https://host/x\u0000",
+  "git@host:x\u0000y",
+  "https:host/x",
+  "https://host\\@-x/y",
+])("refuses parser-confusing remote %s", async (remoteUrl) => {
+  const { provider, calls } = fixture();
+  await expect(
+    provider.invoke(
+      "start",
+      { title: "Repo", destinationName: "repo", remoteUrl },
+      context,
+      signal,
+      metadata(provider),
+    ),
+  ).rejects.toThrow();
+  expect(calls).toEqual([]);
 });
 
 it.each(["../escape", "/absolute", "..", "a/b", "a\\b", "repo.", "repo.git", "repo.GIT"])(
@@ -243,6 +308,7 @@ it.each([
   ["gitlab", "group/subgroup/repo"],
   ["forgejo", "alex/.config"],
   ["azure-devops", "My Repo"],
+  ["azure-devops", "Group/Project (Team)/Repo & Tools"],
   ["azure-devops", "Gröup/Project/My Repo"],
   ["bitbucket", "team/repo"],
 ] as const)("preserves valid %s repository identifier %s", async (source, repository) => {

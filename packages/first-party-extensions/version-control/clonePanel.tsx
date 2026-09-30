@@ -98,7 +98,11 @@ export function CloneRepositoryPanel({
   const [title, setTitle] = useState("");
   const [destinationName, setDestinationName] = useState("");
   const [protocol, setProtocol] = useState<CloneProtocol>("auto");
-  const [listings, setListings] = useState<Partial<Record<SourceControlKind, RepositoryList>>>({});
+  const [listingCache, setListings] = useState<{
+    providers: SourceControlDiscovery["providers"];
+    values: Partial<Record<SourceControlKind, RepositoryList>>;
+  }>({ providers: discovery.providers, values: {} });
+  const listings = listingCache.providers === discovery.providers ? listingCache.values : {};
   const listing = source === "url" ? null : listings[source];
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -123,7 +127,14 @@ export function CloneRepositoryPanel({
       .invoke("listRepositories", { provider: source }, signal)
       .then(
         (result) => {
-          if (!signal.aborted) setListings((current) => ({ ...current, [source]: result }));
+          if (!signal.aborted)
+            setListings((current) => ({
+              providers: discovery.providers,
+              values: {
+                ...(current.providers === discovery.providers ? current.values : {}),
+                [source]: result,
+              },
+            }));
         },
         (cause) => {
           if (!signal.aborted)
@@ -131,7 +142,7 @@ export function CloneRepositoryPanel({
         },
       );
     return () => controller.abort();
-  }, [host, session, source, visible, listings]);
+  }, [host, session, source, visible, discovery.providers, listingCache]);
 
   useEffect(() => {
     if (!visible) return;
@@ -204,7 +215,7 @@ export function CloneRepositoryPanel({
             ? { remoteUrl: repositoryInput.trim() }
             : {
                 provider: source,
-                repository: preparedRepository.repository?.nameWithOwner ?? repositoryInput.trim(),
+                repository: preparedRepository.input.trim(),
               }),
         },
         session.signal,

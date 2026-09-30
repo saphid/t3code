@@ -17,7 +17,11 @@ import { SourceControlProviderRegistry } from "../sourceControl/SourceControlPro
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
 import { listSourceControlRepositories } from "../sourceControl/RepositoryListing.ts";
 import { assertCloneAuthority } from "./projectsCloneApi.ts";
-import { isSafeRepositoryIdentifier } from "../sourceControl/remoteValidation.ts";
+import {
+  isConfiguredRepositoryHost,
+  isSafeRepositoryIdentifier,
+  providerRepositoryHost,
+} from "../sourceControl/remoteValidation.ts";
 
 const providerKind = Schema.Literals(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"]);
 const listInput = Schema.Struct({ provider: providerKind });
@@ -109,6 +113,12 @@ export function createSourceControlDiscoveryApiProvider(dependencies: {
         );
       if (!("repository" in request) || typeof request.repository !== "string") throw fail();
       if (!isSafeRepositoryIdentifier(request.provider, request.repository)) throw fail(method);
+      if (providerRepositoryHost(request.provider, request.repository) !== null) {
+        const providers = await run(dependencies.discovery.discover);
+        if (!isConfiguredRepositoryHost(request.provider, request.repository, providers))
+          throw fail(method);
+        await assertAuthority();
+      }
       return run(
         dependencies.repositories.lookupRepository({
           provider: request.provider,

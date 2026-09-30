@@ -29,9 +29,12 @@ import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolve
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
+import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import {
+  isConfiguredRepositoryHost,
   isSafeRepositoryIdentifier,
   isSafeRepositoryRemote,
+  providerRepositoryHost,
 } from "../sourceControl/remoteValidation.ts";
 
 const fail = (detail = "Project clone request is invalid or unavailable.") =>
@@ -114,6 +117,7 @@ export const managedCloneDestination = Effect.fn("ProjectsClone.destination")(
 
 export function createProjectsCloneApiProvider(dependencies: {
   readonly environmentId: string;
+  readonly discovery: Pick<SourceControlProviderRegistry["Service"], "discover">;
   readonly destinationPath: (name: string) => Effect.Effect<string, Error>;
   readonly tracker: Pick<ProjectCloneTracker["Service"], "start" | "cancel" | "retry" | "stream">;
   readonly hooks: ProjectCloneHooks;
@@ -155,6 +159,16 @@ export function createProjectsCloneApiProvider(dependencies: {
           !isSafeRepositoryIdentifier(request.provider, request.repository)
         )
           throw fail("Use a valid provider repository path, such as owner/name.");
+        if (
+          request.provider !== undefined &&
+          request.repository !== undefined &&
+          providerRepositoryHost(request.provider, request.repository) !== null
+        ) {
+          const providers = await Effect.runPromise(dependencies.discovery.discover, { signal });
+          if (!isConfiguredRepositoryHost(request.provider, request.repository, providers))
+            throw fail("Choose a repository on a host configured in Source Control settings.");
+          await assertAuthority();
+        }
         const destinationPath = await Effect.runPromise(
           dependencies.destinationPath(request.destinationName),
           { signal },
@@ -302,6 +316,7 @@ export const makeProjectsCloneApiProvider = Effect.fn("ProjectsCloneApi.make")(f
   };
   return createProjectsCloneApiProvider({
     environmentId: yield* environment.getEnvironmentId,
+    discovery: yield* SourceControlProviderRegistry,
     destinationPath: (name) =>
       settings.getSettings.pipe(
         Effect.flatMap((current) => managedCloneDestination(current.addProjectBaseDirectory, name)),

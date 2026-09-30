@@ -52,6 +52,10 @@ it.each(["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const)(
       "owner/repo\n--web",
       "owner/repo;--web",
       "owner/../repo",
+      "attacker.tld/o/n",
+      "1.2.3.4/o/n",
+      "https://attacker.tld/o/n",
+      "ssh://attacker.tld/o/n",
     ]) {
       await expect(
         api.invoke(
