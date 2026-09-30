@@ -109,6 +109,40 @@ describe("usePreviewBridge engine claim", () => {
         false,
       );
       expect(fixture.claim).toHaveBeenCalledTimes(1);
+      fixture.claim.mockReturnValue(
+        new Promise((resolve) => {
+          resolveClaim = resolve;
+        }),
+      );
+      await act(async () => {
+        listener(runtimeTabId, state({ kind: "Loading", url: "https://a.test/", title: "A" }));
+      });
+      expect(fixture.claim).toHaveBeenCalledTimes(2);
+      expect(isHostedEngineClaimPending(threadRef.environmentId, runtimeTabId, serverEpoch)).toBe(
+        false,
+      );
+      await act(async () => {
+        resolveClaim(AsyncResult.failure(Cause.fail("claim still refused")));
+      });
+      expect(isHostedEngineClaimPending(threadRef.environmentId, runtimeTabId, serverEpoch)).toBe(
+        false,
+      );
+      fixture.claim.mockReturnValue(
+        new Promise((resolve) => {
+          resolveClaim = resolve;
+        }),
+      );
+      await act(async () => {
+        listener(runtimeTabId, state({ kind: "Success", url: "https://a.test/", title: "A" }));
+      });
+      expect(fixture.claim).toHaveBeenCalledTimes(3);
+      expect(isHostedEngineClaimPending(threadRef.environmentId, runtimeTabId, serverEpoch)).toBe(
+        false,
+      );
+      await act(async () => {
+        resolveClaim(AsyncResult.success(undefined));
+      });
+      expect(useBrowserEngineHostStore.getState().failedClaimByTabId[runtimeTabId]).toBeUndefined();
       expect(isHostedEngineClaimPending(threadRef.environmentId, runtimeTabId, "epoch-next")).toBe(
         true,
       );

@@ -381,7 +381,7 @@ export function paneStatusText(
         state.ended &&
         state.statusText.startsWith("Unknown terminal thread:")))
   )
-    return `Terminal is ${tab.status}.`;
+    return tab.status === "error" ? "Terminal failed to start." : "Terminal is exited.";
   return reattaching && state.status === "error" && state.ended ? "Connecting…" : state.statusText;
 }
 
@@ -492,7 +492,9 @@ export function applyOutputEvent(
         truncated: omitted,
         status: ended ? "exited" : "live",
         statusText: ended
-          ? `Terminal is ${value.status}.`
+          ? value.status === "error"
+            ? "Terminal failed to start."
+            : `Terminal is ${value.status}.`
           : omitted
             ? "Watching live output. Older retained history was omitted."
             : "Watching live output.",
@@ -1092,6 +1094,13 @@ export class TerminalPanel {
    */
   #observeMeta(next: TerminalSessionMetadata) {
     const tab = this.#tab(next.terminalId);
+    if (
+      !tab.starting &&
+      tab.outputRecovery === "pending" &&
+      tab.meta?.status !== "running" &&
+      next.status === "running"
+    )
+      tab.attachmentRevision += 1;
     tab.meta = next;
     if (
       !tab.starting &&
@@ -1112,7 +1121,10 @@ export class TerminalPanel {
         this.#closing.delete(terminalId);
         this.#emit();
       })
-      .catch(() => {});
+      .catch(() => {
+        if (this.#disposed || this.#closing.get(terminalId) !== marker) return;
+        this.#closing.set(terminalId, { sent: false });
+      });
   }
 
   /** The pane's output stream saw a process exit: banner only, pending its fresh snapshot. */

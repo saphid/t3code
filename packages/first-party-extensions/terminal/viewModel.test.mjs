@@ -1639,7 +1639,10 @@ NodeTest.test("r2 failed close replay stays bounded and scoped to its panel", as
     panel.applySessionsEvent(snapshot);
     panel.applySessionsEvent({ kind: "upsert", terminal: snapshot.terminals[0] });
     await new Promise(setImmediate);
-    NodeAssert.deepEqual(control.calls, [["close", { terminalId: "term-6", deleteHistory: true }]]);
+    NodeAssert.deepEqual(control.calls, [
+      ["close", { terminalId: "term-6", deleteHistory: true }],
+      ["close", { terminalId: "term-6", deleteHistory: true }],
+    ]);
     NodeAssert.deepEqual(panel.snapshot.suppressedTerminalIds, ["term-6"]);
     otherPanel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-6")] });
     NodeAssert.deepEqual(otherPanel.snapshot.terminalIds, ["term-6"]);
@@ -1652,6 +1655,26 @@ NodeTest.test("r2 failed close replay stays bounded and scoped to its panel", as
   } finally {
     panel.dispose();
     otherPanel.dispose();
+  }
+});
+
+NodeTest.test("recovery subscribes once when another client supplies the running session", () => {
+  const control = fakeControl();
+  const panel = new TerminalPanel({ control, launch });
+  try {
+    panel.applySessionsEvent({ kind: "snapshot", terminals: [meta("term-1")] });
+    const revision = panel.snapshot.tabs[0].attachmentRevision;
+    panel.noteOutputError("term-1", new Error("Unknown terminal thread: t, terminal: term-1"));
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    panel.startMissingSessions(["term-1"]);
+    NodeAssert.deepEqual(control.calls, []);
+    NodeAssert.equal(panel.snapshot.tabs[0].attachmentRevision, revision + 1);
+    panel.applySessionsEvent({ kind: "upsert", terminal: meta("term-1") });
+    NodeAssert.equal(panel.snapshot.tabs[0].attachmentRevision, revision + 1);
+    panel.noteOutputSnapshot("term-1", "running");
+    NodeAssert.equal(panel.snapshot.tabs[0].outputRecoveryPending, false);
+  } finally {
+    panel.dispose();
   }
 });
 

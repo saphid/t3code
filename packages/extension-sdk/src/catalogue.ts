@@ -7459,9 +7459,10 @@ export const BROWSER_FRAMES_API = browserFramesApi.definition;
  * calls within one frame collapse to a single store write, so a plugin must
  * re-send after every geometry change rather than stream per frame. `release`
  * ends presentation only — it never closes the browser session.
+ * 2.1.0 adds the optional engine-claim hint on the host and active lease state.
  * --------------------------------------------------------------------- */
 export const BROWSER_SURFACE = "t3.browser/surface";
-export const BROWSER_SURFACE_VERSION = "2.0.0";
+export const BROWSER_SURFACE_VERSION = "2.1.0";
 /** Both grants are required to acquire a presentation lease. */
 export const BROWSER_SURFACE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_SURFACE] as const;
 /**
@@ -7615,7 +7616,7 @@ export type BrowserSurfaceAcquireResult =
   | { readonly ok: false; readonly denial: BrowserSurfaceDenial };
 
 /**
- * The host side of `t3.browser/surface@2.0.0`. Present on `ClientHost` as
+ * The host side of `t3.browser/surface@2.1.0`. Present on `ClientHost` as
  * `browserSurface`; absence means the host predates the contract (treat as
  * `host-unavailable`).
  */
@@ -7624,7 +7625,7 @@ export interface BrowserSurfaceHost {
   readonly version: string;
   /** Static for the host's lifetime — compositing cannot appear mid-session. */
   readonly presentation: BrowserSurfacePresentationSupport;
-  /** Whether this client can claim this environment's engine before a lease exists. */
+  /** Point-in-time claim hint before a lease exists; use lease state for change notifications. */
   readonly engineClaimPending?: boolean;
   acquire(
     request: BrowserSurfaceAcquireRequest,
