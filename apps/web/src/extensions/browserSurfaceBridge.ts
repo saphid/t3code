@@ -27,7 +27,7 @@ import {
   type BrowserSurfaceLeaseState,
   type BrowserSurfaceRect,
 } from "@t3tools/extension-sdk/catalogue";
-import { validateContext } from "@t3tools/extension-sdk/contracts";
+import { resourceKey, validateContext, type ViewContext } from "@t3tools/extension-sdk/contracts";
 
 import { isElectron } from "~/env";
 import {
@@ -68,7 +68,7 @@ export interface BrowserSurfaceBridgeDeps {
   readonly mountSessionSync: (threadRef: ScopedThreadRef) => () => void;
   readonly readSessions: (threadRef: ScopedThreadRef) => ThreadPreviewState;
   readonly subscribeSessions: (threadRef: ScopedThreadRef, listener: () => void) => () => void;
-  readonly acquireNative: (runtimeTabId: string) => NativeSurfaceLease;
+  readonly acquireNative: (runtimeTabId: string, context: ViewContext) => NativeSurfaceLease;
   readonly ownerOf: (runtimeTabId: string) => symbol | null;
   readonly subscribeStore: (
     listener: (state: {
@@ -140,8 +140,8 @@ export function createBrowserSurfaceBridge(
       appAtomRegistry.subscribe(previewStateAtom(scopedThreadKey(threadRef)), listener),
     // The extension view paints its own device toolbar and commits resizes
     // through t3.browser/sessions, so the host's controls stand down.
-    acquireNative: (runtimeTabId) =>
-      acquireBrowserSurface(runtimeTabId, false, /* hostViewportControls */ false),
+    acquireNative: (runtimeTabId, context) =>
+      acquireBrowserSurface(runtimeTabId, false, false, resourceKey(context.resource)),
     ownerOf: (runtimeTabId) =>
       useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner ?? null,
     subscribeStore: (listener) => useBrowserSurfaceStore.subscribe(listener),
@@ -293,7 +293,7 @@ export function createBrowserSurfaceBridge(
 
         const composite = presentation.supported;
         const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
-        const native = composite ? deps.acquireNative(runtimeTabId) : null;
+        const native = composite ? deps.acquireNative(runtimeTabId, context) : null;
         const nativeOwner = composite ? deps.ownerOf(runtimeTabId) : null;
         // Read again after mounting: the mount may synchronously reconcile a
         // cached list. Absence only becomes authoritative once a list applied
