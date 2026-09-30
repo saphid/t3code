@@ -20,7 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/stream";
+import * as Stream from "effect/Stream";
 import type { ClientProviderServerFrame } from "@t3tools/contracts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ClientApiProviders, layer as clientApiProvidersLayer } from "./ClientApiProviders.ts";
@@ -458,7 +458,7 @@ it.effect("asks only a 1.3.0 composer for listed comment text", () =>
       asked: ["text"],
       listed: { annotations: [{ ...entry, text: "why?" }] },
     });
-    // Review repro (gaps-files-2 P3): asking for no optional field asks for no text.
+    // Asking for no optional field asks for no text.
     for (const input of [{}, { include: [] }] as Json[])
       expect(yield* list("conn-22", currentFrames, input)).toEqual({
         asked: undefined,
@@ -467,7 +467,7 @@ it.effect("asks only a 1.3.0 composer for listed comment text", () =>
   }).pipe(Effect.provide(brokerLayer)),
 );
 
-// Review repro (gaps-files-2 P2): one comment's whole text is read on its
+// One comment's whole text is read on its
 // own, and only from a composer client that has the read.
 it.effect("reads one comment's text only from a 1.3.0 composer", () =>
   Effect.gen(function* () {
