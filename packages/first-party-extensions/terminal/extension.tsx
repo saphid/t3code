@@ -82,6 +82,7 @@ import {
   type TerminalCommandActions,
   type TerminalControlOps,
   type TerminalPanelSnapshot,
+  type TerminalTabState,
 } from "./viewModel.ts";
 
 const manifestId = "t3.terminal";
@@ -112,6 +113,7 @@ interface RestoredGroup {
 
 interface RestoredState {
   readonly terminalIds: readonly string[];
+  readonly suppressedTerminalIds?: readonly string[];
   readonly activeTerminalId: string | null;
   readonly terminalGroups?: readonly RestoredGroup[];
   readonly activeTerminalGroupId?: string | null;
@@ -143,6 +145,7 @@ function restoreState(value: unknown): value is RestoredState | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as {
     terminalIds?: unknown;
+    suppressedTerminalIds?: unknown;
     activeTerminalId?: unknown;
     terminalGroups?: unknown;
     activeTerminalGroupId?: unknown;
@@ -151,6 +154,7 @@ function restoreState(value: unknown): value is RestoredState | null {
     Object.keys(value).every(
       (key) =>
         key === "terminalIds" ||
+        key === "suppressedTerminalIds" ||
         key === "activeTerminalId" ||
         key === "terminalGroups" ||
         key === "activeTerminalGroupId",
@@ -158,6 +162,9 @@ function restoreState(value: unknown): value is RestoredState | null {
     (candidate.terminalIds === undefined ||
       (Array.isArray(candidate.terminalIds) &&
         candidate.terminalIds.every((id) => typeof id === "string"))) &&
+    (candidate.suppressedTerminalIds === undefined ||
+      (Array.isArray(candidate.suppressedTerminalIds) &&
+        candidate.suppressedTerminalIds.every((id) => typeof id === "string"))) &&
     (candidate.activeTerminalId === undefined ||
       typeof candidate.activeTerminalId === "string" ||
       candidate.activeTerminalId === null) &&
@@ -632,6 +639,7 @@ function TerminalPane(props: {
   readonly running: boolean;
   /** Its start is pending or in flight (isPaneReattaching): an ended stream's error is stale. */
   readonly reattaching: boolean;
+  readonly sessionState?: Pick<TerminalTabState, "status" | "error" | "attachmentRevision">;
   readonly assets: GhosttyAssets;
   readonly themeVars: Record<string, string> | null;
   readonly appearanceVars: Record<string, string> | null;
@@ -672,6 +680,9 @@ function TerminalPane(props: {
   const shownRef = useRef(shown && visible);
   const runningRef = useRef(running);
   runningRef.current = running;
+  const attachmentRevision = props.sessionState?.attachmentRevision ?? 0;
+  const attachmentRevisionRef = useRef(attachmentRevision);
+  attachmentRevisionRef.current = attachmentRevision;
   // Latest active/shown state for the async surface creation: a surface
   // finishing after the focus effect last ran must know whether this pane
   // owns focus NOW, not at effect time.
@@ -693,12 +704,12 @@ function TerminalPane(props: {
   // slot says so honestly and retries when one frees.
   const [streamBlocked, setStreamBlocked] = useState(false);
   const acquireStreamRef = useRef((_mandatory: boolean) => {});
-  const runningChangedRef = useRef((_running: boolean) => {});
+  const runningChangedRef = useRef((_running: boolean, _attachmentRevision: number) => {});
   useEffect(() => {
     if (!visible) return;
     let stopped = false;
     let run: { controller: AbortController; lease: TerminalPaneLease } | null = null;
-    const reattach = new OutputReattach(runningRef.current);
+    const reattach = new OutputReattach(runningRef.current, attachmentRevisionRef.current);
     let retryRegistration: (() => void) | null = null;
     // Broker refusals are capacity this hub cannot see (another client
     // document of the installation, or the environment's 64-stream pool):
@@ -758,6 +769,7 @@ function TerminalPane(props: {
             const source = subscribeOutput(
               host,
               session.context,
+              panel,
               terminalId,
               subscribeSignal,
               onSuspended,
@@ -776,7 +788,6 @@ function TerminalPane(props: {
                 // resubscribes and the fresh snapshot says whether the
                 // session's current process is the exited one (close it) or
                 // a restart that replaced it.
-                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
                 if (value.kind === "exit") {
                   const surface = surfaceRef.current;
                   if (surface !== null)
@@ -787,6 +798,7 @@ function TerminalPane(props: {
                   panel.noteExit(terminalId, value.exitCode);
                 }
                 yield { streamId: frame.streamId, sequence: frame.sequence, value };
+                if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
               }
             })();
           },
@@ -839,8 +851,9 @@ function TerminalPane(props: {
     const resume = () => {
       if (!stopped && run === null && reattach.take()) acquire(shownRef.current);
     };
-    runningChangedRef.current = (next: boolean) => {
+    runningChangedRef.current = (next: boolean, revision: number) => {
       reattach.noteRunning(next);
+      reattach.noteAttachment(revision);
       resume();
     };
     acquire(shownRef.current);
@@ -855,8 +868,8 @@ function TerminalPane(props: {
   // A session that starts running again (Start, restart) has output an ended
   // stream will never carry: reattach (OutputReattach).
   useEffect(() => {
-    runningChangedRef.current(running);
-  }, [running]);
+    runningChangedRef.current(running, attachmentRevision);
+  }, [running, attachmentRevision]);
 
   // Group switches inside the view re-prioritize the pane's slot: shown
   // promotes to mandatory (re-acquiring after an eviction), hidden demotes
@@ -1037,7 +1050,7 @@ function TerminalPane(props: {
         aria-label="Output status"
         style={{ padding: "6px 10px", color: muted, fontSize: 12, flexShrink: 0 }}
       >
-        {terminalId}: {paneStatusText(state, reattaching)}
+        {terminalId}: {paneStatusText(state, reattaching, props.sessionState)}
       </output>
       {state.degraded && (
         <output
@@ -1093,19 +1106,32 @@ function TerminalPane(props: {
  * On older hosts a transport drop ends the stream and output returns on the
  * next running edge (OutputReattach).
  */
-function subscribeOutput(
+async function* subscribeOutput(
   host: ClientHost,
   context: ViewSession["context"],
+  panel: TerminalPanel,
   terminalId: string,
   signal: AbortSignal,
   onSuspended: () => void,
 ) {
-  return bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
-    "subscribe",
-    { terminalId },
-    signal,
-    resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : undefined,
-  );
+  try {
+    let received = false;
+    const stream = bindStreamApi(terminalOutputEventsApi, host, context).subscribe(
+      "subscribe",
+      { terminalId },
+      signal,
+      resolveResumableStreams(host) ? { resume: "fresh-snapshot", onSuspended } : undefined,
+    );
+    for await (const frame of stream) {
+      received = true;
+      yield frame;
+    }
+    if (!signal.aborted && !received)
+      throw new Error("Terminal output ended before a snapshot arrived.");
+  } catch (error) {
+    if (!signal.aborted && !isBrokerStreamRefusal(error)) panel.noteOutputError(terminalId, error);
+    throw error;
+  }
 }
 
 /**
@@ -1121,18 +1147,21 @@ function useTerminalOutput(
   terminalId: string | null,
   visible: boolean,
   running: boolean,
+  attachmentRevision: number,
 ) {
   const [state, setState] = useState<{ terminalId: string; buffer: OutputBuffer } | null>(null);
   const pendingRef = useRef<{ sequence: number; count: number; parts: string[] } | null>(null);
   const runningRef = useRef(running);
   runningRef.current = running;
-  const runningChangedRef = useRef((_running: boolean) => {});
+  const attachmentRevisionRef = useRef(attachmentRevision);
+  attachmentRevisionRef.current = attachmentRevision;
+  const runningChangedRef = useRef((_running: boolean, _attachmentRevision: number) => {});
   useEffect(() => {
     pendingRef.current = null;
     if (!visible || terminalId === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    const reattach = new OutputReattach(runningRef.current);
+    const reattach = new OutputReattach(runningRef.current, attachmentRevisionRef.current);
     let attached = false;
     const attach = () => {
       attached = true;
@@ -1145,8 +1174,9 @@ function useTerminalOutput(
     const resume = () => {
       if (!signal.aborted && !attached && reattach.take()) attach();
     };
-    runningChangedRef.current = (next: boolean) => {
+    runningChangedRef.current = (next: boolean, revision: number) => {
       reattach.noteRunning(next);
+      reattach.noteAttachment(revision);
       resume();
     };
     const pump = async () => {
@@ -1158,7 +1188,7 @@ function useTerminalOutput(
         let resurrect = false;
         try {
           reattach.subscribed();
-          const stream = subscribeOutput(host, session.context, terminalId, signal, () => {
+          const stream = subscribeOutput(host, session.context, panel, terminalId, signal, () => {
             const suspended = suspendedOutputStatus(stateRef.current);
             if (suspended === stateRef.current) return;
             stateRef.current = suspended;
@@ -1174,7 +1204,6 @@ function useTerminalOutput(
             }
             const value = frame.value as TerminalOutputEventsValue;
             streak = noteOutputFrameForStreak(value, streak, Date.now());
-            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "closed") {
               overflowClose = value.reason === "overflow";
               resurrect = isResumableOutputClose(value.reason, streak.attempts);
@@ -1196,6 +1225,7 @@ function useTerminalOutput(
             pendingRef.current = applied.pending;
             stateRef.current = applied.buffer;
             setState({ terminalId, buffer: applied.buffer });
+            if (value.kind === "snapshot") panel.noteOutputSnapshot(terminalId, value.status);
             if (value.kind === "exit") {
               panel.noteExit(terminalId, value.exitCode);
               overflowClose = false;
@@ -1237,8 +1267,8 @@ function useTerminalOutput(
     };
   }, [host, session, panel, terminalId, visible]);
   useEffect(() => {
-    runningChangedRef.current(running);
-  }, [running]);
+    runningChangedRef.current(running, attachmentRevision);
+  }, [running, attachmentRevision]);
   return state?.terminalId === terminalId ? state.buffer : null;
 }
 
@@ -1321,6 +1351,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
         const snapshot = panel.snapshot;
         session.save({
           terminalIds: [...snapshot.terminalIds],
+          suppressedTerminalIds: [...snapshot.suppressedTerminalIds],
           activeTerminalId: snapshot.activeTerminalId,
           terminalGroups: snapshot.groups.map((group) => ({
             id: group.id,
@@ -1425,6 +1456,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
     textFallback ? activeId : null,
     visible && textFallback,
     activeTab?.status === "running",
+    activeTab?.attachmentRevision ?? 0,
   );
   useFitResize(panel, textFallback ? activeId : null, outputRef);
   const outputContents = output?.contents ?? "";
@@ -1901,6 +1933,7 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                       visible={visible}
                       running={tabById.get(terminalId)?.status === "running"}
                       reattaching={isPaneReattaching(tabById.get(terminalId), snapshot.stream)}
+                      sessionState={tabById.get(terminalId)}
                       assets={assets}
                       themeVars={themeVars}
                       appearanceVars={appearanceVars}
@@ -1928,7 +1961,11 @@ function TerminalView(props: { host: ClientHost; session: ViewSession }) {
                 {activeId}:{" "}
                 {activeTab.exitBanner ??
                   (output
-                    ? paneStatusText(output, isPaneReattaching(activeTab, snapshot.stream))
+                    ? paneStatusText(
+                        output,
+                        isPaneReattaching(activeTab, snapshot.stream),
+                        activeTab,
+                      )
                     : "Connecting…")}
                 {activeTab.error ? ` — ${activeTab.error}` : ""}
               </output>

@@ -50,6 +50,7 @@ import {
   buildUserInputAnswers,
   checkpointLabel,
   collectDiffStream,
+  collectWorkflowScriptStream,
   countAnsweredQuestions,
   deriveAgentsPanelModel,
   describeAgentSessionReceipt,
@@ -60,6 +61,7 @@ import {
   describeSessionImport,
   describeSessionScan,
   describeSessionsError,
+  describeAgentsError,
   elapsedBetween,
   finishedAgentIds,
   isWorkflowName,
@@ -84,6 +86,7 @@ import {
   type UserInputDraftAnswer,
   type VerifiedDiffPatch,
   type WorkspaceScript,
+  type WorkflowScriptViewState,
 } from "./viewModel.js";
 
 const manifestId = "t3.agents";
@@ -242,7 +245,7 @@ function useAgentsFeed(host: ClientHost, session: ViewSession, visible: boolean)
         } catch (error) {
           if (signal.aborted) return;
           update({
-            problem: error instanceof Error ? error.message : "Agent stream is unavailable",
+            problem: describeAgentsError(error, "Agent stream is unavailable."),
           });
           return;
         }
@@ -295,7 +298,7 @@ function PlanSourceLink({
       (receipt) => {
         if (receipt.status === "refused") setOutcome(describeNavigationReceipt(receipt));
       },
-      (error: unknown) => setOutcome(error instanceof Error ? error.message : "Navigation failed"),
+      (error: unknown) => setOutcome(describeAgentsError(error, "Could not open agents.")),
     );
   };
   return (
@@ -305,7 +308,9 @@ function PlanSourceLink({
         Open agents there
       </button>
       {capabilities.status === "unavailable" ? (
-        <output aria-label="Navigation result">{capabilities.error}</output>
+        <output aria-label="Navigation result">
+          {describeAgentsError(capabilities.error, "Navigation is unavailable.")}
+        </output>
       ) : capabilities.status === "ready" && !supported ? (
         <output aria-label="Navigation result">Navigation is not available on this client</output>
       ) : (
@@ -332,7 +337,7 @@ function useAgentSessionControl(
     capabilities.status === "ready" && capabilities.value.operations.openAgentSession === true;
   const unavailable =
     capabilities.status === "unavailable"
-      ? capabilities.error
+      ? describeAgentsError(capabilities.error, "Session pages are unavailable.")
       : capabilities.status === "ready" && !supported
         ? "Session pages are not available on this client"
         : null;
@@ -349,7 +354,7 @@ function useAgentSessionControl(
           (receipt) => {
             if (receipt.status === "refused") note(describeAgentSessionReceipt(receipt));
           },
-          (error: unknown) => note(error instanceof Error ? error.message : "Could not open"),
+          (error: unknown) => note(describeAgentsError(error, "Could not open the session.")),
         );
       };
       const text = unavailable ?? outcomes[agent.id];
@@ -435,7 +440,7 @@ function useCapabilities(
               key,
               read: {
                 status: "unavailable",
-                error: error instanceof Error ? error.message : "API unavailable",
+                error: describeAgentsError(error, "Could not load orchestration capabilities."),
               },
             });
         },
@@ -500,7 +505,7 @@ function useControls(host: ClientHost, session: ViewSession, feed: AgentsFeedSta
             ...current,
             [key]: {
               kind: "error",
-              message: error instanceof Error ? error.message : `${operation} failed`,
+              message: describeAgentsError(error, "Could not complete the operation."),
             },
           })),
         );
@@ -532,9 +537,10 @@ function OpButton(props: {
   readonly label: string;
   readonly support: ReturnType<typeof operationSupport>;
   readonly disabled?: boolean;
+  readonly expanded?: boolean;
   readonly onClick: () => void;
 }) {
-  const { label, support, disabled, onClick } = props;
+  const { label, support, disabled, expanded, onClick } = props;
   if (support.kind === "unsupported") {
     // The capability detail names the operation — no invented affordance.
     return (
@@ -547,6 +553,7 @@ function OpButton(props: {
     <button
       type="button"
       disabled={disabled || support.kind !== "ready"}
+      aria-expanded={expanded}
       onClick={onClick}
       style={control}
     >
@@ -1028,7 +1035,7 @@ function AgentOutput(props: { readonly agent: RuntimeSubagent; readonly readLog:
         if (!controller.signal.aborted)
           setView({
             kind: "error",
-            detail: error instanceof Error ? error.message : "output unavailable",
+            detail: describeAgentsError(error, "Could not load the output."),
           });
       },
     );
@@ -1172,16 +1179,14 @@ function AgentRow(props: {
 function WorkflowGroupView(props: {
   readonly group: AgentsWorkflowGroup;
   readonly scriptSupport: ReturnType<typeof operationSupport>;
-  readonly onShowScript: (workflowId: string) => void;
+  readonly onToggleScript: (workflowId: string, scriptPath: string) => void;
+  readonly onCloseScript: (workflowId: string, scriptPath: string) => void;
   readonly sessionControl: (agent: RuntimeSubagent) => ReactNode;
   readonly readLog: ReadAgentLog;
-  readonly script:
-    | { readonly contents: string; readonly truncated: boolean }
-    | "loading"
-    | string
-    | null;
+  readonly script: WorkflowScriptViewState | null;
 }) {
-  const { group, scriptSupport, onShowScript, sessionControl, readLog, script } = props;
+  const { group, scriptSupport, onToggleScript, onCloseScript, sessionControl, readLog, script } =
+    props;
   const workflow = group.workflow;
   return (
     <li style={{ padding: "4px 0" }}>
@@ -1192,30 +1197,69 @@ function WorkflowGroupView(props: {
           <OpButton
             label="Script"
             support={scriptSupport}
-            disabled={script === "loading"}
-            onClick={() => onShowScript(workflow.id)}
+            expanded={script?.open ?? false}
+            onClick={() => onToggleScript(workflow.id, workflow.runHandles!.scriptPath!)}
           />
         )}
         {sessionControl(workflow)}
       </div>
-      {typeof script === "string" && script !== "loading" && (
-        <p style={{ margin: "2px 0 0", fontSize: 11, color: muted }}>{script}</p>
-      )}
-      {script !== null && typeof script === "object" && (
-        <pre
-          style={{
-            margin: "4px 0 0",
-            fontFamily: mono,
-            fontSize: 11,
-            color: muted,
-            whiteSpace: "pre-wrap",
-            maxHeight: 160,
-            overflow: "auto",
-          }}
-        >
-          {script.contents}
-          {script.truncated ? "\n… (script truncated by the contract bound)" : ""}
-        </pre>
+      {script?.open && (
+        <div style={{ margin: "4px 6px", border, borderRadius: 6 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "4px 8px",
+              borderBottom: border,
+            }}
+          >
+            <span
+              style={{
+                fontFamily: mono,
+                fontSize: 10,
+                color: muted,
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {workflow.runHandles?.scriptPath?.split("/").at(-1)}
+            </span>
+            <button
+              type="button"
+              aria-label="Close script"
+              onClick={() => onCloseScript(workflow.id, workflow.runHandles!.scriptPath!)}
+              style={control}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ maxHeight: 288, overflow: "auto", padding: 8 }}>
+            {script.result === "loading" ? (
+              <p style={{ margin: 0, fontSize: 12, color: muted }}>Loading…</p>
+            ) : script.result === "error" ? (
+              <p style={{ margin: 0, fontSize: 12, color: toneColor.danger }}>
+                Could not load the script.
+              </p>
+            ) : (
+              <pre
+                style={{
+                  margin: 0,
+                  fontFamily: mono,
+                  fontSize: 11,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "anywhere",
+                  lineHeight: 1.625,
+                }}
+              >
+                {script.result.contents}
+                {script.result.truncated ? "\n… (truncated)" : ""}
+              </pre>
+            )}
+          </div>
+        </div>
       )}
       {group.phases.map((phase) => (
         <div key={phase.index} style={{ marginTop: 4 }}>
@@ -1289,7 +1333,7 @@ function CheckpointsSection(props: {
         setDiffView({
           key,
           kind: "error",
-          detail: error instanceof Error ? error.message : "diff stream failed",
+          detail: describeAgentsError(error, "Could not load the diff."),
         }),
       );
   };
@@ -1659,9 +1703,8 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   // previous incarnation may have left running; concurrent clients allocate
   // disjoint families.
   const [runNonce] = useState(scriptRunNonce);
-  const [scripts, setScripts] = useState<
-    Record<string, { contents: string; truncated: boolean } | "loading" | string | null>
-  >({});
+  const [scripts, setScripts] = useState<Record<string, WorkflowScriptViewState>>({});
+  const scriptsRef = useRef(scripts);
 
   const runScriptEntry = (script: WorkspaceScript) => {
     if (!workspace || runs[script.name]?.kind === "running") return;
@@ -1670,17 +1713,38 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
     );
   };
 
-  const showWorkflowScript = (workflowId: string) => {
-    setScripts((current) => ({ ...current, [workflowId]: "loading" }));
-    bindApi(orchestrationStatusApi, host, session.context)
-      .invoke("getWorkflowScript", { workflowId }, session.signal)
-      .then((result) => setScripts((current) => ({ ...current, [workflowId]: result })))
-      .catch((error: unknown) =>
-        setScripts((current) => ({
-          ...current,
-          [workflowId]: error instanceof Error ? error.message : "script unavailable",
-        })),
+  const updateWorkflowScript = (key: string, value: WorkflowScriptViewState) => {
+    scriptsRef.current = { ...scriptsRef.current, [key]: value };
+    setScripts(scriptsRef.current);
+  };
+  const toggleWorkflowScript = async (workflowId: string, scriptPath: string) => {
+    const key = JSON.stringify([workflowId, scriptPath]);
+    const previous = scriptsRef.current[key];
+    if (previous && (previous.open || previous.result !== "error")) {
+      updateWorkflowScript(key, { ...previous, open: !previous.open });
+      return;
+    }
+    updateWorkflowScript(key, { open: true, result: "loading" });
+    try {
+      const result = await collectWorkflowScriptStream(
+        bindStreamApi(orchestrationStatusApi, host, session.context, "^1.1.0").subscribe(
+          "readWorkflowScript",
+          { workflowId },
+          session.signal,
+        ),
+        session.signal,
       );
+      if (!session.signal.aborted)
+        updateWorkflowScript(key, { open: scriptsRef.current[key]!.open, result });
+    } catch {
+      if (!session.signal.aborted)
+        updateWorkflowScript(key, { open: scriptsRef.current[key]!.open, result: "error" });
+    }
+  };
+  const closeWorkflowScript = (workflowId: string, scriptPath: string) => {
+    const key = JSON.stringify([workflowId, scriptPath]);
+    const previous = scriptsRef.current[key];
+    if (previous) updateWorkflowScript(key, { ...previous, open: false });
   };
 
   const readLog = useCallback<ReadAgentLog>(
@@ -1803,11 +1867,16 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
                     <WorkflowGroupView
                       key={group.workflow.id}
                       group={group}
-                      scriptSupport={operationSupport(capabilities, "getWorkflowScript")}
-                      onShowScript={showWorkflowScript}
+                      scriptSupport={operationSupport(capabilities, "readWorkflowScript")}
+                      onToggleScript={toggleWorkflowScript}
+                      onCloseScript={closeWorkflowScript}
                       sessionControl={sessionControl}
                       readLog={readLog}
-                      script={scripts[group.workflow.id] ?? null}
+                      script={
+                        scripts[
+                          JSON.stringify([group.workflow.id, group.workflow.runHandles?.scriptPath])
+                        ] ?? null
+                      }
                     />
                   ))}
                   {model.directAgents.map((agent) => (
@@ -1839,7 +1908,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
           )}
           {scriptsRead.status === "unavailable" && (
             <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
-              t3.json is not readable in this workspace ({scriptsRead.error}).
+              {describeAgentsError(scriptsRead.error, "t3.json is not readable in this workspace.")}
             </p>
           )}
           {scriptsRead.status === "ready" &&
@@ -1979,11 +2048,11 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.2.0",
+  version: "0.2.1",
   requires: [
     requireApi(workspaceFilesApi),
     requireApi(terminalControlApi),
-    requireApi(orchestrationStatusApi),
+    requireApi(orchestrationStatusApi, "^1.1.0"),
     requireApi(orchestrationControlApi),
     requireApi(agentSessionsApi),
     requireApi(orchestrationLogsApi),

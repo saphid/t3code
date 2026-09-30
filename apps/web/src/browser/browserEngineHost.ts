@@ -35,24 +35,56 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 const TITLE_MAX_LENGTH = 512;
 
 interface BrowserEngineHostStoreState {
-  /** The registered host id per environment; absent while not hosting. */
-  readonly hostConnectionIdByEnvironment: Record<string, string>;
+  /** Absent before registration; null once registration failed or ended. */
+  readonly hostConnectionIdByEnvironment: Record<string, string | null>;
   readonly setHostConnectionId: (environmentId: string, hostConnectionId: string | null) => void;
+  readonly failedClaimByTabId: Record<
+    string,
+    { readonly hostConnectionId: string; readonly serverEpoch: string }
+  >;
+  readonly setClaimFailure: (
+    runtimeTabId: string,
+    claim: { readonly hostConnectionId: string; readonly serverEpoch: string } | null,
+  ) => void;
 }
 
 export const useBrowserEngineHostStore = create<BrowserEngineHostStoreState>()((set) => ({
   hostConnectionIdByEnvironment: {},
+  failedClaimByTabId: {},
   setHostConnectionId: (environmentId, hostConnectionId) =>
     set((state) => {
-      const current = state.hostConnectionIdByEnvironment[environmentId] ?? null;
+      const current = state.hostConnectionIdByEnvironment[environmentId];
       if (current === hostConnectionId) return state;
-      const { [environmentId]: _previous, ...rest } = state.hostConnectionIdByEnvironment;
       return {
-        hostConnectionIdByEnvironment:
-          hostConnectionId === null ? rest : { ...rest, [environmentId]: hostConnectionId },
+        hostConnectionIdByEnvironment: {
+          ...state.hostConnectionIdByEnvironment,
+          [environmentId]: hostConnectionId,
+        },
       };
     }),
+  setClaimFailure: (runtimeTabId, claim) =>
+    set((state) => {
+      if (claim === null && state.failedClaimByTabId[runtimeTabId] === undefined) return state;
+      const { [runtimeTabId]: _previous, ...rest } = state.failedClaimByTabId;
+      return { failedClaimByTabId: claim === null ? rest : { ...rest, [runtimeTabId]: claim } };
+    }),
 }));
+
+export function isHostedEngineClaimPending(
+  environmentId: string,
+  runtimeTabId?: string,
+  serverEpoch?: string,
+): boolean {
+  const state = useBrowserEngineHostStore.getState();
+  const hostConnectionId = state.hostConnectionIdByEnvironment[environmentId];
+  if (hostConnectionId === null) return false;
+  const failure = runtimeTabId ? state.failedClaimByTabId[runtimeTabId] : undefined;
+  return (
+    failure === undefined ||
+    failure.hostConnectionId !== hostConnectionId ||
+    failure.serverEpoch !== serverEpoch
+  );
+}
 
 /**
  * Latest observed state of each guest this window renders, keyed by runtime
@@ -67,6 +99,7 @@ export function recordHostedTabState(runtimeTabId: string, state: DesktopPreview
 
 export function forgetHostedTab(runtimeTabId: string): void {
   hostedTabs.delete(runtimeTabId);
+  useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, null);
 }
 
 /** The engine generation of a guest is its serialized webContents id. */
@@ -463,7 +496,7 @@ export function createEngineHostEventHandler(input: {
     }
     const hostConnectionId =
       useBrowserEngineHostStore.getState().hostConnectionIdByEnvironment[environmentId];
-    if (!bridge || hostConnectionId === undefined || handled.has(event.commandId)) return;
+    if (!bridge || hostConnectionId == null || handled.has(event.commandId)) return;
     handled.add(event.commandId);
     if (handled.size > HANDLED_COMMANDS_LIMIT) {
       handled.delete(handled.values().next().value!);

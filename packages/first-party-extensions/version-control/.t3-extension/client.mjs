@@ -573,10 +573,11 @@ var __t3Client = (() => {
       }
     ]
   });
+  var WORKFLOW_SCRIPT_MAX_CHUNKS = 64;
   function defineOrchestrationStatusApi(diffEventSchema) {
     return defineStreamApi({
       id: ORCHESTRATION_STATUS,
-      version: "1.0.0",
+      version: "1.1.0",
       methods: [
         {
           name: "getCapabilities",
@@ -588,16 +589,32 @@ var __t3Client = (() => {
             streamEpoch: id,
             revision: num
           })
-        },
-        {
-          name: "getWorkflowScript",
-          effect: "read",
-          requiredGrants: [ORCHESTRATION_READ],
-          inputSchema: obj({ workflowId: id }),
-          outputSchema: obj({ contents: { type: "string", maxLength: 8192 }, truncated: bool })
         }
       ],
       streams: [
+        {
+          name: "readWorkflowScript",
+          requiredGrants: [ORCHESTRATION_READ],
+          inputSchema: obj({ workflowId: id }),
+          eventSchema: {
+            oneOf: [
+              obj({
+                kind: { const: "manifest" },
+                chunkCount: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS },
+                truncated: bool
+              }),
+              obj({
+                kind: { const: "chunk" },
+                chunkIndex: { ...num, minimum: 0, maximum: WORKFLOW_SCRIPT_MAX_CHUNKS - 1 },
+                data: { type: "string", maxLength: 8192 }
+              }),
+              obj({
+                kind: { const: "complete" },
+                sha256: { type: "string", pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }
+              })
+            ]
+          }
+        },
         {
           name: "subscribeAgents",
           requiredGrants: [ORCHESTRATION_READ],
@@ -617,7 +634,7 @@ var __t3Client = (() => {
           eventSchema: diffEventSchema
         }
       ]
-    });
+    }, { baseline: "1.0.0", additions: [{ version: "1.1.0", stream: "readWorkflowScript" }] });
   }
   var ORCHESTRATION_CONTROL_API = orchestrationControlApi.definition;
   var logSource = { enum: ["output"] };
@@ -2144,16 +2161,92 @@ var __t3Client = (() => {
     path: { type: "string", minLength: 1, maxLength: 4096 },
     cwd: { type: "string", minLength: 1, maxLength: 4096 }
   };
+  var uiEditorOpenReceiptV11Schema = {
+    oneOf: [
+      {
+        ...uiEditorOpenReceiptSchema.oneOf[0],
+        properties: {
+          ...uiEditorOpenReceiptSchema.oneOf[0].properties,
+          url: { type: "string", minLength: 1, maxLength: 16384 }
+        }
+      },
+      uiEditorOpenReceiptSchema.oneOf[1]
+    ]
+  };
+  var editorWorkspaceInputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      ...editorPathInput,
+      workspace: { const: true },
+      editor: { type: "string", minLength: 1, maxLength: 64 },
+      hintShown: { const: true }
+    },
+    oneOf: [
+      { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
+      { required: ["workspace"], properties: { workspace: { const: true } } }
+    ]
+  };
+  var editorOptionsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["visible", "editors", "preferredEditor", "remoteHint"],
+    properties: {
+      visible: { type: "boolean" },
+      editors: {
+        type: "array",
+        maxItems: 32,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "label"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            label: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      },
+      preferredEditor: { type: ["string", "null"], maxLength: 64 },
+      remoteHint: { type: ["string", "null"], maxLength: 1024 }
+    }
+  };
+  var editorCapabilitiesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string" },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openPath"],
+        properties: { openPath: { type: "boolean" } }
+      },
+      clients: { type: "array", maxItems: 0 },
+      editor: editorOptionsSchema
+    }
+  };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "openPath",
         effect: "write",
         requiredGrants: [],
-        inputSchema: withTarget(editorPathInput, ["path", "cwd"]),
-        outputSchema: uiEditorOpenReceiptSchema
+        inputSchema: {
+          ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
+          oneOf: editorWorkspaceInputSchema.oneOf
+        },
+        outputSchema: uiEditorOpenReceiptV11Schema
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}, []),
+        outputSchema: editorCapabilitiesSchema
       }
     ]
   });
@@ -4859,12 +4952,53 @@ var __t3Client = (() => {
       workflowApprovalsRequired: { type: "integer", minimum: 0 }
     }
   };
-  var prsDetailSchema = {
+  var prsDetailSchemaV1_1 = {
     ...prsDetailSchemaV1,
     properties: {
       ...prsDetailSchemaV1.properties,
       preferredMergeMethod: { enum: ["merge", "squash", "rebase"] },
       observedAt: prsObservedAtField
+    }
+  };
+  var prsFilesViewedSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["files", "truncated", "nextCursor"],
+    properties: {
+      files: {
+        type: "array",
+        maxItems: 500,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["path", "state"],
+          properties: {
+            path: { type: "string", minLength: 1, maxLength: 4096 },
+            state: { enum: ["unviewed", "viewed", "dismissed"] }
+          }
+        }
+      },
+      truncated: { type: "boolean" },
+      snapshot: { type: "string", minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" },
+      nextCursor: {
+        type: ["string", "null"],
+        minLength: 1,
+        maxLength: 3,
+        pattern: "^[1-9][0-9]{0,2}$"
+      }
+    }
+  };
+  var prsDetailSchema = {
+    ...prsDetailSchemaV1_1,
+    properties: {
+      ...prsDetailSchemaV1_1.properties,
+      capabilities: {
+        ...prsCapabilitiesSchema,
+        properties: {
+          ...prsCapabilitiesSchema.properties,
+          viewedFiles: { enum: ["host", "environment"] }
+        }
+      }
     }
   };
   var prsCommentSchema = {
@@ -5436,14 +5570,61 @@ var __t3Client = (() => {
       ]
     };
   }
-  var prsReadApi = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchema), {
+  var prsReadApi = defineStreamApi({
+    ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema),
+    methods: [
+      ...prsReadDefinition("1.2.0", prsListResultSchema, prsDetailSchema).methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsCapabilitiesResultSchema,
+          properties: {
+            ...prsCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsOperationsSupportSchema,
+              properties: {
+                ...prsOperationsSupportSchema.properties,
+                "prs.filesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method.name === "invalidate" ? {
+        ...method,
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reference: prsRefInputSchema,
+            filesViewedOnly: { type: "boolean" }
+          }
+        }
+      } : method),
+      {
+        name: "filesViewed",
+        effect: "read",
+        requiredGrants: [PRS_READ],
+        inputSchema: {
+          ...prsRefInputSchema,
+          properties: {
+            ...prsRefInputSchema.properties,
+            cursor: { type: "string", minLength: 1, maxLength: 3, pattern: "^[1-9][0-9]{0,2}$" }
+          }
+        },
+        outputSchema: prsFilesViewedSchema
+      }
+    ]
+  }, {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "detail", output: "preferredMergeMethod" },
       { version: "1.1.0", method: "detail", output: "observedAt" },
-      { version: "1.1.0", method: "list", output: "entries[].observedAt" }
+      { version: "1.1.0", method: "list", output: "entries[].observedAt" },
+      { version: "1.2.0", method: "detail", output: "capabilities.viewedFiles" },
+      { version: "1.2.0", method: "filesViewed" },
+      { version: "1.2.0", method: "invalidate", input: "filesViewedOnly" }
     ]
   });
+  var prsReadApiV1_1 = defineStreamApi(prsReadDefinition("1.1.0", prsListResultSchema, prsDetailSchemaV1_1));
   var prsReadApiV1 = defineStreamApi(prsReadDefinition("1.0.0", prsListResultSchemaV1, prsDetailSchemaV1));
   var PRS_READ_API = prsReadApi.definition;
   var PRS_READ_API_V1 = prsReadApiV1.definition;
@@ -6016,7 +6197,7 @@ var __t3Client = (() => {
       body: prsWriteBodySchema
     }
   };
-  var prsWriteApi = defineApi({
+  var prsWriteApiV1 = defineApi({
     id: PRS_WRITE,
     version: "1.0.0",
     methods: [
@@ -6228,6 +6409,60 @@ var __t3Client = (() => {
         outputSchema: prsEmptyOutputSchema
       }
     ]
+  });
+  var prsWriteApi = defineApi({
+    ...prsWriteApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      ...prsWriteApiV1.definition.methods.map((method) => method.name === "getCapabilities" ? {
+        ...method,
+        outputSchema: {
+          ...prsWriteCapabilitiesResultSchema,
+          properties: {
+            ...prsWriteCapabilitiesResultSchema.properties,
+            operations: {
+              ...prsWriteOperationsSupportSchema,
+              properties: {
+                ...prsWriteOperationsSupportSchema.properties,
+                "prs.setFilesViewed": { type: "boolean" }
+              }
+            }
+          }
+        }
+      } : method),
+      {
+        name: "setFilesViewed",
+        effect: "write",
+        requiredGrants: [PRS_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["repository", "number", "files"],
+          properties: {
+            host: prsHostField,
+            repository: prsRepositoryField,
+            number: { type: "integer", minimum: 1 },
+            files: {
+              type: "array",
+              maxItems: 500,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "viewed"],
+                properties: {
+                  path: { type: "string", minLength: 1, maxLength: 4096 },
+                  viewed: { type: "boolean" }
+                }
+              }
+            }
+          }
+        },
+        outputSchema: prsEmptyOutputSchema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "setFilesViewed" }]
   });
   var PRS_WRITE_API = prsWriteApi.definition;
   var BROWSER_OPERATE = "t3.browser/operate";
@@ -7076,6 +7311,17 @@ var __t3Client = (() => {
   var BROWSER_FRAMES_API = browserFramesApi.definition;
   var BROWSER_SURFACE = "t3.browser/surface";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
+  var BROWSER_RECORDING = "t3.browser/recording";
+  var HOST_CAPABILITY_GRANT_DESCRIPTIONS = {
+    [BROWSER_RECORDING]: "Record the browser panel as video",
+    [BROWSER_CAPTURE_ARTIFACT_ACTIONS]: "Reveal saved recordings and copy their file paths"
+  };
+  var BROWSER_CAPTURE_REQUIRED_GRANTS = [BROWSER_SESSIONS, BROWSER_CAPTURE];
+  var BROWSER_RECORDING_REQUIRED_GRANTS = [
+    ...BROWSER_CAPTURE_REQUIRED_GRANTS,
+    BROWSER_RECORDING
+  ];
   var BROWSER_CAPTURE_ARTIFACT_REF_PATTERN2 = "^pending-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
   var COMPOSER_CONTEXT = "t3.composer/context";
   var COMPOSER_WRITE = "t3.composer/write";
@@ -8219,7 +8465,7 @@ var __t3Client = (() => {
   });
   var UI_EDITOR = "t3.ui/editor";
   var UI_EDITOR_OPEN = "t3.ui/editor.open";
-  var uiEditorApi = defineApi({
+  var uiEditorApiV1 = defineApi({
     id: UI_EDITOR,
     version: "1.0.0",
     methods: [
@@ -8245,6 +8491,36 @@ var __t3Client = (() => {
         },
         outputSchema: uiEditorOpenReceiptSchema
       }
+    ]
+  });
+  var uiEditorApi = defineApi({
+    ...uiEditorApiV1.definition,
+    version: "1.1.0",
+    methods: [
+      {
+        ...uiEditorApiV1.definition.methods[0],
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema
+          }
+        }
+      },
+      {
+        ...uiEditorApiV1.definition.methods[1],
+        inputSchema: editorWorkspaceInputSchema,
+        outputSchema: uiEditorOpenReceiptV11Schema
+      }
+    ]
+  }, {
+    baseline: "1.0.0",
+    additions: [
+      { version: "1.1.0", method: "openPath", input: "workspace" },
+      { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" }
     ]
   });
   var UI_NAVIGATION = "t3.ui/navigation";
@@ -8410,8 +8686,10 @@ var __t3Client = (() => {
     resourcesLeaseApiV1.definition,
     workspaceResourcesApi.definition,
     prsReadApi.definition,
+    prsReadApiV1_1.definition,
     prsReadApiV1.definition,
     prsWriteApi.definition,
+    prsWriteApiV1.definition,
     composerContextApi.definition,
     messagesEnrichmentApi.definition,
     messagesEnrichmentApiV1_1.definition,
@@ -8425,6 +8703,7 @@ var __t3Client = (() => {
     uiExternalApi.definition,
     uiExternalApiV1.definition,
     uiEditorApi.definition,
+    uiEditorApiV1.definition,
     uiNavigationApi.definition,
     uiNavigationApiV1_1.definition,
     uiNavigationApiV1.definition,
@@ -8782,7 +9061,7 @@ var __t3Client = (() => {
   }
 
   // extension.tsx
-  var import_react4 = __toESM(require_react(), 1);
+  var import_react5 = __toESM(require_react(), 1);
 
   // viewModel.ts
   var CHANGE_LANES = ["conflicted", "staged", "changes", "untracked"];
@@ -9439,7 +9718,7 @@ var __t3Client = (() => {
   }
 
   // prsPanel.tsx
-  var import_react3 = __toESM(require_react(), 1);
+  var import_react4 = __toESM(require_react(), 1);
 
   // mutationToasts.ts
   var import_react = __toESM(require_react(), 1);
@@ -10271,7 +10550,100 @@ ${prefix}`;
     };
   }
 
+  // node_modules/@t3tools/shared/src/gitPatchPath.ts
+  var CHARACTER_BY_ESCAPE = {
+    '"': 34,
+    "\\": 92,
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11
+  };
+  var QUOTE = '"';
+  var BACKSLASH = 92;
+  var utf8 = new TextEncoder();
+  var fromUtf8 = new TextDecoder();
+  function unescapeBody(body) {
+    if (!body.includes("\\")) return body;
+    const bytes = [];
+    let literal = "";
+    const flush = () => {
+      if (literal.length === 0) return;
+      bytes.push(...utf8.encode(literal));
+      literal = "";
+    };
+    let at = 0;
+    while (at < body.length) {
+      const character = body.charAt(at);
+      if (character !== "\\") {
+        literal += character;
+        at += 1;
+        continue;
+      }
+      const escaped = body.charAt(at + 1);
+      if (escaped === "") {
+        flush();
+        bytes.push(BACKSLASH);
+        break;
+      }
+      const named = CHARACTER_BY_ESCAPE[escaped];
+      if (named !== void 0) {
+        flush();
+        bytes.push(named);
+        at += 2;
+        continue;
+      }
+      const octal = body.slice(at + 1, at + 4);
+      if (/^[0-7]{3}$/.test(octal)) {
+        flush();
+        bytes.push(Number.parseInt(octal, 8));
+        at += 4;
+        continue;
+      }
+      literal += escaped;
+      at += 2;
+    }
+    flush();
+    return fromUtf8.decode(new Uint8Array(bytes));
+  }
+  function unquoteGitPatchPath(token) {
+    if (token.length >= 2 && token.startsWith(QUOTE) && token.endsWith(QUOTE)) {
+      return unescapeBody(token.slice(1, -1));
+    }
+    return unescapeBody(token);
+  }
+
   // prsViewModel.ts
+  function prsViewedFilesEnabled(store, operations) {
+    return store !== void 0 && operations?.["prs.setFilesViewed"] === true;
+  }
+  function prsFileViewedStates(result) {
+    return result === null ? null : new Map(result.files.map((file) => [file.path, file.state]));
+  }
+  function prsFileViewed(path3, states, overlay) {
+    return {
+      viewed: overlay.get(path3) ?? states?.get(path3) === "viewed",
+      stale: !overlay.has(path3) && states?.get(path3) === "dismissed"
+    };
+  }
+  function prsSettleViewedOverlay(overlay, states, pending, answered) {
+    if (states === null || overlay.size === 0) return overlay;
+    const next = new Map(overlay);
+    for (const [path3, viewed] of overlay) {
+      if (!pending.has(path3) && (answered.has(path3) || states.get(path3) === "viewed" === viewed)) {
+        next.delete(path3);
+      }
+    }
+    return next.size === overlay.size ? overlay : next;
+  }
+  function prsRevertViewedOverlay(overlay, owned) {
+    const next = new Map(overlay);
+    for (const path3 of owned) next.delete(path3);
+    return next;
+  }
   function prsGate(capabilities, error) {
     if (error !== null) return { kind: "error", detail: error };
     if (capabilities === null) return { kind: "loading" };
@@ -10706,15 +11078,14 @@ ${ref.number}`;
     return `${files} file${files === 1 ? "" : "s"} omitted from the delivered diff (+${additions} \u2212${deletions})`;
   }
   function resolveDiffPath(raw) {
-    if (raw.startsWith("a/") || raw.startsWith("b/")) return raw.slice(2);
-    return raw;
+    return unquoteGitPatchPath(raw);
   }
   var DIFF_GIT_BOUNDARY = /^diff --git /gm;
   var BINARY_FILES_MARKER = /^Binary files .+ differ$/m;
   var GIT_BINARY_MARKER = /^GIT binary patch$/m;
-  var BINARY_B_PATH = /^Binary files .+ and b\/(.+) differ$/m;
-  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" "b\/(.*)"$/;
-  var HEADER_B_PATH = /^diff --git a\/.* b\/(.*)$/;
+  var BINARY_B_PATH = /^Binary files .+ and ("b\/.*"|b\/.+) differ$/m;
+  var HEADER_B_PATH_QUOTED = /^diff --git "a\/(?:.*)" ("b\/.*")$/;
+  var HEADER_B_PATH = /^diff --git a\/.* (b\/.*)$/;
   function binaryPathsFromPatch(diff) {
     const paths = /* @__PURE__ */ new Set();
     const boundaries = [...diff.matchAll(DIFF_GIT_BOUNDARY)].map((match) => match.index);
@@ -10724,11 +11095,11 @@ ${ref.number}`;
       const section = diff.slice(start, end);
       if (BINARY_FILES_MARKER.test(section)) {
         const path3 = BINARY_B_PATH.exec(section)?.[1];
-        if (path3 !== void 0) paths.add(path3);
+        if (path3 !== void 0) paths.add(resolveDiffPath(path3).slice(2));
       } else if (GIT_BINARY_MARKER.test(section)) {
         const header = section.split("\n", 1)[0] ?? "";
         const path3 = HEADER_B_PATH_QUOTED.exec(header)?.[1] ?? HEADER_B_PATH.exec(header)?.[1] ?? null;
-        if (path3 !== null) paths.add(path3);
+        if (path3 !== null) paths.add(resolveDiffPath(path3).slice(2));
       }
     }
     return paths;
@@ -11769,6 +12140,159 @@ ${writeKey}`;
     ] });
   }
 
+  // usePrsFilesViewed.ts
+  var import_react3 = __toESM(require_react(), 1);
+  var EMPTY_OVERLAY = /* @__PURE__ */ new Map();
+  function usePrsFilesViewed(host, session, reference, store, operations, readSupported, revision2, onFailure, onSuccess) {
+    const enabled = readSupported && prsViewedFilesEnabled(store, operations);
+    const scope = (0, import_react3.useRef)({
+      queued: /* @__PURE__ */ new Map(),
+      sentBy: /* @__PURE__ */ new Map(),
+      answered: /* @__PURE__ */ new Set(),
+      request: 0,
+      read: 0,
+      timer: null,
+      disposed: false
+    });
+    const [read, setRead] = (0, import_react3.useState)({ result: null, error: false });
+    const [pressed, setPressed] = (0, import_react3.useState)({
+      overlay: EMPTY_OVERLAY
+    });
+    const states = (0, import_react3.useMemo)(() => prsFileViewedStates(read.result), [read.result]);
+    const latestFailure = (0, import_react3.useRef)(onFailure);
+    const latestSuccess = (0, import_react3.useRef)(onSuccess);
+    (0, import_react3.useEffect)(() => {
+      latestFailure.current = onFailure;
+      latestSuccess.current = onSuccess;
+    }, [onFailure, onSuccess]);
+    const changeOverlay = (0, import_react3.useCallback)(
+      (change) => setPressed((current) => {
+        const overlay = change(current.overlay);
+        return overlay === current.overlay ? current : { overlay };
+      }),
+      []
+    );
+    const readViewed = (0, import_react3.useCallback)(async () => {
+      const current = scope.current;
+      if (!enabled || reference === null || current.disposed || session.signal.aborted) return;
+      const request = ++current.read;
+      const api = bindApi(prsReadApi, host, session.context, "^1.2.0");
+      const files = [];
+      let cursor = null;
+      let truncated = false;
+      let snapshot;
+      let restarted = false;
+      try {
+        while (true) {
+          const page = await api.invoke(
+            "filesViewed",
+            { ...reference, ...cursor === null ? {} : { cursor } },
+            session.signal
+          );
+          if (current.disposed || session.signal.aborted || current.read !== request) return;
+          if (cursor !== null && page.snapshot !== snapshot) {
+            if (restarted) throw new Error("Viewed files changed while paging.");
+            restarted = true;
+            files.length = 0;
+            truncated = false;
+            cursor = null;
+            snapshot = void 0;
+            continue;
+          }
+          if (page.nextCursor !== null && Number(page.nextCursor) <= Number(cursor ?? "0"))
+            throw new Error("Viewed files cursor did not advance.");
+          snapshot = page.snapshot;
+          files.push(...page.files);
+          truncated ||= page.truncated;
+          cursor = page.nextCursor;
+          if (cursor === null) break;
+        }
+        const result = { files, truncated, nextCursor: null };
+        const pending = /* @__PURE__ */ new Set([...current.queued.keys(), ...current.sentBy.keys()]);
+        const answered = /* @__PURE__ */ new Set();
+        for (const path3 of current.answered) {
+          if (!pending.has(path3)) {
+            answered.add(path3);
+            current.answered.delete(path3);
+          }
+        }
+        const nextStates = prsFileViewedStates(result);
+        changeOverlay((overlay) => prsSettleViewedOverlay(overlay, nextStates, pending, answered));
+        setRead({ result, error: false });
+      } catch {
+        if (!current.disposed && !session.signal.aborted && current.read === request)
+          setRead((current2) => ({ ...current2, error: true }));
+      }
+    }, [enabled, reference, host, session, changeOverlay]);
+    (0, import_react3.useEffect)(() => {
+      void readViewed();
+    }, [readViewed, revision2]);
+    const flush = () => {
+      const current = scope.current;
+      current.timer = null;
+      if (reference === null || current.queued.size === 0 || session.signal.aborted) return;
+      const files = [...current.queued].map(([path3, viewed]) => ({ path: path3, viewed }));
+      current.queued.clear();
+      const request = ++current.request;
+      for (const file of files) current.sentBy.set(file.path, request);
+      void bindApi(prsWriteApi, host, session.context, "^1.1.0").invoke("setFilesViewed", { ...reference, files }, session.signal).then(
+        () => {
+          if (current.disposed || session.signal.aborted) return;
+          for (const file of files) {
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) current.answered.add(file.path);
+          }
+          latestSuccess.current();
+          void readViewed();
+        },
+        () => {
+          if (current.disposed || session.signal.aborted) return;
+          const owned = /* @__PURE__ */ new Set();
+          for (const file of files) {
+            if (current.sentBy.get(file.path) !== request) continue;
+            current.sentBy.delete(file.path);
+            if (!current.queued.has(file.path)) owned.add(file.path);
+          }
+          if (owned.size === 0) return;
+          changeOverlay((current2) => prsRevertViewedOverlay(current2, owned));
+          latestFailure.current();
+        }
+      );
+    };
+    const flushRef = (0, import_react3.useRef)(flush);
+    flushRef.current = flush;
+    (0, import_react3.useEffect)(() => {
+      const current = scope.current;
+      current.disposed = false;
+      return () => {
+        if (current.timer !== null) {
+          clearTimeout(current.timer);
+          flushRef.current();
+        }
+        current.disposed = true;
+      };
+    }, []);
+    const setViewed = (0, import_react3.useCallback)(
+      (path3, viewed) => {
+        if (!enabled) return;
+        changeOverlay((current2) => new Map(current2).set(path3, viewed));
+        const current = scope.current;
+        current.queued.set(path3, viewed);
+        if (current.timer !== null) clearTimeout(current.timer);
+        current.timer = setTimeout(() => flushRef.current(), 400);
+      },
+      [enabled, changeOverlay]
+    );
+    return {
+      enabled,
+      file: (path3) => prsFileViewed(path3, states, pressed.overlay),
+      setViewed,
+      truncated: read.result?.truncated === true,
+      error: read.error
+    };
+  }
+
   // prsPanel.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
   var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
@@ -11838,8 +12362,8 @@ ${writeKey}`;
   };
   var message = (error, fallback) => error instanceof Error ? error.message : fallback;
   function usePrsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11861,8 +12385,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function usePrsWriteCapabilities(host, session, enabled, tick) {
-    const [result, setResult] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [result, setResult] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11884,8 +12408,8 @@ ${writeKey}`;
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useCheckoutSupport(host, session, enabled) {
-    const [supported, setSupported] = (0, import_react3.useState)({ checkout: false, handoff: false });
-    (0, import_react3.useEffect)(() => {
+    const [supported, setSupported] = (0, import_react4.useState)({ checkout: false, handoff: false });
+    (0, import_react4.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11906,8 +12430,8 @@ ${writeKey}`;
     return enabled ? supported : { checkout: false, handoff: false };
   }
   function useDefaultRefs(host, session, enabled, revision2) {
-    const [refs, setRefs] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [refs, setRefs] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11924,12 +12448,12 @@ ${writeKey}`;
     return enabled ? refs : null;
   }
   function usePrsRefreshes(host, session, enabled) {
-    const [state2, setState] = (0, import_react3.useState)({
+    const [state2, setState] = (0, import_react4.useState)({
       tick: 0,
       live: false,
       detail: null
     });
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -11988,11 +12512,11 @@ ${writeKey}`;
     return Object.fromEntries(entries.map((entry) => [prsRefKey(entry), receivedAt]));
   }
   function usePrsList(host, session, enabled, input, revision2) {
-    const inputKey = (0, import_react3.useMemo)(() => JSON.stringify(input), [input]);
+    const inputKey = (0, import_react4.useMemo)(() => JSON.stringify(input), [input]);
     const key = `${revision2}|${inputKey}`;
-    const [state2, setState] = (0, import_react3.useState)(null);
-    const continuation = (0, import_react3.useRef)(null);
-    (0, import_react3.useEffect)(() => {
+    const [state2, setState] = (0, import_react4.useState)(null);
+    const continuation = (0, import_react4.useRef)(null);
+    (0, import_react4.useEffect)(() => {
       if (!enabled) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12094,8 +12618,8 @@ ${writeKey}`;
   function usePrsDetail(host, session, ref, operations, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [sections, setSections] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [sections, setSections] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (ref === null || refKey === null || key === null || operations === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12165,8 +12689,8 @@ ${writeKey}`;
   function usePrsDiff(host, session, ref, enabled, revision2) {
     const refKey = ref === null ? null : prsRefKey(ref);
     const key = refKey === null ? null : `${revision2}|${refKey}`;
-    const [state2, setState] = (0, import_react3.useState)(null);
-    (0, import_react3.useEffect)(() => {
+    const [state2, setState] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
       if (!enabled || ref === null || key === null) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -12247,8 +12771,8 @@ ${writeKey}`;
     return { diff: value, loadMore };
   }
   function useDebounced(value, delay) {
-    const [debounced, setDebounced] = (0, import_react3.useState)(value);
-    (0, import_react3.useEffect)(() => {
+    const [debounced, setDebounced] = (0, import_react4.useState)(value);
+    (0, import_react4.useEffect)(() => {
       const timer = setTimeout(() => setDebounced(value), delay);
       return () => clearTimeout(timer);
     }, [value, delay]);
@@ -12312,23 +12836,23 @@ ${writeKey}`;
   function ChecksControl(props) {
     const { host, state: state2, checks, stale = false, loadChecks, onOpenLink } = props;
     const icon = prsChecksIcon(state2);
-    const [open, setOpen] = (0, import_react3.useState)(false);
-    const [lazy, setLazy] = (0, import_react3.useState)({ status: "loading" });
-    const trigger = (0, import_react3.useRef)(null);
-    const popup = (0, import_react3.useRef)(null);
-    const [popupElement, setPopupElement] = (0, import_react3.useState)(null);
-    const attachPopup = (0, import_react3.useCallback)((element) => {
+    const [open, setOpen] = (0, import_react4.useState)(false);
+    const [lazy, setLazy] = (0, import_react4.useState)({ status: "loading" });
+    const trigger = (0, import_react4.useRef)(null);
+    const popup = (0, import_react4.useRef)(null);
+    const [popupElement, setPopupElement] = (0, import_react4.useState)(null);
+    const attachPopup = (0, import_react4.useCallback)((element) => {
       popup.current = element;
       setPopupElement(element);
     }, []);
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (!open || popupElement === null) return;
       const timer = setTimeout(() => {
         (tabbablesIn(popupElement)[0] ?? popupElement).focus();
       }, 0);
       return () => clearTimeout(timer);
     }, [open, popupElement]);
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (!open || checks !== void 0 || loadChecks === void 0) return;
       const controller = new AbortController();
       setLazy({ status: "loading" });
@@ -12343,7 +12867,7 @@ ${writeKey}`;
       );
       return () => controller.abort();
     }, [open]);
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (!open || typeof document === "undefined" || !("addEventListener" in document)) return;
       const onPress = (event) => {
         const target = event.target;
@@ -12496,8 +13020,8 @@ ${writeKey}`;
   };
   function CopyableCode(props) {
     const { host, value, copyLabel, copiedLabel, onError } = props;
-    const [copied, setCopied] = (0, import_react3.useState)(false);
-    (0, import_react3.useEffect)(() => {
+    const [copied, setCopied] = (0, import_react4.useState)(false);
+    (0, import_react4.useEffect)(() => {
       if (!copied) return;
       const timer = setTimeout(() => setCopied(false), 1600);
       return () => clearTimeout(timer);
@@ -12860,9 +13384,16 @@ ${writeKey}`;
       }
     );
   }
-  function PrsFileSection({ row }) {
-    const [collapsed, setCollapsed] = (0, import_react3.useState)(false);
-    const rows = (0, import_react3.useMemo)(
+  var PrsFileSection = (0, import_react4.memo)(function PrsFileSection2({
+    row,
+    enabled,
+    viewed,
+    stale,
+    setViewed,
+    host
+  }) {
+    const [collapsed, setCollapsed] = (0, import_react4.useState)(false);
+    const rows = (0, import_react4.useMemo)(
       () => collapsed || row.binary || row.textless ? [] : fileRows(row),
       [collapsed, row]
     );
@@ -12909,6 +13440,37 @@ ${writeKey}`;
                   ] })
                 ]
               }
+            ),
+            enabled && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              "label",
+              {
+                "data-viewed-toggle": "",
+                onClick: (event) => event.stopPropagation(),
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 11,
+                  color: muted2,
+                  cursor: "pointer"
+                },
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                    "input",
+                    {
+                      type: "checkbox",
+                      "aria-label": stale ? "Changed" : "Viewed",
+                      checked: viewed,
+                      onChange: (event) => {
+                        setViewed(row.path, event.target.checked);
+                        setCollapsed(event.target.checked);
+                      },
+                      style: { margin: 0, accentColor: "var(--primary, #2563eb)" }
+                    }
+                  ),
+                  stale ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "This file has been pushed to since you marked it viewed.", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: "var(--warning, #b45309)" }, children: "Changed" }) }) : "Viewed"
+                ]
+              }
             )
           ]
         }
@@ -12924,9 +13486,22 @@ ${writeKey}`;
       ] }),
       !collapsed && rows.map((line) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsDiffRow, { row: line }, line.ordinal))
     ] });
-  }
+  });
   function PrsDiffSection(props) {
     const { diff, supported, onLoadMore } = props;
+    const viewed = usePrsFilesViewed(
+      props.host,
+      props.session,
+      props.reference,
+      props.detail?.capabilities.viewedFiles,
+      props.write,
+      props.viewedReadSupported,
+      props.revision,
+      props.onViewedFailure,
+      props.onViewedSuccess
+    );
+    const patch = diff.status === "ready" ? diff.delivery.patch : "";
+    const renderable = (0, import_react4.useMemo)(() => renderableFromPatch(patch), [patch]);
     if (!supported) {
       return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Diff streaming is not supported by this host (prs.streamDiff)." });
     }
@@ -12937,7 +13512,6 @@ ${writeKey}`;
       return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: diff.detail });
     }
     const { delivery } = diff;
-    const renderable = renderableFromPatch(delivery.patch);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { style: { ...noteStyle, fontSize: 12 }, children: [
         delivery.diffHashes[0] !== void 0 ? `sha256 ${delivery.diffHashes[0].slice(0, 12)} \xB7 ${delivery.byteLength} bytes` : "empty diff",
@@ -12961,7 +13535,49 @@ ${writeKey}`;
           }
         )
       ] }),
-      renderable !== null && renderable.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { children: renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(PrsFileSection, { row }, row.key)) }),
+      renderable !== null && renderable.kind === "files" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+        viewed.enabled && renderable.files.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+          "p",
+          {
+            style: { ...noteStyle, display: "flex", alignItems: "center", gap: 6, fontSize: 12 },
+            children: [
+              renderable.files.filter((row) => viewed.file(row.path).viewed).length,
+              " /",
+              " ",
+              renderable.files.length,
+              props.detail?.capabilities.viewedFiles === "environment" ? " viewed in T3 Code" : " viewed",
+              props.detail?.capabilities.viewedFiles === "environment" && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                Tooltip,
+                {
+                  host: props.host,
+                  label: "This host keeps no shared record of which files you have read, so these ticks are kept by this environment. They follow you between the apps connected to it, but the host's own web UI will not show them.",
+                  children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { "aria-label": "These ticks are kept here, not on the host", children: "\u24D8" })
+                }
+              ),
+              viewed.truncated && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+                Tooltip,
+                {
+                  host: props.host,
+                  label: "The host had more files than were read, so this count is short.",
+                  children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\xB7 partial count" })
+                }
+              )
+            ]
+          }
+        ),
+        viewed.enabled && viewed.error && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: "Your ticks could not be read. The boxes are whatever was last read, and empty if nothing has been read yet." }),
+        renderable.files.map((row) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          PrsFileSection,
+          {
+            row,
+            enabled: viewed.enabled,
+            ...viewed.file(row.path),
+            setViewed: viewed.setViewed,
+            host: props.host
+          },
+          row.key
+        ))
+      ] }),
       delivery.omittedFileStats.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: prsOmittedFilesLabel(delivery.omittedFileStats) }),
       delivery.nextCursor !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
         "button",
@@ -13020,10 +13636,10 @@ ${writeKey}`;
   }
   function CheckoutMenu(props) {
     const { host, pending, disabled, options, onPick } = props;
-    const [open, setOpen] = (0, import_react3.useState)(null);
-    const trigger = (0, import_react3.useRef)(null);
-    const items = (0, import_react3.useRef)([]);
-    (0, import_react3.useEffect)(() => {
+    const [open, setOpen] = (0, import_react4.useState)(null);
+    const trigger = (0, import_react4.useRef)(null);
+    const items = (0, import_react4.useRef)([]);
+    (0, import_react4.useEffect)(() => {
       if (open !== null) items.current[open === "first" ? 0 : items.current.length - 1]?.focus();
     }, [open]);
     const close = () => {
@@ -13129,14 +13745,14 @@ ${writeKey}`;
   }
   function ConfirmDialog(props) {
     const { host, anchor, title, description, confirmLabel, pending, onCancel, onConfirm } = props;
-    const titleId = (0, import_react3.useId)();
-    const descriptionId = (0, import_react3.useId)();
-    const cancel = (0, import_react3.useRef)(null);
-    const confirm = (0, import_react3.useRef)(null);
-    const opener = (0, import_react3.useRef)(anchor);
+    const titleId = (0, import_react4.useId)();
+    const descriptionId = (0, import_react4.useId)();
+    const cancel = (0, import_react4.useRef)(null);
+    const confirm = (0, import_react4.useRef)(null);
+    const opener = (0, import_react4.useRef)(anchor);
     const HostDialog = resolveFloatingDialog(host);
     const hosted = HostDialog !== null;
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       if (hosted) return;
       cancel.current?.focus();
       const returnTo = opener.current;
@@ -13321,9 +13937,9 @@ ${writeKey}`;
   var MERGE_METHODS = ["merge", "squash", "rebase"];
   function useRememberedMergeMethod(host) {
     const preferences = resolvePullRequestPreferences(host);
-    const [local, setLocal] = (0, import_react3.useState)(null);
-    const [, setChanged] = (0, import_react3.useState)(0);
-    (0, import_react3.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
+    const [local, setLocal] = (0, import_react4.useState)(null);
+    const [, setChanged] = (0, import_react4.useState)(0);
+    (0, import_react4.useEffect)(() => preferences?.subscribe(() => setChanged((count) => count + 1)), [preferences]);
     return {
       last: preferences === null ? local : preferences.lastMergeMethod(),
       legacy: (project) => preferences?.legacyProjectMergeMethod(project) ?? void 0,
@@ -13337,14 +13953,14 @@ ${writeKey}`;
   }
   function PullRequestsPanel(props) {
     const { host, session, visible, selected: selected2, onSelect } = props;
-    const [tick, setTick] = (0, import_react3.useState)(0);
-    const [listState, setListState] = (0, import_react3.useState)("open");
-    const [involvement, setInvolvement] = (0, import_react3.useState)("all");
-    const [query, setQuery] = (0, import_react3.useState)("");
-    const [refreshError, setRefreshError] = (0, import_react3.useState)(null);
-    const [pagingThreads, setPagingThreads] = (0, import_react3.useState)(/* @__PURE__ */ new Map());
-    const [pagedThreads, setPagedThreads] = (0, import_react3.useState)(null);
-    const pagedGeneration = (0, import_react3.useRef)({
+    const [tick, setTick] = (0, import_react4.useState)(0);
+    const [listState, setListState] = (0, import_react4.useState)("open");
+    const [involvement, setInvolvement] = (0, import_react4.useState)("all");
+    const [query, setQuery] = (0, import_react4.useState)("");
+    const [refreshError, setRefreshError] = (0, import_react4.useState)(null);
+    const [pagingThreads, setPagingThreads] = (0, import_react4.useState)(/* @__PURE__ */ new Map());
+    const [pagedThreads, setPagedThreads] = (0, import_react4.useState)(null);
+    const pagedGeneration = (0, import_react4.useRef)({
       scope: null,
       activity: null,
       generation: 0
@@ -13356,16 +13972,17 @@ ${writeKey}`;
     const writeProbe = usePrsWriteCapabilities(host, session, visible && ready, tick);
     const write = prsWriteGate(writeProbe.capabilities, writeProbe.error);
     const writeOps = write.kind === "ready" ? write.operations : null;
-    const [drafts, setDrafts] = (0, import_react3.useState)({});
-    const [writeState, setWriteState] = (0, import_react3.useState)(null);
+    const [drafts, setDrafts] = (0, import_react4.useState)({});
+    const [writeState, setWriteState] = (0, import_react4.useState)(null);
     const rememberedMergeMethod = useRememberedMergeMethod(host);
-    const [openError, setOpenError] = (0, import_react3.useState)(null);
-    const [stackConfirm, setStackConfirm] = (0, import_react3.useState)(null);
-    const stackMergeOpener = (0, import_react3.useRef)(null);
-    const stackRebaseOpener = (0, import_react3.useRef)(null);
-    const [stackReceipt, setStackReceipt] = (0, import_react3.useState)(null);
-    const [handoff, setHandoff] = (0, import_react3.useState)(null);
-    const [handoffReceipt, setHandoffReceipt] = (0, import_react3.useState)(null);
+    const [openError, setOpenError] = (0, import_react4.useState)(null);
+    const [stackConfirm, setStackConfirm] = (0, import_react4.useState)(null);
+    const stackMergeOpener = (0, import_react4.useRef)(null);
+    const stackRebaseOpener = (0, import_react4.useRef)(null);
+    const [stackReceipt, setStackReceipt] = (0, import_react4.useState)(null);
+    const [handoff, setHandoff] = (0, import_react4.useState)(null);
+    const [handoffReceipt, setHandoffReceipt] = (0, import_react4.useState)(null);
+    const [viewedFailureKey, setViewedFailureKey] = (0, import_react4.useState)(null);
     const openOnHost = (url) => {
       setOpenError(null);
       void bindApi(uiExternalApi, host, session.context).invoke("open", { url }, session.signal).then(
@@ -13385,7 +14002,7 @@ ${writeKey}`;
     );
     const revision2 = `${tick}:${refreshes.tick}`;
     const debouncedQuery = useDebounced(query, 250);
-    const listInput = (0, import_react3.useMemo)(
+    const listInput = (0, import_react4.useMemo)(
       () => prsListInput(listState, involvement, debouncedQuery),
       [listState, involvement, debouncedQuery]
     );
@@ -13405,12 +14022,21 @@ ${writeKey}`;
       revision2
     );
     const runInvalidate = () => {
+      setViewedFailureKey(null);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
       const invalidations = [api.invoke("invalidate", {}, signal)];
       if (selected2 !== null)
         invalidations.push(api.invoke("invalidate", { reference: selected2 }, signal));
+      if (selected2 !== null && ops?.["prs.filesViewed"] === true)
+        invalidations.push(
+          bindApi(prsReadApi, host, session.context, "^1.2.0").invoke(
+            "invalidate",
+            { reference: selected2, filesViewedOnly: true },
+            signal
+          )
+        );
       void Promise.all(invalidations).then(
         () => {
           if (signal.aborted) return;
@@ -13577,7 +14203,7 @@ ${writeKey}`;
     };
     const pagedScope = selectedKey === null ? null : `${revision2}
 ${selectedKey}`;
-    (0, import_react3.useEffect)(() => {
+    (0, import_react4.useEffect)(() => {
       const current = pagedGeneration.current;
       if (current.scope !== pagedScope || current.activity !== sections.activity)
         pagedGeneration.current = {
@@ -14381,9 +15007,27 @@ ${thread.id}`) === activity,
                     {
                       diff,
                       supported: ops?.["prs.streamDiff"] === true,
-                      onLoadMore: loadMore
-                    }
-                  )
+                      onLoadMore: loadMore,
+                      host,
+                      session,
+                      reference: selected2,
+                      detail: sections.detail,
+                      write: writeOps,
+                      viewedReadSupported: ops?.["prs.filesViewed"] === true,
+                      revision: revision2,
+                      onViewedSuccess: () => setViewedFailureKey(null),
+                      onViewedFailure: () => {
+                        const disclose = () => setViewedFailureKey(selectedKey);
+                        if (!toasts.report(
+                          { severity: "error", title: "Could not update viewed files" },
+                          disclose
+                        ))
+                          disclose();
+                      }
+                    },
+                    `${session.context.resource.environmentId ?? ""}:${session.context.resource.projectId ?? ""}:${selected2 === null ? "" : prsRefKey(selected2)}`
+                  ),
+                  selectedKey !== null && viewedFailureKey === selectedKey && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: "Could not update viewed files" })
                 ] }),
                 prsWriteUnavailableNote(write) !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12, paddingBottom: 8 }, children: prsWriteUnavailableNote(write) })
               ] })
@@ -14429,8 +15073,8 @@ ${thread.id}`) === activity,
     ) && (record.selectedPath === void 0 || typeof record.selectedPath === "string") && (record.selectedLane === void 0 || typeof record.selectedLane === "string" && LANES.has(record.selectedLane)) && (record.view === void 0 || typeof record.view === "string" && VIEWS.has(record.view)) && (record.prHost === void 0 || typeof record.prHost === "string") && (record.prRepository === void 0 || typeof record.prRepository === "string") && (record.prNumber === void 0 || typeof record.prNumber === "number");
   }
   function useCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [result, setResult] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14452,8 +15096,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useStatusStream(host, session, visible, tick) {
-    const [model, setModel] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [model, setModel] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14510,8 +15154,8 @@ ${thread.id}`) === activity,
     return model?.key === tick ? model.status : CONNECTING_STATUS;
   }
   function useVcsActionsCapabilities(host, session, visible, tick) {
-    const [result, setResult] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [result, setResult] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14533,8 +15177,8 @@ ${thread.id}`) === activity,
     return result?.key === tick ? result : { capabilities: null, error: null };
   }
   function useChangesList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [result, setResult] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14560,8 +15204,8 @@ ${thread.id}`) === activity,
     return { changes: result.changes, error: result.key === revision2 ? result.error : null };
   }
   function useRefsList(host, session, visible, isRepo, revision2) {
-    const [result, setResult] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [result, setResult] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible || !isRepo || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14584,8 +15228,8 @@ ${thread.id}`) === activity,
     return { refs: result.refs, error: result.key === revision2 ? result.error : null };
   }
   function useRemotesList(host, session, visible, enabled, revision2) {
-    const [result, setResult] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [result, setResult] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible || !enabled || revision2 === "") return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14608,8 +15252,8 @@ ${thread.id}`) === activity,
     return { remotes: result.remotes, error: result.key === revision2 ? result.error : null };
   }
   function useThemeVars(host, session, visible) {
-    const [vars, setVars] = (0, import_react4.useState)(null);
-    (0, import_react4.useEffect)(() => {
+    const [vars, setVars] = (0, import_react5.useState)(null);
+    (0, import_react5.useEffect)(() => {
       if (!visible) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -14665,48 +15309,48 @@ ${thread.id}`) === activity,
   };
   function VersionControlView(props) {
     const { host, session } = props;
-    const [visible, setVisible] = (0, import_react4.useState)(session.visible);
-    const [tick, setTick] = (0, import_react4.useState)(0);
-    const [refreshError, setRefreshError] = (0, import_react4.useState)(null);
-    const [mutation, setMutation] = (0, import_react4.useState)(IDLE_MUTATION);
-    const [mutationSerial, setMutationSerial] = (0, import_react4.useState)(0);
-    const [commitMessage, setCommitMessage] = (0, import_react4.useState)("");
-    const [stackedChoice, setStackedChoice] = (0, import_react4.useState)(null);
-    const [featureBranch, setFeatureBranch] = (0, import_react4.useState)(false);
-    const [pendingConfirm, setPendingConfirm] = (0, import_react4.useState)(null);
-    const [pendingDiscard, setPendingDiscard] = (0, import_react4.useState)(null);
-    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react4.useState)(null);
-    const [stacked, setStacked] = (0, import_react4.useState)(null);
-    const [newRefName, setNewRefName] = (0, import_react4.useState)("");
-    const [newWorktreeName, setNewWorktreeName] = (0, import_react4.useState)("");
-    const [publishOpen, setPublishOpen] = (0, import_react4.useState)(false);
-    const [publishProvider, setPublishProvider] = (0, import_react4.useState)("github");
-    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react4.useState)("");
-    const [publishVisibility, setPublishVisibility] = (0, import_react4.useState)("private");
-    const [publishRemoteName, setPublishRemoteName] = (0, import_react4.useState)("origin");
-    const [publishProtocol, setPublishProtocol] = (0, import_react4.useState)("ssh");
-    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react4.useState)(false);
-    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react4.useState)(
+    const [visible, setVisible] = (0, import_react5.useState)(session.visible);
+    const [tick, setTick] = (0, import_react5.useState)(0);
+    const [refreshError, setRefreshError] = (0, import_react5.useState)(null);
+    const [mutation, setMutation] = (0, import_react5.useState)(IDLE_MUTATION);
+    const [mutationSerial, setMutationSerial] = (0, import_react5.useState)(0);
+    const [commitMessage, setCommitMessage] = (0, import_react5.useState)("");
+    const [stackedChoice, setStackedChoice] = (0, import_react5.useState)(null);
+    const [featureBranch, setFeatureBranch] = (0, import_react5.useState)(false);
+    const [pendingConfirm, setPendingConfirm] = (0, import_react5.useState)(null);
+    const [pendingDiscard, setPendingDiscard] = (0, import_react5.useState)(null);
+    const [deferredFollowUp, setDeferredFollowUp] = (0, import_react5.useState)(null);
+    const [stacked, setStacked] = (0, import_react5.useState)(null);
+    const [newRefName, setNewRefName] = (0, import_react5.useState)("");
+    const [newWorktreeName, setNewWorktreeName] = (0, import_react5.useState)("");
+    const [publishOpen, setPublishOpen] = (0, import_react5.useState)(false);
+    const [publishProvider, setPublishProvider] = (0, import_react5.useState)("github");
+    const [publishRepositoryPath, setPublishRepositoryPath] = (0, import_react5.useState)("");
+    const [publishVisibility, setPublishVisibility] = (0, import_react5.useState)("private");
+    const [publishRemoteName, setPublishRemoteName] = (0, import_react5.useState)("origin");
+    const [publishProtocol, setPublishProtocol] = (0, import_react5.useState)("ssh");
+    const [publishAdvancedOpen, setPublishAdvancedOpen] = (0, import_react5.useState)(false);
+    const [worktreeRemoveFailures, setWorktreeRemoveFailures] = (0, import_react5.useState)(
       /* @__PURE__ */ new Set()
     );
-    const inFlight = (0, import_react4.useRef)(false);
-    (0, import_react4.useEffect)(() => session.onVisibility(setVisible), [session]);
+    const inFlight = (0, import_react5.useRef)(false);
+    (0, import_react5.useEffect)(() => session.onVisibility(setVisible), [session]);
     const themeVars = useThemeVars(host, session, visible);
     const restored = session.restoreState && typeof session.restoreState === "object" && !Array.isArray(session.restoreState) ? session.restoreState : null;
-    const [selection, setSelection] = (0, import_react4.useState)(
+    const [selection, setSelection] = (0, import_react5.useState)(
       () => restored?.selectedPath && restored.selectedLane && LANES.has(restored.selectedLane) ? { path: restored.selectedPath, lane: restored.selectedLane } : null
     );
-    const [view, setView] = (0, import_react4.useState)(
+    const [view, setView] = (0, import_react5.useState)(
       restored?.view === "repository" ? "repository" : "pull-requests"
     );
-    const [selectedPr, setSelectedPr] = (0, import_react4.useState)(
+    const [selectedPr, setSelectedPr] = (0, import_react5.useState)(
       () => restored?.prRepository !== void 0 && typeof restored.prNumber === "number" ? {
         repository: restored.prRepository,
         number: restored.prNumber,
         ...restored.prHost !== void 0 && restored.prHost !== "" ? { host: restored.prHost } : {}
       } : null
     );
-    const savedState = (0, import_react4.useRef)({ ...restored });
+    const savedState = (0, import_react5.useRef)({ ...restored });
     const persist = (patch) => {
       const next = { ...savedState.current, ...patch };
       for (const key of Object.keys(next)) if (next[key] === void 0) delete next[key];
@@ -14714,7 +15358,7 @@ ${thread.id}`) === activity,
       session.save(next);
     };
     const repositoryVisible = visible && view === "repository";
-    const runFollowUpRef = (0, import_react4.useRef)(() => {
+    const runFollowUpRef = (0, import_react5.useRef)(() => {
     });
     const { begin: beginToast } = useMutationToasts(
       host,
@@ -14749,15 +15393,15 @@ ${thread.id}`) === activity,
       isRepo && ops?.["repository.listRemotes"] === true,
       listRevision
     );
-    const lanes = (0, import_react4.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
+    const lanes = (0, import_react5.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
     const selected2 = retainSelection(selection, lanes);
     const selectedEntry = selected2 === null ? null : lanes[selected2.lane].find((e) => e.path === selected2.path) ?? null;
     const selectedStat = selected2 === null ? null : numstatFor(status.local, selected2.path);
-    const rows = (0, import_react4.useMemo)(() => refRows(refs.refs), [refs.refs]);
-    const remoteList = (0, import_react4.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
-    const worktrees = (0, import_react4.useMemo)(() => worktreeRows(rows), [rows]);
+    const rows = (0, import_react5.useMemo)(() => refRows(refs.refs), [refs.refs]);
+    const remoteList = (0, import_react5.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
+    const worktrees = (0, import_react5.useMemo)(() => worktreeRows(rows), [rows]);
     const canStage = ops?.["changes.stage"] === true;
     const canUnstage = ops?.["changes.unstage"] === true;
     const canCommit = ops?.["changes.commit"] === true;
@@ -14780,7 +15424,7 @@ ${thread.id}`) === activity,
       repository: publishRepositoryPath,
       remoteName: publishRemoteName
     });
-    const stackedOffers = (0, import_react4.useMemo)(
+    const stackedOffers = (0, import_react5.useMemo)(
       () => stackedActionOffers(status.local, status.remote, lanes, featureBranch),
       [status.local, status.remote, lanes, featureBranch]
     );
@@ -15044,7 +15688,7 @@ ${thread.id}`) === activity,
       setView(next);
       persist({ view: next });
     };
-    (0, import_react4.useEffect)(() => {
+    (0, import_react5.useEffect)(() => {
       runFollowUpRef.current = (action) => {
         switchView("repository");
         setStackedChoice(action);

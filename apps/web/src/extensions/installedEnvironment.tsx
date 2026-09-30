@@ -43,6 +43,7 @@ import {
 } from "./installedController";
 
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
+import type { UiEditorOpenReceipt } from "@t3tools/extension-sdk/catalogue";
 import { createBrowserCaptureBridge } from "./browserCaptureBridge";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
@@ -437,6 +438,31 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
             return resolveLeasePresentationUrl(request, result, connection.httpBaseUrl);
           });
         }),
+      openEditorPath: async (installationId, contentHash, input, context, signal) => {
+        const resolution = snapshots
+          .get(environmentId)
+          ?.apiResolution?.find((item) => item.id === "t3.ui/editor");
+        const selected = snapshots
+          .get(environmentId)
+          ?.apiSelections?.find((item) => item.id === "t3.ui/editor")?.providerId;
+        if (
+          resolution?.reason ||
+          (resolution?.providerId && resolution.providerId !== "host.ui.editor") ||
+          (selected && selected !== "host.ui.editor")
+        )
+          throw new Error("The native editor provider is no longer selected.");
+        const provider = providers.get("t3.client/editor");
+        const installationGeneration = controller.installationEpoch(installationId);
+        if (!provider || installationGeneration === null)
+          throw new Error("The editor host is unavailable.");
+        return (await provider.invoke({
+          method: "openPath",
+          input,
+          context,
+          signal,
+          caller: { installationId, contentHash, installationGeneration },
+        })) as UiEditorOpenReceipt;
+      },
       subscribeApi: (installationId, expectedContentHash, request, signal) =>
         withClientConnectionIdFrames(environmentId, signal, (clientConnectionId) =>
           authenticatedApiFrames(

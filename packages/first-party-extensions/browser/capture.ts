@@ -304,18 +304,29 @@ type Notifications = BoundApi<typeof uiNotificationsApi>;
  * The toast body for a copy the host refused. Host details can name the
  * saved file's absolute path, so the pack words every reason itself.
  */
-function copyFailureBody(reason: BrowserCaptureArtifactActionFailureReason): string {
+function copyFailureBody(
+  reason: BrowserCaptureArtifactActionFailureReason,
+  kind: "screenshot" | "recording",
+): string {
   switch (reason) {
     case "artifact-not-found":
-      return "This screenshot is no longer available to copy.";
+      return kind === "recording"
+        ? "This recording is no longer available to copy."
+        : "This screenshot is no longer available to copy.";
     case "desktop-required":
-      return "Saved screenshots live in the T3 Code desktop app.";
+      return kind === "recording"
+        ? "Saved recordings live in the T3 Code desktop app."
+        : "Saved screenshots live in the T3 Code desktop app.";
     case "grant-denied":
     case "scope-invalid":
     case "host-unavailable":
-      return "This panel can no longer reach the saved screenshot.";
+      return kind === "recording"
+        ? "This panel can no longer reach the saved recording."
+        : "This panel can no longer reach the saved screenshot.";
     case "action-failed":
-      return "The saved screenshot could not be copied.";
+      return kind === "recording"
+        ? "The saved recording could not be copied."
+        : "The saved screenshot could not be copied.";
   }
 }
 
@@ -334,6 +345,7 @@ export async function runCaptureToastAction(
   notificationId: string,
   actionId: string,
   signal: AbortSignal,
+  kind: "screenshot" | "recording" = "screenshot",
 ): Promise<void> {
   if (actionId === "reveal") {
     await capture.revealArtifact?.(request);
@@ -343,7 +355,13 @@ export async function runCaptureToastAction(
     actionId === "copy-image"
       ? { run: capture.copyArtifactToClipboard, failTitle: "Unable to copy screenshot" }
       : actionId === "copy-path"
-        ? { run: capture.copyArtifactPath, failTitle: "Unable to copy screenshot path" }
+        ? {
+            run: capture.copyArtifactPath,
+            failTitle:
+              kind === "recording"
+                ? "Unable to copy recording path"
+                : "Unable to copy screenshot path",
+          }
         : null;
   if (!copy?.run) return;
   const result = await copy.run(request);
@@ -354,7 +372,7 @@ export async function runCaptureToastAction(
       ? {
           notificationId,
           severity: "success",
-          title: "Screenshot saved",
+          title: kind === "recording" ? "Recording saved" : "Screenshot saved",
           body: "",
           flashAction: { actionId, label: "Copied!", durationMs: CAPTURE_COPIED_FLASH_MS },
         }
@@ -362,7 +380,7 @@ export async function runCaptureToastAction(
           notificationId,
           severity: "error",
           title: copy.failTitle,
-          body: copyFailureBody(result.failure.reason),
+          body: copyFailureBody(result.failure.reason, kind),
         },
     signal,
   );
@@ -381,6 +399,7 @@ export async function serveCaptureToastActions(
   request: BrowserCaptureArtifactActionRequest,
   notificationId: string,
   signal: AbortSignal,
+  kind: "screenshot" | "recording" = "screenshot",
 ): Promise<void> {
   while (!signal.aborted) {
     let outcome;
@@ -397,6 +416,7 @@ export async function serveCaptureToastActions(
       notificationId,
       outcome.actionId,
       signal,
+      kind,
     ).catch(() => {});
   }
 }

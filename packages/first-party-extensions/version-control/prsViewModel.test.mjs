@@ -55,6 +55,75 @@ import {
 } from "./prsViewModel.ts";
 import * as PrsViewModel from "./prsViewModel.ts";
 
+NodeTest.test("viewed-file model gates ticks and distinguishes files changed since viewing", () => {
+  NodeAssert.equal(typeof PrsViewModel.prsViewedFilesEnabled, "function");
+  NodeAssert.equal(
+    PrsViewModel.prsViewedFilesEnabled(undefined, { "prs.setFilesViewed": true }),
+    false,
+  );
+  NodeAssert.equal(PrsViewModel.prsViewedFilesEnabled("host", {}), false);
+  NodeAssert.equal(
+    PrsViewModel.prsViewedFilesEnabled("environment", { "prs.setFilesViewed": true }),
+    true,
+  );
+  const states = PrsViewModel.prsFileViewedStates({
+    files: [
+      { path: "a", state: "viewed" },
+      { path: "b", state: "dismissed" },
+    ],
+    truncated: false,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("a", states, new Map()), {
+    viewed: true,
+    stale: false,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("b", states, new Map()), {
+    viewed: false,
+    stale: true,
+  });
+  NodeAssert.deepEqual(PrsViewModel.prsFileViewed("c", states, new Map()), {
+    viewed: false,
+    stale: false,
+  });
+});
+
+NodeTest.test(
+  "viewed ticks optimistically toggle, roll back only owned failures, and settle on fresh reads",
+  () => {
+    NodeAssert.equal(typeof PrsViewModel.prsFileViewed, "function");
+    const states = PrsViewModel.prsFileViewedStates({
+      files: [{ path: "b", state: "viewed" }],
+      truncated: false,
+    });
+    const overlay = new Map([
+      ["a", true],
+      ["b", false],
+    ]);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("a", states, overlay).viewed, true);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("b", states, overlay).viewed, false);
+    const reverted = PrsViewModel.prsRevertViewedOverlay(overlay, new Set(["a"]));
+    NodeAssert.equal(PrsViewModel.prsFileViewed("a", states, reverted).viewed, false);
+    NodeAssert.equal(PrsViewModel.prsFileViewed("b", states, reverted).viewed, false);
+    NodeAssert.deepEqual(
+      PrsViewModel.prsSettleViewedOverlay(overlay, states, new Set(["a"]), new Set(["a", "b"])),
+      new Map([["a", true]]),
+    );
+    NodeAssert.deepEqual(
+      PrsViewModel.prsSettleViewedOverlay(overlay, null, new Set(), new Set(["a", "b"])),
+      overlay,
+    );
+    const pushed = PrsViewModel.prsFileViewedStates({
+      files: [{ path: "a", state: "dismissed" }],
+      truncated: false,
+    });
+    const settled = PrsViewModel.prsSettleViewedOverlay(overlay, pushed, new Set(), new Set(["a"]));
+    NodeAssert.deepEqual(PrsViewModel.prsFileViewed("a", pushed, settled), {
+      viewed: false,
+      stale: true,
+    });
+  },
+);
+
 const sha256Hex = async (text) => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -539,14 +608,34 @@ NodeTest.test("fileRows names elided regions as gap rows", () => {
   NodeAssert.equal(rows[0].count, 40);
 });
 
-NodeTest.test("paths and labels: prefixes stripped, renames shown, change types named", () => {
-  NodeAssert.equal(resolveDiffPath("a/src/x.ts"), "src/x.ts");
-  NodeAssert.equal(resolveDiffPath("src/x.ts"), "src/x.ts");
-  NodeAssert.equal(changeTypeLabel("rename-changed"), "renamed, modified");
-  NodeAssert.equal(changeTypeLabel("new"), "added");
-  const rename = { prevPath: "old.ts", path: "new.ts" };
-  NodeAssert.equal(displayPath(rename), "old.ts → new.ts");
-  NodeAssert.equal(displayPath({ prevPath: null, path: "new.ts" }), "new.ts");
+NodeTest.test(
+  "paths and labels: real prefixes preserved, renames shown, change types named",
+  () => {
+    NodeAssert.equal(resolveDiffPath("a/src/x.ts"), "a/src/x.ts");
+    NodeAssert.equal(resolveDiffPath('"b/caf\\303\\251.ts"'), "b/café.ts");
+    NodeAssert.equal(resolveDiffPath("src/x.ts"), "src/x.ts");
+    NodeAssert.equal(changeTypeLabel("rename-changed"), "renamed, modified");
+    NodeAssert.equal(changeTypeLabel("new"), "added");
+    const rename = { prevPath: "old.ts", path: "new.ts" };
+    NodeAssert.equal(displayPath(rename), "old.ts → new.ts");
+    NodeAssert.equal(displayPath({ prevPath: null, path: "new.ts" }), "new.ts");
+  },
+);
+
+NodeTest.test("PR diff rows keep root and a and b directory paths distinct", () => {
+  const paths = ["foo.ts", "b/foo.ts", "a/foo.ts"];
+  const patch = paths
+    .map(
+      (path) =>
+        `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    )
+    .join("");
+  const rendered = renderableFromPatch(patch);
+  NodeAssert.deepEqual(
+    rendered.files.map((row) => row.path),
+    paths,
+  );
+  NodeAssert.equal(new Set(rendered.files.map((row) => row.key)).size, paths.length);
 });
 
 /* ---------------- writes (t3.prs/write) ---------------- */
