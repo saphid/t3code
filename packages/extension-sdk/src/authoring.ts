@@ -529,15 +529,6 @@ export interface BrowserSurfaceSlot {
 
 const OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
 const OCCLUSION_POLL_MS = 400;
-/**
- * `host-unavailable` is the only transient denial — the host says "retry
- * once synchronization completes". A mounted slot must recover without a
- * remount, so acquisition retries on a bounded backoff; exhausting it leaves
- * the named denial rendered, which is terminal until the caller remounts or
- * changes the session identity. Every other denial is stable and never
- * retried.
- */
-const ACQUIRE_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
 
 /**
  * The composited webview is a fixed-position sibling, not a DOM descendant —
@@ -621,11 +612,9 @@ function slotOccluded(element: HTMLElement, clip: BrowserSurfaceRect): boolean {
  * `present`. There is no automatic re-acquire — a `superseded` end is
  * terminal for the lease; the caller must remount the slot element or change
  * the session identity (clear it and open a fresh session) to acquire again.
- * The one exception is a `host-unavailable` acquire denial, which is
- * explicitly transient ("retry when synchronization completes"): the hook
- * retries it on a bounded backoff, and a lease that ends `session-unverified`
- * may likewise be re-acquired by remount or identity change once the host
- * recovers.
+ * Acquisition may wait for the host's bounded session synchronization. A
+ * denied acquisition or a lease that ends `session-unverified` can be tried
+ * again by remount or identity change once the host recovers.
  */
 /* oxlint-disable react/hooks -- hooks come from the injected host React identity. */
 export function useBrowserSurfaceSlot(
@@ -664,20 +653,19 @@ export function useBrowserSurfaceSlot(
     if (!element || !options.session) return;
     const surface = host.browserSurface;
     const major = Number.parseInt(surface?.version.split(".")[0] ?? "", 10);
-    if (!surface || surface.id !== BROWSER_SURFACE || major !== 1) {
+    if (!surface || surface.id !== BROWSER_SURFACE || major !== 2) {
       setResult({
         ok: false,
         denial: {
           reason: "host-unavailable",
-          detail: `This host does not implement ${BROWSER_SURFACE}@1.x.`,
+          detail: `This host does not implement ${BROWSER_SURFACE}@2.x.`,
         },
       });
       return;
     }
     const surfaceSession = options.session;
     let detach: () => void = () => {};
-    let retry: ReturnType<typeof setTimeout> | null = null;
-    let attempts = 0;
+    const acquisition = new AbortController();
     let disposed = false;
 
     const attach = (held: BrowserSurfaceLease) => {
@@ -765,32 +753,31 @@ export function useBrowserSurfaceSlot(
       };
     };
 
-    const tryAcquire = () => {
-      if (disposed) return;
-      const acquired = surface.acquire({
-        context: session.context,
-        session: surfaceSession,
-        signal: session.signal,
-      });
-      if (!acquired.ok) {
-        setResult(acquired);
-        if (
-          acquired.denial.reason === "host-unavailable" &&
-          attempts < ACQUIRE_RETRY_DELAYS_MS.length
-        ) {
-          retry = setTimeout(tryAcquire, ACQUIRE_RETRY_DELAYS_MS[attempts]);
-          attempts += 1;
-        }
+    const accept = (acquired: BrowserSurfaceAcquireResult) => {
+      if (disposed) {
+        if (acquired.ok) acquired.lease.release();
         return;
       }
       setResult(acquired);
-      attach(acquired.lease);
+      if (acquired.ok) attach(acquired.lease);
     };
-    tryAcquire();
+    const acquired = surface.acquire({
+      context: session.context,
+      session: surfaceSession,
+      signal: AbortSignal.any([session.signal, acquisition.signal]),
+    });
+    if ("then" in acquired)
+      acquired.then(accept, () =>
+        accept({
+          ok: false,
+          denial: { reason: "host-unavailable", detail: "The browser host is not connected." },
+        }),
+      );
+    else accept(acquired);
     return () => {
       disposed = true;
-      if (retry !== null) clearTimeout(retry);
       detach();
+      acquisition.abort();
     };
     // The lease is re-acquired only when the element or session identity changes.
   }, [element, targetKey, host, session]);

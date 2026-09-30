@@ -196,7 +196,7 @@ export function createInstalledExtensionController(options: {
   readonly register: (extension: Extension<SurfaceRenderer>, client: ClientHost) => () => void;
   readonly changed: (snapshot: InstalledSnapshot) => void;
   /**
-   * `t3.browser/surface@1.0.0` host bridge factory — bound per installation so
+   * `t3.browser/surface@2.0.0` host bridge factory — bound per installation so
    * the resulting `host.browserSurface` enforces that installation's grants
    * and ends its leases with the installation lifetime.
    */
