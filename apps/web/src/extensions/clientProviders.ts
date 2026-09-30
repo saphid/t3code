@@ -9,6 +9,9 @@ import * as Schema from "effect/Schema";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ClientProviderEmitEvent } from "@t3tools/contracts";
 import { BROWSER_CAPTURE_ARTIFACT_REF_PATTERN } from "@t3tools/extension-sdk/catalogue";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
+import { useBrowserSurfaceStore } from "../browser/browserSurfaceStore";
+import { submitBrowserAnnotation } from "./browserAnnotationSubmission";
 import {
   BROWSER_READ_HISTORY,
   BROWSER_RECORD_HISTORY,
@@ -788,14 +791,33 @@ export function createPanelsClientProvider(
                 "provider-rejected",
                 "The browser session epoch changed",
               );
+            const key = resourceKey(call.context.resource);
+            const held = useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[key];
+            if (
+              !held ||
+              held.installationId !== call.caller.installationId ||
+              held.tabId !== tabId ||
+              held.serverEpoch !== serverEpoch
+            )
+              throw new ClientProviderOpError(
+                "client-target-denied",
+                "This installation does not hold this browser session",
+              );
             if (input.open) {
               if (!Object.hasOwn(preview.sessions, tabId))
                 throw new ClientProviderOpError(
                   "provider-rejected",
                   "The browser session is not in this thread",
                 );
-              miniPlayer.open(ref, browserMiniPlayerSource(tabId));
-              store.close(ref);
+              const panel = selectThreadRightPanelState(store.byThreadKey, ref);
+              const surface = panel.surfaces.find(
+                (item) =>
+                  item.kind === "extension" &&
+                  item.record.surfaceId.startsWith(`${call.caller.installationId}/`) &&
+                  resourceKey(item.record.context.resource) === key,
+              );
+              miniPlayer.open(ref, browserMiniPlayerSource(tabId, surface?.id));
+              if (surface && panel.activeSurfaceId === surface.id) store.close(ref);
             } else if (selectThreadPreviewMiniPlayerTabId(miniPlayer.byThreadKey, ref) === tabId) {
               miniPlayer.close(ref);
             }
@@ -1021,6 +1043,7 @@ export function createComposerClientProvider(
   fetchCaptureArtifact: FetchCaptureArtifact = fetchBrowserCaptureArtifact,
   releaseCaptureArtifact: ReleaseCaptureArtifact = releaseBrowserCaptureArtifact,
   readAnnotation: typeof readBrowserCaptureAnnotation = readBrowserCaptureAnnotation,
+  submitAnnotation: typeof submitBrowserAnnotation = submitBrowserAnnotation,
 ): ClientLocalProvider {
   return {
     invoke(call) {
@@ -1044,6 +1067,7 @@ export function createComposerClientProvider(
             );
           const store = useComposerDraftStore.getState();
           let imageInserted = false;
+          let attachedImage: ComposerImageAttachment | null = null;
           if (capture.file && capture.annotation.screenshot) {
             const image: ComposerImageAttachment = {
               type: "image",
@@ -1055,6 +1079,7 @@ export function createComposerClientProvider(
               file: capture.file,
             };
             imageInserted = store.addImage(ref, image);
+            if (imageInserted) attachedImage = image;
             if (!imageInserted) URL.revokeObjectURL(image.previewUrl);
           }
           store.addPreviewAnnotation(
@@ -1063,6 +1088,12 @@ export function createComposerClientProvider(
           );
           if (capture.artifactRef) releaseCaptureArtifact(ref.environmentId, capture.artifactRef);
           capture.consume();
+          if (capture.submission === "send")
+            submitAnnotation(
+              ref,
+              imageInserted ? capture.annotation : { ...capture.annotation, screenshot: null },
+              attachedImage,
+            );
           return {
             inserted: true,
             imageInserted,

@@ -7,6 +7,18 @@ import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
 const require = NodeModule.createRequire(import.meta.url);
+const runtimeRequire = NodeModule.createRequire(
+  new URL("../../extension-runtime/package.json", import.meta.url),
+);
+const { Ajv } = runtimeRequire("ajv");
+const { uiPanelsApi } = await import("../../extension-sdk/dist/catalogue.js");
+const validator = new Ajv({ strict: true });
+const inputValidators = new Map(
+  uiPanelsApi.definition.methods.map((method) => [
+    method.name,
+    validator.compile(method.inputSchema),
+  ]),
+);
 const { build } = require("esbuild");
 const React = require("react");
 const { act, create } = require("react-test-renderer");
@@ -53,16 +65,70 @@ const context = {
     threadId: "thread-a",
   },
 };
-const held = { tabId: "tab-a", serverEpoch: "epoch-a" };
+const held = { tabId: "tab-a", serverEpoch: "epoch-a", engineGeneration: "guest-1" };
 const signal = new AbortController().signal;
+
+NodeTest.test(
+  "tab switches read local state, native X updates pressed state, and unreachable pages disable float",
+  async () => {
+    const fixture = hostFixture();
+    const view = await mount(fixture.host);
+    NodeAssert.equal(view.button().props["aria-pressed"], false);
+    await act(async () => fixture.publish(held.tabId));
+    NodeAssert.equal(view.button().props["aria-pressed"], true);
+    await act(async () => fixture.publish(null));
+    NodeAssert.equal(view.button().props["aria-label"], "Float preview over chat");
+    await view.update({ held: { ...held, tabId: "tab-b" } });
+    NodeAssert.equal(fixture.calls.length, 0);
+    await act(async () => fixture.publishReady(false));
+    NodeAssert.equal(view.button().props.disabled, true);
+    await act(async () => fixture.publishReady(true));
+    NodeAssert.equal(view.button().props.disabled, false);
+    await view.update({ available: false });
+    NodeAssert.equal(view.button().props.disabled, true);
+    await view.close();
+  },
+);
+
+NodeTest.test("host failures never leak raw error text", async () => {
+  const fixture = hostFixture({
+    toggle: async () => {
+      throw new Error("private-host-detail");
+    },
+  });
+  const messages = [];
+  const view = await mount(fixture.host);
+  await view.update({ report: (message) => messages.push(message) });
+  await view.click();
+  NodeAssert.deepEqual(messages, ["Floating preview unavailable. Try again."]);
+  await view.close();
+});
 
 function hostFixture({ version = "1.1.0", supported = true, toggle } = {}) {
   const calls = [];
   let active = null;
+  let ready = true;
+  const listeners = new Set();
+  const publish = (tabId) => {
+    active = tabId;
+    for (const listener of listeners) listener();
+  };
   const host = {
     React,
+    browserMiniPlayer: {
+      version: 1,
+      supported,
+      read: () => active,
+      canFloat: () => ready,
+      subscribe(_context, listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
     discoverApis: async () => [{ id: "t3.ui/panels", version }],
     async invokeApi(request) {
+      const validate = inputValidators.get(request.method);
+      NodeAssert.ok(validate(request.input), JSON.stringify(validate.errors));
       calls.push(request);
       if (request.method === "getCapabilities")
         return {
@@ -72,11 +138,19 @@ function hostFixture({ version = "1.1.0", supported = true, toggle } = {}) {
         };
       if (request.method === "getBrowserMiniPlayer") return { tabId: active };
       if (toggle) return toggle(request);
-      active = request.input.open ? request.input.tabId : null;
+      publish(request.input.open ? request.input.tabId : null);
       return { tabId: active };
     },
   };
-  return { host, calls };
+  return {
+    host,
+    calls,
+    publish,
+    publishReady(value) {
+      ready = value;
+      for (const listener of listeners) listener();
+    },
+  };
 }
 
 async function mount(host) {
@@ -96,6 +170,7 @@ async function mount(host) {
   });
   return {
     button: () => renderer.root.findByType("button"),
+    buttons: () => renderer.root.findAllByType("button"),
     async click() {
       await act(async () => {
         renderer.root.findByType("button").props.onClick();
@@ -126,11 +201,8 @@ NodeTest.test(
     NodeAssert.equal(old.calls.length, 0);
     const web = hostFixture({ supported: false });
     const view = await mount(web.host);
-    NodeAssert.equal(view.button().props.disabled, true);
-    NodeAssert.deepEqual(
-      web.calls.map((call) => call.method),
-      ["getCapabilities"],
-    );
+    NodeAssert.equal(view.buttons().length, 0);
+    NodeAssert.deepEqual(web.calls, []);
     await view.close();
   },
 );
@@ -146,7 +218,7 @@ NodeTest.test(
     await view.update({ visible: false });
     const hiddenCalls = fixture.calls.length;
     await view.update({ visible: true });
-    NodeAssert.equal(fixture.calls.length, hiddenCalls + 2);
+    NodeAssert.equal(fixture.calls.length, hiddenCalls);
     NodeAssert.equal(view.button().props["aria-label"], "Close floating preview");
     await view.click();
     NodeAssert.equal(view.button().props["aria-label"], "Float preview over chat");
@@ -155,8 +227,8 @@ NodeTest.test(
         .filter((call) => call.method === "setBrowserMiniPlayer")
         .map((call) => call.input),
       [
-        { ...held, open: true },
-        { ...held, open: false },
+        { tabId: held.tabId, serverEpoch: held.serverEpoch, open: true },
+        { tabId: held.tabId, serverEpoch: held.serverEpoch, open: false },
       ],
     );
     await view.close();

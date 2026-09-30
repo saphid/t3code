@@ -36,6 +36,31 @@ const context = {
     threadId: "thread-a",
   },
 };
+
+NodeTest.test(
+  "annotation capability discovery is cached and local capture mode needs no crop upload",
+  async () => {
+    let discoveries = 0;
+    const host = fakeHost({
+      capture: async (request) => {
+        NodeAssert.equal(request.annotation, true);
+        return { ok: true, artifact: null, annotationRef: "native-ref" };
+      },
+    });
+    host.browserCapture.version = "1.3.0";
+    host.discoverApis = async () => {
+      discoveries += 1;
+      return [{ id: "t3.composer/context", version: "1.3.0" }];
+    };
+    const scope = { ...context, resource: { ...context.resource, id: "cached-view" } };
+    for (let pick = 0; pick < 2; pick += 1)
+      NodeAssert.equal(
+        (await captureToChat(host, scope, held, "element", new AbortController().signal)).kind,
+        "annotated",
+      );
+    NodeAssert.equal(discoveries, 1);
+  },
+);
 const artifact = {
   artifactRef: ARTIFACT_REF,
   mimeType: "image/png",

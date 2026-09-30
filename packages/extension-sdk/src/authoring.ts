@@ -625,6 +625,8 @@ export function useBrowserSurfaceSlot(
   const { useCallback, useLayoutEffect, useRef, useState } = host.React;
   const [element, setElement] = useState<HTMLElement | null>(null);
   const [result, setResult] = useState<BrowserSurfaceAcquireResult | null>(null);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(0);
+  const [wasVisible, setWasVisible] = useState(options.visible);
   const [shown, setShown] = useState(false);
   // Lease transitions are host-originated; the bump re-reads lease.state.
   const [, setLeaseVersion] = useState(0);
@@ -637,6 +639,17 @@ export function useBrowserSurfaceSlot(
   const updateRef = useRef<(() => void) | null>(null);
 
   const ref = useCallback((node: HTMLElement | null) => setElement(node), []);
+
+  if (wasVisible !== options.visible) {
+    setWasVisible(options.visible);
+    if (
+      options.visible &&
+      result?.ok &&
+      result.lease.state.kind === "ended" &&
+      result.lease.state.reason === "superseded"
+    )
+      setSurfaceAttempt((attempt) => attempt + 1);
+  }
 
   useLayoutEffect(() => {
     presentationRef.current = {
@@ -779,8 +792,7 @@ export function useBrowserSurfaceSlot(
       detach();
       acquisition.abort();
     };
-    // The lease is re-acquired only when the element or session identity changes.
-  }, [element, targetKey, host, session]);
+  }, [element, targetKey, host, session, surfaceAttempt]);
 
   return {
     ref,

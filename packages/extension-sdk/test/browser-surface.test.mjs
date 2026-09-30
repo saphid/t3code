@@ -219,7 +219,7 @@ NodeTest.test("t3.browser/surface contract surface is named, versioned and grant
 
 NodeTest.test("t3.browser/capture is a host-local grant, never a brokered API", () => {
   NodeAssert.equal(BROWSER_CAPTURE, "t3.browser/capture");
-  NodeAssert.equal(BROWSER_CAPTURE_VERSION, "1.2.0");
+  NodeAssert.equal(BROWSER_CAPTURE_VERSION, "1.3.0");
   NodeAssert.deepEqual(BROWSER_CAPTURE_REQUIRED_GRANTS, [
     "t3.browser/sessions",
     "t3.browser/capture",
@@ -355,6 +355,50 @@ NodeTest.test("useBrowserSurfaceSlot acquires, presents element bounds and relea
     dom.restore();
   }
 });
+
+NodeTest.test(
+  "superseded hidden panels reacquire the same session on each return without a new session",
+  async () => {
+    const dom = domStubs();
+    const session = makeSession();
+    const fixture = fakeLeaseHost();
+    const acquire = fixture.host.browserSurface.acquire;
+    fixture.host.browserSurface.acquire = (request) => {
+      fixture.lease.state = { kind: "active", presentation: { supported: true } };
+      return acquire(request);
+    };
+    let renderer;
+    function View({ visible }) {
+      const slot = useBrowserSurfaceSlot(fixture.host, session, { session: sessionRef, visible });
+      return React.createElement("div", { ref: slot.ref });
+    }
+    try {
+      await TestRenderer.act(async () => {
+        renderer = TestRenderer.create(React.createElement(View, { visible: true }), {
+          createNodeMock: () => fakeElement(rect, { document: dom.document }),
+        });
+      });
+      for (let cycle = 0; cycle < 2; cycle += 1) {
+        await TestRenderer.act(async () =>
+          renderer.update(React.createElement(View, { visible: false })),
+        );
+        await TestRenderer.act(async () => {
+          fixture.lease.state = { kind: "ended", reason: "superseded" };
+          for (const listener of fixture.calls.listeners) listener(fixture.lease.state);
+        });
+        await TestRenderer.act(async () =>
+          renderer.update(React.createElement(View, { visible: true })),
+        );
+        NodeAssert.equal(fixture.calls.acquire.length, cycle + 2);
+        NodeAssert.equal(fixture.lease.state.kind, "active");
+        NodeAssert.deepEqual(fixture.calls.acquire.at(-1).session, sessionRef);
+      }
+    } finally {
+      if (renderer) await TestRenderer.act(async () => renderer.unmount());
+      dom.restore();
+    }
+  },
+);
 
 NodeTest.test("useBrowserSurfaceSlot surfaces a named acquire denial", async () => {
   const dom = domStubs();

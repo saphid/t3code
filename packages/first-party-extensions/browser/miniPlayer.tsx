@@ -4,7 +4,14 @@ import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 import type { CaptureSessionRef } from "./capture.js";
 
 export async function readBrowserMiniPlayer(
@@ -39,7 +46,7 @@ export async function setBrowserMiniPlayer(
   return (
     await bindApi(uiPanelsApi, host, session.context, "^1.1.0").invoke(
       "setBrowserMiniPlayer",
-      { ...held, open },
+      { tabId: held.tabId, serverEpoch: held.serverEpoch, open },
       signal,
     )
   ).tabId;
@@ -50,10 +57,11 @@ export function MiniPlayerButton(props: {
   readonly session: ViewSession;
   readonly held: CaptureSessionRef | null;
   readonly visible: boolean;
+  readonly available?: boolean;
   readonly style: CSSProperties;
   readonly report: (message: string) => void;
 }) {
-  const { host, session, held, visible, style, report } = props;
+  const { host, session, held, visible, style, report, available = true } = props;
   const tabId = held?.tabId;
   const serverEpoch = held?.serverEpoch;
   const identity = JSON.stringify([
@@ -63,60 +71,66 @@ export function MiniPlayerButton(props: {
     serverEpoch,
   ]);
   const lifetime = useRef<AbortSignal | null>(null);
-  const [state, setState] = useState<{
-    identity: string;
-    signal: AbortSignal;
-    open: boolean;
-    reason: string | null;
-  } | null>(null);
-  const [pendingSignal, setPendingSignal] = useState<AbortSignal | null>(null);
-  const pending = pendingSignal !== null && !pendingSignal.aborted;
+  const capability = host.browserMiniPlayer;
+  const subscribe = useCallback(
+    (listener: () => void) => capability?.subscribe(session.context, listener) ?? (() => {}),
+    [capability, session],
+  );
+  const read = useCallback(() => capability?.read(session.context) ?? null, [capability, session]);
+  const active = useSyncExternalStore(subscribe, read, read);
+  const readAvailable = useCallback(
+    () =>
+      tabId != null &&
+      serverEpoch != null &&
+      (capability?.canFloat(session.context, { tabId, serverEpoch }) ?? false),
+    [capability, session, tabId, serverEpoch],
+  );
+  const pageAvailable = useSyncExternalStore(subscribe, readAvailable, readAvailable);
+  const open = active === tabId;
+  const [pendingIdentity, setPendingIdentity] = useState<string | null>(null);
+  const pending = pendingIdentity === identity;
   useEffect(() => {
-    if (!visible || !tabId || !serverEpoch) return;
+    if (!tabId || !serverEpoch) {
+      lifetime.current = null;
+      return;
+    }
     const controller = new AbortController();
     const signal = AbortSignal.any([session.signal, controller.signal]);
     lifetime.current = signal;
-    void readBrowserMiniPlayer(host, session, signal).then(
-      (current) => {
-        if (!signal.aborted) setState({ identity, signal, open: current === tabId, reason: null });
-      },
-      (error: unknown) => {
-        if (!signal.aborted)
-          setState({
-            identity,
-            signal,
-            open: false,
-            reason: error instanceof Error ? error.message : "Floating preview unavailable.",
-          });
-      },
-    );
     return () => controller.abort();
-  }, [host, session, visible, tabId, serverEpoch, identity]);
-  const current = state?.identity === identity && !state.signal.aborted && visible ? state : null;
-  const label = current?.open ? "Close floating preview" : "Float preview over chat";
+  }, [session, tabId, serverEpoch]);
+  if (!capability?.supported) return null;
+  const label = open ? "Close floating preview" : "Float preview over chat";
   return (
-    <Tooltip host={host} label={current?.reason ?? label}>
+    <Tooltip host={host} label={label}>
       <button
         type="button"
         aria-label={label}
-        disabled={!held || !current || current.reason !== null || pending}
-        style={style}
+        aria-pressed={open}
+        disabled={!held || !visible || !available || !pageAvailable || pending}
+        style={{ ...style, ...(open ? { color: "var(--primary)" } : {}) }}
         onClick={() => {
           const signal = lifetime.current;
-          if (!held || !current || !signal || signal.aborted || pending || current.reason) return;
-          setPendingSignal(signal);
-          void setBrowserMiniPlayer(host, session, held, !current.open, signal)
+          if (
+            !held ||
+            !visible ||
+            !available ||
+            !pageAvailable ||
+            !signal ||
+            signal.aborted ||
+            pending
+          )
+            return;
+          setPendingIdentity(identity);
+          void setBrowserMiniPlayer(host, session, held, !open, signal)
             .then(
-              (active) => {
-                if (!signal.aborted) setState({ ...current, open: active === held.tabId });
-              },
-              (error: unknown) => {
-                if (!signal.aborted)
-                  report(error instanceof Error ? error.message : "Floating preview unavailable.");
+              () => {},
+              () => {
+                if (!signal.aborted) report("Floating preview unavailable. Try again.");
               },
             )
             .finally(() => {
-              if (!signal.aborted) setPendingSignal(null);
+              if (!signal.aborted) setPendingIdentity(null);
             });
         }}
       >

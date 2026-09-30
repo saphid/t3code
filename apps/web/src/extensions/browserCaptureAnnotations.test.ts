@@ -19,13 +19,14 @@ const annotation = {
 
 describe("client-local browser annotation references", () => {
   const lifetimes: AbortController[] = [];
-  const retain = () => {
+  const retain = (installationId = "ext", releaseArtifact = vi.fn()) => {
     const lifetime = new AbortController();
     lifetimes.push(lifetime);
     const handle = retainBrowserCaptureAnnotation({
       environmentId: "env",
       threadId: "thread",
-      installationId: "ext",
+      installationId,
+      releaseArtifact,
       lifetime: lifetime.signal,
       annotation,
       file: null,
@@ -68,5 +69,27 @@ describe("client-local browser annotation references", () => {
     const oldest = retain();
     for (let index = 0; index < 32; index += 1) retain();
     expect(read(oldest.annotationRef)).toBeNull();
+  });
+
+  it("releases abandoned handles eagerly and does not evict another installation", () => {
+    vi.useFakeTimers();
+    const release = vi.fn();
+    const pending = retain("ext", release);
+    pending.setArtifact("pending-expired");
+    expect(vi.getTimerCount()).toBe(1);
+    for (let index = 0; index < 33; index += 1) retain("other");
+    expect(read(pending.annotationRef)).not.toBeNull();
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(release).toHaveBeenCalledWith("pending-expired");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancellation releases a late upload and eagerly discards the handle", () => {
+    const release = vi.fn();
+    const pending = retain("ext", release);
+    pending.lifetime.abort();
+    pending.setArtifact("pending-late");
+    expect(release).toHaveBeenCalledWith("pending-late");
+    expect(read(pending.annotationRef)).toBeNull();
   });
 });

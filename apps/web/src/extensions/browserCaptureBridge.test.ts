@@ -129,6 +129,18 @@ function harness(overrides: Partial<BrowserCaptureBridgeDeps> = {}) {
 }
 
 describe("browser capture bridge", () => {
+  it("retains annotation crops locally without waiting for an unused upload", async () => {
+    const fixture = harness();
+    const host = fixture.host(
+      { capabilities: [BROWSER_SESSIONS, BROWSER_CAPTURE, "t3.composer/write"] },
+      "ext.a",
+    );
+    const result = await host.capture({ context, session, target: "element", annotation: true });
+    expect(result.ok).toBe(true);
+    expect(result.annotationRef).toBeTruthy();
+    expect(fixture.uploads).toHaveLength(0);
+    fixture.lifetime.abort();
+  });
   it("retains native annotation geometry behind a local reference, even when the crop fails", async () => {
     const regions = [{ id: "region-a", rect: { x: 4, y: 5, width: 6, height: 7 } }];
     const h = harness();

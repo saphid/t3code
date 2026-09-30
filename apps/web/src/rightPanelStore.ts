@@ -30,6 +30,12 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
+import { useBrowserSurfaceStore } from "./browser/browserSurfaceStore";
+import {
+  browserMiniPlayerSource,
+  usePreviewMiniPlayerStore,
+  type PreviewMiniPlayerSource,
+} from "./previewMiniPlayerStore";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -43,6 +49,37 @@ const RIGHT_PANEL_KINDS = [
   "agents",
   "extension",
 ] as const;
+
+function floatExtensionBrowserPanel(ref: ScopedThreadRef, panel: ThreadRightPanelState) {
+  if (!panel.isOpen) return;
+  const surface = panel.surfaces.find((item) => item.id === panel.activeSurfaceId);
+  if (surface?.kind !== "extension") return;
+  const target =
+    useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[
+      resourceKey(surface.record.context.resource)
+    ];
+  if (target)
+    usePreviewMiniPlayerStore
+      .getState()
+      .open(ref, browserMiniPlayerSource(target.tabId, surface.id));
+}
+
+export function returnBrowserMiniPlayerToPanel(
+  ref: ScopedThreadRef,
+  source: PreviewMiniPlayerSource,
+) {
+  if (source.kind !== "browser") return;
+  const store = useRightPanelStore.getState();
+  const panel = selectThreadRightPanelState(store.byThreadKey, ref);
+  const surface = panel.surfaces.find(
+    (item) => item.id === source.returnSurfaceId && item.kind === "extension",
+  );
+  if (surface) {
+    store.activateSurface(ref, surface.id);
+    store.show(ref);
+  } else store.openBrowser(ref, source.tabId);
+  usePreviewMiniPlayerStore.getState().close(ref);
+}
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export interface DeviceTabTarget {
@@ -1235,19 +1272,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             current.isOpen ? current : { ...current, isOpen: true },
           ),
         ),
-      close: (ref) =>
+      close: (ref) => {
+        const current = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+        floatExtensionBrowserPanel(ref, current);
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
             current.isOpen ? { ...current, isOpen: false } : current,
           ),
-        ),
-      toggleVisibility: (ref) =>
+        );
+      },
+      toggleVisibility: (ref) => {
+        const current = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+        if (current.isOpen) floatExtensionBrowserPanel(ref, current);
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
             isOpen: !current.isOpen,
           })),
-        ),
+        );
+      },
       toggle: (ref, kind) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

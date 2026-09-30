@@ -44,6 +44,7 @@ import {
 
 import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
 import { createBrowserCaptureBridge } from "./browserCaptureBridge";
+import { createBrowserMiniPlayerBridge } from "./browserMiniPlayerBridge";
 import { createBrowserSurfaceBridge } from "./browserSurfaceBridge";
 import { createBrowserFramesBridge } from "./browserFramesBridge";
 import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
@@ -480,6 +481,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       browserSurface: createBrowserSurfaceBridge(environmentId),
       browserFrames: createBrowserFramesBridge(environmentId),
       browserCapture: createBrowserCaptureBridge(environmentId),
+      browserMiniPlayer: createBrowserMiniPlayerBridge(environmentId),
       keybindings: createKeybindingsHostBridge(),
       codeView: hostCodeView,
       tooltip: hostTooltip,

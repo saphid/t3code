@@ -35,6 +35,7 @@ import {
   useBrowserSurfaceStore,
   type BrowserSurfaceLease as NativeSurfaceLease,
   type BrowserSurfacePresentation,
+  type BrowserExtensionTarget,
 } from "~/browser/browserSurfaceStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import {
@@ -51,6 +52,7 @@ import { environmentShell } from "~/state/shell";
 import { environmentThreadShells } from "~/state/threads";
 
 export interface BrowserSurfaceBinding {
+  readonly installationId?: string;
   /** The installation's grant set — the authority every acquire checks. */
   readonly grants: {
     readonly capabilities: readonly string[];
@@ -171,6 +173,15 @@ export function createBrowserSurfaceBridge(
   const pluginOwners = new Map<string, { readonly supersede: () => void }>();
 
   return (binding) => {
+    const targets = new Map<string, BrowserExtensionTarget>();
+    binding.lifetime.addEventListener(
+      "abort",
+      () => {
+        for (const [key, target] of targets)
+          useBrowserSurfaceStore.getState().forgetExtension(key, target);
+      },
+      { once: true },
+    );
     const presentation = deps.composites()
       ? ({ supported: true } as const)
       : ({ supported: false, reason: "desktop-required" } as const);
@@ -242,7 +253,21 @@ export function createBrowserSurfaceBridge(
             "session identity must come from t3.browser/sessions (tabId + serverEpoch).",
           );
         if (request.signal?.aborted)
-          return deny("scope-invalid", "the calling view's lifetime has already ended.");
+          return deny("scope-invalid", "the calling view’s lifetime has already ended.");
+        const key = resourceKey(context.resource);
+        const requestedRuntimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
+        const target = {
+          installationId: binding.installationId ?? "",
+          tabId,
+          serverEpoch,
+          runtimeTabId: requestedRuntimeTabId,
+        };
+        targets.set(key, target);
+        useBrowserSurfaceStore.getState().requestExtension(key, target);
+        const forgetTarget = () => {
+          if (targets.get(key) === target) targets.delete(key);
+          useBrowserSurfaceStore.getState().forgetExtension(key, target);
+        };
         const unmountSync = deps.mountSessionSync(threadRef);
         const synced = deps.readSessions(threadRef);
         if (synced.serverEpoch !== serverEpoch) {
@@ -274,18 +299,22 @@ export function createBrowserSurfaceBridge(
           });
           const scope = deps.resolveThreadScope(threadRef);
           if (failure !== null || !scope.authoritative) {
+            forgetTarget();
             unmountSync();
             return deny(failure ?? "host-unavailable", "The browser host is not connected.");
           }
           if (scope.projectId !== resource.projectId || request.signal?.aborted) {
+            forgetTarget();
             unmountSync();
             return deny("scope-invalid", "The calling view no longer owns this thread.");
           }
           if (binding.lifetime.aborted) {
+            forgetTarget();
             unmountSync();
             return deny("host-unavailable", "The installation's client lifetime has ended.");
           }
           if (deps.readSessions(threadRef).serverEpoch !== serverEpoch) {
+            forgetTarget();
             unmountSync();
             return deny("epoch-changed", "The session belongs to a previous browser host.");
           }
@@ -334,6 +363,7 @@ export function createBrowserSurfaceBridge(
         function end(reason: BrowserSurfaceEndReason) {
           if (state.kind === "ended") return;
           state = { kind: "ended", reason };
+          if (reason !== "superseded" && reason !== "released") forgetTarget();
           if (cancelFlush) {
             cancelFlush();
             cancelFlush = null;

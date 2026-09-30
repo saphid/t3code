@@ -7169,6 +7169,7 @@ var __t3Client = (() => {
   var BROWSER_SURFACE_Z_INDEX = 30;
   var BROWSER_SURFACE_OVERLAY_ATTRIBUTE = "data-browser-surface-overlay";
   var BROWSER_CAPTURE = "t3.browser/capture";
+  var BROWSER_ANNOTATION_MIN_VERSION = "1.3.0";
   var BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
   var BROWSER_RECORDING = "t3.browser/recording";
   var BROWSER_RECORDING_MIN_VERSION = "1.2.0";
@@ -8948,9 +8949,11 @@ var __t3Client = (() => {
     return covering.some((node) => !element.contains(node) && !(typeof node.closest === "function" && (node.closest("[data-preview-viewport]") !== null || node.closest(`[${BROWSER_SURFACE_OVERLAY_ATTRIBUTE}]`) !== null)));
   }
   function useBrowserSurfaceSlot(host, session, options) {
-    const { useCallback: useCallback2, useLayoutEffect, useRef: useRef6, useState: useState10 } = host.React;
+    const { useCallback: useCallback3, useLayoutEffect, useRef: useRef6, useState: useState10 } = host.React;
     const [element, setElement] = useState10(null);
     const [result2, setResult] = useState10(null);
+    const [surfaceAttempt, setSurfaceAttempt] = useState10(0);
+    const [wasVisible, setWasVisible] = useState10(options.visible);
     const [shown, setShown] = useState10(false);
     const [, setLeaseVersion] = useState10(0);
     const targetKey = options.session ? `${options.session.serverEpoch}${options.session.tabId}` : "";
@@ -8960,7 +8963,12 @@ var __t3Client = (() => {
       zIndex: options.zIndex ?? BROWSER_SURFACE_Z_INDEX
     });
     const updateRef = useRef6(null);
-    const ref = useCallback2((node) => setElement(node), []);
+    const ref = useCallback3((node) => setElement(node), []);
+    if (wasVisible !== options.visible) {
+      setWasVisible(options.visible);
+      if (options.visible && result2?.ok && result2.lease.state.kind === "ended" && result2.lease.state.reason === "superseded")
+        setSurfaceAttempt((attempt) => attempt + 1);
+    }
     useLayoutEffect(() => {
       presentationRef.current = {
         visible: options.visible,
@@ -9092,7 +9100,7 @@ var __t3Client = (() => {
         detach();
         acquisition.abort();
       };
-    }, [element, targetKey, host, session]);
+    }, [element, targetKey, host, session, surfaceAttempt]);
     return {
       ref,
       lease: result2?.ok ? result2.lease : null,
@@ -9102,7 +9110,7 @@ var __t3Client = (() => {
     };
   }
   function useRemoteBrowserFrames(host, session, options) {
-    const { useCallback: useCallback2, useEffect: useEffect9, useRef: useRef6, useState: useState10 } = host.React;
+    const { useCallback: useCallback3, useEffect: useEffect9, useRef: useRef6, useState: useState10 } = host.React;
     const [element, setElement] = useState10(null);
     const [status, setStatus] = useState10({ kind: "idle" });
     const [view, setView] = useState10({
@@ -9114,7 +9122,7 @@ var __t3Client = (() => {
     const sessionRef = useRef6(options.session);
     sessionRef.current = options.session;
     const targetKey = options.session ? `${options.session.serverEpoch} ${options.session.tabId}` : "";
-    const ref = useCallback2((node) => setElement(node), []);
+    const ref = useCallback3((node) => setElement(node), []);
     useEffect9(() => {
       setStatus({ kind: "idle" });
       setView({ status: "connecting", inputConnected: false, droppedFrames: 0, rejectedInput: 0 });
@@ -9437,6 +9445,26 @@ var __t3Client = (() => {
     "too-large",
     "upload-failed"
   ]);
+  var annotationSupport = /* @__PURE__ */ new WeakMap();
+  function supportsAnnotationComposer(host, context2, signal) {
+    const discover = host.discoverApis;
+    if (!discover) return Promise.resolve(false);
+    let scopes = annotationSupport.get(discover);
+    if (!scopes) {
+      scopes = /* @__PURE__ */ new WeakMap();
+      annotationSupport.set(discover, scopes);
+    }
+    const cached2 = scopes.get(context2);
+    if (cached2) return cached2;
+    const support = discover(context2, signal).then(
+      (apis) => apis.some(
+        (api) => api.id === composerContextApi.definition.id && satisfiesSemverRange(api.version, "^1.3.0")
+      )
+    );
+    scopes.set(context2, support);
+    void support.catch(() => scopes.delete(context2));
+    return support;
+  }
   async function captureToChat(host, context2, held, target, signal) {
     const threadId = context2.resource.threadId;
     if (!host.browserCapture || threadId === void 0)
@@ -9446,8 +9474,17 @@ var __t3Client = (() => {
         message: "This host cannot capture browser sessions."
       };
     let captured;
+    let composerSupported = false;
     try {
-      captured = await host.browserCapture.capture({ context: context2, session: held, target, signal });
+      composerSupported = target === "element" && await supportsAnnotationComposer(host, context2, signal);
+      signal.throwIfAborted();
+      captured = await host.browserCapture.capture({
+        context: context2,
+        session: held,
+        target,
+        signal,
+        ...composerSupported && satisfiesSemverRange(host.browserCapture.version, `^${BROWSER_ANNOTATION_MIN_VERSION}`) ? { annotation: true } : {}
+      });
     } catch (error) {
       if (signal.aborted) return { kind: "cancelled" };
       return {
@@ -9457,24 +9494,19 @@ var __t3Client = (() => {
       };
     }
     if (signal.aborted) return { kind: "cancelled" };
-    if (target === "element" && captured.annotationRef && host.discoverApis) {
+    if (target === "element" && captured.annotationRef && composerSupported) {
       try {
-        const apis = await host.discoverApis(context2, signal);
-        if (apis.some(
-          (api) => api.id === composerContextApi.definition.id && satisfiesSemverRange(api.version, "^1.3.0")
-        )) {
-          const inserted = await bindApi(composerContextApi, host, context2, "^1.3.0").invoke(
-            "insertPreviewAnnotation",
-            { threadId, annotationRef: captured.annotationRef },
-            signal
-          );
-          if (signal.aborted) return { kind: "cancelled" };
-          return {
-            kind: "annotated",
-            imageInserted: inserted.imageInserted,
-            screenshotFailed: inserted.screenshotFailed
-          };
-        }
+        const inserted = await bindApi(composerContextApi, host, context2, "^1.3.0").invoke(
+          "insertPreviewAnnotation",
+          { threadId, annotationRef: captured.annotationRef },
+          signal
+        );
+        if (signal.aborted) return { kind: "cancelled" };
+        return {
+          kind: "annotated",
+          imageInserted: inserted.imageInserted,
+          screenshotFailed: inserted.screenshotFailed
+        };
       } catch (error) {
         if (signal.aborted) return { kind: "cancelled" };
         return {
@@ -9492,6 +9524,12 @@ var __t3Client = (() => {
         message: captured.failure.grant ? `Capture failed \u2014 ${grantDenialMessage(captured.failure.grant)}` : `Capture failed \u2014 ${captured.failure.reason}: ${captured.failure.detail}`
       };
     }
+    if (!captured.artifact)
+      return {
+        kind: "failed",
+        stage: "insert",
+        message: "The annotation could not be added to chat."
+      };
     try {
       const result2 = await bindApi(composerContextApi, host, context2).invoke(
         "insertImage",
@@ -16969,27 +17007,15 @@ ${ind(d)}}`;
   // miniPlayer.tsx
   var import_react7 = __toESM(require_react(), 1);
   var import_jsx_runtime6 = __toESM(require_jsx_runtime(), 1);
-  async function readBrowserMiniPlayer(host, session, signal) {
-    const apis = await host.discoverApis(session.context, signal);
-    if (!apis.some(
-      (api2) => api2.id === uiPanelsApi.definition.id && satisfiesSemverRange(api2.version, "^1.1.0")
-    ))
-      throw new Error("Floating previews require a newer T3 Code host.");
-    const api = bindApi(uiPanelsApi, host, session.context, "^1.1.0");
-    const capabilities = await api.invoke("getCapabilities", {}, signal);
-    if (!capabilities.operations.getBrowserMiniPlayer || !capabilities.operations.setBrowserMiniPlayer)
-      throw new Error("This client cannot show a floating preview.");
-    return (await api.invoke("getBrowserMiniPlayer", {}, signal)).tabId;
-  }
   async function setBrowserMiniPlayer(host, session, held, open, signal) {
     return (await bindApi(uiPanelsApi, host, session.context, "^1.1.0").invoke(
       "setBrowserMiniPlayer",
-      { ...held, open },
+      { tabId: held.tabId, serverEpoch: held.serverEpoch, open },
       signal
     )).tabId;
   }
   function MiniPlayerButton(props) {
-    const { host, session, held, visible, style, report } = props;
+    const { host, session, held, visible, style, report, available = true } = props;
     const tabId = held?.tabId;
     const serverEpoch = held?.serverEpoch;
     const identity2 = JSON.stringify([
@@ -16999,53 +17025,55 @@ ${ind(d)}}`;
       serverEpoch
     ]);
     const lifetime = (0, import_react7.useRef)(null);
-    const [state2, setState] = (0, import_react7.useState)(null);
-    const [pendingSignal, setPendingSignal] = (0, import_react7.useState)(null);
-    const pending = pendingSignal !== null && !pendingSignal.aborted;
+    const capability = host.browserMiniPlayer;
+    const subscribe2 = (0, import_react7.useCallback)(
+      (listener) => capability?.subscribe(session.context, listener) ?? (() => {
+      }),
+      [capability, session]
+    );
+    const read = (0, import_react7.useCallback)(() => capability?.read(session.context) ?? null, [capability, session]);
+    const active = (0, import_react7.useSyncExternalStore)(subscribe2, read, read);
+    const readAvailable = (0, import_react7.useCallback)(
+      () => tabId != null && serverEpoch != null && (capability?.canFloat(session.context, { tabId, serverEpoch }) ?? false),
+      [capability, session, tabId, serverEpoch]
+    );
+    const pageAvailable = (0, import_react7.useSyncExternalStore)(subscribe2, readAvailable, readAvailable);
+    const open = active === tabId;
+    const [pendingIdentity, setPendingIdentity] = (0, import_react7.useState)(null);
+    const pending = pendingIdentity === identity2;
     (0, import_react7.useEffect)(() => {
-      if (!visible || !tabId || !serverEpoch) return;
+      if (!tabId || !serverEpoch) {
+        lifetime.current = null;
+        return;
+      }
       const controller = new AbortController();
       const signal = AbortSignal.any([session.signal, controller.signal]);
       lifetime.current = signal;
-      void readBrowserMiniPlayer(host, session, signal).then(
-        (current2) => {
-          if (!signal.aborted) setState({ identity: identity2, signal, open: current2 === tabId, reason: null });
-        },
-        (error) => {
-          if (!signal.aborted)
-            setState({
-              identity: identity2,
-              signal,
-              open: false,
-              reason: error instanceof Error ? error.message : "Floating preview unavailable."
-            });
-        }
-      );
       return () => controller.abort();
-    }, [host, session, visible, tabId, serverEpoch, identity2]);
-    const current = state2?.identity === identity2 && !state2.signal.aborted && visible ? state2 : null;
-    const label = current?.open ? "Close floating preview" : "Float preview over chat";
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label: current?.reason ?? label, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+    }, [session, tabId, serverEpoch]);
+    if (!capability?.supported) return null;
+    const label = open ? "Close floating preview" : "Float preview over chat";
+    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(Tooltip, { host, label, children: /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
       "button",
       {
         type: "button",
         "aria-label": label,
-        disabled: !held || !current || current.reason !== null || pending,
-        style,
+        "aria-pressed": open,
+        disabled: !held || !visible || !available || !pageAvailable || pending,
+        style: { ...style, ...open ? { color: "var(--primary)" } : {} },
         onClick: () => {
           const signal = lifetime.current;
-          if (!held || !current || !signal || signal.aborted || pending || current.reason) return;
-          setPendingSignal(signal);
-          void setBrowserMiniPlayer(host, session, held, !current.open, signal).then(
-            (active) => {
-              if (!signal.aborted) setState({ ...current, open: active === held.tabId });
+          if (!held || !visible || !available || !pageAvailable || !signal || signal.aborted || pending)
+            return;
+          setPendingIdentity(identity2);
+          void setBrowserMiniPlayer(host, session, held, !open, signal).then(
+            () => {
             },
-            (error) => {
-              if (!signal.aborted)
-                report(error instanceof Error ? error.message : "Floating preview unavailable.");
+            () => {
+              if (!signal.aborted) report("Floating preview unavailable. Try again.");
             }
           ).finally(() => {
-            if (!signal.aborted) setPendingSignal(null);
+            if (!signal.aborted) setPendingIdentity(null);
           });
         },
         children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(
@@ -19227,7 +19255,7 @@ ${titledTitle}`;
     const remoteNotice = remote.status.kind === "connecting" ? "Connecting remote browser frames\u2026" : remote.status.kind === "error" ? `Remote browser frames failed \u2014 ${remote.status.detail}` : remote.status.kind === "unsupported" ? `This client cannot composite a native browser surface and has no remote frame transport (${remote.status.detail}). The session is still open \u2014 view it from the desktop app.` : null;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" && leaseState.reason !== "superseded" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(
       "section",
       {
@@ -19374,6 +19402,7 @@ ${titledTitle}`;
                     session,
                     held,
                     visible,
+                    available: surfaceLease?.state.kind === "active" && live?.engine.state === "ready" && live?.navigation.kind !== "failed",
                     style: buttonStyle,
                     report: setNotice
                   }

@@ -7600,9 +7600,12 @@ export interface BrowserFramesHost {
  * without uploading it or exposing bytes or local paths. `recordingArtifactActions`
  * requires `t3.browser/artifact-actions` for reveal and copy path, not copy image.
  * Recording refs are host-local, not pending uploads or composer attachments.
+ * 1.3.0 adds client-local annotation refs; opting into annotation mode keeps
+ * the crop local for native composer attachment without an intermediate upload.
  * --------------------------------------------------------------------- */
 export const BROWSER_CAPTURE = "t3.browser/capture";
-export const BROWSER_CAPTURE_VERSION = "1.2.0";
+export const BROWSER_CAPTURE_VERSION = "1.3.0";
+export const BROWSER_ANNOTATION_MIN_VERSION = "1.3.0";
 export const BROWSER_CAPTURE_ARTIFACT_ACTIONS = "t3.browser/artifact-actions";
 export const BROWSER_RECORDING = "t3.browser/recording";
 export const BROWSER_RECORDING_MIN_VERSION = "1.2.0";
@@ -7702,11 +7705,13 @@ export interface BrowserCaptureRequest {
   readonly context: ViewContext;
   readonly session: BrowserSurfaceSessionRef;
   readonly target: BrowserCaptureTarget;
+  readonly annotation?: boolean;
   /** Caller lifetime — pass `ViewSession.signal`. Aborting cancels an open picker. */
   readonly signal?: AbortSignal;
 }
 
 export type BrowserCaptureResult =
+  | { readonly ok: true; readonly artifact: null; readonly annotationRef: string }
   | {
       readonly ok: true;
       readonly artifact: BrowserCaptureArtifact;

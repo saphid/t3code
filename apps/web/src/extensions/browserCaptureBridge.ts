@@ -47,7 +47,10 @@ import { validateContext } from "@t3tools/extension-sdk/contracts";
 import * as Schema from "effect/Schema";
 
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
-import { uploadBrowserCapture } from "~/browser/browserCaptureArtifacts";
+import {
+  uploadBrowserCapture,
+  releaseBrowserCaptureArtifact,
+} from "~/browser/browserCaptureArtifacts";
 import {
   BrowserRecordingConflictError,
   findActiveBrowserRecordingRuntimeTabId,
@@ -715,6 +718,12 @@ export function createBrowserCaptureBridge(
             if (!picked || request.signal?.aborted || binding.lifetime.aborted)
               return fail("cancelled", "The element pick was dismissed.");
             const { annotation } = picked;
+            if (request.annotation && !binding.grants.capabilities.includes("t3.composer/write"))
+              return fail(
+                "grant-denied",
+                "Adding annotations requires composer access.",
+                "t3.composer/write",
+              );
             if (binding.installationId) {
               const capture = capturePreviewAnnotationScreenshot(annotation);
               const file =
@@ -729,14 +738,21 @@ export function createBrowserCaptureBridge(
                 (capture.status === "captured" && file === null);
               retainedAnnotation = retainBrowserCaptureAnnotation({
                 environmentId,
-                threadId: resource.threadId,
+                threadId: threadRef.threadId,
                 installationId: binding.installationId,
-                lifetime: binding.lifetime,
+                lifetime: request.signal
+                  ? AbortSignal.any([binding.lifetime, request.signal])
+                  : binding.lifetime,
                 annotation: file ? annotation : { ...annotation, screenshot: null },
                 file,
                 screenshotFailed,
+                submission: picked.submission,
+                releaseArtifact: (artifactRef) =>
+                  releaseBrowserCaptureArtifact(threadRef.environmentId, artifactRef),
               });
             }
+            if (request.annotation && retainedAnnotation)
+              return { ok: true, artifact: null, annotationRef: retainedAnnotation.annotationRef };
             const screenshot = annotation.screenshot;
             if (!screenshot || picked.screenshotFailed)
               return imageFailure("capture-failed", "The picker kept no crop of the selection.");
@@ -774,9 +790,13 @@ export function createBrowserCaptureBridge(
               error instanceof Error ? error.message : "The capture could not be stored.",
             );
           }
-          if (request.signal?.aborted || binding.lifetime.aborted)
-            return fail("cancelled", "The capture was cancelled.");
           retainedAnnotation?.setArtifact(artifactRef);
+          if (request.signal?.aborted || binding.lifetime.aborted) {
+            if (!retainedAnnotation)
+              releaseBrowserCaptureArtifact(threadRef.environmentId, artifactRef);
+            retainedAnnotation?.discard();
+            return fail("cancelled", "The capture was cancelled.");
+          }
           if (savedPath !== null) {
             remember(artifactRef, savedPath, projectId, true);
           }

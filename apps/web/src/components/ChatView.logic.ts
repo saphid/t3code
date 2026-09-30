@@ -101,6 +101,7 @@ export function shouldRenderPreviewMiniPlayer(
   renderedRightPanelSurface: RightPanelSurface | null,
   extensionPresentation?: {
     readonly extensionPanelOpen: boolean;
+    readonly requestedTabId?: string | null;
     readonly browserSurface:
       | Pick<BrowserSurfacePresentation, "owner" | "extensionResourceKey">
       | undefined;
@@ -111,10 +112,13 @@ export function shouldRenderPreviewMiniPlayer(
     if (
       renderedRightPanelSurface?.kind === "extension" &&
       extensionPresentation?.extensionPanelOpen &&
-      isExtensionPresented(
-        extensionPresentation.browserSurface,
-        resourceKey(renderedRightPanelSurface.record.context.resource),
-      )
+      (extensionPresentation.requestedTabId != null
+        ? extensionPresentation.requestedTabId === source.tabId
+        : source.returnSurfaceId === renderedRightPanelSurface.id ||
+          isExtensionPresented(
+            extensionPresentation.browserSurface,
+            resourceKey(renderedRightPanelSurface.record.context.resource),
+          ))
     )
       return false;
     return !(

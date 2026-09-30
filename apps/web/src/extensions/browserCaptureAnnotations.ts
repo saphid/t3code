@@ -6,6 +6,7 @@ export interface BrowserCaptureAnnotation {
   readonly file: File | null;
   readonly artifactRef: string | null;
   readonly screenshotFailed: boolean;
+  readonly submission?: "attach" | "send";
   readonly consume: () => void;
 }
 
@@ -14,6 +15,7 @@ interface RetainedAnnotation extends BrowserCaptureAnnotation {
   readonly threadId: string;
   readonly installationId: string;
   readonly expiresAt: number;
+  readonly discard: () => void;
 }
 
 const retained = new Map<string, RetainedAnnotation>();
@@ -26,11 +28,20 @@ export function retainBrowserCaptureAnnotation(input: {
   readonly annotation: PreviewAnnotationPayload;
   readonly file: File | null;
   readonly screenshotFailed: boolean;
+  readonly submission?: "attach" | "send";
+  readonly releaseArtifact?: (artifactRef: string) => void;
 }) {
   const annotationRef = `preview-annotation-${randomUUID()}`;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   const consume = () => {
     retained.delete(annotationRef);
-    input.lifetime.removeEventListener("abort", consume);
+    clearTimeout(deadline);
+    input.lifetime.removeEventListener("abort", discard);
+  };
+  const discard = () => {
+    const artifactRef = retained.get(annotationRef)?.artifactRef;
+    if (artifactRef) input.releaseArtifact?.(artifactRef);
+    consume();
   };
   const entry = {
     environmentId: input.environmentId,
@@ -39,22 +50,32 @@ export function retainBrowserCaptureAnnotation(input: {
     annotation: input.annotation,
     file: input.file,
     screenshotFailed: input.screenshotFailed,
+    submission: input.submission ?? "attach",
     artifactRef: null,
     expiresAt: Date.now() + 5 * 60_000,
     consume,
+    discard,
   } satisfies RetainedAnnotation;
   for (const previous of retained.values()) {
-    if (previous.expiresAt <= Date.now()) previous.consume();
+    if (previous.expiresAt <= Date.now()) previous.discard();
   }
   retained.set(annotationRef, entry);
-  while (retained.size > 32) retained.values().next().value?.consume();
-  input.lifetime.addEventListener("abort", consume, { once: true });
-  if (input.lifetime.aborted) consume();
+  const own = [...retained.values()].filter(
+    (previous) =>
+      previous.environmentId === input.environmentId &&
+      previous.installationId === input.installationId,
+  );
+  for (const previous of own.slice(0, Math.max(0, own.length - 32))) previous.discard();
+  deadline = setTimeout(discard, 5 * 60_000);
+  input.lifetime.addEventListener("abort", discard, { once: true });
+  if (input.lifetime.aborted) discard();
   return {
     annotationRef,
+    discard,
     setArtifact(artifactRef: string) {
       const current = retained.get(annotationRef);
       if (current) retained.set(annotationRef, { ...current, artifactRef });
+      else input.releaseArtifact?.(artifactRef);
     },
   };
 }
@@ -68,7 +89,7 @@ export function readBrowserCaptureAnnotation(
   const entry = retained.get(annotationRef);
   if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
-    entry.consume();
+    entry.discard();
     return null;
   }
   return entry.environmentId === environmentId &&

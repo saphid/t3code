@@ -1048,7 +1048,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const surfaceNotice =
     epochChangedPresentation || surfaceDenial?.reason === "host-unavailable"
       ? null
-      : leaseState?.kind === "ended"
+      : leaseState?.kind === "ended" && leaseState.reason !== "superseded"
         ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
         : remoteEligible
           ? remoteNotice
@@ -1213,6 +1213,11 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           session={session}
           held={held}
           visible={visible}
+          available={
+            surfaceLease?.state.kind === "active" &&
+            live?.engine.state === "ready" &&
+            live?.navigation.kind !== "failed"
+          }
           style={buttonStyle}
           report={setNotice}
         />

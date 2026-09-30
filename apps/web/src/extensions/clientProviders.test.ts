@@ -53,6 +53,8 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { setLocalStorageItem } from "../hooks/useLocalStorage";
 import { useRightPanelStore } from "../rightPanelStore";
 import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { useBrowserSurfaceStore } from "../browser/browserSurfaceStore";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
 
 // Base UI keeps ToastStore internal; tests drive the real store to cover its timer rules.
 const requireFromHere = NodeModule.createRequire(import.meta.url);
@@ -163,6 +165,86 @@ function invokeCall(
 describe("browser SDK native parity seams", () => {
   const threadRef = scopeThreadRef(EnvironmentId.make(ENV), ThreadId.make("thread-a"));
   const previewState = { serverEpoch: "epoch-a", sessions: { "tab-a": {} } };
+  beforeEach(() =>
+    useBrowserSurfaceStore.setState({
+      extensionTargetsByResourceKey: {
+        [resourceKey(context().resource)]: {
+          installationId: INSTALL,
+          tabId: "tab-a",
+          serverEpoch: "epoch-a",
+          runtimeTabId: "runtime-a",
+        },
+      },
+    }),
+  );
+  afterEach(() => useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} }));
+
+  it("rejects sessions never held by this installation without changing another panel", () => {
+    useBrowserSurfaceStore.setState({ extensionTargetsByResourceKey: {} });
+    useRightPanelStore.getState().open(threadRef, "diff");
+    const provider = createPanelsClientProvider(
+      makeDeps(["t3.ui/panels", "t3.browser/sessions"]),
+      () => previewState,
+      () => true,
+    );
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("setBrowserMiniPlayer", {
+            threadId: "thread-a",
+            tabId: "tab-a",
+            serverEpoch: "epoch-a",
+            open: true,
+          }),
+        ),
+      "client-target-denied",
+    );
+    expect(
+      Object.values(useRightPanelStore.getState().byThreadKey).some(
+        (panel) => panel.isOpen && panel.activeSurfaceId === "diff",
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["attach", "send"] as const)(
+    "only the trusted picker submission can request a native send: %s",
+    (submission) => {
+      const nativeSend = vi.fn();
+      const read = vi.fn(() => ({
+        annotation: {
+          id: "native-send",
+          pageUrl: "https://example.com",
+          pageTitle: "Page",
+          comment: "fix",
+          elements: [],
+          regions: [],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-09-30T00:00:00Z",
+        },
+        file: null,
+        artifactRef: null,
+        screenshotFailed: false,
+        submission,
+        consume: vi.fn(),
+      }));
+      const provider = createComposerClientProvider(
+        makeDeps(["t3.composer/write"]),
+        undefined,
+        undefined,
+        read,
+        nativeSend,
+      );
+      provider.invoke(
+        invokeCall("insertPreviewAnnotation", {
+          threadId: "thread-a",
+          annotationRef: "native-ref",
+        }),
+      );
+      expect(nativeSend).toHaveBeenCalledTimes(submission === "send" ? 1 : 0);
+    },
+  );
 
   it("opens the native mini-player, preserves its geometry, and closes only the requested source", () => {
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
@@ -178,7 +260,7 @@ describe("browser SDK native parity seams", () => {
       Object.values(useRightPanelStore.getState().byThreadKey).find((panel) =>
         panel.surfaces.some((surface) => surface.id === "browser:tab-a"),
       )?.isOpen,
-    ).toBe(false);
+    ).toBe(true);
     usePreviewMiniPlayerStore.getState().move(threadRef, "browser:tab-a", { x: 32, y: 64 });
     provider.invoke(invokeCall("setBrowserMiniPlayer", input));
     expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)[0]?.position).toEqual({
@@ -188,7 +270,13 @@ describe("browser SDK native parity seams", () => {
     expect(provider.invoke(invokeCall("getBrowserMiniPlayer", { threadId: "thread-a" }))).toEqual({
       tabId: "tab-a",
     });
-    provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, tabId: "other", open: false }));
+    expectDenied(
+      () =>
+        provider.invoke(
+          invokeCall("setBrowserMiniPlayer", { ...input, tabId: "other", open: false }),
+        ),
+      "client-target-denied",
+    );
     expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)).toHaveLength(1);
     provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, open: false }));
     expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
@@ -246,7 +334,7 @@ describe("browser SDK native parity seams", () => {
     );
     expectDenied(
       () => provider.invoke(invokeCall("setBrowserMiniPlayer", { ...input, tabId: "other" })),
-      "provider-rejected",
+      "client-target-denied",
     );
   });
 

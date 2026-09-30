@@ -1,4 +1,6 @@
 import { installedWorkspaceContext, rightPanelViewContext } from "../extensions/installedContext";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
+import { registerBrowserAnnotationSender } from "../extensions/browserAnnotationSubmission";
 import {
   dispatchExtensionCommand,
   extensionCommandForKeydown,
@@ -1540,9 +1542,23 @@ export default function ChatView(props: ChatViewProps) {
       const runtimeTabId =
         source?.kind === "browser" ? resolvePreviewRuntimeTabId?.(source.tabId) : undefined;
       const surface = runtimeTabId ? state.byTabId[runtimeTabId] : undefined;
+      const extensionSurface =
+        activeRightPanelSurface?.kind === "extension" ? activeRightPanelSurface : null;
+      const target = extensionSurface
+        ? state.extensionTargetsByResourceKey[resourceKey(extensionSurface.record.context.resource)]
+        : undefined;
+      const restored = extensionSurface?.record.restoreState;
+      const restoredTabId =
+        typeof restored === "object" &&
+        restored !== null &&
+        "tabId" in restored &&
+        typeof restored.tabId === "string"
+          ? restored.tabId
+          : null;
       return {
         owner: surface?.owner ?? null,
         extensionResourceKey: surface?.extensionResourceKey ?? null,
+        requestedTabId: target?.tabId ?? restoredTabId,
       };
     }),
   );
@@ -1555,6 +1571,7 @@ export default function ChatView(props: ChatViewProps) {
         activeRightPanelSurface?.kind === "extension" &&
         activeRightPanelSurface.id === renderedRightPanelSurface?.id,
       browserSurface: miniPlayerBrowserSurface,
+      requestedTabId: miniPlayerBrowserSurface.requestedTabId,
     },
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
@@ -8164,6 +8181,15 @@ export default function ChatView(props: ChatViewProps) {
   const sendQueuedMessage = useEffectEvent((message: QueuedComposerMessage) => {
     void onSend(undefined, message.submissionIntent, undefined, message);
   });
+  const sendBrowserAnnotation = useEffectEvent(
+    (annotation: PreviewAnnotationPayload, image: ComposerImageAttachment | null) => {
+      void onSend(undefined, "foreground", { annotation, image });
+    },
+  );
+  useEffect(() => {
+    if (activeThreadRef)
+      return registerBrowserAnnotationSender(activeThreadRef, sendBrowserAnnotation);
+  }, [activeThreadRef]);
   const nextQueuedMessage = queuedMessages[0] ?? null;
   const latestToolActivityId = useMemo(
     () => (nextQueuedMessage ? latestCompletedToolActivityId(threadActivities) : null),

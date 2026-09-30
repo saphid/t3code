@@ -18,6 +18,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { shouldRenderPreviewMiniPlayer } from "~/components/ChatView.logic";
 import { extensionPanelSurface } from "~/rightPanelStore";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
 
 const context = {
   client: "web",
@@ -187,7 +188,11 @@ describe("browserSurfaceBridge", () => {
   it("keeps the mini-player from superseding an async surface-2 lease after a reconnect remount", async () => {
     const setup = harness();
     const { acquireNative: _mockAcquire, ...deps } = setup.deps;
-    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    useBrowserSurfaceStore.setState({
+      activityByTabId: {},
+      byTabId: {},
+      extensionTargetsByResourceKey: {},
+    });
     const bind = createBrowserSurfaceBridge("env-a", {
       ...deps,
       ownerOf: (runtimeTabId) =>
@@ -217,6 +222,16 @@ describe("browserSurfaceBridge", () => {
     const runtimeTabId = previewRuntimeTabId(threadRef, session.serverEpoch, session.tabId);
     const pending = host.acquire({ context, session });
     expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]).toBeUndefined();
+    expect(
+      shouldRenderPreviewMiniPlayer({ kind: "browser", tabId: session.tabId }, panel, {
+        extensionPanelOpen: true,
+        requestedTabId:
+          useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[
+            resourceKey(context.resource)
+          ]?.tabId ?? null,
+        browserSurface: undefined,
+      }),
+    ).toBe(false);
     setup.setPreviewState({
       serverEpoch: "epoch-2",
       sessions: { "tab-1": {} },
@@ -378,6 +393,11 @@ describe("browserSurfaceBridge", () => {
 
       const pending = host.acquire({ context, session: freshSession });
       expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
+      expect(
+        useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[
+          resourceKey(context.resource)
+        ]?.tabId,
+      ).toBe(freshSession.tabId);
       expect(h.syncMounts).toEqual(["env-a/thread-a"]);
       expect(h.syncUnmounts).toEqual([]);
       expect(h.sessionListeners.size).toBe(1);
@@ -459,6 +479,11 @@ describe("browserSurfaceBridge", () => {
       expect(h.nativeLeases).toEqual([]);
       expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
       expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
+      expect(
+        useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[
+          resourceKey(context.resource)
+        ],
+      ).toBeUndefined();
       expect(h.sessionRefreshes).toEqual(["env-a/thread-a"]);
     },
   );
@@ -487,6 +512,11 @@ describe("browserSurfaceBridge", () => {
       expect(h.syncUnmounts).toEqual(["env-a/thread-a"]);
       expect(h.sessionListeners.size).toBe(0);
       expect(h.deferred.every((entry) => entry.canceled)).toBe(true);
+      expect(
+        useBrowserSurfaceStore.getState().extensionTargetsByResourceKey[
+          resourceKey(context.resource)
+        ],
+      ).toBeUndefined();
     },
   );
 

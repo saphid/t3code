@@ -159,6 +159,13 @@ describe("floating browser preview", () => {
       },
     });
     expect(panel).not.toBeNull();
+    expect(
+      shouldRenderPreviewMiniPlayer(source, panel, {
+        extensionPanelOpen: true,
+        requestedTabId: source.tabId,
+        browserSurface: undefined,
+      }),
+    ).toBe(false);
     useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
     usePreviewMiniPlayerStore.getState().open(threadRef, source);

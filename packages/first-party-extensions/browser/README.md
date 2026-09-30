@@ -98,19 +98,17 @@ The panel renders through public contracts only:
   pack still requires only notifications `^1.0.0`: it probes the host's
   version, and offers the actions only for a capture the desktop saved;
   otherwise the plain toast goes out.
-  On a 1.2.0 capture host, an element pick also returns a client-local
+  On a 1.3.0 capture host, an element pick also returns a client-local
   `annotationRef`. `t3.composer/context` 1.3.0 `insertPreviewAnnotation`
   consumes that reference through the same client connection and adds the
   native annotation chip and optional crop together. Elements, regions,
   drawings, styles and comments stay on the host; even a failed crop keeps
-  the annotation. Older hosts keep the crop-only path.
-- `t3.ui/panels` 1.1.0 `getBrowserMiniPlayer` and `setBrowserMiniPlayer`
-  drive the native floating preview through the client-provider seam.
-  The header's “Float preview over chat” action opens the native player and
-  hides the rail, just like native; dragging, resizing, closing and returning
-  to the panel use the existing player. The mutation requires both
-  `t3.ui/panels` and `t3.browser/sessions`. Older clients report unsupported
-  instead of displaying a pack-owned imitation.
+  the annotation. This path keeps the crop local rather than uploading an
+  attachment that would immediately be released. Cmd/Ctrl+Enter in the native
+  picker asks the host to send; the extension cannot request a send through
+  the composer API. Handles are consumed once, scoped to the installation
+  and thread, and discarded on cancellation or after five minutes. Older
+  hosts keep the crop-only path.
   On a capture 1.2.0 desktop host, Shift-click starts the native recorder
   (`t3.browser/recording` grant and a live user click). Click again to stop
   and save the video locally, with no upload or attachment size limit.
@@ -123,6 +121,19 @@ The panel renders through public contracts only:
   pending composer attachments. The native toolbar has no recording-upload action,
   so the SDK offers none; native automation's explicit transfer remains separate.
   Older hosts and web clients do not offer recording.
+- `t3.ui/panels` 1.1.0 `getBrowserMiniPlayer` and `setBrowserMiniPlayer`
+  drive the native floating preview through the client-provider seam.
+  The header’s “Float preview over chat” action and closing the Browser panel
+  float its live page. Reopening or returning from the player reclaims the
+  same session in the originating extension panel, without a superseded
+  notice or a new tab. The player hides while that panel is open, including
+  while its surface acquisition is pending. Dragging, resizing and closing
+  use the existing player. The button follows local host state, including
+  closing the player from its own X, without requests on tab switches.
+  It is disabled for missing web contents or an unreachable page and omitted
+  on web clients and hosts without floating-preview support. The mutation
+  requires both `t3.ui/panels` and `t3.browser/sessions` and a session held by
+  this installation; it does not close an unrelated panel.
 - `t3.browser/local-servers` (`t3.browser/read-local-servers` grant) fills
   the empty state's "Local servers" section while it is visible. Loopback
   URLs open as-is — unlike the native panel they are not re-mapped to a
