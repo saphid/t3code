@@ -7,6 +7,8 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
+export const BACKEND_LIVENESS_PATH = "/healthz";
+
 /**
  * Normalizes an arbitrary readiness probe failure into a plain, structured value
  * suitable for diagnostic logging. Preserves the tagged-error `_tag` (and

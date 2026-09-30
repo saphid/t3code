@@ -24,6 +24,10 @@ See the [mobile README](../../apps/mobile/README.md) for native builds and Metro
 Flags go directly after the task name, for example `vp run dev --home-dir /tmp/t3code-dev`.
 Add `--browser` to open a browser automatically.
 
+The packaged desktop restarts its primary local backend after sustained HTTP liveness loss.
+Set `T3CODE_DISABLE_DESKTOP_BACKEND_WATCHDOG=1` before launching it when debugging a paused
+backend. The watchdog is disabled in desktop development mode and does not monitor WSL backends.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.

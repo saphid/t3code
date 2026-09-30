@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
+import { BACKEND_LIVENESS_PATH } from "@t3tools/shared/httpReadiness";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -294,6 +295,12 @@ const authenticateRawRouteWithScope = (
     }
   });
 
+export const livenessRouteLayer = HttpRouter.add(
+  "GET",
+  BACKEND_LIVENESS_PATH,
+  Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+);
+
 export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "metadata",
@@ -371,7 +378,10 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   ),
 );
 
-const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
+  OTLP_TRACES_PROXY_PATH,
+  BACKEND_LIVENESS_PATH,
+]);
 
 // Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
 // before routing, so a route handler cannot skip it. TracerDisabledWhen is one

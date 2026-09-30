@@ -48,7 +48,10 @@ import {
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
-import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
+import {
+  BACKEND_LIVENESS_PATH,
+  waitForHttpReady as waitForHttpReadyShared,
+} from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -67,6 +70,9 @@ const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
+const BACKEND_LIVENESS_INTERVAL = Duration.seconds(10);
+const BACKEND_LIVENESS_REQUEST_TIMEOUT = Duration.seconds(5);
+const BACKEND_LIVENESS_FAILURE_LIMIT = 12;
 const { logWarning: logBackendProcessWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-process");
 
@@ -94,6 +100,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
+  readonly livenessWatchdogEnabled?: boolean;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
@@ -575,7 +582,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // about to come up moments later; a one-shot probe left the app stuck
   // on "Connecting to WSL…" forever even though the backend kept running
   // and became healthy. Each round gets a fresh budget, and the forked
-  // loop is torn down with the run scope once the child exits.
+  // loop is interrupted when the backend run fiber ends.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     waitForHttpReady({
       executablePath: options.executablePath,
@@ -593,7 +600,34 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
 
-  yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
+  const monitorLiveness = Effect.fnUntraced(function* () {
+    const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
+    const url = new URL(BACKEND_LIVENESS_PATH, options.httpBaseUrl).href;
+    let failures = 0;
+    while (failures < BACKEND_LIVENESS_FAILURE_LIMIT) {
+      yield* Effect.sleep(BACKEND_LIVENESS_INTERVAL);
+      const alive = yield* httpClient.get(url).pipe(
+        Effect.as(true),
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        Effect.scoped,
+        Effect.timeoutOption(BACKEND_LIVENESS_REQUEST_TIMEOUT),
+        Effect.map(Option.getOrElse(() => false)),
+        Effect.orElseSucceed(() => false),
+      );
+      failures = alive ? 0 : failures + 1;
+    }
+    yield* logBackendProcessWarning("backend stopped answering liveness probes; forcing restart", {
+      pid: Number(handle.pid),
+      failures,
+    });
+    yield* handle.kill({ forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE }).pipe(Effect.ignore);
+  });
+
+  yield* probeReadiness().pipe(
+    Effect.repeat({ while: (ready) => !ready }),
+    Effect.andThen(options.livenessWatchdogEnabled === true ? monitorLiveness() : Effect.void),
+    Effect.forkChild,
+  );
 
   const exit = yield* handle.exitCode.pipe(
     Effect.mapError(

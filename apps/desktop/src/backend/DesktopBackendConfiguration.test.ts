@@ -64,6 +64,7 @@ function makeEnvironmentLayer(
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
     readonly otlpLogsUrl?: string;
+    readonly disableBackendWatchdog?: string;
   },
 ) {
   return DesktopEnvironment.layer({
@@ -89,6 +90,7 @@ function makeEnvironmentLayer(
           T3CODE_OTLP_TRACES_URL: options?.otlpTracesUrl,
           T3CODE_OTLP_METRICS_URL: options?.otlpMetricsUrl,
           T3CODE_OTLP_LOGS_URL: options?.otlpLogsUrl,
+          T3CODE_DISABLE_DESKTOP_BACKEND_WATCHDOG: options?.disableBackendWatchdog,
         }),
       ),
     ),
@@ -243,6 +245,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.entryPath, environment.backendEntryPath);
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
+        assert.equal(first.livenessWatchdogEnabled, true);
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
@@ -931,6 +934,7 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.captureOutput, true);
+        assert.equal(config.livenessWatchdogEnabled, false);
         // Dev never shares the prod compile cache.
         assert.notInclude(config.args, "--require");
       }).pipe(
@@ -949,6 +953,30 @@ describe("DesktopBackendConfiguration", () => {
           ),
         ),
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolvePrimary disables the watchdog when its environment opt-out is set", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolvePrimary;
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(makeEnvironmentLayer(baseDir, { disableBackendWatchdog: "1" })),
+          ),
+        ),
+      );
+      assert.equal(config.livenessWatchdogEnabled, false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -19,6 +19,7 @@ import * as Sink from "effect/Sink";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -113,8 +114,252 @@ const healthyHttpClientLayer = httpClientLayer((request) =>
   Effect.succeed(responseForRequest(request, 200)),
 );
 
+const startLivenessRun = Effect.fnUntraced(function* (
+  respond: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
+  config: Partial<DesktopBackendManager.DesktopBackendStartConfig> = {
+    livenessWatchdogEnabled: true,
+  },
+) {
+  const ready = yield* Deferred.make<void>();
+  const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>();
+  const kills: Array<ChildProcess.KillOptions | undefined> = [];
+  const requests: Array<string> = [];
+  const signals: Array<AbortSignal> = [];
+  const spawnerLayer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        makeProcess({
+          exitCode: Deferred.await(exit),
+          kill: (options) =>
+            Effect.sync(() => {
+              kills.push(options);
+            }).pipe(Effect.andThen(Deferred.fail(exit, signalDeath())), Effect.asVoid),
+        }),
+      ),
+    ),
+  );
+  const clientLayer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request, _url, signal) => {
+      requests.push(request.url);
+      signals.push(signal);
+      return respond(request);
+    }),
+  );
+  const fiber = yield* DesktopBackendManager.runBackendProcess({
+    ...baseConfig,
+    ...config,
+    desktopTelemetryStream: Stream.empty,
+    onReady: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+  }).pipe(Effect.provide(Layer.merge(spawnerLayer, clientLayer)), Effect.forkChild);
+  yield* Deferred.await(ready);
+  return { fiber, exit, kills, requests, signals };
+});
+
+describe("desktop backend liveness", () => {
+  it.effect("restarts a hung ready backend through the instance supervisor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const exited = yield* Deferred.make<
+          ChildProcessSpawner.ExitCode,
+          PlatformError.PlatformError
+        >();
+        const ready = yield* Queue.unbounded<number>();
+        const failures = yield* Queue.unbounded<string>();
+        let starts = 0;
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.sync(() => {
+              starts += 1;
+              return makeProcess({
+                exitCode: starts === 1 ? Deferred.await(exited) : Effect.never,
+                kill: () => Deferred.fail(exited, signalDeath()).pipe(Effect.asVoid),
+              });
+            }),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          config: { ...baseConfig, livenessWatchdogEnabled: true },
+          spawnerLayer,
+          httpClientLayer: httpClientLayer((request) =>
+            request.url.endsWith("/healthz")
+              ? starts === 1
+                ? Effect.never
+                : Effect.succeed(responseForRequest(request, 204))
+              : Effect.succeed(responseForRequest(request, 200)),
+          ),
+          onReady: Effect.suspend(() => Queue.offer(ready, starts).pipe(Effect.asVoid)),
+          backendOutputLog: {
+            persistFailure: ({ details }) => Queue.offer(failures, details).pipe(Effect.asVoid),
+          },
+        });
+        yield* instance.start;
+        assert.equal(yield* Queue.take(ready), 1);
+        yield* TestClock.adjust(Duration.minutes(3));
+        assert.include(yield* Queue.take(failures), "pid=123 Failed to read the exit status");
+        yield* TestClock.adjust(Duration.millis(500));
+        assert.equal(yield* Queue.take(ready), 2);
+        assert.equal(starts, 2);
+        assert.isTrue((yield* instance.snapshot).ready);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("kills a hung backend only after twelve consecutive timed-out liveness probes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startLivenessRun((request) =>
+          request.url.endsWith("/healthz")
+            ? Effect.never
+            : Effect.succeed(responseForRequest(request, 200)),
+        );
+        yield* TestClock.adjust(Duration.seconds(179));
+        assert.deepEqual(run.kills, []);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.deepEqual(run.kills, [{ forceKillAfter: Duration.seconds(2) }]);
+        assert.isTrue(
+          yield* Fiber.join(run.fiber).pipe(Effect.flip, Effect.map(isBackendProcessError)),
+        );
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("checks disk-free liveness rather than slow metadata after readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let metadataReads = 0;
+        const run = yield* startLivenessRun((request) => {
+          if (request.url.endsWith("/healthz"))
+            return Effect.succeed(responseForRequest(request, 204));
+          metadataReads += 1;
+          return metadataReads === 1
+            ? Effect.succeed(responseForRequest(request, 200))
+            : Effect.never;
+        });
+        yield* TestClock.adjust(Duration.minutes(5));
+        assert.deepEqual(run.kills, []);
+        assert.equal(metadataReads, 1);
+        assert.equal(run.requests.filter((url) => url.endsWith("/healthz")).length, 30);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("resets consecutive failures after a successful probe", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let probes = 0;
+        const run = yield* startLivenessRun((request) => {
+          if (!request.url.endsWith("/healthz"))
+            return Effect.succeed(responseForRequest(request, 200));
+          probes += 1;
+          return probes === 12 ? Effect.succeed(responseForRequest(request, 503)) : Effect.never;
+        });
+        yield* TestClock.adjust(Duration.seconds(340));
+        assert.equal(probes, 23);
+        assert.deepEqual(run.kills, []);
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.deepEqual(run.kills, [{ forceKillAfter: Duration.seconds(2) }]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("records no spans for periodic liveness probes", () => {
+    const spans: Array<string> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        spans.push(options.name);
+        return Tracer.nativeTracer.span(options);
+      },
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startLivenessRun((request) =>
+          Effect.succeed(responseForRequest(request, 200)),
+        );
+        assert.include(spans, "http.client GET");
+        spans.length = 0;
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.equal(run.requests.filter((url) => url.endsWith("/healthz")).length, 3);
+        assert.deepEqual(spans, []);
+      }),
+    ).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.withTracer(tracer),
+      Effect.withTracerEnabled(true),
+    );
+  });
+
+  for (const [name, config] of [
+    ["WSL backends", { bootstrapDelivery: "stdin" }],
+    ["a watchdog without an explicit opt-in", {}],
+    ["an explicitly disabled watchdog", { livenessWatchdogEnabled: false }],
+  ] as const) {
+    it.effect(`does not probe or kill ${name}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const run = yield* startLivenessRun(
+            (request) =>
+              request.url.endsWith("/healthz")
+                ? Effect.never
+                : Effect.succeed(responseForRequest(request, 200)),
+            config,
+          );
+          yield* TestClock.adjust(Duration.minutes(5));
+          assert.deepEqual(run.kills, []);
+          assert.equal(run.requests.length, 1);
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    );
+  }
+
+  it.effect("cancels successful probe responses instead of retaining their bodies", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startLivenessRun((request) =>
+          Effect.succeed(responseForRequest(request, request.url.endsWith("/healthz") ? 204 : 200)),
+        );
+        yield* TestClock.adjust(Duration.seconds(10));
+        assert.equal(run.signals.length, 2);
+        assert.isTrue(run.signals[1]!.aborted);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("interrupts an in-flight probe and never kills after the run stops", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startLivenessRun((request) =>
+          request.url.endsWith("/healthz")
+            ? Effect.never
+            : Effect.succeed(responseForRequest(request, 200)),
+        );
+        yield* TestClock.adjust(Duration.seconds(11));
+        yield* Fiber.interrupt(run.fiber);
+        assert.equal(run.signals.length, 2);
+        assert.isTrue(run.signals[1]!.aborted);
+        yield* TestClock.adjust(Duration.minutes(5));
+        assert.deepEqual(run.kills, []);
+        assert.equal(run.requests.length, 2);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
 function decodeBootstrap(raw: string) {
   return decodeDesktopBackendBootstrap(raw);
+}
+
+function signalDeath() {
+  return PlatformError.systemError({
+    _tag: "Unknown",
+    module: "ChildProcess",
+    method: "exitCode",
+    description: "Process interrupted due to receipt of signal: 'SIGKILL'",
+  });
 }
 
 interface MakeInstanceInput {

@@ -2162,6 +2162,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves empty backend liveness through the composed router without auth", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/healthz"));
+      assert.equal(response.status, 204);
+      assert.equal(yield* response.text, "");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves the public environment descriptor without requiring auth", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
