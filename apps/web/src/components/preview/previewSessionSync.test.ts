@@ -28,7 +28,10 @@ type ListAtom = Atom.Writable<
 const previewHarness = vi.hoisted(() => ({
   lists: new Map<
     string,
-    { box: { current: AsyncResult.AsyncResult<PreviewListResult, never> }; atom: ListAtom }
+    {
+      box: { current: AsyncResult.AsyncResult<PreviewListResult, never>; requests: number };
+      atom: ListAtom;
+    }
   >(),
 }));
 
@@ -39,14 +42,23 @@ vi.mock("~/state/preview", async () => {
     let entry = previewHarness.lists.get(threadId);
     if (entry === undefined) {
       const box = {
-        current: effectReactivity.AsyncResult.initial<PreviewListResult, never>(),
+        current: effectReactivity.AsyncResult.initial<PreviewListResult, never>(
+          true,
+        ) as AsyncResult.AsyncResult<PreviewListResult, never>,
+        requests: 0,
       };
       const atom = effectReactivity.Atom.writable(
-        () => box.current,
+        () => {
+          box.requests += 1;
+          return effectReactivity.AsyncResult.waiting(box.current);
+        },
         (
           ctx: { setSelf: (value: AsyncResult.AsyncResult<PreviewListResult, never>) => void },
           value: AsyncResult.AsyncResult<PreviewListResult, never>,
-        ) => ctx.setSelf(value),
+        ) => {
+          box.current = value;
+          ctx.setSelf(value);
+        },
       );
       entry = { box, atom };
       previewHarness.lists.set(threadId, entry);
@@ -64,14 +76,18 @@ const threadRef = {
   threadId: "thread-sync",
 } as unknown as ScopedThreadRef;
 
-const listAtom = (): ListAtom =>
+const listAtom = (ref = threadRef): ListAtom =>
   previewEnvironment.list({
     environmentId: "env-sync",
-    input: { threadId: "thread-sync" },
+    input: { threadId: ref.threadId },
   } as never) as ListAtom;
 
-const listResult = (revision: number, tabIds: string[]): PreviewListResult => ({
-  serverEpoch: "epoch-1",
+const listResult = (
+  revision: number,
+  tabIds: string[],
+  serverEpoch = "epoch-1",
+): PreviewListResult => ({
+  serverEpoch,
   revision,
   sessions: tabIds.map(
     (tabId) =>
@@ -86,7 +102,7 @@ const listResult = (revision: number, tabIds: string[]): PreviewListResult => ({
   ),
 });
 
-function bridgeHost(overrides: Partial<BrowserSurfaceBridgeDeps> = {}) {
+function bridgeHost(overrides: Partial<BrowserSurfaceBridgeDeps> = {}, ref = threadRef) {
   const lifetime = new AbortController();
   const bind = createBrowserSurfaceBridge("env-sync", {
     composites: () => true,
@@ -122,7 +138,7 @@ function bridgeHost(overrides: Partial<BrowserSurfaceBridgeDeps> = {}) {
           id: "view",
           environmentId: "env-sync",
           projectId: "project-a",
-          threadId: "thread-sync",
+          threadId: ref.threadId,
         },
       },
       session: { tabId: "tab-new", serverEpoch: "epoch-1" },
@@ -131,12 +147,117 @@ function bridgeHost(overrides: Partial<BrowserSurfaceBridgeDeps> = {}) {
 }
 
 describe("previewSessionSync arbitration", () => {
+  it.each([4_000, 8_000])(
+    "waits for the real sync's late refresh (%s ms) without retrying",
+    async (delay) => {
+      vi.useFakeTimers();
+      const ref = { ...threadRef, threadId: `thread-late-${delay}` } as ScopedThreadRef;
+      const atom = listAtom(ref);
+      appAtomRegistry.set(atom, AsyncResult.success(listResult(1, [], "epoch-old")));
+      const { acquire, lifetime } = bridgeHost({}, ref);
+      let settled = false;
+      const pending = Promise.resolve(acquire()).then((result) => {
+        settled = true;
+        return result;
+      });
+      try {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(settled).toBe(false);
+        expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
+        appAtomRegistry.set(atom, AsyncResult.success(listResult(2, ["tab-new"])));
+        await vi.advanceTimersByTimeAsync(1);
+        const acquired = await pending;
+        expect(acquired.ok).toBe(true);
+        if (!acquired.ok) throw new Error("expected the refreshed session to attach");
+        expect(acquired.lease.state.kind).toBe("active");
+        expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
+        acquired.lease.release();
+      } finally {
+        lifetime.abort();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("returns epoch-changed only after the refresh still reports a different epoch", async () => {
+    const ref = { ...threadRef, threadId: "thread-stale" } as ScopedThreadRef;
+    const atom = listAtom(ref);
+    appAtomRegistry.set(atom, AsyncResult.success(listResult(1, [], "epoch-old")));
+    const { acquire } = bridgeHost({}, ref);
+    const pending = Promise.resolve(acquire());
+    await Promise.resolve();
+    appAtomRegistry.set(atom, AsyncResult.success(listResult(2, [], "epoch-new")));
+    const acquired = await pending;
+    expect(acquired.ok).toBe(false);
+    if (acquired.ok) throw new Error("expected a stale session denial");
+    expect(acquired.denial.reason).toBe("epoch-changed");
+    expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
+  });
+
+  it.each(["failure", "timeout"])(
+    "returns host-unavailable when synchronization ends in %s",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const ref = { ...threadRef, threadId: `thread-offline-${outcome}` } as ScopedThreadRef;
+      const atom = listAtom(ref);
+      appAtomRegistry.set(atom, AsyncResult.success(listResult(1, [], "epoch-old")));
+      const { acquire, lifetime } = bridgeHost({}, ref);
+      const pending = Promise.resolve(acquire());
+      try {
+        await Promise.resolve();
+        if (outcome === "failure")
+          appAtomRegistry.set(atom, AsyncResult.failure(Cause.die("offline")));
+        else await vi.advanceTimersByTimeAsync(30_000);
+        const acquired = await pending;
+        expect(acquired.ok).toBe(false);
+        if (acquired.ok) throw new Error("expected an unavailable host");
+        expect(acquired.denial.reason).toBe("host-unavailable");
+        expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
+      } finally {
+        lifetime.abort();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("uses exactly one list request on a cold attach", async () => {
+    const ref = { ...threadRef, threadId: "thread-cold" } as ScopedThreadRef;
+    const atom = listAtom(ref);
+    const { acquire } = bridgeHost({}, ref);
+    const pending = Promise.resolve(acquire());
+    await Promise.resolve();
+    expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(1);
+    appAtomRegistry.set(atom, AsyncResult.success(listResult(1, ["tab-new"])));
+    const acquired = await pending;
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) throw new Error("expected the cold session to attach");
+    acquired.lease.release();
+  });
+
+  it("refreshes a reused sync after a failure without waiting for its idle TTL", async () => {
+    const ref = { ...threadRef, threadId: "thread-reused" } as ScopedThreadRef;
+    const atom = listAtom(ref);
+    appAtomRegistry.set(atom, AsyncResult.success(listResult(1, [], "epoch-old")));
+    const { acquire } = bridgeHost({}, ref);
+    const first = acquire();
+    await Promise.resolve();
+    appAtomRegistry.set(atom, AsyncResult.failure(Cause.die("offline")));
+    expect((await first).ok).toBe(false);
+    const second = acquire();
+    await Promise.resolve();
+    expect(previewHarness.lists.get(ref.threadId)?.box.requests).toBe(2);
+    appAtomRegistry.set(atom, AsyncResult.success(listResult(2, ["tab-new"])));
+    const acquired = await second;
+    if (!acquired.ok) throw new Error("expected the reused sync to recover");
+    acquired.lease.release();
+  });
+
   it("does not treat a refresh's waiting replay as a completed list", async () => {
     // Warm-synced state: a completed authoritative list already applied and
     // the requested tab is absent from it.
     appAtomRegistry.set(listAtom(), AsyncResult.success(listResult(1, []), { timestamp: 1 }));
     const { acquire } = bridgeHost();
-    const acquired = acquire();
+    const acquired = await acquire();
     if (!acquired.ok) throw new Error("expected lease");
     const lease: BrowserSurfaceLease = acquired.lease;
     const baseline = readThreadPreviewState(threadRef).listSeq;
@@ -163,7 +284,7 @@ describe("previewSessionSync arbitration", () => {
   it("keeps the lease when the arbitrating list contains the tab", async () => {
     appAtomRegistry.set(listAtom(), AsyncResult.success(listResult(3, []), { timestamp: 3 }));
     const { acquire } = bridgeHost();
-    const acquired = acquire();
+    const acquired = await acquire();
     if (!acquired.ok) throw new Error("expected lease");
     const lease = acquired.lease;
     await Promise.resolve();
@@ -185,7 +306,7 @@ describe("previewSessionSync arbitration", () => {
   it("counts a completed Failure as an attempt, retries, and verifies on a later list", async () => {
     appAtomRegistry.set(listAtom(), AsyncResult.success(listResult(5, []), { timestamp: 5 }));
     const { acquire } = bridgeHost();
-    const acquired = acquire();
+    const acquired = await acquire();
     if (!acquired.ok) throw new Error("expected lease");
     const lease = acquired.lease;
     const baselineFailures = readThreadPreviewState(threadRef).listFailures;
@@ -229,7 +350,7 @@ describe("previewSessionSync arbitration", () => {
         return () => {};
       },
     });
-    const acquired = acquire();
+    const acquired = await acquire();
     if (!acquired.ok) throw new Error("expected lease");
     await Promise.resolve();
     // The arbitrating request never resolves — the bound ends the lease.

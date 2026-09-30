@@ -8773,7 +8773,6 @@ var __t3Client = (() => {
   }
   var OVERFLOW_CLIP_PATTERN = /(auto|scroll|hidden|clip)/;
   var OCCLUSION_POLL_MS = 400;
-  var ACQUIRE_RETRY_DELAYS_MS = [500, 1e3, 2e3, 4e3, 8e3];
   function clippedSlotRect(element) {
     const bounds = element.getBoundingClientRect();
     let x1 = bounds.x;
@@ -8858,8 +8857,7 @@ var __t3Client = (() => {
       const surfaceSession = options.session;
       let detach = () => {
       };
-      let retry = null;
-      let attempts = 0;
+      const acquisition = new AbortController();
       let disposed = false;
       const attach = (held) => {
         let poll = null;
@@ -8935,31 +8933,32 @@ var __t3Client = (() => {
           setShown(false);
         };
       };
-      const tryAcquire = () => {
-        if (disposed)
-          return;
-        const acquired = surface.acquire({
-          context: session.context,
-          session: surfaceSession,
-          signal: session.signal
-        });
-        if (!acquired.ok) {
-          setResult(acquired);
-          if (acquired.denial.reason === "host-unavailable" && attempts < ACQUIRE_RETRY_DELAYS_MS.length) {
-            retry = setTimeout(tryAcquire, ACQUIRE_RETRY_DELAYS_MS[attempts]);
-            attempts += 1;
-          }
+      const accept = (acquired2) => {
+        if (disposed) {
+          if (acquired2.ok)
+            acquired2.lease.release();
           return;
         }
-        setResult(acquired);
-        attach(acquired.lease);
+        setResult(acquired2);
+        if (acquired2.ok)
+          attach(acquired2.lease);
       };
-      tryAcquire();
+      const acquired = surface.acquire({
+        context: session.context,
+        session: surfaceSession,
+        signal: AbortSignal.any([session.signal, acquisition.signal])
+      });
+      if ("then" in acquired)
+        acquired.then(accept, () => accept({
+          ok: false,
+          denial: { reason: "host-unavailable", detail: "The browser host is not connected." }
+        }));
+      else
+        accept(acquired);
       return () => {
         disposed = true;
-        if (retry !== null)
-          clearTimeout(retry);
         detach();
+        acquisition.abort();
       };
     }, [element, targetKey, host, session]);
     return {
@@ -18166,6 +18165,7 @@ ${ind(d)}}`;
     const tabsEpoch = (0, import_react8.useRef)(null);
     const [notice, setNotice] = (0, import_react8.useState)(null);
     const [visible, setVisible] = (0, import_react8.useState)(session.visible);
+    const [surfaceAttempt, setSurfaceAttempt] = (0, import_react8.useState)(0);
     const heldRef = (0, import_react8.useRef)(held);
     const historyRef = (0, import_react8.useRef)(history);
     const dropHeldSession = (0, import_react8.useCallback)(() => {
@@ -18337,7 +18337,7 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
-    const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null);
+    const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null) || surfaceDenial?.reason === "epoch-changed";
     (0, import_react8.useEffect)(() => {
       if (epochChangedPresentation) dropHeldSession();
     }, [epochChangedPresentation, dropHeldSession]);
@@ -18515,6 +18515,7 @@ ${ind(d)}}`;
       go(url, isLeaseUrl(url) ? void 0 : () => projectHistory.record(url));
     };
     const go = (url, onAccepted) => {
+      if (surfaceDenial?.reason === "host-unavailable") setSurfaceAttempt((attempt) => attempt + 1);
       const api = bindApi(browserSessionsApi, host, session.context);
       const current = heldRef.current;
       const usable = current && surfaceLease?.state.kind !== "ended" && !isRecoveryExhausted(live) ? current : null;
@@ -18718,7 +18719,7 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "epoch-changed" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = epochChangedPresentation || surfaceDenial?.reason === "host-unavailable" ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {
@@ -18977,7 +18978,8 @@ ${titledTitle}`;
                 ref: surfaceSlotRef,
                 "aria-label": "Browser surface",
                 style: { position: "absolute", inset: 0 }
-              }
+              },
+              surfaceAttempt
             ),
             remoteEligible && remote.status.kind !== "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
               "div",

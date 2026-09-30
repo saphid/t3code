@@ -178,7 +178,7 @@ export function createBrowserSurfaceBridge(
       id: BROWSER_SURFACE,
       version: BROWSER_SURFACE_VERSION,
       presentation,
-      acquire(request): BrowserSurfaceAcquireResult {
+      async acquire(request): Promise<BrowserSurfaceAcquireResult> {
         if (binding.lifetime.aborted)
           return deny("host-unavailable", "the installation's client lifetime has already ended.");
         for (const grant of BROWSER_SURFACE_REQUIRED_GRANTS)
@@ -243,22 +243,54 @@ export function createBrowserSurfaceBridge(
           );
         if (request.signal?.aborted)
           return deny("scope-invalid", "the calling view's lifetime has already ended.");
+        const unmountSync = deps.mountSessionSync(threadRef);
         const synced = deps.readSessions(threadRef);
-        if (synced.serverEpoch !== null && synced.serverEpoch !== serverEpoch) {
-          const unmountSync = deps.mountSessionSync(threadRef);
-          try {
-            deps.refreshSessions(threadRef);
-          } finally {
+        if (synced.serverEpoch !== serverEpoch) {
+          const failure = await new Promise<BrowserSurfaceDenialReason | null>((resolve) => {
+            let unsubscribe = () => {};
+            let cancelDeadline = () => {};
+            const finish = (reason: BrowserSurfaceDenialReason | null) => {
+              unsubscribe();
+              cancelDeadline();
+              request.signal?.removeEventListener("abort", onScopeEnd);
+              binding.lifetime.removeEventListener("abort", onLifetimeEnd);
+              resolve(reason);
+            };
+            const onScopeEnd = () => finish("scope-invalid");
+            const onLifetimeEnd = () => finish("host-unavailable");
+            const check = () => {
+              const current = deps.readSessions(threadRef);
+              if (current.listSeq > synced.listSeq) finish(null);
+              else if (current.listFailures > synced.listFailures) finish("host-unavailable");
+            };
+            unsubscribe = deps.subscribeSessions(threadRef, check);
+            cancelDeadline = deps.defer(() => finish("host-unavailable"), VERIFY_TIMEOUT_MS);
+            request.signal?.addEventListener("abort", onScopeEnd, { once: true });
+            binding.lifetime.addEventListener("abort", onLifetimeEnd, { once: true });
+            if (request.signal?.aborted) onScopeEnd();
+            else if (binding.lifetime.aborted) onLifetimeEnd();
+            else check();
+          });
+          const scope = deps.resolveThreadScope(threadRef);
+          if (failure !== null || !scope.authoritative) {
             unmountSync();
+            return deny(failure ?? "host-unavailable", "The browser host is not connected.");
           }
-          return deny(
-            "host-unavailable",
-            `${BROWSER_SURFACE} is refreshing this thread's sessions; retry once synchronization completes.`,
-          );
+          if (scope.projectId !== resource.projectId || request.signal?.aborted) {
+            unmountSync();
+            return deny("scope-invalid", "The calling view no longer owns this thread.");
+          }
+          if (binding.lifetime.aborted) {
+            unmountSync();
+            return deny("host-unavailable", "The installation's client lifetime has ended.");
+          }
+          if (deps.readSessions(threadRef).serverEpoch !== serverEpoch) {
+            unmountSync();
+            return deny("epoch-changed", "The session belongs to a previous browser host.");
+          }
         }
 
         const composite = presentation.supported;
-        const unmountSync = deps.mountSessionSync(threadRef);
         const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
         const native = composite ? deps.acquireNative(runtimeTabId) : null;
         const nativeOwner = composite ? deps.ownerOf(runtimeTabId) : null;

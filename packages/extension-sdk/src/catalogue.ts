@@ -7338,8 +7338,8 @@ export type BrowserSurfaceDenialReason =
   /**
    * The host could not verify the lease scope right now — the thread's
    * shell state is still synchronizing, or the calling client's install
-   * lifetime ended. Transient for a live installation; SDK callers retry
-   * with bounded backoff before treating the slot as dead.
+   * lifetime ended. A caller can remount the slot to try again once the
+   * host is connected.
    */
   | "host-unavailable";
 
@@ -7438,7 +7438,9 @@ export interface BrowserSurfaceHost {
   readonly version: string;
   /** Static for the host's lifetime — compositing cannot appear mid-session. */
   readonly presentation: BrowserSurfacePresentationSupport;
-  acquire(request: BrowserSurfaceAcquireRequest): BrowserSurfaceAcquireResult;
+  acquire(
+    request: BrowserSurfaceAcquireRequest,
+  ): BrowserSurfaceAcquireResult | Promise<BrowserSurfaceAcquireResult>;
 }
 
 /* ------------------------------------------------------------------------

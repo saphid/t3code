@@ -293,6 +293,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   // back to the session line, so an older message never resurfaces.
   const [notice, setNotice] = useState<string | null>(null);
   const [visible, setVisible] = useState(session.visible);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(0);
   const heldRef = useRef(held);
   const historyRef = useRef(history);
   const dropHeldSession = useCallback(() => {
@@ -519,7 +520,9 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
     visible: visible && held !== null,
     cornerRadius: 8,
   });
-  const epochChangedPresentation = isEpochChangedPresentation(surfaceLease?.state ?? null);
+  const epochChangedPresentation =
+    isEpochChangedPresentation(surfaceLease?.state ?? null) ||
+    surfaceDenial?.reason === "epoch-changed";
   useEffect(() => {
     if (epochChangedPresentation) dropHeldSession();
   }, [epochChangedPresentation, dropHeldSession]);
@@ -757,6 +760,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   };
 
   const go = (url: string, onAccepted?: () => void) => {
+    if (surfaceDenial?.reason === "host-unavailable") setSurfaceAttempt((attempt) => attempt + 1);
     const api = bindApi(browserSessionsApi, host, session.context);
     // An ended lease means the held session is suspect, and a guest whose
     // recovery gave up stays dead — open fresh rather than navigate either.
@@ -1037,7 +1041,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
   const pageLoading =
     held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
   const surfaceNotice =
-    epochChangedPresentation || surfaceDenial?.reason === "epoch-changed"
+    epochChangedPresentation || surfaceDenial?.reason === "host-unavailable"
       ? null
       : leaseState?.kind === "ended"
         ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
@@ -1312,6 +1316,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
       {held ? (
         <div ref={setContentElement} style={{ position: "relative", flex: 1, minHeight: 0 }}>
           <div
+            key={surfaceAttempt}
             ref={surfaceSlotRef}
             aria-label="Browser surface"
             style={{ position: "absolute", inset: 0 }}
