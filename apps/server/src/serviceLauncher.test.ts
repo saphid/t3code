@@ -1,10 +1,17 @@
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  databaseBackupBlocker,
+  Launcher,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -13,6 +20,11 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+async function writeSparseFile(filePath: string, size: number): Promise<void> {
+  await NodeFSP.writeFile(filePath, "");
+  await NodeFSP.truncate(filePath, size);
+}
 
 it("accepts only exact semantic versions", () => {
   for (const version of ["0.0.0", "1.2.3", "1.2.3-alpha.1", "1.2.3-0", "1.2.3+001"]) {
@@ -357,6 +369,107 @@ if (context.update?.status === "pending") {
       const updateId = state.update?.id;
       assert.isDefined(updateId);
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+    }),
+  );
+
+  it.effect("refuses a backup that cannot fit and leaves the server running", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-space-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      const replyPath = path.join(root, "rejection.txt");
+      const trialMarker = path.join(root, "trial-started");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      // A sparse 8 TiB file (under the ext4 per-file limit) is larger than any test machine's free space
+      // whether the backup would be cloned or copied.
+      yield* Effect.promise(() => writeSparseFile(databasePath, 8 * 1024 ** 4));
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
+      const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
+      const childSource = `
+import { writeFileSync } from "node:fs";
+const paths = ${encoded};
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  writeFileSync(paths.trialMarker, "started");
+  process.exit(1);
+} else if (context.update === undefined) {
+  process.on("message", (message) => {
+    if (message.type === "update-rejected") {
+      writeFileSync(paths.replyPath, message.reason);
+      process.exit(0);
+    }
+  });
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath });
+  setInterval(() => {}, 1_000);
+} else {
+  process.exit(0);
+}
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => Promise.reject(new Error("launcher unexpectedly completed")),
+          () => Promise.resolve(),
+        ),
+      );
+
+      assert.include(yield* fs.readFileString(replyPath), "Not enough free disk space");
+      assert.isFalse(yield* fs.exists(trialMarker));
+      const state = yield* Effect.promise(() => readServiceState(statePath));
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.isUndefined(state.update);
+    }),
+  );
+
+  it.effect("checks database backup space against clone or full-copy needs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
+      const databasePath = path.join(root, "state.sqlite");
+      yield* Effect.promise(() => writeSparseFile(databasePath, 10 * 1024 ** 3));
+      const free = (bytes: number) => () => Promise.resolve(bytes);
+
+      assert.isUndefined(
+        yield* Effect.promise(() =>
+          databaseBackupBlocker(root, databasePath, free(64 * 1024 ** 3)),
+        ),
+      );
+      const blocker = yield* Effect.promise(() =>
+        databaseBackupBlocker(root, databasePath, free(1024 ** 2)),
+      );
+      assert.include(blocker ?? "", "Not enough free disk space");
+      assert.include(blocker ?? "", "The server was not stopped");
+      // A filesystem that duplicates the probe file (free space drops by its
+      // size) needs room for a full copy, not just clone headroom.
+      let reads = 0;
+      const duplicating = () => {
+        reads += 1;
+        return Promise.resolve(10.2 * 1024 ** 3 - (reads > 1 ? 32 * 1024 ** 2 : 0));
+      };
+      assert.include(
+        (yield* Effect.promise(() => databaseBackupBlocker(root, databasePath, duplicating))) ?? "",
+        "Not enough free disk space",
+      );
+      // No probe files are left behind in the backup directory.
+      assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );
 });
