@@ -60,6 +60,7 @@ import {
 
 import { useMutationToasts, type MutationToastPatch } from "./mutationToasts.js";
 import { PrsMetadataPicker } from "./prsMetadataPickers.js";
+import { border, muted } from "./prsPresentation.js";
 import { usePrsFilesViewed } from "./usePrsFilesViewed.js";
 import {
   PRS_INVOLVEMENTS,
@@ -142,8 +143,6 @@ import {
 // Theme-backed values chain a `--t3-version-control-*` hop (published on the
 // view root from `t3.ui/theme` tokens) ahead of the legacy host vars; an
 // unserved hop never resolves and the legacy chain renders.
-const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
-const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
 const hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
 
 const control = {

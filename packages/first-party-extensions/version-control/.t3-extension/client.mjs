@@ -9893,6 +9893,22 @@ var __t3Client = (() => {
   // prsMetadataPickers.tsx
   var import_react2 = __toESM(require_react(), 1);
 
+  // prsPresentation.ts
+  var muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+  var border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+  var operationPrefix = /^Pull request operation \w+ failed:\s*/iu;
+  var toolNoise = [
+    /^(github|gitlab|bitbucket|azure devops)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
+    /^exited? with (code|status) \d+\.?$/iu,
+    /^unknown error\.?$/iu
+  ];
+  function prsReadableFailure(failure, hint) {
+    const raw = failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "";
+    const detail = raw.replace(operationPrefix, "").trim();
+    if (detail.length === 0 || toolNoise.some((pattern) => pattern.test(detail))) return hint;
+    return detail.length <= 320 ? detail : `${detail.slice(0, 319)}\u2026`;
+  }
+
   // node_modules/@pierre/diffs/dist/constants.js
   var DIFFS_DEVELOPMENT_BUILD = (() => {
     try {
@@ -11445,7 +11461,7 @@ ${ref.number}`;
   }
   function prsStackMergePlan(stack, number, mergeMethod) {
     const position = stack.layers.findIndex((layer) => layer.number === number) + 1;
-    const selected2 = position > 0 ? stack.layers[position - 1] : void 0;
+    const selected = position > 0 ? stack.layers[position - 1] : void 0;
     const layers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
     const unready = layers.some((layer) => layer.state !== "open" || layer.isDraft === true);
     const count = layers.length;
@@ -11459,8 +11475,8 @@ ${ref.number}`;
       )
     };
     return {
-      visible: selected2?.state === "open",
-      disabled: selected2?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
+      visible: selected?.state === "open",
+      disabled: selected?.state !== "open" || count === 0 || unready || layers.some((layer) => !layer.headSha),
       layers,
       input,
       label: "Merge stack",
@@ -11539,8 +11555,6 @@ ${writeKey}`;
 
   // prsMetadataPickers.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
-  var muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
-  var border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var rowStyle = {
     display: "inline-flex",
     alignItems: "center",
@@ -11551,6 +11565,7 @@ ${writeKey}`;
     trigger: "Change labels",
     search: "Search labels",
     permission: "Changing labels needs triage access on this repository",
+    unavailable: "Labels cannot be changed from here",
     empty: "This repository has no labels.",
     noMatch: "No label matches that.",
     error: "The labels could not be read.",
@@ -11560,6 +11575,7 @@ ${writeKey}`;
     trigger: "Request a review",
     search: "Search people with access",
     permission: "Asking someone to review needs write access on this repository",
+    unavailable: "Reviews cannot be requested from here",
     empty: "Nobody else has access to this repository.",
     noMatch: "Nobody with access matches that.",
     error: "The people with access could not be read.",
@@ -11572,11 +11588,6 @@ ${writeKey}`;
   function matches(candidate, query) {
     const needle = query.toLowerCase();
     return candidate.name.toLowerCase().includes(needle) || (candidate.kind === "label" ? candidate.value.description : candidate.value.name)?.toLowerCase().includes(needle) === true;
-  }
-  function selected(candidate, detail) {
-    return candidate.kind === "label" ? detail.labels.some((label) => label.name === candidate.name) : detail.reviewers.some(
-      (reviewer) => reviewer.login.toLowerCase() === candidate.name.toLowerCase()
-    );
   }
   function toggleMetadata(detail, candidate, applied) {
     if (candidate.kind === "label")
@@ -11701,7 +11712,7 @@ ${writeKey}`;
     const canRead = readOperations?.[kind === "labels" ? "prs.labelCandidates" : "prs.reviewerCandidates"] === true;
     const canWrite = writeOperations?.[kind === "labels" ? "prs.setLabels" : "prs.requestReviewers"] === true;
     const allowed = supported && permitted && canRead && canWrite;
-    const disabledReason = !permitted ? words.permission : !canRead ? `${words.search} is unavailable through t3.prs/read` : `${words.trigger} is unavailable through t3.prs/write`;
+    const disabledReason = !permitted ? words.permission : words.unavailable;
     const [open, setOpen] = (0, import_react2.useState)(false);
     const [query, setQuery] = (0, import_react2.useState)("");
     const [highlight, setHighlight] = (0, import_react2.useState)(0);
@@ -11721,6 +11732,7 @@ ${writeKey}`;
       setAnchor(element);
     }, []);
     const search = (0, import_react2.useRef)(null);
+    const activeOption = (0, import_react2.useRef)(null);
     const popup = (0, import_react2.useRef)(null);
     const [popupElement, setPopupElement] = (0, import_react2.useState)(null);
     const attachPopup = (0, import_react2.useCallback)((element) => {
@@ -11731,7 +11743,8 @@ ${writeKey}`;
     const shown = optimistic?.source === detail ? optimistic.value : pending && optimistic !== null ? toggleMetadata(detail, optimistic.candidate, optimistic.applied) : detail;
     const candidates = (list?.candidates ?? []).filter((candidate) => matches(candidate, query));
     const active = candidates[Math.min(highlight, candidates.length - 1)];
-    const isSelected = (candidate) => optimistic?.source === detail || pending && optimistic !== null || list?.source !== detail ? selected(candidate, shown) : candidate.kind === "label" ? candidate.value.isApplied : candidate.value.isRequested;
+    const activeId = active === void 0 ? void 0 : `${listId}-${candidates.indexOf(active)}`;
+    const isSelected = (candidate) => pending && optimistic?.candidate.key === candidate.key ? optimistic.applied : candidate.kind === "label" ? candidate.value.isApplied : candidate.value.isRequested;
     (0, import_react2.useEffect)(() => {
       detailRef.current = detail;
     }, [detail]);
@@ -11749,13 +11762,11 @@ ${writeKey}`;
       if (!open || !allowed) return;
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      const source = detailRef.current;
       const api = bindApi(prsReadApi, host, session.context);
       const read = async () => {
         if (kind === "labels") {
           const result2 = await api.invoke("labelCandidates", reference, signal);
           return {
-            source,
             truncated: result2.truncated,
             candidates: result2.candidates.map((value) => ({
               kind: "label",
@@ -11767,7 +11778,6 @@ ${writeKey}`;
         }
         const result = await api.invoke("reviewerCandidates", reference, signal);
         return {
-          source,
           truncated: result.truncated,
           candidates: result.candidates.map((value) => ({
             kind: "reviewer",
@@ -11782,12 +11792,14 @@ ${writeKey}`;
           if (!signal.aborted) setList(result);
         },
         (error) => {
-          if (!signal.aborted)
-            setReadError(error instanceof Error ? error.message : "Host read failed");
+          if (!signal.aborted) setReadError(prsReadableFailure(error, words.error));
         }
       );
       return () => controller.abort();
-    }, [open, allowed, kind, host, session, reference]);
+    }, [open, allowed, kind, host, session, reference, words.error]);
+    (0, import_react2.useEffect)(() => {
+      if (open) activeOption.current?.scrollIntoView({ block: "nearest" });
+    }, [open, activeId, active?.key, popupElement]);
     (0, import_react2.useEffect)(() => {
       if (!open || popupElement === null) return;
       const timer = setTimeout(() => search.current?.focus(), 0);
@@ -11843,6 +11855,14 @@ ${writeKey}`;
             signal
           );
         if (signal.aborted) return;
+        setList(
+          (current) => current === null ? null : {
+            ...current,
+            candidates: current.candidates.map(
+              (entry) => entry.key !== candidate.key ? entry : entry.kind === "label" ? { ...entry, value: { ...entry.value, isApplied: applied } } : { ...entry, value: { ...entry.value, isRequested: applied } }
+            )
+          }
+        );
         setOptimistic(
           (current) => current === null || current.source === detailRef.current ? current : {
             ...current,
@@ -11861,7 +11881,10 @@ ${writeKey}`;
         showReceipt({
           severity: "error",
           title: candidate.kind === "label" ? applied ? `Could not put ${candidate.name} on` : `Could not take ${candidate.name} off` : applied ? `Could not ask ${candidate.name} for a review` : `Could not take back the review request to ${candidate.name}`,
-          body: error instanceof Error ? error.message : candidate.kind === "label" ? "The host refused it. Check that you have triage access on this repository." : "The host refused it. Check that you have write access on this repository, and that they still have access to it."
+          body: prsReadableFailure(
+            error,
+            candidate.kind === "label" ? "The host refused it. Check that you have triage access on this repository." : "The host refused it. Check that you have write access on this repository, and that they still have access to it."
+          )
         });
       } finally {
         pendingRef.current = false;
@@ -11872,7 +11895,8 @@ ${writeKey}`;
       role: "dialog",
       "aria-label": words.trigger,
       onKeyDown: (event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Tab") setOpen(false);
+        else if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
           close();
@@ -11931,7 +11955,7 @@ ${writeKey}`;
                 "aria-controls": listId,
                 "aria-expanded": true,
                 "aria-autocomplete": "list",
-                "aria-activedescendant": active === void 0 ? void 0 : `${listId}-${candidates.indexOf(active)}`,
+                "aria-activedescendant": activeId,
                 value: query,
                 onChange: (event) => {
                   setQuery(event.target.value);
@@ -11976,7 +12000,7 @@ ${writeKey}`;
             list === null ? readError !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { style: { margin: 0, padding: 8, color: muted, fontSize: 12 }, children: [
               words.error,
               " ",
-              readError
+              readError === words.error ? null : readError
             ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { "aria-busy": true, "aria-label": "Loading candidates", style: { padding: 8 }, children: [0, 1, 2, 3].map((index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "div",
               {
@@ -11993,6 +12017,7 @@ ${writeKey}`;
             )) }) : candidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: 0, padding: 8, color: muted, fontSize: 12 }, children: query.length > 0 ? words.noMatch : words.empty }) : candidates.map((candidate, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "button",
               {
+                ref: active?.key === candidate.key ? activeOption : void 0,
                 id: `${listId}-${index}`,
                 type: "button",
                 role: "option",
@@ -12081,37 +12106,46 @@ ${writeKey}`;
         }
       ),
       supported ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { style: { position: "relative", display: "inline-flex" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Tooltip, { host, side: "bottom", label: allowed ? words.trigger : disabledReason, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "button",
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          Tooltip,
           {
-            ref: attachTrigger,
-            type: "button",
-            "aria-label": words.trigger,
-            "aria-haspopup": "dialog",
-            "aria-expanded": open && allowed,
-            disabled: !allowed,
-            onClick: () => {
-              if (allowed) {
-                setReadError(null);
-                setOpen((current) => !current);
+            host,
+            side: "bottom",
+            showWhenDisabled: true,
+            label: allowed ? words.trigger : disabledReason,
+            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                ref: attachTrigger,
+                type: "button",
+                "aria-label": words.trigger,
+                "aria-haspopup": "dialog",
+                "aria-expanded": open && allowed,
+                disabled: !allowed,
+                onClick: () => {
+                  if (allowed) {
+                    setReadError(null);
+                    setOpen((current) => !current);
+                  }
+                },
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 24,
+                  height: 24,
+                  border: "none",
+                  borderRadius: 4,
+                  background: "transparent",
+                  color: "inherit",
+                  cursor: allowed ? "pointer" : "default",
+                  opacity: allowed ? 1 : 0.5
+                },
+                children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PickerIcon, { kind })
               }
-            },
-            style: {
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 24,
-              height: 24,
-              border: "none",
-              borderRadius: 4,
-              background: "transparent",
-              color: "inherit",
-              cursor: allowed ? "pointer" : "default",
-              opacity: allowed ? 1 : 0.5
-            },
-            children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(PickerIcon, { kind })
+            )
           }
-        ) }),
+        ),
         open && allowed ? Popover !== void 0 && anchor !== null ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           Popover,
           {
@@ -12295,8 +12329,6 @@ ${writeKey}`;
 
   // prsPanel.tsx
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
-  var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
-  var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
   var hairline = "1px solid var(--t3-version-control-border, var(--border, #f0f2f5))";
   var control = {
     padding: "4px 8px",
@@ -12315,7 +12347,7 @@ ${writeKey}`;
     font: "inherit",
     fontSize: 14,
     padding: "3px 6px",
-    border: border2,
+    border,
     borderRadius: 5,
     background: "transparent",
     color: "inherit"
@@ -12332,13 +12364,13 @@ ${writeKey}`;
   };
   var oidStyle = {
     fontFamily: "var(--font-mono, ui-monospace, monospace)",
-    color: muted2,
+    color: muted,
     fontSize: 11
   };
   var noteStyle = {
     margin: 0,
     padding: "4px 10px",
-    color: muted2,
+    color: muted,
     fontSize: 12
   };
   var headingStyle = {
@@ -12346,7 +12378,7 @@ ${writeKey}`;
     padding: "2px 10px",
     fontSize: 12,
     fontWeight: 600,
-    color: muted2,
+    color: muted,
     textTransform: "uppercase",
     letterSpacing: 0.4
   };
@@ -12783,9 +12815,9 @@ ${writeKey}`;
       // `--success`/`--info` are host constants outside the theme contract's
       // role set — the native panel reads the same variables.
       open: "var(--success, #2da44e)",
-      closed: muted2,
+      closed: muted,
       merged: "var(--info, #8250df)",
-      muted: muted2
+      muted
     };
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
       "span",
@@ -12920,7 +12952,7 @@ ${writeKey}`;
         width: 320,
         maxWidth: "calc(100vw - 24px)",
         padding: "8px 10px",
-        border: border2,
+        border,
         borderRadius: 6,
         fontSize: 12,
         textAlign: "left",
@@ -12932,14 +12964,14 @@ ${writeKey}`;
     };
     const body = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "0 0 6px", fontWeight: 600, fontSize: 13 }, children: icon.label }),
-      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "0 0 6px", color: muted2 }, children: summary }),
-      stale ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted2 }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+      summary !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: "0 0 6px", color: muted }, children: summary }),
+      stale ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted }, children: "Check details are out of date. Refresh the pull request to update them." }) : shown?.status === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted }, children: "Loading checks\u2026" }) : shown?.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted }, children: shown.detail }) : shown?.status === "ready" && shown.checks.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { margin: 0, color: muted }, children: "No checks reported" }) : shown?.status === "ready" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: shown.checks.map((check, index) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
         "li",
         {
           style: { display: "flex", alignItems: "baseline", gap: 6, padding: "1px 0" },
           children: [
             /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flex: 1, minWidth: 0, overflowWrap: "anywhere" }, children: check.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted2 }, children: prsCheckStatusLabel(check.status) }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted }, children: prsCheckStatusLabel(check.status) }),
             check.url !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "button",
               {
@@ -13055,7 +13087,7 @@ ${writeKey}`;
         children: "\u2197"
       }
     ) });
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted2 }, children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, color: muted }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host: props.host, side: "top", label: chips.base.tooltip, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("code", { style: { ...chipStyle, maxWidth: "45%", flexShrink: 0 }, children: [
         chips.base.stacked && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { "aria-label": "Stacked pull request", children: "\u29C9 " }),
         chips.base.text
@@ -13135,7 +13167,7 @@ ${writeKey}`;
                 minWidth: 0,
                 marginTop: 2,
                 fontSize: 11,
-                color: muted2,
+                color: muted,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap"
@@ -13162,9 +13194,9 @@ ${writeKey}`;
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 2 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted2 }, children: entry.headBranch }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted2, fontSize: 11 }, children: "\u2192" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted2, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted }, children: entry.headBranch }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { flexShrink: 0, color: muted, fontSize: 11 }, children: "\u2192" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("code", { style: { ...chipStyle, color: muted, maxWidth: "45%", flexShrink: 0 }, children: entry.baseBranch })
           ] }),
           entry.labels.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "span",
@@ -13182,8 +13214,8 @@ ${writeKey}`;
                     fontSize: 10,
                     padding: "0 5px",
                     borderRadius: 8,
-                    border: border2,
-                    color: muted2
+                    border,
+                    color: muted
                   },
                   children: label.name
                 },
@@ -13197,7 +13229,7 @@ ${writeKey}`;
   }
   function metaRow(label, value) {
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { display: "flex", gap: 8, padding: "1px 0", fontSize: 12 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { width: 110, flexShrink: 0, color: muted2 }, children: label }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { width: 110, flexShrink: 0, color: muted }, children: label }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { minWidth: 0, overflowWrap: "anywhere" }, children: value })
     ] });
   }
@@ -13217,7 +13249,7 @@ ${writeKey}`;
             "span",
             {
               style: {
-                color: check.status === "success" ? "var(--success, #2da44e)" : check.status === "failure" || check.status === "action-required" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted2,
+                color: check.status === "success" ? "var(--success, #2da44e)" : check.status === "failure" || check.status === "action-required" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted,
                 flexShrink: 0
               },
               children: prsCheckStatusLabel(check.status)
@@ -13229,7 +13261,7 @@ ${writeKey}`;
               "span",
               {
                 style: {
-                  color: muted2,
+                  color: muted,
                   fontSize: 12,
                   flexShrink: 1,
                   minWidth: 0,
@@ -13248,7 +13280,7 @@ ${writeKey}`;
   function CommentRow({ comment }) {
     const verdict = prsReviewVerdictLabel(comment.reviewState);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "4px 10px", fontSize: 12, borderTop: hairline }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted2, fontSize: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
         prsActorLabel(comment.author),
         verdict !== null ? ` ${verdict}` : comment.kind === "review" ? " reviewed" : " commented",
         comment.path !== null ? ` on ${comment.path}` : "",
@@ -13258,7 +13290,7 @@ ${writeKey}`;
         comment.url !== null ? ` \u2014 ${comment.url}` : ""
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 2 }, children: comment.body }),
-      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+      comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
     ] });
   }
   function ReviewThreadSection(props) {
@@ -13277,14 +13309,14 @@ ${writeKey}`;
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: thread.comments.map((comment) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "3px 10px", fontSize: 12 }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted2, fontSize: 12 }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { style: { color: muted, fontSize: 12 }, children: [
               prsActorLabel(comment.author),
               " \xB7 ",
               formatRelativeTime(comment.createdAt),
               comment.url !== null ? ` \u2014 ${comment.url}` : ""
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginTop: 1 }, children: comment.body }),
-            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
+            comment.reactions !== void 0 && comment.reactions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 1 }, children: comment.reactions.map((r) => `${r.content} \xD7${r.count}`).join(" \xB7 ") })
           ] }, comment.id)) }),
           canPage && prsThreadMoreLabel(thread) !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
@@ -13343,7 +13375,7 @@ ${writeKey}`;
     flexShrink: 0,
     textAlign: "right",
     paddingRight: 8,
-    color: muted2,
+    color: muted,
     userSelect: "none"
   };
   function PrsDiffRow({ row }) {
@@ -13354,7 +13386,7 @@ ${writeKey}`;
           style: {
             ...diffRowBase,
             justifyContent: "center",
-            color: muted2,
+            color: muted,
             background: "var(--t3-version-control-muted, var(--muted, #f4f5f7))",
             fontStyle: "italic"
           },
@@ -13378,7 +13410,7 @@ ${writeKey}`;
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: gutter, children: deletion || row.kind === "context" ? row.oldLine : "" }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: gutter, children: addition || row.kind === "context" ? row.newLine : "" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, userSelect: "none", width: 14 }, children: addition ? "+" : deletion ? "\u2212" : " " }),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { overflow: "hidden", textOverflow: "ellipsis" }, children: row.text })
         ]
       }
@@ -13432,7 +13464,7 @@ ${writeKey}`;
                 },
                 children: [
                   displayPath(row),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted }, children: [
                     " ",
                     "\u2014 ",
                     row.binary ? "binary" : changeTypeLabel(row.changeType),
@@ -13451,7 +13483,7 @@ ${writeKey}`;
                   alignItems: "center",
                   gap: 6,
                   fontSize: 11,
-                  color: muted2,
+                  color: muted,
                   cursor: "pointer"
                 },
                 children: [
@@ -13669,7 +13701,7 @@ ${writeKey}`;
               setOpen(event.key === "ArrowDown" ? "first" : "last");
             }
           },
-          style: { ...control, fontSize: 12, border: border2 },
+          style: { ...control, fontSize: 12, border },
           children: [
             prsCheckoutLabel(pending),
             " \u25BE"
@@ -13706,7 +13738,7 @@ ${writeKey}`;
             minWidth: 260,
             marginTop: 4,
             padding: 4,
-            border: border2,
+            border,
             borderRadius: 6,
             background: "var(--t3-version-control-background, var(--popover, var(--background, #fff)))",
             boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)"
@@ -13734,7 +13766,7 @@ ${writeKey}`;
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: option.label }),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 12, color: muted2 }, children: option.description })
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { fontSize: 12, color: muted }, children: option.description })
               ]
             },
             option.mode
@@ -13784,7 +13816,7 @@ ${writeKey}`;
       width: 360,
       maxWidth: "calc(100vw - 24px)",
       padding: "10px 12px",
-      border: border2,
+      border,
       borderRadius: 8,
       fontSize: 12,
       color: "var(--t3-version-control-text, var(--foreground, #20252d))",
@@ -13799,7 +13831,7 @@ ${writeKey}`;
           type: "button",
           disabled: pending,
           onClick: onCancel,
-          style: { ...control, fontSize: 12, border: border2 },
+          style: { ...control, fontSize: 12, border },
           children: "Cancel"
         }
       ),
@@ -13810,7 +13842,7 @@ ${writeKey}`;
           type: "button",
           disabled: pending,
           onClick: onConfirm,
-          style: { ...control, fontSize: 12, border: border2 },
+          style: { ...control, fontSize: 12, border },
           children: pending ? "Working\u2026" : confirmLabel
         }
       )
@@ -13830,7 +13862,7 @@ ${writeKey}`;
       );
     const body = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("strong", { id: titleId, style: { fontSize: 13 }, children: title }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted2 }, children: description }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { id: descriptionId, style: { margin: "4px 0", color: muted }, children: description }),
       props.children,
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }, children: actions })
     ] });
@@ -13952,7 +13984,7 @@ ${writeKey}`;
     };
   }
   function PullRequestsPanel(props) {
-    const { host, session, visible, selected: selected2, onSelect } = props;
+    const { host, session, visible, selected, onSelect } = props;
     const [tick, setTick] = (0, import_react4.useState)(0);
     const [listState, setListState] = (0, import_react4.useState)("open");
     const [involvement, setInvolvement] = (0, import_react4.useState)("all");
@@ -14013,12 +14045,12 @@ ${writeKey}`;
       listInput,
       revision2
     );
-    const sections = usePrsDetail(host, session, selected2, ops, revision2);
+    const sections = usePrsDetail(host, session, selected, ops, revision2);
     const { diff, loadMore } = usePrsDiff(
       host,
       session,
-      selected2,
-      visible && ready && selected2 !== null && ops?.["prs.streamDiff"] === true,
+      selected,
+      visible && ready && selected !== null && ops?.["prs.streamDiff"] === true,
       revision2
     );
     const runInvalidate = () => {
@@ -14027,13 +14059,13 @@ ${writeKey}`;
       const signal = AbortSignal.any([controller.signal, session.signal]);
       const api = bindApi(prsReadApi, host, session.context);
       const invalidations = [api.invoke("invalidate", {}, signal)];
-      if (selected2 !== null)
-        invalidations.push(api.invoke("invalidate", { reference: selected2 }, signal));
-      if (selected2 !== null && ops?.["prs.filesViewed"] === true)
+      if (selected !== null)
+        invalidations.push(api.invoke("invalidate", { reference: selected }, signal));
+      if (selected !== null && ops?.["prs.filesViewed"] === true)
         invalidations.push(
           bindApi(prsReadApi, host, session.context, "^1.2.0").invoke(
             "invalidate",
-            { reference: selected2, filesViewedOnly: true },
+            { reference: selected, filesViewedOnly: true },
             signal
           )
         );
@@ -14048,12 +14080,12 @@ ${writeKey}`;
         }
       ).finally(() => controller.abort());
     };
-    const selectedKey = selected2 === null ? null : prsRefKey(selected2);
-    const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected2 !== null);
+    const selectedKey = selected === null ? null : prsRefKey(selected);
+    const checkoutSupport = useCheckoutSupport(host, session, visible && ready && selected !== null);
     const defaultRefs = useDefaultRefs(
       host,
       session,
-      visible && ready && selected2 !== null,
+      visible && ready && selected !== null,
       revision2
     );
     const toasts = useMutationToasts(host, session, visible && ready);
@@ -14161,13 +14193,13 @@ ${writeKey}`;
     const writeError = (key) => writeState !== null && !writeState.pending && writeState.key === key ? writeState.error : null;
     const writePending = (key) => writeState !== null && writeState.pending && writeState.key === key;
     const runPrAction = (offer, method) => {
-      if (selected2 === null) return;
+      if (selected === null) return;
       runWrite(
         `action:${offer.action}`,
         (signal) => writeApi().invoke(
           "runAction",
           {
-            ...selected2,
+            ...selected,
             action: offer.action,
             ...(offer.action === "merge" || offer.action === "enable-auto-merge") && method !== void 0 ? { mergeMethod: method } : {},
             ...offer.action === "update-branch" && method !== void 0 ? { updateMethod: method } : {}
@@ -14178,8 +14210,8 @@ ${writeKey}`;
       );
     };
     const threadWrite = (thread) => {
-      if (selected2 === null || write.kind !== "ready") return null;
-      const ref = selected2;
+      if (selected === null || write.kind !== "ready") return null;
+      const ref = selected;
       const replyKey = `reply:${thread.id}`;
       return {
         canReply: write.operations["prs.replyToThread"],
@@ -14213,7 +14245,7 @@ ${selectedKey}`;
         };
     }, [pagedScope, sections.activity]);
     const loadThreadComments = (thread) => {
-      if (selected2 === null || pagedScope === null || sections.activity === null || thread.nextCommentsCursor === void 0)
+      if (selected === null || pagedScope === null || sections.activity === null || thread.nextCommentsCursor === void 0)
         return;
       const cursor = thread.nextCommentsCursor;
       const scope = pagedScope;
@@ -14225,7 +14257,7 @@ ${thread.id}`;
       setPagingThreads((prev) => new Map(prev).set(pendingKey, head));
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, session.signal]);
-      void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected2, threadId: thread.id, cursor }, signal).then(
+      void bindApi(prsReadApi, host, session.context).invoke("threadComments", { ...selected, threadId: thread.id, cursor }, signal).then(
         (page) => {
           if (signal.aborted || generation !== pagedGeneration.current.generation) return;
           setPagedThreads((prev) => {
@@ -14303,7 +14335,7 @@ ${thread.id}`;
       setDraft("method:merge", value);
       rememberedMergeMethod.remember(value);
     };
-    const stackMerge = detail !== null && selected2 !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected2.number, mergeMethod) : null;
+    const stackMerge = detail !== null && selected !== null && sections.stack !== null && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanMergeStack(detail, write) ? prsStackMergePlan(sections.stack, selected.number, mergeMethod) : null;
     const stackRebase = detail !== null && sections.stack !== null && sections.stack.layers.length > 0 && sections.stackFresh && sections.stackError === null && write.kind === "ready" && prsCanRebaseStack(detail, write) ? prsStackRebasePlan(sections.stack) : null;
     const openStackConfirm = (action) => {
       if (selectedKey === null) return;
@@ -14314,9 +14346,9 @@ ${thread.id}`;
     const confirming = confirmPlan !== null ? stackConfirm : null;
     const stackActionPending = confirming !== null && writePending(`stack:${confirming.action}`);
     const runStackAction = () => {
-      if (selected2 === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
+      if (selected === null || selectedKey === null || confirming === null || confirmPlan === null || confirmPlan.disabled)
         return;
-      const ref = selected2;
+      const ref = selected;
       const refKey = selectedKey;
       const { action } = confirming;
       setStackConfirm({ ...confirming, running: confirmPlan });
@@ -14362,7 +14394,7 @@ ${thread.id}`;
                 flexWrap: "wrap"
               },
               children: [
-                selected2 === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
+                selected === null ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { role: "group", "aria-label": "State filter", style: { display: "flex", gap: 2 }, children: PRS_LIST_STATES.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                     "button",
                     {
@@ -14428,7 +14460,7 @@ ${thread.id}`;
             ready && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
               refreshError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: { ...noteStyle, fontSize: 12 }, children: refreshError }),
               refreshes.detail !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: { ...noteStyle, fontSize: 12 }, children: refreshes.detail }),
-              selected2 === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+              selected === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
                 ops !== null && ops["prs.list"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Listing pull requests is not supported by this host (prs.list)." }),
                 gate.providers.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: prsProviderLabel(provider) }, provider.host)),
                 list.error !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: list.error }),
@@ -14490,7 +14522,7 @@ ${thread.id}`;
                   }
                 )
               ] }),
-              selected2 !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
+              selected !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
                 ops !== null && ops["prs.detail"] !== true && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "note", style: noteStyle, children: "Pull-request detail is not supported by this host (prs.detail)." }),
                 detail === null && sections.detailError === null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: noteStyle, children: "Reading pull request\u2026" }),
                 sections.detailError !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { role: "alert", style: noteStyle, children: [
@@ -14522,10 +14554,10 @@ ${thread.id}`;
                                 {
                                   type: "button",
                                   onClick: () => openOnHost(repositoryUrl),
-                                  style: { ...linkButton, color: muted2, fontSize: 12 },
+                                  style: { ...linkButton, color: muted, fontSize: 12 },
                                   children: detail.repository
                                 }
-                              ) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: detail.repository })
+                              ) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: detail.repository })
                             }
                           ),
                           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, side: "top", label: prsOpenOnHostLabel(detail.provider), children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
@@ -14592,7 +14624,7 @@ ${thread.id}`;
                         ]
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted2, fontSize: 12, marginTop: 2 }, children: detail.url }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { style: { color: muted, fontSize: 12, marginTop: 2 }, children: detail.url }),
                     /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                       ReceiptLine,
                       {
@@ -14661,7 +14693,7 @@ ${thread.id}`;
                     metaRow("Updated", formatRelativeTime(detail.updatedAt)),
                     detail.mergedAt !== null && metaRow("Merged", formatRelativeTime(detail.mergedAt)),
                     detail.closedAt !== null && metaRow("Closed", formatRelativeTime(detail.closedAt)),
-                    selected2 !== null && metaRow(
+                    selected !== null && metaRow(
                       "Reviewers",
                       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         PrsMetadataPicker,
@@ -14669,7 +14701,7 @@ ${thread.id}`;
                           kind: "reviewers",
                           host,
                           session,
-                          reference: selected2,
+                          reference: selected,
                           detail,
                           readOperations: ops,
                           writeOperations: writeOps,
@@ -14678,7 +14710,7 @@ ${thread.id}`;
                         `${selectedKey}:reviewers`
                       )
                     ),
-                    selected2 !== null && (detail.labels.length > 0 || detail.capabilities.labels === true) && metaRow(
+                    selected !== null && (detail.labels.length > 0 || detail.capabilities.labels === true) && metaRow(
                       "Labels",
                       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                         PrsMetadataPicker,
@@ -14686,7 +14718,7 @@ ${thread.id}`;
                           kind: "labels",
                           host,
                           session,
-                          reference: selected2,
+                          reference: selected,
                           detail,
                           readOperations: ops,
                           writeOperations: writeOps,
@@ -14770,7 +14802,7 @@ ${thread.id}`;
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.stack.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                     "li",
                     {
-                      style: { padding: "2px 10px", fontSize: 12, color: muted2 },
+                      style: { padding: "2px 10px", fontSize: 12, color: muted },
                       children: [
                         "#",
                         layer.number,
@@ -14809,7 +14841,7 @@ ${thread.id}`;
                                 disabled: stackMerge.disabled || writeState?.pending === true,
                                 ref: stackMergeOpener,
                                 onClick: () => openStackConfirm("merge"),
-                                style: { ...control, fontSize: 12, border: border2 },
+                                style: { ...control, fontSize: 12, border },
                                 children: stackMerge.label
                               }
                             )
@@ -14833,11 +14865,11 @@ ${thread.id}`;
                             disabled: stackRebase.disabled || writeState?.pending === true,
                             ref: stackRebaseOpener,
                             onClick: () => openStackConfirm("rebase"),
-                            style: { ...control, fontSize: 12, border: border2 },
+                            style: { ...control, fontSize: 12, border },
                             children: stackRebase.label
                           }
                         ),
-                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: stackMerge.blockedNote })
+                        stackMerge !== null && stackMerge.visible && stackMerge.blockedNote !== null && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { style: { color: muted, fontSize: 12 }, children: stackMerge.blockedNote })
                       ]
                     }
                   )
@@ -14864,7 +14896,7 @@ ${thread.id}`;
                   sections.linked !== null && sections.linked.threads.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { style: { ...noteStyle, fontSize: 12 }, children: "No linked threads." }),
                   /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: sections.linked?.threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("li", { style: { padding: "2px 10px", fontSize: 12 }, children: [
                     thread.title,
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2, fontSize: 12 }, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 12 }, children: [
                       " ",
                       "\u2014 ",
                       thread.id,
@@ -14924,7 +14956,7 @@ ${thread.id}`) === activity,
                         onChange: (value) => setDraft("comment", value),
                         onSubmit: (body) => runWrite(
                           "comment",
-                          (signal) => writeApi().invoke("comment", { ...selected2, body }, signal),
+                          (signal) => writeApi().invoke("comment", { ...selected, body }, signal),
                           [{ key: "comment", submitted: body }]
                         )
                       }
@@ -14949,7 +14981,7 @@ ${thread.id}`) === activity,
                           "review",
                           (signal) => writeApi().invoke(
                             "submitReview",
-                            { ...selected2, verdict, body, comments: [] },
+                            { ...selected, verdict, body, comments: [] },
                             signal
                           ),
                           [
@@ -14990,7 +15022,7 @@ ${thread.id}`) === activity,
                         ),
                         " ",
                         commit.messageHeadline,
-                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted2, fontSize: 11 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { style: { color: muted, fontSize: 11 }, children: [
                           " ",
                           "\xB7 ",
                           formatRelativeTime(commit.committedDate)
@@ -15010,7 +15042,7 @@ ${thread.id}`) === activity,
                       onLoadMore: loadMore,
                       host,
                       session,
-                      reference: selected2,
+                      reference: selected,
                       detail: sections.detail,
                       write: writeOps,
                       viewedReadSupported: ops?.["prs.filesViewed"] === true,
@@ -15025,7 +15057,7 @@ ${thread.id}`) === activity,
                           disclose();
                       }
                     },
-                    `${session.context.resource.environmentId ?? ""}:${session.context.resource.projectId ?? ""}:${selected2 === null ? "" : prsRefKey(selected2)}`
+                    `${session.context.resource.environmentId ?? ""}:${session.context.resource.projectId ?? ""}:${selected === null ? "" : prsRefKey(selected)}`
                   ),
                   selectedKey !== null && viewedFailureKey === selectedKey && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { role: "alert", style: noteStyle, children: "Could not update viewed files" })
                 ] }),
@@ -15295,8 +15327,8 @@ ${thread.id}`) === activity,
     }, [host, session, visible]);
     return vars;
   }
-  var border3 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
-  var muted3 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
+  var border2 = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
+  var muted2 = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
   var control2 = {
     padding: "4px 8px",
     border: "1px solid transparent",
@@ -15396,9 +15428,9 @@ ${thread.id}`) === activity,
     const lanes = (0, import_react5.useMemo)(() => lanesFromChanges(changes.changes?.entries ?? []), [changes.changes]);
     if (pendingDiscard !== null && planDiscard(lanes, pendingDiscard) === null)
       setPendingDiscard(null);
-    const selected2 = retainSelection(selection, lanes);
-    const selectedEntry = selected2 === null ? null : lanes[selected2.lane].find((e) => e.path === selected2.path) ?? null;
-    const selectedStat = selected2 === null ? null : numstatFor(status.local, selected2.path);
+    const selected = retainSelection(selection, lanes);
+    const selectedEntry = selected === null ? null : lanes[selected.lane].find((e) => e.path === selected.path) ?? null;
+    const selectedStat = selected === null ? null : numstatFor(status.local, selected.path);
     const rows = (0, import_react5.useMemo)(() => refRows(refs.refs), [refs.refs]);
     const remoteList = (0, import_react5.useMemo)(() => remoteRows(remotes.remotes), [remotes.remotes]);
     const worktrees = (0, import_react5.useMemo)(() => worktreeRows(rows), [rows]);
@@ -15727,7 +15759,7 @@ ${thread.id}`) === activity,
                 display: "flex",
                 gap: 6,
                 padding: 8,
-                borderBottom: border3,
+                borderBottom: border2,
                 flexShrink: 0,
                 alignItems: "center"
               },
@@ -15761,7 +15793,7 @@ ${thread.id}`) === activity,
                   }
                 ),
                 view === "repository" && repo.kind === "ready" && repo.capabilities.operations["status.refresh"] === true && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", onClick: refresh, style: control2, children: "Refresh" }),
-                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: refreshError ?? headerStatus })
+                view === "repository" && headerStatus !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: refreshError ?? headerStatus })
               ]
             }
           ),
@@ -15776,8 +15808,8 @@ ${thread.id}`) === activity,
             }
           ),
           view === "repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
-            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
-            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "loading" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: "Reading repository capabilities\u2026" }),
+            repo.kind === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "alert", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "Repository status unavailable \u2014 ",
               repo.detail
             ] }),
@@ -15789,13 +15821,13 @@ ${thread.id}`) === activity,
                 style: {
                   display: "block",
                   padding: "4px 10px",
-                  color: mutation.kind === "failed" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted3,
+                  color: mutation.kind === "failed" ? "var(--t3-version-control-error, var(--destructive, #b42318))" : muted2,
                   fontSize: 12
                 },
                 children: describeMutation(mutation)
               }
             ),
-            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "no-repository" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "This workspace is not a repository",
               repo.detail ? ` \u2014 ${repo.detail}` : "",
               ".",
@@ -15811,7 +15843,7 @@ ${thread.id}`) === activity,
               ),
               !canInit && " Repository init is not supported by the detected drivers."
             ] }),
-            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted3, fontSize: 12, margin: 0 }, children: [
+            repo.kind === "unsupported" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("p", { role: "note", style: { padding: "6px 10px", color: muted2, fontSize: 12, margin: 0 }, children: [
               "Unsupported repository driver: ",
               repo.driverKind,
               ". ",
@@ -15854,7 +15886,7 @@ ${thread.id}`) === activity,
                         children: "Publish repository\u2026"
                       }
                     ),
-                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 11 }, children: syncBlockReasons([
+                    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: syncBlockReasons([
                       canPull ? pull.disabled : null,
                       canPush ? push.disabled : null,
                       publish.offered ? publish.disabled : null
@@ -15903,7 +15935,7 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border3,
+                            border: border2,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
@@ -15937,7 +15969,7 @@ ${thread.id}`) === activity,
                             padding: "1px 0",
                             fontSize: 11,
                             border: "none",
-                            color: muted3
+                            color: muted2
                           },
                           children: "Advanced"
                         }
@@ -15966,7 +15998,7 @@ ${thread.id}`) === activity,
                                   font: "inherit",
                                   fontSize: 12,
                                   padding: "3px 6px",
-                                  border: border3,
+                                  border: border2,
                                   borderRadius: 5,
                                   background: "transparent",
                                   color: "inherit"
@@ -16022,7 +16054,7 @@ ${thread.id}`) === activity,
                               children: "Cancel"
                             }
                           ),
-                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 11 }, children: publishPlan.disabled })
+                          publishPlan.disabled !== null && publishRepositoryPath.trim() !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 11 }, children: publishPlan.disabled })
                         ]
                       }
                     )
@@ -16033,11 +16065,11 @@ ${thread.id}`) === activity,
                 "output",
                 {
                   "aria-label": "Changes status",
-                  style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
+                  style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                   children: changes.error
                 }
               ),
-              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { padding: "4px 6px", color: muted3, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
+              changes.changes !== null && laneCount(lanes) === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { padding: "4px 6px", color: muted2, fontSize: 12, margin: 0 }, children: "Working tree clean \u2014 nothing staged, modified, or untracked." }),
               CHANGE_LANES.map((lane) => {
                 const bulk = laneMutation(lane);
                 const rowAction = entryMutation(lane);
@@ -16054,7 +16086,7 @@ ${thread.id}`) === activity,
                         padding: "2px 6px",
                         fontSize: 12,
                         fontWeight: 600,
-                        color: muted3,
+                        color: muted2,
                         textTransform: "uppercase",
                         letterSpacing: 0.4,
                         display: "flex",
@@ -16148,7 +16180,7 @@ ${thread.id}`) === activity,
                                   children: "Cancel"
                                 }
                               ),
-                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3 }, children: discardConfirm.disabled })
+                              discardConfirm.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2 }, children: discardConfirm.disabled })
                             ]
                           }
                         )
@@ -16164,7 +16196,7 @@ ${thread.id}`) === activity,
                           "button",
                           {
                             type: "button",
-                            "aria-current": selected2?.path === entry.path && selected2.lane === lane ? "true" : void 0,
+                            "aria-current": selected?.path === entry.path && selected.lane === lane ? "true" : void 0,
                             onClick: () => select(entry.path, lane),
                             style: {
                               flex: 1,
@@ -16177,14 +16209,14 @@ ${thread.id}`) === activity,
                               borderRadius: 5,
                               cursor: "pointer",
                               color: "var(--t3-version-control-text, var(--foreground, #20252d))",
-                              background: selected2?.path === entry.path && selected2.lane === lane ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))" : "transparent",
+                              background: selected?.path === entry.path && selected.lane === lane ? "var(--t3-version-control-accent-surface, var(--accent, #e8eef7))" : "transparent",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap"
                             },
                             children: [
                               entry.path,
-                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
+                              /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
                                 " \u2014 ",
                                 describeEntry(entry)
                               ] })
@@ -16240,7 +16272,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted3,
+                      color: muted2,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
@@ -16276,7 +16308,7 @@ ${thread.id}`) === activity,
                       padding: "4px 6px",
                       font: "inherit",
                       fontSize: 14,
-                      border: border3,
+                      border: border2,
                       borderRadius: 5,
                       background: "transparent",
                       color: "inherit",
@@ -16295,7 +16327,7 @@ ${thread.id}`) === activity,
                       children: commit.label
                     }
                   ),
-                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: commit.disabled })
+                  commit.disabled !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: commit.disabled })
                 ] }),
                 canRunActions && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "div",
@@ -16348,7 +16380,7 @@ ${thread.id}`) === activity,
                             alignItems: "center",
                             gap: 4,
                             fontSize: 12,
-                            color: muted3
+                            color: muted2
                           },
                           children: [
                             /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
@@ -16367,7 +16399,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12 }, children: chooserReason })
+                      chooserReason !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12 }, children: chooserReason })
                     ]
                   }
                 ),
@@ -16465,7 +16497,7 @@ ${thread.id}`) === activity,
                     },
                     children: [
                       /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { children: describeStackedProgress(stacked.model) }),
-                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { color: muted3 }, children: stacked.model.phases.map((phase) => {
+                      stacked.model.phases.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { color: muted2 }, children: stacked.model.phases.map((phase) => {
                         const startedAt = stacked.model.started.findIndex(
                           (entry) => entry.phase === phase
                         );
@@ -16485,7 +16517,7 @@ ${thread.id}`) === activity,
                           ]
                         }
                       ),
-                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: "2px 0 0", color: muted3 }, children: describeStackedResult(stacked.model.result) })
+                      stacked.model.result !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: "2px 0 0", color: muted2 }, children: describeStackedResult(stacked.model.result) })
                     ]
                   }
                 )
@@ -16499,7 +16531,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted3,
+                      color: muted2,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
@@ -16536,7 +16568,7 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border3,
+                            border: border2,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
@@ -16560,7 +16592,7 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Branch create status",
-                    style: { display: "block", padding: "0 6px 4px", color: muted3, fontSize: 12 },
+                    style: { display: "block", padding: "0 6px 4px", color: muted2, fontSize: 12 },
                     children: create.disabled
                   }
                 ),
@@ -16568,7 +16600,7 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Refs status",
-                    style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
+                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                     children: refs.error
                   }
                 ),
@@ -16597,14 +16629,14 @@ ${thread.id}`) === activity,
                             },
                             children: [
                               row.name,
-                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
+                              describeRef(row) !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
                                 " \u2014 ",
                                 describeRef(row)
                               ] })
                             ]
                           }
                         ),
-                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted3, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
+                        canSwitchRef && !row.current && !switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { style: { color: muted2, fontSize: 12, flexShrink: 0 }, children: switchState.reason }),
                         canSwitchRef && switchState.ok && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
                           "button",
                           {
@@ -16640,7 +16672,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted3,
+                      color: muted2,
                       textTransform: "uppercase",
                       letterSpacing: 0.4
                     },
@@ -16682,7 +16714,7 @@ ${thread.id}`) === activity,
                             font: "inherit",
                             fontSize: 12,
                             padding: "3px 6px",
-                            border: border3,
+                            border: border2,
                             borderRadius: 5,
                             background: "transparent",
                             color: "inherit"
@@ -16716,13 +16748,13 @@ ${thread.id}`) === activity,
                     style: {
                       display: "block",
                       padding: "0 6px 4px",
-                      color: muted3,
+                      color: muted2,
                       fontSize: 12
                     },
                     children: worktreePlan.disabled
                   }
                 ),
-                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted3, fontSize: 12 }, children: "No additional worktrees." }),
+                worktrees.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No additional worktrees." }),
                 /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: worktrees.map((worktree) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "li",
                   {
@@ -16746,7 +16778,7 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             worktree.refName,
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
                               " \u2014 ",
                               worktree.path
                             ] })
@@ -16793,7 +16825,7 @@ ${thread.id}`) === activity,
                       padding: "2px 6px",
                       fontSize: 12,
                       fontWeight: 600,
-                      color: muted3,
+                      color: muted2,
                       textTransform: "uppercase",
                       letterSpacing: 0.4,
                       display: "flex",
@@ -16823,11 +16855,11 @@ ${thread.id}`) === activity,
                   "output",
                   {
                     "aria-label": "Remotes status",
-                    style: { display: "block", padding: "4px 6px", color: muted3, fontSize: 12 },
+                    style: { display: "block", padding: "4px 6px", color: muted2, fontSize: 12 },
                     children: remotes.error
                   }
                 ),
-                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted3, fontSize: 12 }, children: "No remotes configured." }),
+                remotes.remotes !== null && remoteList.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("p", { style: { margin: 0, padding: "2px 6px 4px", color: muted2, fontSize: 12 }, children: "No remotes configured." }),
                 /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: remoteList.map((remote) => /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
                   "li",
                   {
@@ -16851,7 +16883,7 @@ ${thread.id}`) === activity,
                           },
                           children: [
                             remote.name,
-                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted3 }, children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { style: { color: muted2 }, children: [
                               " ",
                               "\u2014 ",
                               remote.url,
@@ -16876,19 +16908,19 @@ ${thread.id}`) === activity,
                 )) })
               ] })
             ] }),
-            selected2 !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+            selected !== null && selectedEntry !== null && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
               "output",
               {
                 "aria-label": "Selection",
                 style: {
                   padding: "6px 10px",
-                  color: muted3,
+                  color: muted2,
                   fontSize: 12,
-                  borderTop: border3,
+                  borderTop: border2,
                   flexShrink: 0
                 },
                 children: [
-                  selected2.path,
+                  selected.path,
                   " \u2014 ",
                   describeEntry(selectedEntry),
                   selectedStat !== null ? ` (+${selectedStat.insertions} \u2212${selectedStat.deletions})` : ""
@@ -16902,9 +16934,9 @@ ${thread.id}`) === activity,
               "aria-label": "Slice notice",
               style: {
                 padding: "6px 10px",
-                color: muted3,
+                color: muted2,
                 fontSize: 12,
-                borderTop: border3,
+                borderTop: border2,
                 flexShrink: 0
               },
               children: "Version Control on t3.vcs + t3.prs: pull-request browse/detail/diff plus host writes (actions, comments, reviews, thread reply/resolve \u2014 t3.prs/write), status, staging lanes, stage/unstage/commit, branch create/switch, pull/push/fetch, init, worktrees, and remotes (t3.vcs/mutate); composite commit+push+PR actions and publish repository (t3.vcs/actions). Clone/discovery, stash, and per-hunk diff expansion are deferred slices."

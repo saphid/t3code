@@ -57,7 +57,7 @@ const metadataDetail = (overrides = {}) => {
     },
     viewerPermissions: { ...detail.viewerPermissions, labels: true, requestReviewers: true },
     labels: [{ name: "docs", color: "0000ff" }],
-    reviewers: [{ login: "review-team", name: "Review Team", avatarUrl: null }],
+    reviewers: [],
     ...overrides,
   };
 };
@@ -427,7 +427,7 @@ NodeTest.it(
 );
 
 NodeTest.it(
-  "successful review requests use the native receipt without rereading the detail",
+  "successful review requests use the native receipt without a picker-initiated detail read",
   async () => {
     const view = mountPanel();
     await open(view, "Request a review");
@@ -440,6 +440,217 @@ NodeTest.it(
     NodeAssert.equal(reads(view, "detail").length, 1);
     NodeAssert.equal(reads(view, "invalidate").length, 0);
     view.unmount();
+  },
+);
+
+NodeTest.it("team requests stay checked while another reviewer is toggled", async () => {
+  const pending = deferred();
+  const view = mountPanel({ "t3.prs/write#requestReviewers": () => pending.promise });
+  await open(view, "Request a review");
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], true);
+  dispatch(candidate(view, "ada"), "onClick");
+  await flush();
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], true);
+  pending.resolve({});
+  await flush();
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], true);
+  dispatch(candidate(view, "review-team"), "onClick");
+  await flush();
+  NodeAssert.deepEqual(view.writes()[1].input, {
+    ...REF,
+    reviewers: [{ id: "team-1", kind: "team" }],
+    requested: false,
+  });
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], false);
+  view.unmount();
+});
+
+NodeTest.it("team requests keep their direction across detail refreshes", async () => {
+  const view = mountPanel();
+  await open(view, "Request a review");
+  await view.refresh();
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], true);
+  dispatch(candidate(view, "review-team"), "onClick");
+  await flush();
+  NodeAssert.deepEqual(view.writes()[0].input, {
+    ...REF,
+    reviewers: [{ id: "team-1", kind: "team" }],
+    requested: false,
+  });
+  await view.refresh();
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], false);
+  dispatch(candidate(view, "review-team"), "onClick");
+  await flush();
+  await view.refresh();
+  NodeAssert.equal(candidate(view, "review-team").props["aria-selected"], true);
+  NodeAssert.equal(view.writes()[1].input.requested, true);
+  NodeAssert.equal(reads(view, "reviewerCandidates").length, 1);
+  view.unmount();
+});
+
+NodeTest.it(
+  "reviewer selection distinguishes users and teams with the same id and login",
+  async () => {
+    const view = mountPanel({
+      "t3.prs/read#reviewerCandidates": () => ({
+        ...reviewers,
+        candidates: reviewers.candidates.map((entry) => ({
+          ...entry,
+          id: "shared",
+          login: "shared",
+        })),
+      }),
+    });
+    await open(view, "Request a review");
+    dispatch(candidates(view)[1], "onClick");
+    await flush();
+    dispatch(candidates(view)[0], "onClick");
+    await flush();
+    NodeAssert.equal(candidates(view)[0].props["aria-selected"], true);
+    NodeAssert.equal(candidates(view)[1].props["aria-selected"], false);
+    NodeAssert.deepEqual(
+      view.writes().map((write) => write.input.reviewers),
+      [[{ id: "shared", kind: "team" }], [{ id: "shared", kind: "user" }]],
+    );
+    view.unmount();
+  },
+);
+
+NodeTest.it(
+  "disabled pickers show the access or availability reason through the host tooltip",
+  async () => {
+    const cases = [
+      {
+        overrides: {
+          "t3.prs/read#detail": () =>
+            metadataDetail({
+              viewerPermissions: {
+                ...metadataDetail().viewerPermissions,
+                labels: false,
+                requestReviewers: false,
+              },
+            }),
+        },
+        reasons: [
+          "Changing labels needs triage access on this repository",
+          "Asking someone to review needs write access on this repository",
+        ],
+      },
+      {
+        overrides: {
+          "t3.prs/read#getCapabilities": defaultHandlers()["t3.prs/read#getCapabilities"],
+        },
+        reasons: ["Labels cannot be changed from here", "Reviews cannot be requested from here"],
+      },
+      {
+        overrides: {
+          "t3.prs/write#getCapabilities": defaultHandlers()["t3.prs/write#getCapabilities"],
+        },
+        reasons: ["Labels cannot be changed from here", "Reviews cannot be requested from here"],
+      },
+    ];
+    for (const { overrides, reasons } of cases) {
+      const view = mountPanel(overrides, {
+        tooltip: {
+          version: 1,
+          Tooltip: ({ children, label, showWhenDisabled }) =>
+            children.props.disabled && !showWhenDisabled
+              ? children
+              : React.createElement("span", { title: label }, children),
+        },
+      });
+      await flush();
+      for (const [index, name] of ["Change labels", "Request a review"].entries()) {
+        NodeAssert.equal(button(view, name).props.disabled, true);
+        NodeAssert.equal(button(view, name).parent.props.title, reasons[index]);
+      }
+      view.unmount();
+    }
+  },
+);
+
+NodeTest.it("keyboard highlight scrolls long candidate lists before selecting", async () => {
+  const manyLabels = Array.from({ length: 15 }, (_, index) => ({
+    name: `label-${index}`,
+    color: null,
+    description: null,
+    isApplied: false,
+  }));
+  const view = mountPanel({
+    "t3.prs/read#labelCandidates": () => ({ candidates: manyLabels, truncated: false }),
+  });
+  await open(view, "Change labels");
+  for (let index = 0; index < 12; index += 1)
+    dispatch(view.find("Search labels"), "onKeyDown", { key: "ArrowDown" });
+  NodeAssert.deepEqual(view.scrolls().at(-1), { name: "label-12", options: { block: "nearest" } });
+  dispatch(view.find("Search labels"), "onKeyDown", { key: "Enter" });
+  await flush();
+  NodeAssert.deepEqual(view.writes()[0].input, { ...REF, labels: ["label-12"], applied: true });
+  dispatch(view.find("Search labels"), "onKeyDown", { key: "ArrowUp" });
+  NodeAssert.equal(view.scrolls().at(-1).name, "label-11");
+  dispatch(view.find("Search labels"), "onChange", { target: { value: "label-14" } });
+  NodeAssert.equal(view.scrolls().at(-1).name, "label-14");
+  view.unmount();
+});
+
+NodeTest.it("Tab closes a portaled picker even when focus has no next target", async () => {
+  const view = mountPanel(undefined, {
+    floatingLayer: {
+      version: 1,
+      Popover: (props) =>
+        React.createElement("div", { ...props, ref: props.elementRef }, props.children),
+    },
+  });
+  await open(view, "Change labels");
+  dispatch(view.find("Search labels"), "onKeyDown", { key: "Tab" });
+  NodeAssert.equal(button(view, "Change labels").props["aria-expanded"], false);
+  NodeAssert.equal(candidates(view).length, 0);
+  view.unmount();
+});
+
+NodeTest.it(
+  "candidate read and mutation failures use bounded host words or useful hints",
+  async () => {
+    const longReason = "Repository access denied. ".repeat(30);
+    for (const [reason, expected] of [
+      ["Pull request operation labelCandidates failed: Access denied", "Access denied"],
+      [
+        "Pull request operation labelCandidates failed: exited with code 1",
+        "The labels could not be read.",
+      ],
+      [longReason, `${longReason.slice(0, 319)}…`],
+    ]) {
+      const view = mountPanel({
+        "t3.prs/read#labelCandidates": () => Promise.reject(new Error(reason)),
+      });
+      await open(view, "Change labels");
+      NodeAssert.ok(view.text().includes(expected));
+      NodeAssert.ok(!view.text().includes("Pull request operation"));
+      NodeAssert.ok(!view.text().includes("exited with code"));
+      NodeAssert.ok(!view.text().includes(longReason));
+      view.unmount();
+    }
+    for (const [reason, expected] of [
+      ["Pull request operation setLabels failed: Triage access denied", "Triage access denied"],
+      [
+        "unknown error",
+        "The host refused it. Check that you have triage access on this repository.",
+      ],
+      [longReason, `${longReason.slice(0, 319)}…`],
+    ]) {
+      const view = mountPanel({
+        "t3.prs/write#setLabels": () => Promise.reject(new Error(reason)),
+      });
+      await open(view, "Change labels");
+      dispatch(candidate(view, "bug"), "onClick");
+      await flush();
+      NodeAssert.ok(view.text().includes(expected));
+      NodeAssert.ok(!view.text().includes("Pull request operation"));
+      NodeAssert.ok(!view.text().includes("unknown error"));
+      NodeAssert.ok(!view.text().includes(longReason));
+      NodeAssert.equal(candidate(view, "bug").props["aria-selected"], false);
+      view.unmount();
+    }
   },
 );
 

@@ -17,10 +17,9 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import type { MutationToastPatch } from "./mutationToasts.js";
+import { border, muted, prsReadableFailure } from "./prsPresentation.js";
 import { prsActorTooltip } from "./prsViewModel.js";
 
-const muted = "var(--t3-version-control-muted-foreground, var(--muted-foreground, #667085))";
-const border = "1px solid var(--t3-version-control-border, var(--border, #dfe3e8))";
 const rowStyle = {
   display: "inline-flex",
   alignItems: "center",
@@ -31,6 +30,7 @@ const labelWords = {
   trigger: "Change labels",
   search: "Search labels",
   permission: "Changing labels needs triage access on this repository",
+  unavailable: "Labels cannot be changed from here",
   empty: "This repository has no labels.",
   noMatch: "No label matches that.",
   error: "The labels could not be read.",
@@ -40,6 +40,7 @@ const reviewerWords = {
   trigger: "Request a review",
   search: "Search people with access",
   permission: "Asking someone to review needs write access on this repository",
+  unavailable: "Reviews cannot be requested from here",
   empty: "Nobody else has access to this repository.",
   noMatch: "Nobody with access matches that.",
   error: "The people with access could not be read.",
@@ -50,7 +51,7 @@ const reviewerWords = {
 type Candidate =
   | { kind: "label"; key: string; name: string; value: PrsLabelCandidate }
   | { kind: "reviewer"; key: string; name: string; value: PrsReviewerCandidate };
-type CandidateList = { candidates: readonly Candidate[]; truncated: boolean; source: PrsDetail };
+type CandidateList = { candidates: readonly Candidate[]; truncated: boolean };
 
 function labelColor(color: string | null) {
   const hex = color?.trim().replace(/^#/, "") ?? "";
@@ -65,14 +66,6 @@ function matches(candidate: Candidate, query: string) {
       ?.toLowerCase()
       .includes(needle) === true
   );
-}
-
-function selected(candidate: Candidate, detail: PrsDetail) {
-  return candidate.kind === "label"
-    ? detail.labels.some((label) => label.name === candidate.name)
-    : detail.reviewers.some(
-        (reviewer) => reviewer.login.toLowerCase() === candidate.name.toLowerCase(),
-      );
 }
 
 function toggleMetadata(detail: PrsDetail, candidate: Candidate, applied: boolean): PrsDetail {
@@ -236,11 +229,7 @@ export function PrsMetadataPicker({
   const canWrite =
     writeOperations?.[kind === "labels" ? "prs.setLabels" : "prs.requestReviewers"] === true;
   const allowed = supported && permitted && canRead && canWrite;
-  const disabledReason = !permitted
-    ? words.permission
-    : !canRead
-      ? `${words.search} is unavailable through t3.prs/read`
-      : `${words.trigger} is unavailable through t3.prs/write`;
+  const disabledReason = !permitted ? words.permission : words.unavailable;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
@@ -265,6 +254,7 @@ export function PrsMetadataPicker({
     setAnchor(element);
   }, []);
   const search = useRef<HTMLInputElement | null>(null);
+  const activeOption = useRef<HTMLButtonElement | null>(null);
   const popup = useRef<HTMLDivElement | null>(null);
   const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
   const attachPopup = useCallback((element: HTMLDivElement | null) => {
@@ -280,9 +270,10 @@ export function PrsMetadataPicker({
         : detail;
   const candidates = (list?.candidates ?? []).filter((candidate) => matches(candidate, query));
   const active = candidates[Math.min(highlight, candidates.length - 1)];
+  const activeId = active === undefined ? undefined : `${listId}-${candidates.indexOf(active)}`;
   const isSelected = (candidate: Candidate) =>
-    optimistic?.source === detail || (pending && optimistic !== null) || list?.source !== detail
-      ? selected(candidate, shown)
+    pending && optimistic?.candidate.key === candidate.key
+      ? optimistic.applied
       : candidate.kind === "label"
         ? candidate.value.isApplied
         : candidate.value.isRequested;
@@ -304,13 +295,11 @@ export function PrsMetadataPicker({
     if (!open || !allowed) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, session.signal]);
-    const source = detailRef.current;
     const api = bindApi(prsReadApi, host, session.context);
     const read = async (): Promise<CandidateList> => {
       if (kind === "labels") {
         const result = await api.invoke("labelCandidates", reference, signal);
         return {
-          source,
           truncated: result.truncated,
           candidates: result.candidates.map((value) => ({
             kind: "label",
@@ -322,7 +311,6 @@ export function PrsMetadataPicker({
       }
       const result = await api.invoke("reviewerCandidates", reference, signal);
       return {
-        source,
         truncated: result.truncated,
         candidates: result.candidates.map((value) => ({
           kind: "reviewer",
@@ -337,12 +325,14 @@ export function PrsMetadataPicker({
         if (!signal.aborted) setList(result);
       },
       (error: unknown) => {
-        if (!signal.aborted)
-          setReadError(error instanceof Error ? error.message : "Host read failed");
+        if (!signal.aborted) setReadError(prsReadableFailure(error, words.error));
       },
     );
     return () => controller.abort();
-  }, [open, allowed, kind, host, session, reference]);
+  }, [open, allowed, kind, host, session, reference, words.error]);
+  useEffect(() => {
+    if (open) activeOption.current?.scrollIntoView({ block: "nearest" });
+  }, [open, activeId, active?.key, popupElement]);
   useEffect(() => {
     if (!open || popupElement === null) return;
     const timer = setTimeout(() => search.current?.focus(), 0);
@@ -402,6 +392,20 @@ export function PrsMetadataPicker({
           signal,
         );
       if (signal.aborted) return;
+      setList((current) =>
+        current === null
+          ? null
+          : {
+              ...current,
+              candidates: current.candidates.map((entry) =>
+                entry.key !== candidate.key
+                  ? entry
+                  : entry.kind === "label"
+                    ? { ...entry, value: { ...entry.value, isApplied: applied } }
+                    : { ...entry, value: { ...entry.value, isRequested: applied } },
+              ),
+            },
+      );
       setOptimistic((current) =>
         current === null || current.source === detailRef.current
           ? current
@@ -431,12 +435,12 @@ export function PrsMetadataPicker({
             : applied
               ? `Could not ask ${candidate.name} for a review`
               : `Could not take back the review request to ${candidate.name}`,
-        body:
-          error instanceof Error
-            ? error.message
-            : candidate.kind === "label"
-              ? "The host refused it. Check that you have triage access on this repository."
-              : "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+        body: prsReadableFailure(
+          error,
+          candidate.kind === "label"
+            ? "The host refused it. Check that you have triage access on this repository."
+            : "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+        ),
       });
     } finally {
       pendingRef.current = false;
@@ -448,7 +452,8 @@ export function PrsMetadataPicker({
     role: "dialog",
     "aria-label": words.trigger,
     onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "Escape") {
+      if (event.key === "Tab") setOpen(false);
+      else if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
         close();
@@ -504,9 +509,7 @@ export function PrsMetadataPicker({
           aria-controls={listId}
           aria-expanded
           aria-autocomplete="list"
-          aria-activedescendant={
-            active === undefined ? undefined : `${listId}-${candidates.indexOf(active)}`
-          }
+          aria-activedescendant={activeId}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -551,7 +554,7 @@ export function PrsMetadataPicker({
         {list === null ? (
           readError !== null ? (
             <p style={{ margin: 0, padding: 8, color: muted, fontSize: 12 }}>
-              {words.error} {readError}
+              {words.error} {readError === words.error ? null : readError}
             </p>
           ) : (
             <div aria-busy aria-label="Loading candidates" style={{ padding: 8 }}>
@@ -578,6 +581,7 @@ export function PrsMetadataPicker({
           candidates.map((candidate, index) => (
             <button
               key={candidate.key}
+              ref={active?.key === candidate.key ? activeOption : undefined}
               id={`${listId}-${index}`}
               type="button"
               role="option"
@@ -683,7 +687,12 @@ export function PrsMetadataPicker({
       </span>
       {supported ? (
         <span style={{ position: "relative", display: "inline-flex" }}>
-          <Tooltip host={host} side="bottom" label={allowed ? words.trigger : disabledReason}>
+          <Tooltip
+            host={host}
+            side="bottom"
+            showWhenDisabled
+            label={allowed ? words.trigger : disabledReason}
+          >
             <button
               ref={attachTrigger}
               type="button"
