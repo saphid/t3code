@@ -15258,6 +15258,9 @@ ${ind(d)}}`;
         return `Requested ${state2.status.url} (request ${state2.epoch})`;
     }
   }
+  function isEpochChangedPresentation(leaseState, denial) {
+    return leaseState?.kind === "ended" && leaseState.reason === "epoch-changed" || denial?.reason === "epoch-changed";
+  }
   function isBrowserPreviewFile(path3) {
     return /\.(?:html?|pdf)$/i.test(path3.split(/[?#]/, 1)[0] ?? "");
   }
@@ -18165,6 +18168,12 @@ ${ind(d)}}`;
     const [visible, setVisible] = (0, import_react8.useState)(session.visible);
     const heldRef = (0, import_react8.useRef)(held);
     const historyRef = (0, import_react8.useRef)(history);
+    const dropHeldSession = (0, import_react8.useCallback)(() => {
+      heldRef.current = null;
+      setHeld(null);
+      setLive(null);
+      setNotice(null);
+    }, [setHeld, setLive, setNotice]);
     const [fence] = (0, import_react8.useState)(createRevisionFence);
     const heldRevision = (0, import_react8.useRef)(-1);
     const addressRef = (0, import_react8.useRef)(null);
@@ -18334,6 +18343,13 @@ ${ind(d)}}`;
       visible: visible && held !== null,
       cornerRadius: 8
     });
+    const epochChangedPresentation = isEpochChangedPresentation(
+      surfaceLease?.state ?? null,
+      surfaceDenial
+    );
+    (0, import_react8.useEffect)(() => {
+      if (epochChangedPresentation) dropHeldSession();
+    }, [epochChangedPresentation, dropHeldSession]);
     const layers = floatingLayers(overlayZIndex);
     const Popover = (0, import_react8.useMemo)(() => panelPopover(host, layers.transient), [host, layers.transient]);
     const floating = (0, import_react8.useMemo)(
@@ -18466,7 +18482,13 @@ ${ind(d)}}`;
       signal: session.signal,
       fence,
       refuse: (outcome) => setNotice(`Browser command ${outcome}`),
-      fail: (error) => setNotice(error instanceof Error ? error.message : "Browser command failed"),
+      fail: (error) => {
+        if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch")) {
+          if (held && heldRef.current?.serverEpoch === held.serverEpoch) dropHeldSession();
+          return;
+        }
+        setNotice(error instanceof Error ? error.message : "Browser command failed");
+      },
       adopt: (receipt2) => {
         heldRevision.current = receipt2.revision;
         const next = {
@@ -18516,11 +18538,7 @@ ${ind(d)}}`;
             expectedEngineGeneration: usable.engineGeneration
           },
           signal
-        ).catch((error) => {
-          if (error instanceof Error && error.message.includes("BrowserStaleServerEpoch"))
-            throw new Error("The browser restarted. Press Enter to open this address again.");
-          throw error;
-        }) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
+        ) : reopen?.api === "profiles" ? profilesApi.invoke("open", reopen.input, signal).catch((error) => {
           throw new Error(profileFailureMessage("open", error));
         }) : api.invoke("open", { url }, signal),
         onAccepted
@@ -18709,11 +18727,7 @@ ${titledTitle}`;
     const capturePage = capturePageView(surfaceLease, surfaceShown, live?.navigation.kind);
     const capture = useBrowserCapture(host, session, held, capturePage, setNotice);
     const pageLoading = held !== null && (live?.navigation.kind === "loading" || live?.navigation.kind === "pending");
-    const surfaceNotice = leaseState?.kind === "ended" ? (
-      // A restarted server ends the lease before the resumed snapshot
-      // drops the hold; native drops it silently.
-      leaseState.reason === "epoch-changed" ? null : `Surface ended (${leaseState.reason}). Enter an address to open a new session.`
-    ) : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
+    const surfaceNotice = epochChangedPresentation ? null : leaseState?.kind === "ended" ? `Surface ended (${leaseState.reason}). Enter an address to open a new session.` : remoteEligible ? remoteNotice : surfaceDenial ? surfaceDenial.grant ? `Native presentation is unavailable \u2014 ${grantDenialMessage(surfaceDenial.grant)}` : `Native presentation is unavailable \u2014 ${surfaceDenial.reason}: ${surfaceDenial.detail}` : null;
     return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
       "section",
       {

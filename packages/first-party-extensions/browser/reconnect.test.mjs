@@ -287,8 +287,9 @@ function restartingBackend() {
           for (const listener of listeners) listener(lease.state);
         };
         // The host's synced sessions: a new epoch ends every older lease.
-        const watch = () => {
-          if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
+        const watch = (reason) => {
+          if (reason) end(reason);
+          else if (hostEpoch !== request.session.serverEpoch) end("epoch-changed");
         };
         surfaceWatchers.add(watch);
         return { ok: true, lease };
@@ -309,6 +310,9 @@ function restartingBackend() {
     syncSurface() {
       hostEpoch = server.epoch;
       for (const watch of surfaceWatchers) watch();
+    },
+    endSurface(reason) {
+      for (const watch of surfaceWatchers) watch(reason);
     },
     navigates: () => navigates,
     opens: () => opens,
@@ -512,8 +516,7 @@ NodeTest.test(
       const release = backend.holdSnapshot();
       backend.restart();
       await settle();
-      // The host ended the lease on the new epoch; the hold drops only when
-      // the snapshot completes. Native drops it silently, so nothing flashes.
+      // The host ended the lease on the new epoch; native drops it silently.
       NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed/);
       release();
       await settle();
@@ -529,7 +532,7 @@ NodeTest.test(
   "an address entered as the server returns stays in the bar and opens once the restart is synced",
   async () => {
     const backend = restartingBackend();
-    await withView(backend, async ({ status, enter, address, text }) => {
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
       backend.drop();
       await settle();
       const release = backend.holdSnapshot();
@@ -543,8 +546,8 @@ NodeTest.test(
       // No session is opened for an epoch the host has not synced: its
       // surface would be denied for good.
       NodeAssert.deepEqual(backend.opens(), []);
-      NodeAssert.match(text(), /Press Enter to open this address again/);
-      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch/);
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|restarted|again/);
       backend.syncSurface();
       release();
       await settle();
@@ -587,6 +590,106 @@ NodeTest.test(
       await settle();
       NodeAssert.deepEqual(backend.opens(), ["https://newer.test/"]);
       presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "an epoch-ended presentation drops silently without a sessions reconnect",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, text }) => {
+      backend.restart();
+      await settle();
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.match(status(), /^Requested https:\/\/a\.test\/ /);
+      NodeAssert.deepEqual(backend.opens(), []);
+      NodeAssert.doesNotMatch(text(), /Surface ended|epoch-changed|restarted/);
+
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "an epoch-denied presentation drops silently and the next Enter acquires fresh",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
+      backend.restart({ syncSurface: false });
+      backend.endSurface("session-unverified");
+      await settle();
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.acquires.at(-1), { tabId: "tab-b", serverEpoch: "epoch-b" });
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.equal(address(), "https://b.test/");
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"], "no automatic retry");
+      NodeAssert.doesNotMatch(text(), /Native presentation is unavailable|epoch-changed/);
+
+      backend.syncSurface();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), []);
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/", "https://b.test/"]);
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "a stale navigation drops its session without retrying or waiting for reconnect",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, hasSurface, enter, address, text }) => {
+      backend.restart({ syncSurface: false });
+      await settle();
+      await enter("https://b.test/");
+      await settle();
+      NodeAssert.deepEqual(backend.navigates(), ["epoch-a"]);
+      NodeAssert.deepEqual(backend.opens(), [], "a stale rejection opens no session");
+      NodeAssert.equal(hasSurface(), false);
+      NodeAssert.equal(address(), "https://b.test/");
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|epoch-changed|restarted|again/);
+
+      backend.syncSurface();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), []);
+      await enter();
+      await settle();
+      NodeAssert.deepEqual(backend.opens(), ["https://b.test/"]);
+      presentingB(backend, status);
+    });
+  },
+);
+
+NodeTest.test(
+  "a late stale-navigation rejection leaves a freshly opened session alone",
+  async () => {
+    const backend = restartingBackend();
+    await withView(backend, async ({ status, enter, address, text }) => {
+      backend.restart({ syncSurface: false });
+      const releaseOlder = backend.holdNavigate();
+      await enter("https://older.test/");
+      await settle();
+      backend.syncSurface();
+      await settle();
+      await enter("https://newer.test/");
+      await settle();
+      presentingB(backend, status);
+
+      releaseOlder();
+      await settle();
+      NodeAssert.equal(address(), "https://newer.test/");
+      NodeAssert.deepEqual(backend.opens(), ["https://newer.test/"]);
+      presentingB(backend, status);
+      NodeAssert.doesNotMatch(text(), /BrowserStaleServerEpoch|epoch-changed|restarted|again/);
     });
   },
 );
