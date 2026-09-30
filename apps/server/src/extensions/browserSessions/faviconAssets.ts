@@ -1,5 +1,5 @@
 /**
- * Bounded favicon assets behind `t3.browser/sessions` `faviconRef`
+ * Bounded favicon assets behind `t3.browser/sessions` `faviconRef`.
  * The owner host's fenced page report carries the
  * captured favicon; the sessions projection stores it here and ships only a
  * content-addressed ref, so favicon bytes never ride the session stream.
