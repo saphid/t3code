@@ -2306,19 +2306,40 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
           <button type="button" onClick={openInPanel}>
             Open in panel
           </button>
-          <button
-            type="button"
-            disabled={
-              externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
-            }
-            onClick={() => externalEditor.openInEditor(selected)}
-          >
-            Open in editor
-          </button>
-          {externalEditor.blockReason !== null && (
-            <span style={{ color: muted, fontSize: 11 }}>
-              Open in editor unavailable — {externalEditor.blockReason}
-            </span>
+          {externalEditor.visible && (
+            <>
+              <button
+                type="button"
+                disabled={
+                  externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                }
+                onClick={() => externalEditor.openInEditor(selected)}
+              >
+                Open in{" "}
+                {externalEditor.editors.find(({ id }) => id === externalEditor.preferredEditor)
+                  ?.label ?? "editor"}
+              </button>
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) externalEditor.markHintShown();
+                }}
+              >
+                <summary>Choose editor</summary>
+                {externalEditor.remoteHint && <p>{externalEditor.remoteHint}</p>}
+                {externalEditor.editors.map((editor) => (
+                  <button
+                    key={editor.id}
+                    type="button"
+                    disabled={
+                      externalEditor.blockReason !== null || externalEditor.state.kind === "opening"
+                    }
+                    onClick={() => externalEditor.openInEditor(selected, editor.id)}
+                  >
+                    {editor.label}
+                  </button>
+                ))}
+              </details>
+            </>
           )}
           {externalEditor.state.kind === "failed" && externalEditor.state.path === selected && (
             <span role="alert" style={{ color: "#b42318", fontSize: 11 }}>

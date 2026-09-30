@@ -8,7 +8,7 @@
  * beats server-advertised names; among advertised names the tailnet MagicDNS
  * name beats mDNS `<hostname>.local` (server sends them in that order).
  */
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import type { ConnectionTarget, EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
@@ -103,19 +103,21 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
     if (presentation === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
-    const profile = Option.getOrNull(presentation.entry.profile);
-    const sshAlias =
-      profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
     return {
-      state: resolveRemoteOpenState({
-        target: presentation.entry.target,
-        sshAlias,
-        remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
-      }),
+      state: remoteOpenStateFor(presentation),
       isResolved: true,
     };
   }, [presentation]);
+}
+
+export function remoteOpenStateFor(presentation: EnvironmentPresentation | null): RemoteOpenState {
+  const profile = presentation ? Option.getOrNull(presentation.entry.profile) : null;
+  return resolveRemoteOpenState({
+    target: presentation?.entry.target ?? null,
+    sshAlias: profile?._tag === "SshConnectionProfile" ? profile.target.alias : null,
+    remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+    isDesktopRenderer: window.desktopBridge !== undefined,
+  });
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {

@@ -1106,11 +1106,57 @@ export const editorWorkspaceInputSchema = {
   type: "object",
   additionalProperties: false,
   required: ["path"],
-  properties: { ...editorPathInput, workspace: { const: true } },
-  anyOf: [
+  properties: {
+    ...editorPathInput,
+    workspace: { const: true },
+    editor: { type: "string", minLength: 1, maxLength: 64 },
+    hintShown: { const: true },
+  },
+  oneOf: [
     { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
     { required: ["workspace"], properties: { workspace: { const: true } } },
   ],
+} as const;
+
+export const editorOptionsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["visible", "editors", "preferredEditor", "remoteHint"],
+  properties: {
+    visible: { type: "boolean" },
+    editors: {
+      type: "array",
+      maxItems: 32,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "label"],
+        properties: {
+          id: { type: "string", minLength: 1, maxLength: 64 },
+          label: { type: "string", minLength: 1, maxLength: 128 },
+        },
+      },
+    },
+    preferredEditor: { type: ["string", "null"], maxLength: 64 },
+    remoteHint: { type: ["string", "null"], maxLength: 1024 },
+  },
+} as const;
+
+export const editorCapabilitiesSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["adapter", "operations", "clients"],
+  properties: {
+    adapter: { type: "string" },
+    operations: {
+      type: "object",
+      additionalProperties: false,
+      required: ["openPath"],
+      properties: { openPath: { type: "boolean" } },
+    },
+    clients: { type: "array", maxItems: 0 },
+    editor: editorOptionsSchema,
+  },
 } as const;
 
 /** Backs `t3.ui/editor`: the client owns the preferred editor and opens through its environment. */
@@ -1124,9 +1170,16 @@ export const CLIENT_EDITOR_API = validateApiDefinition({
       requiredGrants: [],
       inputSchema: {
         ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
-        anyOf: editorWorkspaceInputSchema.anyOf,
+        oneOf: editorWorkspaceInputSchema.oneOf,
       },
       outputSchema: uiEditorOpenReceiptV11Schema,
+    },
+    {
+      name: "getCapabilities",
+      effect: "read",
+      requiredGrants: [],
+      inputSchema: withTarget({}, []),
+      outputSchema: editorCapabilitiesSchema,
     },
   ],
 });

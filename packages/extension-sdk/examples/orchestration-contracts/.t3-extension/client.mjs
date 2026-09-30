@@ -2065,11 +2065,55 @@ var __t3Client = (() => {
     type: "object",
     additionalProperties: false,
     required: ["path"],
-    properties: { ...editorPathInput, workspace: { const: true } },
-    anyOf: [
+    properties: {
+      ...editorPathInput,
+      workspace: { const: true },
+      editor: { type: "string", minLength: 1, maxLength: 64 },
+      hintShown: { const: true }
+    },
+    oneOf: [
       { required: ["cwd"], properties: { cwd: editorPathInput.cwd } },
       { required: ["workspace"], properties: { workspace: { const: true } } }
     ]
+  };
+  var editorOptionsSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["visible", "editors", "preferredEditor", "remoteHint"],
+    properties: {
+      visible: { type: "boolean" },
+      editors: {
+        type: "array",
+        maxItems: 32,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "label"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 64 },
+            label: { type: "string", minLength: 1, maxLength: 128 }
+          }
+        }
+      },
+      preferredEditor: { type: ["string", "null"], maxLength: 64 },
+      remoteHint: { type: ["string", "null"], maxLength: 1024 }
+    }
+  };
+  var editorCapabilitiesSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["adapter", "operations", "clients"],
+    properties: {
+      adapter: { type: "string" },
+      operations: {
+        type: "object",
+        additionalProperties: false,
+        required: ["openPath"],
+        properties: { openPath: { type: "boolean" } }
+      },
+      clients: { type: "array", maxItems: 0 },
+      editor: editorOptionsSchema
+    }
   };
   var CLIENT_EDITOR_API = validateApiDefinition({
     id: "t3.client/editor",
@@ -2081,9 +2125,16 @@ var __t3Client = (() => {
         requiredGrants: [],
         inputSchema: {
           ...withTarget(editorWorkspaceInputSchema.properties, ["path"]),
-          anyOf: editorWorkspaceInputSchema.anyOf
+          oneOf: editorWorkspaceInputSchema.oneOf
         },
         outputSchema: uiEditorOpenReceiptV11Schema
+      },
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: withTarget({}, []),
+        outputSchema: editorCapabilitiesSchema
       }
     ]
   });
@@ -8181,7 +8232,16 @@ var __t3Client = (() => {
     ...uiEditorApiV1.definition,
     version: "1.1.0",
     methods: [
-      uiEditorApiV1.definition.methods[0],
+      {
+        ...uiEditorApiV1.definition.methods[0],
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema
+          }
+        }
+      },
       {
         ...uiEditorApiV1.definition.methods[1],
         inputSchema: editorWorkspaceInputSchema,
@@ -8192,7 +8252,10 @@ var __t3Client = (() => {
     baseline: "1.0.0",
     additions: [
       { version: "1.1.0", method: "openPath", input: "workspace" },
-      { version: "1.1.0", method: "openPath", output: "url" }
+      { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" }
     ]
   });
   var UI_NAVIGATION = "t3.ui/navigation";

@@ -56,7 +56,7 @@ function harness(
   extra: Partial<
     Pick<
       Parameters<typeof createInstalledExtensionController>[0],
-      "codeView" | "tooltip" | "subscribeResumableApi"
+      "codeView" | "tooltip" | "subscribeResumableApi" | "openEditorPath"
     >
   > = {},
 ) {
@@ -108,6 +108,46 @@ function harness(
   };
 }
 describe("installed environment controller", () => {
+  it("keeps editor activation synchronous and fences it by installation lifetime and scope", async () => {
+    let activated = false;
+    const openEditorPath = vi.fn(async () => {
+      activated = true;
+      return { status: "opened" as const, path: "/repo/a.ts", editor: "vscode" };
+    });
+    const current = harness("env-a", { openEditorPath });
+    current.setCatalog([
+      { ...installation, grants: { ...installation.grants, capabilities: ["t3.ui/editor.open"] } },
+    ]);
+    await current.controller.refresh();
+    const host = current.getHost();
+    const input = { path: "a.ts", workspace: true as const };
+    const signal = new AbortController().signal;
+    expect(host.openEditorPath).toBeTypeOf("function");
+    const opened = host.openEditorPath!(input, context, signal);
+    expect(activated).toBe(true);
+    await expect(opened).resolves.toMatchObject({ status: "opened" });
+    expect(openEditorPath).toHaveBeenCalledWith(
+      installation.id,
+      installation.contentHash,
+      input,
+      context,
+      expect.any(AbortSignal),
+    );
+    await expect(
+      host.openEditorPath!(
+        input,
+        { ...context, resource: { ...context.resource, projectId: "other" } },
+        signal,
+      ),
+    ).rejects.toThrow(/scope/);
+    current.controller.dispose();
+    await expect(host.openEditorPath!(input, context, signal)).rejects.toThrow(/scope/);
+    expect(openEditorPath).toHaveBeenCalledTimes(1);
+    const ungranted = harness("env-a", { openEditorPath });
+    await ungranted.controller.refresh();
+    expect(ungranted.getHost().openEditorPath).toBeUndefined();
+    ungranted.controller.dispose();
+  });
   it("offers the host code view to installed clients only where the host has one", async () => {
     const bare = harness();
     await bare.controller.refresh();

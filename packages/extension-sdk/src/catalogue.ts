@@ -36,6 +36,7 @@ import {
   uiExternalLinkReceiptSchema,
   uiEditorOpenReceiptSchema,
   uiEditorOpenReceiptV11Schema,
+  editorOptionsSchema,
   editorWorkspaceInputSchema,
   browserHistoryEntriesSchema,
   uiNavigationFileInputProperties,
@@ -9645,11 +9646,7 @@ export type UiEditorOpenReceipt =
  * editor honors. The caller's own client resolves the path and its saved
  * editor, then launches it in the caller's environment. A refusal is a typed
  * receipt; a missing `t3.ui/editor.open` grant fails the invoke. This is the
- * frozen published 1.0.0 definition. Version 1.1.0 adds `workspace: true`
- * to resolve the path against the scoped thread checkout (or project root)
- * without a caller-supplied cwd, and the optional `url` receipt for native
- * SSH routing. Remote environments use client-local remote-capable editors,
- * never an editor process on the remote server.
+ * frozen published 1.0.0 definition.
  */
 export const uiEditorApiV1 = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };
@@ -9683,13 +9680,34 @@ export const uiEditorApiV1 = defineApi<{
   ],
 });
 
+export type UiEditorCapabilities = UiCapabilities & {
+  readonly editor?: {
+    readonly visible: boolean;
+    readonly editors: readonly { readonly id: string; readonly label: string }[];
+    readonly preferredEditor: string | null;
+    readonly remoteHint: string | null;
+  };
+};
+
+export type UiEditorOpenInput = { path: string; editor?: string; hintShown?: true } & (
+  | { cwd: string }
+  | { workspace: true }
+);
+
+/**
+ * Version 1.1.0 adds workspace opens, native editor choices and SSH hints.
+ * `workspace: true` resolves the scoped thread checkout (or project root),
+ * not path confinement; absolute and parent-relative paths remain supported.
+ * Do not supply cwd with workspace. Only workspace opens use client-local SSH
+ * links; explicit cwd calls retain the native environment launch behavior.
+ * Remote URLs omit line/column positions, like the native remote picker.
+ * Pass hintShown only after displaying remoteHint. ClientHost.openEditorPath
+ * preserves browser click activation after getCapabilities warms the host.
+ */
 export const uiEditorApi = defineApi<{
-  getCapabilities: { input: Record<string, never>; output: UiCapabilities };
+  getCapabilities: { input: Record<string, never>; output: UiEditorCapabilities };
   openPath: {
-    input: { path: string } & (
-      | { cwd: string; workspace?: true }
-      | { workspace: true; cwd?: string }
-    );
+    input: UiEditorOpenInput;
     output: UiEditorOpenReceipt;
   };
 }>(
@@ -9697,7 +9715,16 @@ export const uiEditorApi = defineApi<{
     ...uiEditorApiV1.definition,
     version: "1.1.0",
     methods: [
-      uiEditorApiV1.definition.methods![0]!,
+      {
+        ...uiEditorApiV1.definition.methods![0]!,
+        outputSchema: {
+          ...uiCapabilitiesOutput(["openPath"]),
+          properties: {
+            ...uiCapabilitiesOutput(["openPath"]).properties,
+            editor: editorOptionsSchema,
+          },
+        },
+      },
       {
         ...uiEditorApiV1.definition.methods![1]!,
         inputSchema: editorWorkspaceInputSchema,
@@ -9710,6 +9737,9 @@ export const uiEditorApi = defineApi<{
     additions: [
       { version: "1.1.0", method: "openPath", input: "workspace" },
       { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" },
     ],
   },
 );

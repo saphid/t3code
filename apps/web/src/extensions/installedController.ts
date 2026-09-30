@@ -19,6 +19,7 @@ import {
   type GlobalCommandsHandle,
 } from "@t3tools/extension-sdk/environment";
 import type { Extension } from "@t3tools/extension-sdk/host";
+import type { UiEditorOpenInput, UiEditorOpenReceipt } from "@t3tools/extension-sdk/catalogue";
 import type {
   ApiDiscovery,
   ApiInvocation,
@@ -168,6 +169,13 @@ export function createInstalledExtensionController(options: {
     request: ApiInvocation,
     signal: AbortSignal,
   ) => Promise<Json>;
+  readonly openEditorPath?: (
+    id: string,
+    hash: string,
+    input: UiEditorOpenInput,
+    context: ViewContext,
+    signal: AbortSignal,
+  ) => Promise<UiEditorOpenReceipt>;
   readonly subscribeApi?: (
     id: string,
     hash: string,
@@ -475,6 +483,37 @@ export function createInstalledExtensionController(options: {
                   throw new Error("Installed API invocation expired");
                 return copyJson(result);
               },
+              ...(options.openEditorPath && item.grants.capabilities.includes("t3.ui/editor.open")
+                ? {
+                    async openEditorPath(
+                      input: UiEditorOpenInput,
+                      suppliedContext: ViewContext,
+                      callerSignal: AbortSignal,
+                    ) {
+                      const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                      const context = validateContext(suppliedContext);
+                      if (
+                        !registered ||
+                        disposed ||
+                        signal.aborted ||
+                        context.resource.environmentId !== options.environmentId ||
+                        !context.resource.projectId ||
+                        !item.grants.projectIds.some((id) => id === context.resource.projectId)
+                      )
+                        throw new Error("Installed editor is unavailable in this scope");
+                      const result = await options.openEditorPath!(
+                        item.id,
+                        item.contentHash,
+                        input,
+                        context,
+                        signal,
+                      );
+                      if (!registered || disposed || signal.aborted)
+                        throw new Error("Installed editor invocation expired");
+                      return result;
+                    },
+                  }
+                : {}),
               subscribeApi(request, callerSignal) {
                 return subscribe(options.subscribeApi, request, callerSignal);
               },

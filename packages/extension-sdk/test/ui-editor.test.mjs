@@ -25,6 +25,9 @@ NodeTest.test(
     NodeAssert.deepEqual(uiEditorApi.additions, [
       { version: "1.1.0", method: "openPath", input: "workspace" },
       { version: "1.1.0", method: "openPath", output: "url" },
+      { version: "1.1.0", method: "openPath", input: "editor" },
+      { version: "1.1.0", method: "openPath", input: "hintShown" },
+      { version: "1.1.0", method: "getCapabilities", output: "editor" },
     ]);
     NodeAssert.ok(GENERIC_API_CATALOGUE.includes(uiEditorApiV1.definition));
     const oldOpen = uiEditorApiV1.definition.methods.find(({ name }) => name === "openPath");
