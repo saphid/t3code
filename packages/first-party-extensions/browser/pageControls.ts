@@ -7,11 +7,11 @@
  * turns receipts and errors into the panel's inline messages. Pure and
  * client-injected so the rules are testable without a mounted view.
  *
- * Engine truth comes only from the session's `engine` block: without an
- * owning host the state is `unavailable` (`desktop-required`), a dead guest is
- * `crashed` (with `recovery-exhausted` once the host gave up), and a guest
- * being replaced is `recovering`. Controls are disabled in each of those
- * states with the reason on screen — never a spinner that implies progress.
+ * Engine truth comes from the session's `engine` block. Only the client's
+ * explicit owner-claim signal hides the unclaimed `desktop-required` sentinel
+ * while attachment is pending; remote environments and failed claims keep
+ * their real unavailable state. Dead guests are `crashed` and replacements
+ * are `recovering`. Blocked controls name the same state as the status line.
  *
  * DevTools (open and close are separate verbs) additionally needs the
  * installation's `t3.browser/devtools` grant and only acts on sessions this
@@ -59,8 +59,13 @@ export interface PageTarget {
  * can. `starting` is allowed: the host has claimed the guest and answers
  * commands before its first page report.
  */
-export function pageControlsBlock(session: BrowserSession | null): string | null {
+export function pageControlsBlock(
+  session: BrowserSession | null,
+  engineClaimPending = false,
+): string | null {
   if (session === null) return "Waiting for the browser session to report its state.";
+  if (awaitingEngineClaim(session, engineClaimPending))
+    return "Waiting for the browser engine to attach.";
   const { engine } = session;
   switch (engine.state) {
     case "ready":
@@ -82,11 +87,21 @@ export function isRecoveryExhausted(session: BrowserSession | null): boolean {
   return session?.engine.state === "crashed" && session.engine.reason === "recovery-exhausted";
 }
 
-/** The status line's engine clause, named exactly as the contract reports it. */
-export function engineStatusLabel(session: BrowserSession): string {
+export function awaitingEngineClaim(session: BrowserSession, engineClaimPending: boolean): boolean {
+  return (
+    engineClaimPending &&
+    session.engine.state === "unavailable" &&
+    session.engine.generation === null &&
+    session.engine.reason === "desktop-required"
+  );
+}
+
+/** Engine/navigation status, with pending wording only for a host-reported owner claim. */
+export function engineStatusLabel(session: BrowserSession, engineClaimPending = false): string {
   const { engine, navigation } = session;
-  const engineText =
-    engine.state === "ready"
+  const engineText = awaitingEngineClaim(session, engineClaimPending)
+    ? "engine pending"
+    : engine.state === "ready"
       ? "engine ready"
       : `engine ${engine.state}${engine.reason ? ` (${engine.reason})` : ""}`;
   const failure = navigation.failureCode ? ` (${navigation.failureCode})` : "";
@@ -206,8 +221,9 @@ export async function runPageCommand(
   session: BrowserSession | null,
   verb: PageVerb,
   signal: AbortSignal,
+  engineClaimPending = false,
 ): Promise<PageCommandOutcome> {
-  const block = pageControlsBlock(session);
+  const block = pageControlsBlock(session, engineClaimPending);
   if (block !== null) return { kind: "blocked", message: block };
   if (verb.method === "zoom" && !isLadderFactor(verb.zoomFactor))
     return {

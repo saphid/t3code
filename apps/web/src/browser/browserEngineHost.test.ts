@@ -20,6 +20,7 @@ import {
   type ProfileCommandDeps,
   forgetHostedTab,
   HANDLED_COMMANDS_LIMIT,
+  isHostedEngineClaimPending,
   nextEnginePageReport,
   publishHostProfiles,
   recordHostedTabState,
@@ -401,7 +402,8 @@ describe("createEngineHostEventHandler", () => {
     deliver({ type: "registered", hostConnectionId: "host-1" });
     expect(hostIdOf()).toBe("host-1");
     onResult(AsyncResult.failure(Cause.fail("desktop-required")));
-    expect(hostIdOf()).toBeUndefined();
+    expect(hostIdOf()).toBeNull();
+    expect(isHostedEngineClaimPending(environmentId)).toBe(false);
   });
 
   it("runs a command on its fenced guest once and answers under the host id", async () => {
