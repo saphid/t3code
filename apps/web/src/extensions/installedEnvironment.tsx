@@ -50,6 +50,7 @@ import { createKeybindingsHostBridge } from "./keybindingsHostBridge";
 import { resolveLeasePresentationUrl } from "./leasePresentationUrl";
 import { hostCodeView } from "./codeView/hostCodeView";
 import { hostTooltip } from "./hostTooltip";
+import { hostUiKit } from "./hostUiKit";
 import { hostFloatingLayer } from "./floatingLayer/hostFloatingLayer";
 import { authenticatedApiFrames, resumableApiFrames } from "./installedApiFrames";
 import { hostPullRequestPreferences } from "./hostPullRequestPreferences";
@@ -483,6 +484,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       keybindings: createKeybindingsHostBridge(),
       codeView: hostCodeView,
       tooltip: hostTooltip,
+      uiKit: hostUiKit,
       floatingLayer: hostFloatingLayer,
       pullRequestPreferences: hostPullRequestPreferences,
       environmentLabel: () =>

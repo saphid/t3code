@@ -19,6 +19,7 @@ import {
 } from "@t3tools/extension-sdk/catalogue";
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
@@ -152,6 +153,7 @@ export function ProfileBadge(props: {
 }
 
 export function ProfileSection(props: {
+  host?: Pick<ClientHost, "uiKit">;
   session: BrowserSession;
   api: ProfilesApi;
   profiles: ProfileListStore;
@@ -164,6 +166,9 @@ export function ProfileSection(props: {
   onChosen: () => void;
 }) {
   const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
+  const kit = resolveUiKit(props.host ?? {});
+  const Action = kit?.MenuItem ?? "button";
+  const Heading = kit?.MenuGroupLabel ?? "span";
   const profileId = sessionProfileId(session);
   const { list, error } = useProfileList(profiles);
   const listNote =
@@ -228,65 +233,85 @@ export function ProfileSection(props: {
     <div
       role="group"
       aria-label="Profile"
-      style={{ display: "grid", gap: 6, borderTop: border, paddingTop: 8 }}
+      style={kit ? undefined : { display: "grid", gap: 6, borderTop: border, paddingTop: 8 }}
     >
-      <span
-        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted }}
+      {kit && <kit.MenuSeparator />}
+      <Heading
+        style={
+          kit
+            ? undefined
+            : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted }
+        }
       >
         Profile: {name}
-      </span>
+      </Heading>
       {listNote && (
         <p role="note" style={{ margin: 0, color: muted }}>
           {listNote}
         </p>
       )}
-      {others.length > 0 && (
-        <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-          <span>Open page in</span>
-          <select
-            aria-label="Open page in profile"
-            value=""
-            onChange={(event) => {
-              if (!event.target.value) return;
-              onChosen();
-              onOpenInProfile(event.target.value);
-            }}
-            style={{ ...control, maxWidth: 140 }}
-          >
-            <option value="">Choose…</option>
-            {others.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      {others.length > 0 && kit ? (
+        <kit.MenuRadioGroup
+          value=""
+          onValueChange={(profileId) => {
+            onChosen();
+            onOpenInProfile(profileId);
+          }}
+        >
+          <kit.MenuGroupLabel>Open page in</kit.MenuGroupLabel>
+          {others.map((profile) => (
+            <kit.MenuRadioItem key={profile.id} value={profile.id}>
+              {profile.name}
+            </kit.MenuRadioItem>
+          ))}
+        </kit.MenuRadioGroup>
+      ) : (
+        others.length > 0 && (
+          <label style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>Open page in</span>
+            <select
+              aria-label="Open page in profile"
+              value=""
+              onChange={(event) => {
+                if (!event.target.value) return;
+                onChosen();
+                onOpenInProfile(event.target.value);
+              }}
+              style={{ ...control, maxWidth: 140 }}
+            >
+              <option value="">Choose…</option>
+              {others.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )
       )}
-      <button
-        type="button"
+      <Action
         role="menuitem"
         onClick={() => clear("clearCookies")}
-        style={{ ...control, textAlign: "left" }}
+        style={kit ? undefined : { ...control, textAlign: "left" }}
       >
         Clear cookies
-      </button>
-      <button
-        type="button"
+      </Action>
+      <Action
         role="menuitem"
         onClick={() => clear("clearCache")}
-        style={{ ...control, textAlign: "left" }}
+        style={kit ? undefined : { ...control, textAlign: "left" }}
       >
         Clear cache
-      </button>
+      </Action>
       {importer.kind === "closed" ? (
-        <button
-          type="button"
+        <Action
+          {...(kit ? { closeOnClick: false } : {})}
           role="menuitem"
           onClick={openImporter}
-          style={{ ...control, textAlign: "left" }}
+          style={kit ? undefined : { ...control, textAlign: "left" }}
         >
           Import cookies…
-        </button>
+        </Action>
       ) : importer.kind === "loading" ? (
         <p role="note" style={{ margin: 0, color: muted }}>
           Listing browsers on the desktop…
@@ -342,15 +367,14 @@ export function ProfileSection(props: {
               ))}
             </select>
           )}
-          <button
-            type="button"
+          <Action
             role="menuitem"
             disabled={!importer.handle || selectedSource?.unavailable !== undefined}
             onClick={() => runImport(importer.sourceId, importer.handle)}
-            style={{ ...control, textAlign: "left" }}
+            style={kit ? undefined : { ...control, textAlign: "left" }}
           >
             Import into {name}
-          </button>
+          </Action>
         </div>
       )}
     </div>

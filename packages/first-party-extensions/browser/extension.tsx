@@ -36,6 +36,7 @@ import type { ViewSession } from "@t3tools/extension-sdk/host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddressInput, committedAddress } from "./addressInput.js";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import { AnnotateButton, ScreenshotButton } from "./annotateButton.js";
 import { capturePageView, useBrowserCapture } from "./capture.js";
 import { mintWorkspaceFileUrl } from "./fileOpen.js";
@@ -253,6 +254,9 @@ function restoreState(value: unknown): value is PersistedViewState | null {
  * source of engine/navigation truth.
  */
 function BrowserView(props: { host: ClientHost; session: ViewSession }) {
+  const kit = resolveUiKit(props.host);
+  const ChromeButton = kit?.Button ?? "button";
+  const chromeProps = kit ? { variant: "ghost" as const, size: "icon-xs" as const } : {};
   const { host, session } = props;
   const restored = restoreState(session.restoreState) ? session.restoreState : null;
   const [state, setState] = useState<NavigationState>(() =>
@@ -1069,44 +1073,56 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           with a 1px canvas gap on focus-visible, matching the native address
           wrapper instead of the browser default 1px auto outline. */}
       <style>
-        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):not([data-slot]):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       <header
-        style={{
-          display: "flex",
-          gap: 6,
-          padding: 8,
-          borderBottom: border,
-          flexShrink: 0,
-          alignItems: "center",
-        }}
+        className={
+          kit
+            ? "flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2"
+            : undefined
+        }
+        style={
+          kit
+            ? undefined
+            : {
+                display: "flex",
+                gap: 6,
+                padding: 8,
+                borderBottom: border,
+                flexShrink: 0,
+                alignItems: "center",
+              }
+        }
       >
         <Tooltip host={host} label="Back">
-          <button
+          <ChromeButton
+            {...chromeProps}
             type="button"
             aria-label="Back"
             disabled={held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state)}
             onClick={() => (held ? command("back") : commit(goBack(state)))}
-            style={buttonStyle}
+            style={kit ? undefined : buttonStyle}
           >
-            ←
-          </button>
+            {kit ? <kit.Icon name="back" /> : "←"}
+          </ChromeButton>
         </Tooltip>
         <Tooltip host={host} label="Forward">
-          <button
+          <ChromeButton
+            {...chromeProps}
             type="button"
             aria-label="Forward"
             disabled={
               held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state)
             }
             onClick={() => (held ? command("forward") : commit(goForward(state)))}
-            style={buttonStyle}
+            style={kit ? undefined : buttonStyle}
           >
-            →
-          </button>
+            {kit ? <kit.Icon name="forward" /> : "→"}
+          </ChromeButton>
         </Tooltip>
         <Tooltip host={host} label={pageLoading ? "Loading…" : "Refresh"}>
-          <button
+          <ChromeButton
+            {...chromeProps}
             type="button"
             aria-label={pageLoading ? "Stop" : "Refresh"}
             disabled={
@@ -1116,13 +1132,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 : state.status.kind !== "target")
             }
             onClick={() => (held || fileSource ? command("reload") : commit(reload(state)))}
-            style={buttonStyle}
+            style={kit ? undefined : buttonStyle}
           >
-            ⟳
-          </button>
+            {kit ? <kit.Icon name="refresh" /> : "⟳"}
+          </ChromeButton>
         </Tooltip>
         {/* Native has no tooltip here; the action is More → Show/Hide device toolbar. */}
-        <button
+        <ChromeButton
+          {...chromeProps}
           type="button"
           aria-label={deviceMode ? "Hide device toolbar" : "Show device toolbar"}
           aria-pressed={deviceMode}
@@ -1138,14 +1155,14 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             );
           }}
           style={{
-            ...buttonStyle,
+            ...(kit ? {} : buttonStyle),
             ...(deviceMode
               ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" }
               : {}),
           }}
         >
-          ⛶
-        </button>
+          {kit ? <kit.Icon name="viewport" /> : "⛶"}
+        </ChromeButton>
         <ScreenshotButton
           host={host}
           blockReason={capture.blockReason}
@@ -1166,6 +1183,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           <ProfileBadge host={host} session={live} profiles={profiles} visible={visible} />
         )}
         <AddressInput
+          host={host}
           inputRef={addressRef}
           value={address}
           committed={committedAddress({
@@ -1187,7 +1205,8 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
           }}
         />
         <Tooltip host={host} label="Open in system browser">
-          <button
+          <ChromeButton
+            {...chromeProps}
             type="button"
             aria-label="Open in system browser"
             disabled={externalTarget === null}
@@ -1201,10 +1220,10 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
                 if (fault !== null && !session.signal.aborted) setNotice(fault);
               });
             }}
-            style={buttonStyle}
+            style={kit ? undefined : buttonStyle}
           >
-            ↗
-          </button>
+            {kit ? <kit.Icon name="external" /> : "↗"}
+          </ChromeButton>
         </Tooltip>
 
         <PageMenu
@@ -1220,6 +1239,7 @@ function BrowserView(props: { host: ClientHost; session: ViewSession }) {
             held &&
             live && (
               <ProfileSection
+                host={host}
                 session={live}
                 api={profilesApi}
                 profiles={profiles}

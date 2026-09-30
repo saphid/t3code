@@ -24,6 +24,16 @@ The right-panel store remains the layout/focus owner. Use its existing user-acti
 
 ## Coverage and limits
 
+Installed web and desktop clients can offer `ClientHost.uiKit`, the native
+buttons, grouped inputs, menus, icons, and compact file-tree rows. Packs import
+`resolveUiKit` from `@t3tools/extension-sdk/ui`, resolve once for a view, and
+compose the returned components without bundling a UI library or a second React
+renderer. Keep a plain-control fallback when resolution returns null. The host
+offers this seam only under `t3.ui/theme.read`; `t3.ui/theme@1.1.0` advertises
+its optional `getTokens.uiKitVersion` through `ApiAddition`, retaining the
+1.0.0 baseline. Tooltip and modal dialog behavior stays on the existing
+`tooltip` and `floatingLayer` seams. No rendering call crosses the WebSocket.
+
 Focused tests cover public lifecycle, hidden identity, independent viewers, scope/revision races, timeouts, late factory completion, capability revocation, invalid payloads, bounded updates, failures and 100 lifecycle cycles. They are contract tests, not UI parity or performance measurements. React Native needs a native renderer and bridge; Electron, authenticated local/remote/relay/tunnel domain services, all providers, V2 adapters, compositor performance and accessibility journeys require separate integration verification. The SDK package does not itself serve endpoints. The application environment runtime supplies authenticated installation and API transports; domain support must still be discovered and verified. Broader orchestration operations, structured attachments, asynchronous context resolution and untrusted isolation remain later phases.
 
 For a shell exit transition, `retainHiddenPresentation` keeps a hidden view painted until the shell removes it. Activity remains hidden/cancelled and the wrapper is inert and aria-hidden. The default still applies display:none. The shell must end the transition and conceal/unmount the view; this option does not resume extension work.

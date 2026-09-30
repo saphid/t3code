@@ -34,6 +34,7 @@ import type { BrowserSurfaceBinding } from "./browserSurfaceBridge";
 import type { BrowserFramesBinding } from "./browserFramesBridge";
 import type { BrowserCaptureBinding } from "./browserCaptureBridge";
 import type { KeybindingsHostBinding } from "./keybindingsHostBridge";
+import type { ClientUiKit } from "@t3tools/extension-sdk/ui";
 import type {
   BrowserCaptureHost,
   BrowserFramesHost,
@@ -219,6 +220,7 @@ export function createInstalledExtensionController(options: {
   readonly codeView?: ClientCodeView;
   /** Host-rendered tooltip handed to every installed client; absent on hosts without one. */
   readonly tooltip?: ClientTooltip;
+  readonly uiKit?: ClientUiKit;
   /** Host floating layer handed to every installed client; absent on hosts without one. */
   readonly floatingLayer?: ClientFloatingLayer;
   /** Client-local pull-request preferences handed to every installed client. */
@@ -585,6 +587,9 @@ export function createInstalledExtensionController(options: {
               ...(keybindings ? { keybindings } : {}),
               ...(options.codeView ? { codeView: options.codeView } : {}),
               ...(options.tooltip ? { tooltip: options.tooltip } : {}),
+              ...(options.uiKit && item.grants.capabilities.includes("t3.ui/theme.read")
+                ? { uiKit: options.uiKit }
+                : {}),
               ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
               ...(subscribeResumableApi
                 ? {

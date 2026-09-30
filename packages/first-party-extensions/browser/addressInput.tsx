@@ -1,4 +1,6 @@
 import { useState, type CSSProperties, type Ref } from "react";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
+import type { ClientHost } from "@t3tools/extension-sdk/environment";
 
 /**
  * The address a cancelled edit returns to: the workspace file on show (its
@@ -22,6 +24,7 @@ export function committedAddress(input: {
  * cancels the edit — the draft returns to `committed` and focus leaves.
  */
 export function AddressInput(props: {
+  readonly host?: Pick<ClientHost, "uiKit">;
   readonly value: string;
   readonly committed: string;
   readonly onValueChange: (value: string) => void;
@@ -31,37 +34,42 @@ export function AddressInput(props: {
 }) {
   const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
   const [focused, setFocused] = useState(false);
+  const kit = resolveUiKit(props.host ?? {});
+  const Input = kit?.Input ?? "input";
+  const InputGroup = kit?.InputGroup ?? "div";
   return (
-    <input
-      type="text"
-      aria-label="Address"
-      placeholder="Search or enter URL"
-      ref={inputRef}
-      value={focused ? value : committed}
-      onChange={(event) => onValueChange(event.target.value)}
-      onFocus={(event) => {
-        onValueChange(committed);
-        setFocused(true);
-        // Select the whole address once the edit starts, as native does, so typing replaces it.
-        const input = event.currentTarget;
-        queueMicrotask(() => input.select());
-      }}
-      onBlur={() => setFocused(false)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          const next = value.trim();
-          if (next.length === 0) return;
-          onSubmit(next);
-          event.currentTarget.blur();
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
+    <InputGroup style={{ flex: 1, minWidth: 0 }}>
+      <Input
+        type="text"
+        aria-label="Address"
+        placeholder="Search or enter URL"
+        ref={inputRef}
+        value={focused ? value : committed}
+        onChange={(event) => onValueChange(event.target.value)}
+        onFocus={(event) => {
           onValueChange(committed);
-          event.currentTarget.blur();
-        }
-      }}
-      style={style}
-    />
+          setFocused(true);
+          // Select the whole address once the edit starts, as native does, so typing replaces it.
+          const input = event.currentTarget;
+          queueMicrotask(() => input.select());
+        }}
+        onBlur={() => setFocused(false)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            const next = value.trim();
+            if (next.length === 0) return;
+            onSubmit(next);
+            event.currentTarget.blur();
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onValueChange(committed);
+            event.currentTarget.blur();
+          }
+        }}
+        style={kit ? undefined : style}
+      />
+    </InputGroup>
   );
 }

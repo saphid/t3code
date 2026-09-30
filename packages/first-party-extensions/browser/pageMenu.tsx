@@ -19,6 +19,7 @@ import {
   type PageVerb,
 } from "./pageControls.js";
 import type { PanelFloating } from "./popover.js";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 
 const muted = "var(--t3-browser-muted-foreground, var(--muted-foreground, #667085))";
 const border = "1px solid var(--t3-browser-border, var(--border, #dfe3e8))";
@@ -108,7 +109,7 @@ export function ZoomIndicator(props: {
  * `blockReason` disables every page item and says why; `run` sends one verb.
  */
 export function PageMenu(props: {
-  host: Pick<ClientHost, "React" | "tooltip">;
+  host: Pick<ClientHost, "React" | "tooltip" | "uiKit">;
   session: BrowserSession | null;
   blockReason: string | null;
   run: (verb: PageVerb) => void;
@@ -126,6 +127,160 @@ export function PageMenu(props: {
    */
   children?: (close: () => void) => ReactNode;
 }) {
+  const kit = resolveUiKit(props.host);
+  return kit ? <NativePageMenu {...props} kit={kit} /> : <LegacyPageMenu {...props} />;
+}
+
+function NativePageMenu({
+  host,
+  session,
+  blockReason,
+  run,
+  zoomStep,
+  visible,
+  children,
+  kit,
+}: Parameters<typeof PageMenu>[0] & { kit: NonNullable<ReturnType<typeof resolveUiKit>> }) {
+  const [open, setOpen] = useState(false);
+  if (open && !visible) setOpen(false);
+  const disabled = blockReason !== null;
+  const zoom = session?.zoomFactor ?? null;
+  const {
+    Button,
+    Icon,
+    Menu,
+    MenuTrigger,
+    MenuPopup,
+    MenuItem,
+    MenuSeparator,
+    MenuSub,
+    MenuSubTrigger,
+    MenuSubPopup,
+    MenuRadioGroup,
+    MenuRadioItem,
+  } = kit;
+  return (
+    <Menu open={open && visible} onOpenChange={setOpen}>
+      <Tooltip host={host} label="More">
+        <MenuTrigger>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Preview menu"
+            disabled={session === null}
+          >
+            <Icon name="more" />
+          </Button>
+        </MenuTrigger>
+      </Tooltip>
+      <MenuPopup aria-label="Page" data-t3-browser-popover="" style={{ minWidth: 220 }}>
+        {blockReason && (
+          <p role="note" className="px-2 text-xs text-muted-foreground">
+            {blockReason}
+          </p>
+        )}
+        <MenuItem disabled={disabled} onClick={() => run({ method: "hardReload" })}>
+          Hard reload
+        </MenuItem>
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger disabled={disabled}>Appearance</MenuSubTrigger>
+          <MenuSubPopup>
+            <MenuRadioGroup
+              value={session?.appearance ?? ""}
+              onValueChange={(appearance) =>
+                run({ method: "setAppearance", appearance: appearance as PageAppearance })
+              }
+            >
+              {APPEARANCE_OPTIONS.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuItem
+          closeOnClick={false}
+          onClick={(event) => event.preventDefault()}
+          className="justify-between"
+          disabled={disabled}
+        >
+          <span>Zoom</span>
+          <span className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon-xs"
+              aria-label="Zoom out"
+              disabled={disabled}
+              onClick={() => zoomStep("out")}
+            >
+              <Icon name="minus" />
+            </Button>
+            <select
+              aria-label="Zoom level"
+              disabled={disabled}
+              value={zoom === null ? "" : String(zoom)}
+              onChange={(event) => run({ method: "zoom", zoomFactor: Number(event.target.value) })}
+              className="rounded-sm bg-transparent text-xs tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {zoom === null && <option value="">—</option>}
+              {ZOOM_LADDER.map((level) => (
+                <option key={level} value={String(level)}>
+                  {zoomPercent(level)}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="outline"
+              size="icon-xs"
+              aria-label="Zoom in"
+              disabled={disabled}
+              onClick={() => zoomStep("in")}
+            >
+              <Icon name="plus" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Reset zoom"
+              disabled={disabled || zoom === DEFAULT_ZOOM_FACTOR}
+              onClick={() => run({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR })}
+            >
+              <Icon name="reset" />
+            </Button>
+          </span>
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          disabled={disabled || session?.audioMuted == null}
+          closeOnClick={false}
+          onClick={() => run({ method: "setAudioMuted", muted: session?.audioMuted !== true })}
+        >
+          {session?.audioMuted ? "Unmute page" : "Mute page"}
+        </MenuItem>
+        <MenuItem
+          disabled={disabled || session?.devToolsOpen == null}
+          onClick={() => run({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" })}
+        >
+          {session?.devToolsOpen ? "Close DevTools" : "Open DevTools"}
+        </MenuItem>
+        <MenuItem
+          disabled={disabled || session?.pictureInPicture == null}
+          onClick={() =>
+            run({ method: "setPictureInPicture", open: session?.pictureInPicture !== true })
+          }
+        >
+          {session?.pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"}
+        </MenuItem>
+        {children?.(() => setOpen(false))}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function LegacyPageMenu(props: Parameters<typeof PageMenu>[0]) {
   const { host, session, blockReason, run, zoomStep, floating, visible, children } = props;
   const [open, setOpen] = useState(false);
   if (open && !visible) setOpen(false);

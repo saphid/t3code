@@ -8620,7 +8620,11 @@ export const uiThemeApi = defineApi<{
   getState: { input: Record<string, never>; output: UiThemeState };
   getTokens: {
     input: { appearance?: "light" | "dark" };
-    output: { tokens: Record<string, string>; cssVars: Record<string, string> };
+    output: {
+      tokens: Record<string, string>;
+      cssVars: Record<string, string>;
+      uiKitVersion?: number;
+    };
   };
   setPreference: {
     input: UiThemeSetPreferenceInput;
@@ -8631,100 +8635,107 @@ export const uiThemeApi = defineApi<{
     };
   };
   getTerminalAppearance: { input: Record<string, never>; output: UiTerminalAppearance };
-}>({
-  id: UI_THEME,
-  version: "1.0.0",
-  methods: [
-    {
-      name: "getCapabilities",
-      effect: "read",
-      requiredGrants: [],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: uiCapabilitiesOutput([
-        "getState",
-        "getTokens",
-        "setPreference",
-        "subscribeState",
-        "getTerminalAppearance",
-        "subscribeTerminalAppearance",
-      ]),
-    },
-    {
-      name: "getState",
-      effect: "read",
-      requiredGrants: [UI_THEME_READ],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: themeProviderStateSchema,
-    },
-    {
-      name: "getTokens",
-      effect: "read",
-      requiredGrants: [UI_THEME_READ],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { appearance: { enum: ["light", "dark"] } },
+}>(
+  {
+    id: UI_THEME,
+    version: "1.1.0",
+    methods: [
+      {
+        name: "getCapabilities",
+        effect: "read",
+        requiredGrants: [],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: uiCapabilitiesOutput([
+          "getState",
+          "getTokens",
+          "setPreference",
+          "subscribeState",
+          "getTerminalAppearance",
+          "subscribeTerminalAppearance",
+        ]),
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["tokens", "cssVars"],
-        properties: {
-          tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
-          cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } },
+      {
+        name: "getState",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: themeProviderStateSchema,
+      },
+      {
+        name: "getTokens",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { appearance: { enum: ["light", "dark"] } },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["tokens", "cssVars"],
+          properties: {
+            tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } },
+            uiKitVersion: { type: "integer", minimum: 1 },
+          },
         },
       },
-    },
-    {
-      name: "setPreference",
-      effect: "write",
-      requiredGrants: [UI_THEME_WRITE],
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["mode"],
-        properties: {
-          theme: { type: "string", minLength: 1, maxLength: 160 },
-          appearanceMode: { enum: ["light", "dark", "system"] },
-          themeHalves: themeHalvesSchema,
-          mode: { enum: ["persist", "session"] },
-          clear: { type: "boolean" },
+      {
+        name: "setPreference",
+        effect: "write",
+        requiredGrants: [UI_THEME_WRITE],
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode"],
+          properties: {
+            theme: { type: "string", minLength: 1, maxLength: 160 },
+            appearanceMode: { enum: ["light", "dark", "system"] },
+            themeHalves: themeHalvesSchema,
+            mode: { enum: ["persist", "session"] },
+            clear: { type: "boolean" },
+          },
+        },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["applied"],
+          properties: {
+            applied: { type: "boolean" },
+            reason: { type: "string", maxLength: 200 },
+            propagatedTo: { enum: ["storage-origin", "connection"] },
+          },
         },
       },
-      outputSchema: {
-        type: "object",
-        additionalProperties: false,
-        required: ["applied"],
-        properties: {
-          applied: { type: "boolean" },
-          reason: { type: "string", maxLength: 200 },
-          propagatedTo: { enum: ["storage-origin", "connection"] },
-        },
+      {
+        name: "getTerminalAppearance",
+        effect: "read",
+        requiredGrants: [UI_THEME_READ],
+        inputSchema: composerEmptyInputSchema,
+        outputSchema: terminalAppearanceSchema,
       },
-    },
-    {
-      name: "getTerminalAppearance",
-      effect: "read",
-      requiredGrants: [UI_THEME_READ],
-      inputSchema: composerEmptyInputSchema,
-      outputSchema: terminalAppearanceSchema,
-    },
-  ],
-  streams: [
-    {
-      name: "subscribeState",
-      inputSchema: composerEmptyInputSchema,
-      eventSchema: themeProviderStateSchema,
-      requiredGrants: [UI_THEME_READ],
-    },
-    {
-      name: "subscribeTerminalAppearance",
-      inputSchema: composerEmptyInputSchema,
-      eventSchema: terminalAppearanceSchema,
-      requiredGrants: [UI_THEME_READ],
-    },
-  ],
-});
+    ],
+    streams: [
+      {
+        name: "subscribeState",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: themeProviderStateSchema,
+        requiredGrants: [UI_THEME_READ],
+      },
+      {
+        name: "subscribeTerminalAppearance",
+        inputSchema: composerEmptyInputSchema,
+        eventSchema: terminalAppearanceSchema,
+        requiredGrants: [UI_THEME_READ],
+      },
+    ],
+  },
+  {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "getTokens", output: "uiKitVersion" }],
+  },
+);
 
 export const uiKeybindingsApi = defineApi<{
   getCapabilities: { input: Record<string, never>; output: UiCapabilities };

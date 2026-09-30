@@ -438,9 +438,11 @@ describe("theme provider", () => {
     const resolved = provider.invoke(invokeCall("resolveTokens", { appearance: "light" })) as {
       tokens: Record<string, string>;
       cssVars: Record<string, string>;
+      uiKitVersion: number;
     };
     expect(Object.keys(resolved.tokens).length).toBeGreaterThan(0);
     expect(resolved.cssVars.canvas).toContain("--");
+    expect(resolved.uiKitVersion).toBe(1);
     expectDenied(
       () => provider.invoke(invokeCall("resolveTokens", { appearance: "auto" })),
       "provider-rejected",

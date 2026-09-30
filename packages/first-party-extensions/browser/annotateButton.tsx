@@ -2,6 +2,7 @@ import { Tooltip } from "@t3tools/extension-sdk/authoring";
 import type { BrowserCaptureTarget } from "@t3tools/extension-sdk/catalogue";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
 import type { CSSProperties } from "react";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 
 import { annotationControl } from "./capture.js";
 
@@ -16,19 +17,22 @@ export function AnnotateButton(props: {
 }) {
   const { host, blockReason, onPick, style } = props;
   const annotate = annotationControl(props);
+  const kit = resolveUiKit(host);
+  const Button = kit?.Button ?? "button";
   return (
     <Tooltip host={host} label={annotate.tooltip} showWhenDisabled={annotate.hoverWhileDisabled}>
-      <button
+      <Button
+        {...(kit ? ({ variant: "ghost", size: "icon-xs" } as const) : {})}
         type="button"
         aria-label={annotate.ariaLabel}
         aria-description={annotate.picking ? undefined : (blockReason ?? undefined)}
         aria-pressed={annotate.picking}
         disabled={annotate.disabled}
         onClick={onPick}
-        style={style}
+        style={kit ? undefined : style}
       >
-        ⌖
-      </button>
+        {kit ? <kit.Icon name="annotate" /> : "⌖"}
+      </Button>
     </Tooltip>
   );
 }
@@ -48,18 +52,21 @@ export function ScreenshotButton(props: {
   style: CSSProperties;
 }) {
   const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
+  const kit = resolveUiKit(host);
+  const Button = kit?.Button ?? "button";
   return (
     <Tooltip host={host} label="Screenshot">
-      <button
+      <Button
+        {...(kit ? ({ variant: "ghost", size: "icon-xs" } as const) : {})}
         type="button"
         aria-label="Capture screenshot"
         aria-description={pageFailed ? undefined : (blockReason ?? undefined)}
         disabled={blockReason !== null || capturing !== null}
         onClick={onCapture}
-        style={style}
+        style={kit ? undefined : style}
       >
-        ▣
-      </button>
+        {kit ? <kit.Icon name="camera" /> : "▣"}
+      </Button>
     </Tooltip>
   );
 }

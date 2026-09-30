@@ -7584,7 +7584,7 @@ var __t3Client = (() => {
   });
   var uiThemeApi = defineApi({
     id: UI_THEME,
-    version: "1.0.0",
+    version: "1.1.0",
     methods: [
       {
         name: "getCapabilities",
@@ -7622,7 +7622,8 @@ var __t3Client = (() => {
           required: ["tokens", "cssVars"],
           properties: {
             tokens: { type: "object", additionalProperties: { type: "string", maxLength: 400 } },
-            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } }
+            cssVars: { type: "object", additionalProperties: { type: "string", maxLength: 80 } },
+            uiKitVersion: { type: "integer", minimum: 1 }
           }
         }
       },
@@ -7675,6 +7676,9 @@ var __t3Client = (() => {
         requiredGrants: [UI_THEME_READ]
       }
     ]
+  }, {
+    baseline: "1.0.0",
+    additions: [{ version: "1.1.0", method: "getTokens", output: "uiKitVersion" }]
   });
   var uiKeybindingsApi = defineApi(
     {
@@ -8500,13 +8504,7 @@ var __t3Client = (() => {
     [VCS_ACTIONS]: [PRS_WRITE]
   };
 
-  // node_modules/@t3tools/extension-sdk/dist/environment.js
-  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
-  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
-    "application/wasm",
-    "application/octet-stream",
-    "font/woff2"
-  ];
+  // node_modules/@t3tools/extension-sdk/dist/componentType.js
   var REACT_MEMO_TYPE = /* @__PURE__ */ Symbol.for("react.memo");
   var REACT_FORWARD_REF_TYPE = /* @__PURE__ */ Symbol.for("react.forward_ref");
   function isComponentType(value, depth = 0) {
@@ -8521,6 +8519,14 @@ var __t3Client = (() => {
       return typeof wrapper.render === "function";
     return false;
   }
+
+  // node_modules/@t3tools/extension-sdk/dist/environment.js
+  var ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
+  var ENVIRONMENT_ASSET_MEDIA_TYPES = [
+    "application/wasm",
+    "application/octet-stream",
+    "font/woff2"
+  ];
   function resolveTooltip(host) {
     const member = host.tooltip;
     if (!member || typeof member !== "object")
@@ -9163,6 +9169,37 @@ var __t3Client = (() => {
 
   // addressInput.tsx
   var import_react = __toESM(require_react(), 1);
+
+  // node_modules/@t3tools/extension-sdk/dist/ui.js
+  var COMPONENTS = [
+    "Button",
+    "Input",
+    "InputGroup",
+    "Menu",
+    "MenuTrigger",
+    "MenuPopup",
+    "MenuSub",
+    "MenuSubTrigger",
+    "MenuSubPopup",
+    "MenuItem",
+    "MenuSeparator",
+    "MenuGroupLabel",
+    "MenuRadioGroup",
+    "MenuRadioItem",
+    "TreeRow",
+    "Icon"
+  ];
+  function resolveUiKit(host) {
+    const member = host.uiKit;
+    if (member === null || typeof member !== "object")
+      return null;
+    const kit = member;
+    if (!Number.isInteger(kit.version) || kit.version < 1)
+      return null;
+    return COMPONENTS.every((name) => isComponentType(kit[name])) ? member : null;
+  }
+
+  // addressInput.tsx
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   function committedAddress(input) {
     return input.fileSource ?? input.pageUrl ?? input.target ?? "";
@@ -9170,8 +9207,11 @@ var __t3Client = (() => {
   function AddressInput(props) {
     const { value, committed, onValueChange, onSubmit, inputRef, style } = props;
     const [focused, setFocused] = (0, import_react.useState)(false);
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-      "input",
+    const kit = resolveUiKit(props.host ?? {});
+    const Input = kit?.Input ?? "input";
+    const InputGroup = kit?.InputGroup ?? "div";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(InputGroup, { style: { flex: 1, minWidth: 0 }, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      Input,
       {
         type: "text",
         "aria-label": "Address",
@@ -9200,9 +9240,9 @@ var __t3Client = (() => {
             event.currentTarget.blur();
           }
         },
-        style
+        style: kit ? void 0 : style
       }
-    );
+    ) });
   }
 
   // node_modules/@t3tools/shared/src/semver.ts
@@ -9591,32 +9631,38 @@ var __t3Client = (() => {
   function AnnotateButton(props) {
     const { host, blockReason, onPick, style } = props;
     const annotate2 = annotationControl(props);
+    const kit = resolveUiKit(host);
+    const Button = kit?.Button ?? "button";
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: annotate2.tooltip, showWhenDisabled: annotate2.hoverWhileDisabled, children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-      "button",
+      Button,
       {
+        ...kit ? { variant: "ghost", size: "icon-xs" } : {},
         type: "button",
         "aria-label": annotate2.ariaLabel,
         "aria-description": annotate2.picking ? void 0 : blockReason ?? void 0,
         "aria-pressed": annotate2.picking,
         disabled: annotate2.disabled,
         onClick: onPick,
-        style,
-        children: "\u2316"
+        style: kit ? void 0 : style,
+        children: kit ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(kit.Icon, { name: "annotate" }) : "\u2316"
       }
     ) });
   }
   function ScreenshotButton(props) {
     const { host, blockReason, capturing, pageFailed, onCapture, style } = props;
+    const kit = resolveUiKit(host);
+    const Button = kit?.Button ?? "button";
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tooltip, { host, label: "Screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-      "button",
+      Button,
       {
+        ...kit ? { variant: "ghost", size: "icon-xs" } : {},
         type: "button",
         "aria-label": "Capture screenshot",
         "aria-description": pageFailed ? void 0 : blockReason ?? void 0,
         disabled: blockReason !== null || capturing !== null,
         onClick: onCapture,
-        style,
-        children: "\u25A3"
+        style: kit ? void 0 : style,
+        children: kit ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(kit.Icon, { name: "camera" }) : "\u25A3"
       }
     ) });
   }
@@ -16367,6 +16413,156 @@ ${ind(d)}}`;
     );
   }
   function PageMenu(props) {
+    const kit = resolveUiKit(props.host);
+    return kit ? /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(NativePageMenu, { ...props, kit }) : /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(LegacyPageMenu, { ...props });
+  }
+  function NativePageMenu({
+    host,
+    session,
+    blockReason,
+    run: run2,
+    zoomStep,
+    visible,
+    children,
+    kit
+  }) {
+    const [open, setOpen] = (0, import_react5.useState)(false);
+    if (open && !visible) setOpen(false);
+    const disabled = blockReason !== null;
+    const zoom = session?.zoomFactor ?? null;
+    const {
+      Button,
+      Icon,
+      Menu,
+      MenuTrigger,
+      MenuPopup,
+      MenuItem,
+      MenuSeparator,
+      MenuSub,
+      MenuSubTrigger,
+      MenuSubPopup,
+      MenuRadioGroup,
+      MenuRadioItem
+    } = kit;
+    return /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(Menu, { open: open && visible, onOpenChange: setOpen, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Tooltip, { host, label: "More", children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuTrigger, { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+        Button,
+        {
+          variant: "ghost",
+          size: "icon-xs",
+          "aria-label": "Preview menu",
+          disabled: session === null,
+          children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "more" })
+        }
+      ) }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(MenuPopup, { "aria-label": "Page", "data-t3-browser-popover": "", style: { minWidth: 220 }, children: [
+        blockReason && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("p", { role: "note", className: "px-2 text-xs text-muted-foreground", children: blockReason }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuItem, { disabled, onClick: () => run2({ method: "hardReload" }), children: "Hard reload" }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(MenuSub, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSubTrigger, { disabled, children: "Appearance" }),
+          /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSubPopup, { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+            MenuRadioGroup,
+            {
+              value: session?.appearance ?? "",
+              onValueChange: (appearance) => run2({ method: "setAppearance", appearance }),
+              children: APPEARANCE_OPTIONS.map((option2) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuRadioItem, { value: option2.value, children: option2.label }, option2.value))
+            }
+          ) })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+          MenuItem,
+          {
+            closeOnClick: false,
+            onClick: (event) => event.preventDefault(),
+            className: "justify-between",
+            disabled,
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("span", { children: "Zoom" }),
+              /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("span", { className: "flex items-center gap-1", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                  Button,
+                  {
+                    variant: "outline",
+                    size: "icon-xs",
+                    "aria-label": "Zoom out",
+                    disabled,
+                    onClick: () => zoomStep("out"),
+                    children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "minus" })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)(
+                  "select",
+                  {
+                    "aria-label": "Zoom level",
+                    disabled,
+                    value: zoom === null ? "" : String(zoom),
+                    onChange: (event) => run2({ method: "zoom", zoomFactor: Number(event.target.value) }),
+                    className: "rounded-sm bg-transparent text-xs tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    children: [
+                      zoom === null && /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: "", children: "\u2014" }),
+                      ZOOM_LADDER.map((level) => /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("option", { value: String(level), children: zoomPercent(level) }, level))
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                  Button,
+                  {
+                    variant: "outline",
+                    size: "icon-xs",
+                    "aria-label": "Zoom in",
+                    disabled,
+                    onClick: () => zoomStep("in"),
+                    children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "plus" })
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+                  Button,
+                  {
+                    variant: "ghost",
+                    size: "icon-xs",
+                    "aria-label": "Reset zoom",
+                    disabled: disabled || zoom === DEFAULT_ZOOM_FACTOR,
+                    onClick: () => run2({ method: "zoom", zoomFactor: DEFAULT_ZOOM_FACTOR }),
+                    children: /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(Icon, { name: "reset" })
+                  }
+                )
+              ] })
+            ]
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(MenuSeparator, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          MenuItem,
+          {
+            disabled: disabled || session?.audioMuted == null,
+            closeOnClick: false,
+            onClick: () => run2({ method: "setAudioMuted", muted: session?.audioMuted !== true }),
+            children: session?.audioMuted ? "Unmute page" : "Mute page"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          MenuItem,
+          {
+            disabled: disabled || session?.devToolsOpen == null,
+            onClick: () => run2({ method: session?.devToolsOpen ? "closeDevTools" : "openDevTools" }),
+            children: session?.devToolsOpen ? "Close DevTools" : "Open DevTools"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime5.jsx)(
+          MenuItem,
+          {
+            disabled: disabled || session?.pictureInPicture == null,
+            onClick: () => run2({ method: "setPictureInPicture", open: session?.pictureInPicture !== true }),
+            children: session?.pictureInPicture ? "Close picture in picture" : "Pop out (picture in picture)"
+          }
+        ),
+        children?.(() => setOpen(false))
+      ] })
+    ] });
+  }
+  function LegacyPageMenu(props) {
     const { host, session, blockReason, run: run2, zoomStep, floating, visible, children } = props;
     const [open, setOpen] = (0, import_react5.useState)(false);
     if (open && !visible) setOpen(false);
@@ -16821,6 +17017,9 @@ ${ind(d)}}`;
   }
   function ProfileSection(props) {
     const { session, api, profiles, signal, onOpenInProfile, report, onChosen } = props;
+    const kit = resolveUiKit(props.host ?? {});
+    const Action = kit?.MenuItem ?? "button";
+    const Heading = kit?.MenuGroupLabel ?? "span";
     const profileId = sessionProfileId(session);
     const { list, error } = useProfileList(profiles);
     const listNote = list !== null ? null : error === null ? "Loading profiles\u2026" : profileFailureMessage("list", error);
@@ -16868,12 +17067,13 @@ ${ind(d)}}`;
       {
         role: "group",
         "aria-label": "Profile",
-        style: { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
+        style: kit ? void 0 : { display: "grid", gap: 6, borderTop: border2, paddingTop: 8 },
         children: [
+          kit && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(kit.MenuSeparator, {}),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
-            "span",
+            Heading,
             {
-              style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
+              style: kit ? void 0 : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: muted4 },
               children: [
                 "Profile: ",
                 name
@@ -16881,7 +17081,20 @@ ${ind(d)}}`;
             }
           ),
           listNote && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: listNote }),
-          others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
+          others.length > 0 && kit ? /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+            kit.MenuRadioGroup,
+            {
+              value: "",
+              onValueChange: (profileId2) => {
+                onChosen();
+                onOpenInProfile(profileId2);
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(kit.MenuGroupLabel, { children: "Open page in" }),
+                others.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(kit.MenuRadioItem, { value: profile.id, children: profile.name }, profile.id))
+              ]
+            }
+          ) : others.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("label", { style: { display: "flex", justifyContent: "space-between", gap: 8 }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { children: "Open page in" }),
             /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
               "select",
@@ -16902,32 +17115,30 @@ ${ind(d)}}`;
             )
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
               role: "menuitem",
               onClick: () => clear("clearCookies"),
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Clear cookies"
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
               role: "menuitem",
               onClick: () => clear("clearCache"),
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Clear cache"
             }
           ),
           importer.kind === "closed" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
-            "button",
+            Action,
             {
-              type: "button",
+              ...kit ? { closeOnClick: false } : {},
               role: "menuitem",
               onClick: openImporter,
-              style: { ...control2, textAlign: "left" },
+              style: kit ? void 0 : { ...control2, textAlign: "left" },
               children: "Import cookies\u2026"
             }
           ) : importer.kind === "loading" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "Listing browsers on the desktop\u2026" }) : importer.kind === "failed" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: importer.message }) : importer.sources.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("p", { role: "note", style: { margin: 0, color: muted4 }, children: "No browser on the desktop can be imported from." }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { style: { display: "grid", gap: 4 }, children: [
@@ -16959,13 +17170,12 @@ ${ind(d)}}`;
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
-              "button",
+              Action,
               {
-                type: "button",
                 role: "menuitem",
                 disabled: !importer.handle || selectedSource?.unavailable !== void 0,
                 onClick: () => runImport(importer.sourceId, importer.handle),
-                style: { ...control2, textAlign: "left" },
+                style: kit ? void 0 : { ...control2, textAlign: "left" },
                 children: [
                   "Import into ",
                   name
@@ -18136,6 +18346,9 @@ ${ind(d)}}`;
     });
   }
   function BrowserView(props) {
+    const kit = resolveUiKit(props.host);
+    const ChromeButton = kit?.Button ?? "button";
+    const chromeProps = kit ? { variant: "ghost", size: "icon-xs" } : {};
     const { host, session } = props;
     const restored = restoreState(session.restoreState) ? session.restoreState : null;
     const [state2, setState] = (0, import_react8.useState)(
@@ -18731,11 +18944,12 @@ ${titledTitle}`;
           ...themeVars
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("style", { children: `:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("style", { children: `:is([data-t3-browser-panel],[data-t3-browser-popover]) :is(button,input,select,textarea):not([data-slot]):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-browser-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}` }),
           /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
             "header",
             {
-              style: {
+              className: kit ? "flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2" : void 0,
+              style: kit ? void 0 : {
                 display: "flex",
                 gap: 6,
                 padding: 8,
@@ -18745,41 +18959,45 @@ ${titledTitle}`;
               },
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Back", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                  ChromeButton,
                   {
+                    ...chromeProps,
                     type: "button",
                     "aria-label": "Back",
                     disabled: held ? pageBlock !== null || !(live?.canGoBack ?? false) : !canGoBack(state2),
                     onClick: () => held ? command("back") : commit2(goBack(state2)),
-                    style: buttonStyle,
-                    children: "\u2190"
+                    style: kit ? void 0 : buttonStyle,
+                    children: kit ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(kit.Icon, { name: "back" }) : "\u2190"
                   }
                 ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Forward", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                  ChromeButton,
                   {
+                    ...chromeProps,
                     type: "button",
                     "aria-label": "Forward",
                     disabled: held ? pageBlock !== null || !(live?.canGoForward ?? false) : !canGoForward(state2),
                     onClick: () => held ? command("forward") : commit2(goForward(state2)),
-                    style: buttonStyle,
-                    children: "\u2192"
+                    style: kit ? void 0 : buttonStyle,
+                    children: kit ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(kit.Icon, { name: "forward" }) : "\u2192"
                   }
                 ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: pageLoading ? "Loading\u2026" : "Refresh", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                  ChromeButton,
                   {
+                    ...chromeProps,
                     type: "button",
                     "aria-label": pageLoading ? "Stop" : "Refresh",
                     disabled: fileSource === null && (held ? pageBlock !== null && !isRecoveryExhausted(live) : state2.status.kind !== "target"),
                     onClick: () => held || fileSource ? command("reload") : commit2(reload(state2)),
-                    style: buttonStyle,
-                    children: "\u27F3"
+                    style: kit ? void 0 : buttonStyle,
+                    children: kit ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(kit.Icon, { name: "refresh" }) : "\u27F3"
                   }
                 ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                  ChromeButton,
                   {
+                    ...chromeProps,
                     type: "button",
                     "aria-label": deviceMode ? "Hide device toolbar" : "Show device toolbar",
                     "aria-pressed": deviceMode,
@@ -18791,10 +19009,10 @@ ${titledTitle}`;
                       );
                     },
                     style: {
-                      ...buttonStyle,
+                      ...kit ? {} : buttonStyle,
                       ...deviceMode ? { background: "var(--t3-browser-border, var(--border, #dfe3e8))" } : {}
                     },
-                    children: "\u26F6"
+                    children: kit ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(kit.Icon, { name: "viewport" }) : "\u26F6"
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
@@ -18823,6 +19041,7 @@ ${titledTitle}`;
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                   AddressInput,
                   {
+                    host,
                     inputRef: addressRef,
                     value: address,
                     committed: committedAddress({
@@ -18845,8 +19064,9 @@ ${titledTitle}`;
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Tooltip, { host, label: "Open in system browser", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
-                  "button",
+                  ChromeButton,
                   {
+                    ...chromeProps,
                     type: "button",
                     "aria-label": "Open in system browser",
                     disabled: externalTarget === null,
@@ -18860,8 +19080,8 @@ ${titledTitle}`;
                         if (fault !== null && !session.signal.aborted) setNotice(fault);
                       });
                     },
-                    style: buttonStyle,
-                    children: "\u2197"
+                    style: kit ? void 0 : buttonStyle,
+                    children: kit ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(kit.Icon, { name: "external" }) : "\u2197"
                   }
                 ) }),
                 /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
@@ -18877,6 +19097,7 @@ ${titledTitle}`;
                     children: (close) => held && live && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                       ProfileSection,
                       {
+                        host,
                         session: live,
                         api: profilesApi,
                         profiles,

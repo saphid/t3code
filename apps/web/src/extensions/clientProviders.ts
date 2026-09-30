@@ -289,7 +289,7 @@ function resolveThemeTokens(appearance?: ThemeAppearance): Json {
   for (const role of THEME_COLOR_ROLES) {
     if (colors?.[role]) tokens[role] = colors[role];
   }
-  return { tokens, cssVars } as unknown as Json;
+  return { tokens, cssVars, uiKitVersion: 1 } as unknown as Json;
 }
 
 function paintOverlay(overlay: ThemeSessionOverlay): "painted" | "unknown-theme" | "refused" {

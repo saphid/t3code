@@ -8,6 +8,7 @@ import {
   resolveTooltip,
   type ClientHost,
 } from "@t3tools/extension-sdk/environment";
+import { resolveUiKit, type ClientUiKit } from "@t3tools/extension-sdk/ui";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
@@ -56,7 +57,7 @@ function harness(
   extra: Partial<
     Pick<
       Parameters<typeof createInstalledExtensionController>[0],
-      "codeView" | "tooltip" | "subscribeResumableApi"
+      "codeView" | "tooltip" | "uiKit" | "subscribeResumableApi"
     >
   > = {},
 ) {
@@ -131,6 +132,46 @@ describe("installed environment controller", () => {
     await offered.controller.refresh();
     expect(resolveTooltip(offered.getHost())).toBe(tooltip);
     offered.controller.dispose();
+  });
+  it("offers UI primitives only under the theme read grant and removes them on revoke", async () => {
+    const Component = () => null;
+    const uiKit: ClientUiKit = {
+      version: 1,
+      Button: Component,
+      Input: Component,
+      InputGroup: Component,
+      Menu: Component,
+      MenuTrigger: Component,
+      MenuPopup: Component,
+      MenuSub: Component,
+      MenuSubTrigger: Component,
+      MenuSubPopup: Component,
+      MenuItem: Component,
+      MenuSeparator: Component,
+      MenuGroupLabel: Component,
+      MenuRadioGroup: Component,
+      MenuRadioItem: Component,
+      TreeRow: Component,
+      Icon: Component,
+    };
+    const harnessWithKit = harness("env-a", { uiKit });
+    await harnessWithKit.controller.refresh();
+    expect(resolveUiKit(harnessWithKit.getHost())).toBeNull();
+    harnessWithKit.setCatalog([
+      {
+        ...installation,
+        grants: {
+          ...installation.grants,
+          capabilities: [...installation.grants.capabilities, "t3.ui/theme.read"],
+        },
+      },
+    ]);
+    await harnessWithKit.controller.refresh();
+    expect(resolveUiKit(harnessWithKit.getHost())).toBe(uiKit);
+    harnessWithKit.setCatalog([installation]);
+    await harnessWithKit.controller.refresh();
+    expect(resolveUiKit(harnessWithKit.getHost())).toBeNull();
+    harnessWithKit.controller.dispose();
   });
   it("retains unchanged factories and unloads disabled/replaced/removed generations", async () => {
     const h = harness();

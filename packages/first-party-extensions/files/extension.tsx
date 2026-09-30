@@ -71,6 +71,8 @@ import {
 import { useFileEditor } from "./editorSession.js";
 import { useMutationRefresh, useWorkspaceChanges } from "./mutationRefresh.js";
 import { useWorkspaceTree } from "./workspaceTree.js";
+import { FileTreeRow } from "./treeRow.js";
+import { resolveUiKit } from "@t3tools/extension-sdk/ui";
 import {
   collectResourceRead,
   contentMatchSegments,
@@ -1184,6 +1186,7 @@ const toolbarControl = {
 } as const;
 
 function FilesView(props: { host: ClientHost; session: ViewSession }) {
+  const kit = resolveUiKit(props.host);
   const { host, session } = props;
   const [visible, setVisible] = useState(session.visible);
   useEffect(() => session.onVisibility(setVisible), [session]);
@@ -1951,7 +1954,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {/* Native focus treatment: the host's 2px accent ring with a 1px canvas
           gap on focus-visible (same rule as the other first-party panels). */}
       <style>
-        {`[data-t3-files-panel] :is(button,input,select,textarea):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
+        {`[data-t3-files-panel] :is(button,input,select,textarea):not([data-slot]):focus-visible{outline:none;box-shadow:0 0 0 1px var(--t3-files-canvas, var(--background, #fff)),0 0 0 3px var(--ring, var(--primary, #1b4ed8))}`}
       </style>
       {showExplorer && (
         <header
@@ -2030,6 +2033,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
       {showExplorer && (
         <ul
           ref={tree.ref}
+          role={searching ? undefined : "tree"}
           aria-label="Workspace files"
           onScroll={tree.onScroll}
           onKeyDown={searching ? undefined : onTreeKeyDown}
@@ -2170,23 +2174,33 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                   return (
                     <li
                       key={row.entry.path}
-                      aria-setsize={rows.length}
-                      aria-posinset={index + 1}
+                      role="none"
                       style={{
                         position: "absolute",
                         top: index * TREE_ROW_HEIGHT,
-                        left: 6,
-                        right: 6,
+                        left: 16,
+                        right: 16,
                         height: TREE_ROW_HEIGHT,
                       }}
                     >
-                      <button
+                      <FileTreeRow
+                        kit={kit}
+                        path={row.entry.path}
+                        depth={row.depth}
+                        directory={row.expandable}
+                        expanded={expanded.has(row.entry.path)}
+                        selected={row.entry.path === selected}
+                        tabIndex={
+                          row.entry.path ===
+                          (focusedRow ??
+                            (selected && rowIndex.has(selected) ? selected : rows[0]?.entry.path))
+                            ? 0
+                            : -1
+                        }
                         ref={(button) => {
                           if (button === null) rowButtons.current.delete(row.entry.path);
                           else rowButtons.current.set(row.entry.path, button);
                         }}
-                        type="button"
-                        aria-expanded={row.expandable ? expanded.has(row.entry.path) : undefined}
                         aria-current={row.entry.path === selected ? "true" : undefined}
                         draggable
                         onDragStart={(event) => startMentionDrag(event, row.entry.path)}
@@ -2204,34 +2218,7 @@ function FilesView(props: { host: ClientHost; session: ViewSession }) {
                           }
                           setFolders((previous) => toggleFolder(previous, row.entry.path));
                         }}
-                        style={{
-                          display: "block",
-                          width: "100%",
-                          height: TREE_ROW_HEIGHT,
-                          boxSizing: "border-box",
-                          textAlign: "left",
-                          font: "inherit",
-                          fontSize: 12,
-                          lineHeight: "16px",
-                          padding: "3px 6px",
-                          paddingLeft: 6 + row.depth * 14,
-                          border: "1px solid transparent",
-                          borderRadius: 5,
-                          cursor: "pointer",
-                          color: "var(--t3-files-text, var(--foreground, #20252d))",
-                          background:
-                            row.entry.path === selected
-                              ? "var(--t3-files-accent-surface, var(--accent, #e8eef7))"
-                              : "transparent",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {row.expandable ? (expanded.has(row.entry.path) ? "▾ " : "▸ ") : ""}
-                        {row.entry.path.split("/").at(-1)}
-                        {row.expandable ? "/" : ""}
-                      </button>
+                      />
                     </li>
                   );
                 }),

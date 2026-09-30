@@ -30,6 +30,8 @@ import {
 } from "./contracts.js";
 import type { Extension } from "./host.js";
 import type { SurfaceRenderer } from "./react.js";
+import type { ClientUiKit } from "./ui.js";
+import { isComponentType } from "./componentType.js";
 
 export const ENVIRONMENT_PACKAGE_FORMAT = 1;
 export const ENVIRONMENT_MANIFEST_FILE = "t3-extension.json";
@@ -274,23 +276,6 @@ export interface ClientTooltip {
   readonly Tooltip: React.ComponentType<TooltipProps>;
 }
 
-const REACT_MEMO_TYPE = Symbol.for("react.memo");
-const REACT_FORWARD_REF_TYPE = Symbol.for("react.forward_ref");
-
-/**
- * Whether `value` can be rendered as a component: a function (or class), or
- * a genuine `React.memo` / `React.forwardRef` wrapper around one. Elements,
- * lazy objects and arbitrary tagged objects are not.
- */
-function isComponentType(value: unknown, depth = 0): boolean {
-  if (typeof value === "function") return true;
-  if (typeof value !== "object" || value === null || depth > 4) return false;
-  const wrapper = value as { $$typeof?: unknown; type?: unknown; render?: unknown };
-  if (wrapper.$$typeof === REACT_MEMO_TYPE) return isComponentType(wrapper.type, depth + 1);
-  if (wrapper.$$typeof === REACT_FORWARD_REF_TYPE) return typeof wrapper.render === "function";
-  return false;
-}
-
 /**
  * The host's tooltip when it offers version 1 or a compatible later (integer)
  * one with a renderable component, else null. Packs usually render the
@@ -498,6 +483,7 @@ export interface ClientHost {
    * `authoring`'s `Tooltip`, which falls back to the trigger alone.
    */
   readonly tooltip?: ClientTooltip;
+  readonly uiKit?: ClientUiKit;
   /**
    * Host floating layer for popovers. Absent on hosts without one — read it
    * through `resolveFloatingLayer` and render in place as the fallback.
