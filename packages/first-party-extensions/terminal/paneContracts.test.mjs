@@ -14,9 +14,7 @@ import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
 const packageDir = new URL("./", import.meta.url).pathname;
-const require = NodeModule.createRequire(
-  NodeURL.pathToFileURL(NodePath.join(packageDir, "../../extension-sdk/package.json")),
-);
+const require = NodeModule.createRequire(new URL("./package.json", import.meta.url));
 const { build } = require("esbuild");
 const React = require("react");
 const { create, act } = require("react-test-renderer");
