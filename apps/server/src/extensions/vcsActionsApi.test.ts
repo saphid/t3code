@@ -7,6 +7,7 @@ import {
   GitManagerError,
   ProjectId,
   ProviderInstanceId,
+  SourceControlProviderError,
   ThreadId,
   VcsUnsupportedOperationError,
   extensionWorkspaceRevision,
@@ -1126,6 +1127,33 @@ it.layer(NodeServices.layer)("t3.vcs/actions adapter", (it) => {
       });
       expect(prepared.detail).toContain("VcsUnsupportedOperationError");
     }),
+  );
+
+  it.effect.each(["local", "worktree"] as const)(
+    "returns actionable checkout detail without provider tags (%s)",
+    (mode) =>
+      Effect.gen(function* () {
+        const detail =
+          "If private, run `glab auth login --hostname gitlab.example --api-host gitlab.example:8443` and retry. Merge request !1 was not found or is inaccessible on gitlab.example.";
+        const t = makeProvider({
+          preparePullRequestThread: () =>
+            Effect.fail(
+              new SourceControlProviderError({
+                provider: "gitlab",
+                operation: "getChangeRequest",
+                cwd: ROOT,
+                detail,
+                cause: new Error("provider diagnostic retained server-side"),
+              }),
+            ),
+        });
+        const error = yield* invokeError(t.provider, "preparePullRequestThread", {
+          reference: "1",
+          mode,
+        });
+        expect(error.detail).toBe(detail);
+        expect(t.refreshes).toEqual([]);
+      }),
   );
 
   it.effect("resolves and prepares pull requests within public bounds", () =>

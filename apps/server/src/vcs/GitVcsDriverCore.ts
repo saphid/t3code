@@ -42,6 +42,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { pullRequestHeadRef } from "../git/pullRequestRefs.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -3233,16 +3234,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      const headRef = pullRequestHeadRef(input.provider, input.prNumber);
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
-        ],
+        ["fetch", "--quiet", "--no-tags", remoteName, `+${headRef}:refs/heads/${input.branch}`],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
         },

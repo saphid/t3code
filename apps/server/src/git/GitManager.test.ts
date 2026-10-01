@@ -4883,7 +4883,43 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }),
   );
 
-  it.effect("PR checkout on GitLab and Bitbucket is reported unverified and never advanced", () =>
+  it.effect.each(["local", "worktree"] as const)(
+    "verifies GitLab's published MR head and advances a clean %s checkout",
+    (mode) =>
+      Effect.gen(function* () {
+        const number = mode === "local" ? 320 : 321;
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          kind: "gitlab",
+          number,
+          headBranch: `feature/gitlab-${mode}-published-head`,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, [
+          "push",
+          "origin",
+          `${pullHead}:refs/merge-requests/${number}/head`,
+        ]);
+        const branch = `feature/gitlab-${mode}-published-head`;
+        const checkoutPath =
+          mode === "local"
+            ? repoDir
+            : NodePath.join(repoDir, "..", `gitlab-reused-${NodePath.basename(repoDir)}`);
+        if (mode === "worktree") {
+          yield* runGit(repoDir, ["worktree", "add", checkoutPath, branch]);
+        }
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: String(number),
+          mode,
+        });
+
+        expect(result).toMatchObject({ branch, isOnPullRequestHead: true });
+        expect((yield* runGit(checkoutPath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect("PR checkout without a verifiable GitLab or Bitbucket head is never advanced", () =>
     Effect.gen(function* () {
       for (const [index, kind] of (["gitlab", "bitbucket"] as const).entries()) {
         const local = yield* setUpSwitchOnlyPullRequest({
@@ -4891,6 +4927,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           number: 300 + index,
           headBranch: `feature/${kind}-local`,
           publishPullRef: true,
+          pushHeadBranch: false,
         });
         const localResult = yield* preparePullRequestThread(local.manager, {
           cwd: local.repoDir,
@@ -4907,6 +4944,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           number: 310 + index,
           headBranch: `feature/${kind}-reused`,
           publishPullRef: true,
+          pushHeadBranch: false,
         });
         const worktreePath = NodePath.join(
           reused.repoDir,
@@ -5025,6 +5063,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   // origin is a fork holding a different pull request under the same number as the upstream one
   // the provider resolved. The provider reports `upstreamUrl` (or `reportedUrl`) for it.
   const setUpCollidingPullRequestNumbers = (input: {
+    readonly kind?: "github" | "gitlab";
     readonly repository: string;
     readonly originUrl: string;
     readonly upstreamUrl: string;
@@ -5036,6 +5075,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     readonly reportedNameWithOwner?: string;
   }) =>
     Effect.gen(function* () {
+      const kind = input.kind ?? "github";
+      const pullRequestHeadRef =
+        kind === "gitlab" ? "refs/merge-requests/198/head" : "refs/pull/198/head";
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const originDir = yield* createBareRemote();
@@ -5053,13 +5095,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "push",
         "upstream",
         "HEAD:refs/heads/feature/right-pr",
-        "HEAD:refs/pull/198/head",
+        `HEAD:${pullRequestHeadRef}`,
       ]);
       yield* runGit(repoDir, ["checkout", "-b", "wrong-origin-pr"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "unrelated PR in origin\n");
       yield* runGit(repoDir, ["add", "wrong.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Different PR sharing the number"]);
-      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/198/head"]);
+      yield* runGit(repoDir, ["push", "origin", `HEAD:${pullRequestHeadRef}`]);
       yield* runGit(repoDir, ["checkout", "main"]);
       if (input.visibleRemotes) {
         yield* configureVisibleRemoteUrlWithLocalRewrite(
@@ -5084,16 +5126,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "{upstream}",
         upstreamDir,
       );
-      const pullRequestUrl = `${input.upstreamUrl.replace(/\.git$/u, "")}/pull/198`;
+      const pullRequestPath = kind === "gitlab" ? "-/merge_requests/198" : "pull/198";
+      const pullRequestUrl = `${input.upstreamUrl.replace(/\.git$/u, "")}/${pullRequestPath}`;
       const { service } = createGitHubCliWithFakeGh();
       const base = yield* GitHubSourceControlProvider.make.pipe(
         Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
       );
       const provider: SourceControlProvider["Service"] = {
         ...base,
+        kind,
         getChangeRequest: () =>
           Effect.succeed({
-            provider: "github" as const,
+            provider: kind,
             number: 198,
             title: "Wanted upstream PR",
             url: pullRequestUrl,
@@ -5187,34 +5231,41 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("local PR checkout does not trust clone URLs on another host", () =>
-    Effect.gen(function* () {
-      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
-        repository: "team/repo",
-        originUrl: "https://github.com/team/repo.git",
-        upstreamUrl: "https://forge.example/team/repo.git",
-        visibleRemotes: true,
-        reportedUrl: "https://github.com/team/repo.git",
-      });
+  for (const kind of ["github", "gitlab"] as const) {
+    it.effect(`local ${kind} PR checkout does not trust clone URLs on another host`, () =>
+      Effect.gen(function* () {
+        const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+          kind,
+          repository: "team/repo",
+          originUrl: "https://other.example/team/repo.git",
+          upstreamUrl: "https://forge.example/team/repo.git",
+          visibleRemotes: true,
+          reportedUrl: "https://other.example/team/repo.git",
+        });
 
-      expect(head).toBe(wanted);
-      expect(result.isOnPullRequestHead).toBe(false);
-    }),
-  );
+        expect(head).toBe(wanted);
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
+    );
 
-  it.effect("local PR checkout does not trust a lookup that names another repository", () =>
-    Effect.gen(function* () {
-      const { result } = yield* setUpCollidingPullRequestNumbers({
-        repository: "upstream/repo",
-        originUrl: "https://github.com/fork/repo.git",
-        upstreamUrl: "https://github.com/upstream/repo.git",
-        visibleRemotes: true,
-        reportedNameWithOwner: "fork/repo",
-      });
+    it.effect(
+      `local ${kind} PR checkout does not trust a lookup that names another repository`,
+      () =>
+        Effect.gen(function* () {
+          const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+            kind,
+            repository: "upstream/repo",
+            originUrl: "https://forge.example/fork/repo.git",
+            upstreamUrl: "https://forge.example/upstream/repo.git",
+            visibleRemotes: true,
+            reportedNameWithOwner: "fork/repo",
+          });
 
-      expect(result.isOnPullRequestHead).toBe(false);
-    }),
-  );
+          expect(head).toBe(wanted);
+          expect(result.isOnPullRequestHead).toBe(false);
+        }),
+    );
+  }
 
   it.effect("local PR checkout ignores a remote that only lists the repository second", () =>
     Effect.gen(function* () {
@@ -5712,6 +5763,82 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each(["gitlab.127.0.0.1.nip.io:18880", "gitlab.127.0.0.1.nip.io"])(
+    "checks out the real glab MR shape from GitLab's published head on %s",
+    (host) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "vc41-fork-feature"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "VC41.txt"), "fork head\n");
+        yield* runGit(repoDir, ["add", "VC41.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fork MR head"]);
+        const headCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/1/head"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        yield* runGit(repoDir, ["branch", "-D", "vc41-fork-feature"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          `http://${host}/proofowner/vc41-upstream.git`,
+          remoteDir,
+        );
+        const mrUrl = `http://${host}/proofowner/vc41-upstream/-/merge_requests/1`;
+        const calls: ReadonlyArray<string>[] = [];
+        const provider = yield* GitLabSourceControlProvider.make.pipe(
+          Effect.provide(
+            GitLabCli.layer.pipe(
+              Layer.provide(
+                Layer.mock(VcsProcess.VcsProcess)({
+                  run: (call) => {
+                    calls.push(call.args);
+                    expect(call.args).toEqual(["mr", "view", mrUrl, "--output", "json"]);
+                    return Effect.succeed(
+                      fakeGhOutput(
+                        // glab v1.80.0, captured by proof/vc41-gitlab: project IDs, no path objects.
+                        encodeCliJson({
+                          iid: 1,
+                          title: "VC41 local fork checkout",
+                          web_url: mrUrl,
+                          source_branch: "vc41-fork-feature",
+                          target_branch: "main",
+                          state: "opened",
+                          source_project_id: 2,
+                          target_project_id: 1,
+                        }),
+                      ),
+                    );
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+        const summary = yield* provider.getChangeRequest({ cwd: repoDir, reference: mrUrl });
+        expect(summary.isCrossRepository).toBe(true);
+        expect(summary.headRepositoryNameWithOwner).toBeUndefined();
+        calls.length = 0;
+        const { manager } = yield* makeManager({ sourceControlProvider: provider });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: mrUrl,
+          mode: "worktree",
+        });
+        expect(result.branch).toBe("t3code/pr-1/vc41-fork-feature");
+        expect(result.worktreePath).not.toBeNull();
+        const worktreePath = result.worktreePath ?? "";
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headCommit);
+        expect(NodeFS.readFileSync(NodePath.join(worktreePath, "VC41.txt"), "utf8")).toBe(
+          "fork head\n",
+        );
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        expect(calls).toHaveLength(1);
+      }),
+  );
+
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
   // answers each clone-URL lookup with `cloneUrl(lookup)`. GitLab lookups run the real glab
@@ -5753,7 +5880,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               Layer.mock(VcsProcess.VcsProcess)({
                 run: (call) => {
                   if (call.args[0] === "config") {
-                    expect(call.args[2]).toBe("user");
+                    expect(["user", "api_host"]).toContain(call.args[2]);
                     return Effect.succeed(fakeGhOutput(""));
                   }
                   if (input.lookupNotFound) {

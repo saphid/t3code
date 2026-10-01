@@ -1,4 +1,17 @@
 import { toastManager } from "../ui/toast";
+import { SourceControlProviderError } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+
+/** Keep provider diagnostics on the error; show its actionable sentence in either client. */
+export function pullRequestCheckoutErrorDetail(error: unknown): string | null {
+  return isSourceControlProviderError(error)
+    ? error.detail
+    : error instanceof Error
+      ? error.message
+      : null;
+}
 
 /** How a pull-request checkout handoff ended, as native's toast reports it. */
 export type PullRequestHandoffOutcome =
@@ -66,6 +79,11 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
         type: "error",
         title: "Could not prepare the pull request checkout",
         ...(outcome.detail ? { description: outcome.detail } : {}),
+        // Split Git/API login hints can outgrow the four-line error clamp. Opt in here,
+        // where both native and extension checkout failures share the same toast.
+        ...(outcome.detail && outcome.detail.length >= 180
+          ? { data: { expandableContent: outcome.detail } }
+          : {}),
       } as const;
     case "thread-move-failed":
       return {

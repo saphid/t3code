@@ -493,7 +493,7 @@ layer("GitLabCli.layer", (it) => {
           detail: "Not found on GitLab.",
         });
         expect(requests).toEqual([{ profile: host, apiHost: host }]);
-        expect(mockedRun.mock.calls).toHaveLength(2);
+        expect(mockedRun.mock.calls).toHaveLength(hostConfigured ? 2 : 3);
         expect(mockedRun.mock.calls[0]?.[0].env).toEqual({ GITLAB_HOST: host });
         expect(mockedRun.mock.calls[1]?.[0].args).toEqual([
           "config",
@@ -503,6 +503,15 @@ layer("GitLabCli.layer", (it) => {
           host,
         ]);
         expect(mockedRun.mock.calls[1]?.[0].env).toEqual({ USER: "" });
+        if (!hostConfigured) {
+          expect(mockedRun.mock.calls[2]?.[0].args).toEqual([
+            "config",
+            "get",
+            "api_host",
+            "--host",
+            host,
+          ]);
+        }
       }),
   );
 
@@ -704,7 +713,7 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.equal(error.message.includes("Merge request 4888 was not found"), true);
+      assert.equal(error.message.includes("Merge request !4888 was not found"), true);
       assert.strictEqual(error._tag, "GitLabMergeRequestNotFoundError");
       assert.strictEqual(error.command, "glab");
       assert.strictEqual(error.cwd, "/repo");

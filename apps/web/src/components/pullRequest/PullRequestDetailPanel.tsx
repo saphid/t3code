@@ -118,6 +118,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import {
   beginPullRequestCheckoutToast,
+  pullRequestCheckoutErrorDetail,
   showTaskAddedToComposerToast,
 } from "./pullRequestHandoffToast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
@@ -1174,9 +1175,10 @@ export function PullRequestDetailPanel({
     });
     if (prepared._tag === "Failure") {
       setHandoff(null);
+      const failure = squashAtomCommandFailure(prepared);
       toast.settle({
         kind: "checkout-failed",
-        detail: prepareThread.error instanceof Error ? prepareThread.error.message : null,
+        detail: pullRequestCheckoutErrorDetail(failure),
       });
       return;
     }
