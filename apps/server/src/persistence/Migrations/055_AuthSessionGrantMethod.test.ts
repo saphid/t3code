@@ -13,8 +13,8 @@ layer("055_AuthSessionGrantMethod", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 53 });
       yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* runMigrations({ toMigrationInclusive: 55 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(auth_sessions)
@@ -23,6 +23,10 @@ layer("055_AuthSessionGrantMethod", (it) => {
 
       assert.equal(grantMethod?.name, "grant_method");
       assert.equal(grantMethod?.notnull, 0);
+      const threadColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(projection_threads)
+      `;
+      assert.isTrue(threadColumns.some((column) => column.name === "auto_settle_disabled_at"));
     }),
   );
 });

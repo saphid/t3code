@@ -104,8 +104,9 @@ function TreeRow({
       aria-level={depth + 1}
       aria-selected={selected === true}
       aria-expanded={directory ? expanded === true : undefined}
-      className={`relative flex h-full w-full items-center overflow-hidden rounded-[5px] border-0 text-left text-xs text-[var(--contrast-foreground)] outline-none hover:bg-[color-mix(in_srgb,currentColor_7%,transparent)] focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring aria-selected:bg-[color-mix(in_srgb,currentColor_12%,transparent)] ${className ?? ""}`}
+      className={`relative flex h-full w-full items-center overflow-hidden border-0 text-left text-xs text-foreground outline-none [--extension-tree-hover:color-mix(in_srgb,currentColor_7%,transparent)] hover:bg-(--extension-tree-hover) focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring [--extension-tree-selected:color-mix(in_srgb,currentColor_12%,transparent)] aria-selected:bg-(--extension-tree-selected) ${className ?? ""}`}
       style={{
+        borderRadius: 5,
         padding: "0 6.4px",
         paddingLeft: 6.4 + depth * 19.2,
         gap: 4.8,

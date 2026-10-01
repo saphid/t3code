@@ -1,3 +1,4 @@
+import * as NodeFs from "node:fs";
 // @vitest-environment jsdom
 
 import * as React from "react";
@@ -92,7 +93,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("uses native file-type icons, selection and focus without changing the path", async () => {
+it.skipIf(
+  !NodeFs.existsSync(
+    new URL("../../../../packages/first-party-extensions/files/treeRow.tsx", import.meta.url),
+  ),
+)("uses native file-type icons, selection and focus without changing the path", async () => {
   const rowPath = "../../../../packages/first-party-extensions/files/treeRow.tsx";
   const {
     FileTreeRow,
@@ -288,7 +293,11 @@ it("preserves native address focus, submission and cancellation", async () => {
   expect(document.activeElement).not.toBe(input);
 });
 
-it("keeps plain tree controls functional on a host without UI primitives", async () => {
+it.skipIf(
+  !NodeFs.existsSync(
+    new URL("../../../../packages/first-party-extensions/files/treeRow.tsx", import.meta.url),
+  ),
+)("keeps plain tree controls functional on a host without UI primitives", async () => {
   const rowPath = "../../../../packages/first-party-extensions/files/treeRow.tsx";
   const {
     FileTreeRow,

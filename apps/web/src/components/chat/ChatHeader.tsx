@@ -499,7 +499,7 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen
             ? "pr-0"
             : "[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,4.25rem)+5px)] sm:[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,3.75rem)-3px)] pr-(--chat-header-actions-end)",
-          "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
+          "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
         <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
