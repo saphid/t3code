@@ -321,7 +321,7 @@ describe.each([
     "%s reports the returned GitLab login hint",
     async (mode) => {
       const message =
-        "Merge request not found or inaccessible on GitLab. If this is a private repository, run `glab auth login --hostname gitlab.example --api-host gitlab.example:8443` and retry.";
+        "If private, run `glab auth login --hostname gitlab.example --api-host gitlab.example:8443` and retry. Merge request !1 was not found or is inaccessible on gitlab.example.";
       const error = new SourceControlProviderError({
         provider: "gitlab",
         operation: "getChangeRequest",
@@ -342,7 +342,7 @@ describe.each([
         expect.objectContaining({
           type: "error",
           title: "Could not prepare the pull request checkout",
-          description: error.message,
+          description: message,
         }),
       );
       expect(prepareThread).toHaveBeenCalledOnce();

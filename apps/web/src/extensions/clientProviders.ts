@@ -80,6 +80,7 @@ import { createElement } from "react";
 import { toastManager, type ThreadToastData } from "../components/ui/toast";
 import {
   beginPullRequestCheckoutToast,
+  pullRequestCheckoutErrorDetail,
   showTaskAddedToComposerToast,
 } from "../components/pullRequest/pullRequestHandoffToast";
 import { Spinner } from "../components/ui/spinner";
@@ -2218,7 +2219,7 @@ export const nativePrHandoffPrepare: PrHandoffHost["prepare"] = async ({
   );
   if (result._tag === "Success") return { ok: true, value: result.value };
   const failure = squashAtomCommandFailure(result);
-  return { ok: false, detail: failure instanceof Error ? failure.message : null };
+  return { ok: false, detail: pullRequestCheckoutErrorDetail(failure) };
 };
 
 const PR_HANDOFF_KEYS = new Set(["target", "task", "mode", "pullRequest"]);

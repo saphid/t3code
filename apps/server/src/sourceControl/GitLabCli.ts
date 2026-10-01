@@ -81,11 +81,19 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
   {
     ...gitLabCliExecutionErrorContext,
     reference: Schema.String,
+    host: Schema.optional(Schema.String),
     loginHint: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
-    return `Merge request ${this.reference} was not found or is inaccessible on GitLab.${this.loginHint || " Check the MR number or URL and try again."}`;
+    const url = URL.canParse(this.reference) ? new URL(this.reference) : undefined;
+    const number =
+      url?.pathname.match(/\/-\/merge_requests\/(\d+)\/?$/u)?.[1] ??
+      this.reference.match(/^!?(\d+)$/u)?.[1];
+    const missing = `Merge request ${number ? `!${number}` : this.reference} was not found or is inaccessible on ${this.host ?? url?.host ?? "GitLab"}.`;
+    return this.loginHint
+      ? `${this.loginHint.trim()} ${missing}`
+      : `${missing} Check the MR number or URL and try again.`;
   }
 
   override get message(): string {
@@ -507,7 +515,7 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => host),
           )
         : requestedApiHost;
-    return ` If this is a private repository, run \`glab auth login --hostname ${host}${apiHost === host ? "" : ` --api-host ${apiHost}`}\` and retry.`;
+    return ` If private, run \`glab auth login --hostname ${host}${apiHost === host ? "" : ` --api-host ${apiHost}`}\` and retry.`;
   });
 
   return GitLabCli.of({
@@ -573,6 +581,7 @@ export const make = Effect.gen(function* () {
               command: error.command,
               cwd: error.cwd,
               reference: error.reference,
+              ...(url ? { host: url.host } : {}),
               cause: error.cause,
               loginHint,
             });

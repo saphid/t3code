@@ -22,6 +22,13 @@ const decodeCalls = Schema.decodeUnknownSync(
 );
 
 it.effect.each([
+  {
+    host: "gitlab.127.0.0.1.nip.io:18880",
+    profile: "gitlab.127.0.0.1.nip.io",
+    notFound: true,
+    storedUser: false,
+    mergeRequest: true,
+  },
   { host: "gitlab.com", profile: "gitlab.com" },
   { host: "gitlab-b.example", profile: "gitlab-b.example" },
   { host: "gitlab-b.example:443", profile: "gitlab-b.example", apiHost: "gitlab-b.example" },
@@ -216,6 +223,25 @@ if (args[0] === "config") {
 
       if (notFound) {
         const error = yield* lookup.pipe(Effect.flip);
+        if (mergeRequest) {
+          expect(error.detail).toBe(
+            storedUser
+              ? `Merge request !1 was not found or is inaccessible on ${host}. Check the MR number or URL and try again.`
+              : `If private, run \`glab auth login --hostname ${new URL(`https://${host}`).hostname}${
+                  host.includes(":") || apiHost ? ` --api-host ${apiHost ?? host}` : ""
+                }\` and retry. Merge request !1 was not found or is inaccessible on ${host}.`,
+          );
+        }
+        if (mergeRequest && host === "gitlab.127.0.0.1.nip.io:18880") {
+          // The longest local split-host case keeps the complete login action first,
+          // shortens the MR URL to !1, and does not repeat provider diagnostics.
+          expect(error.detail).toHaveLength(204);
+          expect(error.detail.split(" and retry.")[0]).toBe(
+            "If private, run `glab auth login --hostname gitlab.127.0.0.1.nip.io --api-host gitlab.127.0.0.1.nip.io:18880`",
+          );
+          expect(error.detail).not.toContain("/team/repo/-/merge_requests/");
+          expect(error.detail).not.toContain("GitLab CLI failed");
+        }
         expect(error.detail).toContain(
           mergeRequest ? "not found" : "Repository not found or inaccessible on GitLab.",
         );
