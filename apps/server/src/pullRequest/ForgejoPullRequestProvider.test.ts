@@ -178,7 +178,7 @@ describe("Forgejo reviewer candidates", () => {
     }),
   );
 
-  it.effect("keeps requested teams in listing and detail after reopening", () =>
+  it.effect("keeps requested teams in detail without treating them as requested users", () =>
     Effect.gen(function* () {
       const provider = yield* fakeApi().provider;
       expect(
@@ -188,10 +188,10 @@ describe("Forgejo reviewer candidates", () => {
         ...reference,
         state: "open",
         involvement: "all",
-        viewer: reviewer.login,
+        viewer: team.name,
         limit: 1,
       });
-      expect(list.items[0]?.reviewRequestLogins).toEqual(["reviewer", "ReviewTeam"]);
+      expect(list.items[0]?.reviewRequestLogins).toEqual(["reviewer"]);
     }),
   );
 });

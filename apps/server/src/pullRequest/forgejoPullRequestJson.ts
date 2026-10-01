@@ -153,10 +153,7 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     updatedAt: toIsoUtc(pr.updated_at),
     closedAt: pr.closed_at === null ? null : toIsoUtc(pr.closed_at),
     mergedAt: pr.merged_at === null ? null : toIsoUtc(pr.merged_at),
-    reviewRequestLogins: [
-      ...(pr.requested_reviewers ?? []).map((user) => user.login),
-      ...(pr.requested_reviewers_teams ?? []).map((team) => team.name),
-    ],
+    reviewRequestLogins: (pr.requested_reviewers ?? []).map((user) => user.login),
     labels: (pr.labels ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
   } satisfies ProviderChangeRequest;
 }
