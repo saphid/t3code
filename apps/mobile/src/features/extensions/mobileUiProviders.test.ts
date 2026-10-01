@@ -11,10 +11,14 @@ import {
   type MobileUiProviderCall,
   type MobileUiAppearanceSnapshot,
 } from "./mobileUiProviders";
-import { createMobileExtensionThemeOverlayStore } from "./mobileExtensionThemeOverlay";
+import {
+  createMobileExtensionThemeOverlayStore,
+  type MobileThemePreferencePatch,
+} from "./mobileExtensionThemeOverlay";
 import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemeColors,
+  resolveMobileThemeIds,
   type MobileThemeId,
   type MobileThemeMode,
 } from "../../lib/mobileTheme";
@@ -61,25 +65,29 @@ function fixture(environmentId = ENV, overlay = createMobileExtensionThemeOverla
     },
   ];
   let generation = 1;
-  let theme: MobileThemeId = DEFAULT_MOBILE_THEME_ID;
+  let preferences: MobileThemePreferencePatch = {};
   let mode: MobileThemeMode = "system";
   let dark = false;
   let ready = true;
   const navigateThread = vi.fn();
   const openSession = vi.fn(async () => true);
-  const save = vi.fn(async (patch: { themeId?: MobileThemeId; themeMode?: MobileThemeMode }) => {
-    theme = patch.themeId ?? theme;
+  const save = vi.fn(async (patch: MobileThemePreferencePatch) => {
+    preferences = { ...preferences, ...patch };
     mode = patch.themeMode ?? mode;
   });
   const readAppearance = (): MobileUiAppearanceSnapshot => {
     const session = overlay.getSnapshot();
     const effectiveMode = session?.patch.themeMode ?? mode;
     const appearance = effectiveMode === "system" ? (dark ? "dark" : "light") : effectiveMode;
-    const effectiveTheme = session?.patch.themeId ?? theme;
+    const themeIds = resolveMobileThemeIds(preferences);
+    const storedAppearance = mode === "system" ? (dark ? "dark" : "light") : mode;
+    const theme = themeIds[storedAppearance];
+    const effectiveThemeIds = resolveMobileThemeIds({ ...preferences, ...session?.patch });
+    const effectiveTheme = effectiveThemeIds[appearance];
     return {
       isReady: ready,
       theme,
-      themeIds: { light: theme, dark: theme },
+      themeIds,
       themeMode: mode,
       systemDark: dark,
       effectiveTheme,
@@ -87,11 +95,15 @@ function fixture(environmentId = ENV, overlay = createMobileExtensionThemeOverla
       effectiveMode,
       tokensByAppearance: {
         light: getMobileThemeColors(
-          effectiveTheme === "material-you" ? DEFAULT_MOBILE_THEME_ID : effectiveTheme,
+          effectiveThemeIds.light === "material-you"
+            ? DEFAULT_MOBILE_THEME_ID
+            : effectiveThemeIds.light,
           "light",
         ),
         dark: getMobileThemeColors(
-          effectiveTheme === "material-you" ? DEFAULT_MOBILE_THEME_ID : effectiveTheme,
+          effectiveThemeIds.dark === "material-you"
+            ? DEFAULT_MOBILE_THEME_ID
+            : effectiveThemeIds.dark,
           "dark",
         ),
       },
@@ -129,10 +141,13 @@ function fixture(environmentId = ENV, overlay = createMobileExtensionThemeOverla
       providers.notifyInstallationsChanged();
     },
     setAppearance: (nextTheme: MobileThemeId, nextMode: MobileThemeMode, systemDark: boolean) => {
-      theme = nextTheme;
+      preferences = { themeId: nextTheme };
       mode = nextMode;
       dark = systemDark;
       providers.notifyAppearanceChanged();
+    },
+    setStoredPreferences: (value: MobileThemePreferencePatch) => {
+      preferences = value;
     },
     setReady: (value: boolean) => {
       ready = value;
@@ -274,12 +289,85 @@ describe("mobile UI providers", () => {
           },
         }),
       ),
-    ).toEqual({ applied: true, propagatedTo: "connection" });
+    ).toEqual({ applied: true, propagatedTo: "storage-origin" });
     expect(f.save).toHaveBeenCalledWith(
       { themeId: "ocean", lightThemeId: "ocean", darkThemeId: "grove", themeMode: "light" },
       expect.any(AbortSignal),
     );
     expect(f.overlay.getSnapshot()).toBeNull();
+  });
+
+  for (const [name, preferences] of [
+    ["default", {}],
+    ["legacy", { themeId: "ocean" }],
+    ["explicit", { themeId: "ocean", lightThemeId: "ocean", darkThemeId: "iris" }],
+  ] as const) {
+    it.each(["light", "dark"] as const)(
+      `preserves the untouched half when persisting only %s from ${name} preferences`,
+      async (selectedAppearance) => {
+        for (const activeAppearance of ["light", "dark"] as const) {
+          const f = fixture();
+          f.setAppearance(DEFAULT_MOBILE_THEME_ID, activeAppearance, activeAppearance === "dark");
+          f.setStoredPreferences(preferences);
+          const before = resolveMobileThemeIds(preferences);
+          const expected = { ...before, [selectedAppearance]: "grove" };
+          await f.themeProvider.invoke(
+            call("applyPreference", {
+              writer: "agents",
+              preference: { mode: "persist", themeHalves: { [selectedAppearance]: "grove" } },
+            }),
+          );
+          expect(await f.themeProvider.invoke(call("getState"))).toMatchObject({
+            themeHalves: expected,
+            effectiveTheme: { kind: "stored", theme: expected[activeAppearance] },
+          });
+          f.providers.dispose();
+        }
+      },
+    );
+  }
+
+  it("keeps both stored halves and the active legacy theme when switching back to system appearance", async () => {
+    const f = fixture();
+    f.setAppearance("ocean", "light", true);
+    f.setStoredPreferences({ themeId: "ocean", lightThemeId: "ocean", darkThemeId: "iris" });
+    await f.themeProvider.invoke(
+      call("applyPreference", {
+        writer: "agents",
+        preference: { mode: "persist", appearanceMode: "system" },
+      }),
+    );
+    expect(f.save).toHaveBeenCalledWith(
+      { themeId: "iris", lightThemeId: "ocean", darkThemeId: "iris", themeMode: "system" },
+      expect.any(AbortSignal),
+    );
+    expect(await f.themeProvider.invoke(call("getState"))).toMatchObject({
+      themeHalves: { light: "ocean", dark: "iris" },
+      resolvedTheme: "dark",
+      effectiveTheme: { kind: "stored", theme: "iris" },
+    });
+  });
+
+  it("delivers the session overlay frame after native appearance updates", async () => {
+    const f = fixture();
+    const emit = vi.fn();
+    f.themeProvider.openStream!({ name: "watchState", input: {}, context, caller, emit });
+    await f.themeProvider.invoke(
+      call("applyPreference", {
+        writer: "agents",
+        preference: { mode: "session", theme: "grove" },
+      }),
+    );
+    expect(emit).toHaveBeenCalledTimes(1);
+    f.providers.notifyAppearanceChanged();
+    expect(emit).toHaveBeenCalledTimes(2);
+    expect(emit).toHaveBeenLastCalledWith({
+      type: "data",
+      value: expect.objectContaining({
+        effectiveTheme: { kind: "session-overlay", theme: "grove", writer: "agents" },
+      }),
+    });
+    f.providers.dispose();
   });
 
   it("refuses unknown themes and forged writers without partially saving settings", async () => {
@@ -525,7 +613,7 @@ describe("mobile UI providers", () => {
           }),
           signal,
         }),
-      ).toEqual({ applied: true, propagatedTo: "connection" });
+      ).toEqual({ applied: true, propagatedTo: "storage-origin" });
     } finally {
       any.mockRestore();
     }

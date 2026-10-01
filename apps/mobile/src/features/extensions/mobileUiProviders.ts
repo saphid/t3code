@@ -163,7 +163,7 @@ const cssVars = Object.fromEntries(
 
 function preferencePatch(
   input: Record<string, Json>,
-  appearance: "light" | "dark",
+  current: MobileUiAppearanceSnapshot,
 ): MobileThemePreferencePatch | null {
   const theme = input.theme;
   const halves = input.themeHalves === undefined ? {} : object(input.themeHalves);
@@ -179,15 +179,20 @@ function preferencePatch(
   const mode = input.appearanceMode;
   if (mode !== undefined && mode !== "system" && mode !== "light" && mode !== "dark")
     throw new MobileUiProviderError("provider-rejected", "Invalid appearanceMode");
-  const light = halves.light ?? theme;
-  const dark = halves.dark ?? theme;
-  const nextAppearance = mode === "light" || mode === "dark" ? mode : appearance;
+  const light = (halves.light ?? theme ?? current.themeIds.light) as MobileThemeId;
+  const dark = (halves.dark ?? theme ?? current.themeIds.dark) as MobileThemeId;
+  const nextAppearance =
+    mode === "system"
+      ? current.systemDark
+        ? "dark"
+        : "light"
+      : mode === "light" || mode === "dark"
+        ? mode
+        : current.appearance;
   return {
-    ...(theme === undefined && halves[nextAppearance] === undefined
-      ? {}
-      : { themeId: (halves[nextAppearance] ?? theme) as MobileThemeId }),
-    ...(light === undefined ? {} : { lightThemeId: light as MobileThemeId }),
-    ...(dark === undefined ? {} : { darkThemeId: dark as MobileThemeId }),
+    themeId: nextAppearance === "light" ? light : dark,
+    lightThemeId: light,
+    darkThemeId: dark,
     ...(mode === undefined ? {} : { themeMode: mode }),
   };
 }
@@ -333,7 +338,7 @@ export function createMobileUiProviders(deps: MobileUiProviderDeps) {
         notifyAppearanceChanged();
         return { applied: true, propagatedTo: "connection" };
       }
-      const patch = preferencePatch(preference, appearance().appearance);
+      const patch = preferencePatch(preference, appearance());
       if (!patch) return { applied: false, reason: "unknown-theme" };
       if (preference.mode === "session") {
         if (typeof preference.theme !== "string")
@@ -354,11 +359,11 @@ export function createMobileUiProviders(deps: MobileUiProviderDeps) {
             authorize(call, ["t3.ui/theme.write"]);
             deps.overlay.clear(owner);
             notifyAppearanceChanged();
-            return { applied: true, propagatedTo: "connection" };
+            return { applied: true, propagatedTo: "storage-origin" };
           },
         );
       }
-      notifyAppearanceChanged();
+      // The native appearance layout effect publishes after the overlay has painted.
       return { applied: true, propagatedTo: "connection" };
     },
     openStream(call) {

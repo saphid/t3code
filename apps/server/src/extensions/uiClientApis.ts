@@ -251,6 +251,7 @@ const capabilities = (
         Effect.catch(() => Effect.succeed(undefined)),
       );
       const targets = yield* deps.clientApiProviders.listTargets(deps.environmentId);
+      // Host callers without an explicit connection see the directory, but no available operations.
       const selected =
         metadata.principal?.kind === "provider-session"
           ? undefined
