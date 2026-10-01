@@ -34,8 +34,8 @@ vi.mock("@pierre/diffs/react", async (importOriginal) => ({
     );
     return props.items?.map((item) => (
       <header key={item.id} data-item={item.id}>
-        {props.renderHeaderPrefix?.(item as CodeViewItem<undefined>)}
         {props.renderHeaderFilenameSuffix?.(item as CodeViewItem<undefined>)}
+        {props.renderHeaderPrefix?.(item as CodeViewItem<undefined>)}
       </header>
     ));
   },
@@ -237,22 +237,29 @@ describe("Default Diff pack through the host renderer", () => {
   it.each(cases)("collapses and expands only $path", async ({ path, index }) => {
     await mountPack();
     expect(new Set(items().map((item) => item.id)).size).toBe(PATHS.length);
-    await click(header(index).findAllByType("button")[0]!);
+    await click(header(index).findByProps({ "aria-label": `Collapse ${path}` }));
     expect(items().map((item) => item.collapsed)).toEqual(PATHS.map((_, i) => i === index));
-    expect(header(index).findAllByType("button")[0]!.props["aria-label"]).toBe(`Expand ${path}`);
-    await click(header(index).findAllByType("button")[0]!);
+    await click(header(index).findByProps({ "aria-label": `Expand ${path}` }));
     expect(items().every((item) => !item.collapsed)).toBe(true);
   });
 
   it.each(cases)("copies the exact path $path", async ({ path, index }) => {
     const { clipboard } = await mountPack();
-    await click(header(index).findAllByType("button")[2]!);
+    await click(
+      header(index)
+        .findAllByType("button")
+        .find((button) => button.props.children === "Copy path")!,
+    );
     expect(clipboard).toHaveBeenCalledExactlyOnceWith(path);
   });
 
   it.each(cases)("opens the exact file $path", async ({ path, index }) => {
     const { opens } = await mountPack();
-    await click(header(index).findAllByType("button")[1]!);
+    await click(
+      header(index)
+        .findAllByType("button")
+        .find((button) => button.props.children === "Open")!,
+    );
     expect(opens).toEqual([path]);
   });
 
