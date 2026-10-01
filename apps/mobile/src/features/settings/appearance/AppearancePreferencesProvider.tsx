@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { AppState, Appearance, Platform, useColorScheme } from "react-native";
@@ -43,8 +44,13 @@ import {
   getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
 } from "../../../lib/mobileThemeRuntime";
+import { mobileExtensionThemeOverlayStore } from "../../extensions/mobileExtensionThemeOverlay";
 
 interface AppearancePreferencesContextValue {
+  readonly storedThemeId: MobileThemeId;
+  readonly storedThemeIds: MobileThemeIds;
+  readonly storedThemeMode: MobileThemeMode;
+  readonly systemDark: boolean;
   /** Effective values with base-size derivation applied. Use this for rendering. */
   readonly appearance: ResolvedAppearance;
   readonly themeId: MobileThemeId;
@@ -82,16 +88,29 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : null;
+  const extensionOverlay = useSyncExternalStore(
+    mobileExtensionThemeOverlayStore.subscribe,
+    mobileExtensionThemeOverlayStore.getSnapshot,
+  );
+  const themePreferences = { ...storedPreferences, ...extensionOverlay?.patch };
+  const { light: storedLightThemeId, dark: storedDarkThemeId } = resolveMobileThemeIds(
+    storedPreferences ?? {},
+  );
+  const storedThemeIds = useMemo<MobileThemeIds>(
+    () => ({ light: storedLightThemeId, dark: storedDarkThemeId }),
+    [storedLightThemeId, storedDarkThemeId],
+  );
+  const storedThemeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const preferences = useMemo(
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
   );
-  const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
+  const themeMode = normalizeMobileThemeMode(themePreferences.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
-  const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
+  const { light: lightThemeId, dark: darkThemeId } = resolveMobileThemeIds(themePreferences);
   const themeIds = useMemo<MobileThemeIds>(
-    () => ({ light: resolvedThemeIds.light, dark: resolvedThemeIds.dark }),
-    [resolvedThemeIds.dark, resolvedThemeIds.light],
+    () => ({ light: lightThemeId, dark: darkThemeId }),
+    [lightThemeId, darkThemeId],
   );
   const themeId = themeIds[themeAppearance];
   const systemColorsActive = themeId === "material-you" && isSystemColorsAvailable;
@@ -192,6 +211,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const setThemeIdForAppearance = useCallback(
     (appearance: MobileThemeAppearance, value: MobileThemeId) => {
+      if (mobileExtensionThemeOverlayStore.getSnapshot())
+        selectedThemeIdsRef.current = storedThemeIds;
+      mobileExtensionThemeOverlayStore.clear();
       const patch = createMobileThemeSelectionPatch(
         selectedThemeIdsRef.current,
         themeAppearance,
@@ -201,11 +223,12 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
       updateThemePreferences(patch);
     },
-    [themeAppearance, updateThemePreferences],
+    [storedThemeIds, themeAppearance, updateThemePreferences],
   );
 
   const setThemeIdForBothAppearances = useCallback(
     (value: MobileThemeId) => {
+      mobileExtensionThemeOverlayStore.clear();
       const patch = createMobileThemePairPatch(value);
       selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
       updateThemePreferences(patch);
@@ -215,6 +238,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const setThemeMode = useCallback(
     (value: MobileThemeMode) => {
+      mobileExtensionThemeOverlayStore.clear();
       const current = appliedRuntimeStateRef.current ?? runtimeState;
 
       // Clear a forced native appearance before publishing System. The
@@ -274,6 +298,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
+      storedThemeId:
+        storedThemeIds[storedThemeMode === "system" ? systemColorScheme : storedThemeMode],
+      storedThemeIds,
+      storedThemeMode,
+      systemDark: systemColorScheme === "dark",
       appearance,
       themeId,
       themeIds,
@@ -294,6 +323,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeWordBreak,
     }),
     [
+      storedThemeIds,
+      storedThemeMode,
+      systemColorScheme,
       appearance,
       themeId,
       themeIds,

@@ -640,6 +640,50 @@ describe("browser history adapter", () => {
 });
 
 describe("navigation adapter", () => {
+  it("reports only the selected mobile connection's providers and navigation version", async () => {
+    const bridge = fakeBridge({
+      targets: [
+        {
+          connectionId: "conn-mobile",
+          providers: [
+            { id: "t3.client/theme", version: "1.0.0" },
+            { id: "t3.client/navigation", version: "1.0.0" },
+          ],
+        },
+        {
+          connectionId: "conn-web",
+          providers: [...CLIENT_PROVIDER_APIS.values()].map(({ id, version }) => ({ id, version })),
+        },
+      ],
+    });
+    const providers = makeProviders(bridge);
+    const meta = { ...metadata(), clientConnectionId: "conn-mobile" };
+    expect(
+      await providers.navigation.invoke("getCapabilities", {}, context, signal, meta),
+    ).toMatchObject({
+      operations: {
+        openThread: true,
+        openAgentSession: true,
+        openFile: false,
+        openFileInBrowser: false,
+      },
+    });
+    expect(
+      await providers.theme.invoke("getCapabilities", {}, context, signal, meta),
+    ).toMatchObject({
+      operations: {
+        getState: true,
+        getTerminalAppearance: false,
+        subscribeTerminalAppearance: false,
+      },
+    });
+    expect(
+      await providers.preferences.invoke("getCapabilities", {}, context, signal, meta),
+    ).toMatchObject({
+      operations: { getPreferences: false, setPreferences: false, subscribePreferences: false },
+    });
+  });
+
   it("refuses unknown and cross-project threads without reaching a client", async () => {
     const bridge = fakeBridge();
     const { navigation } = makeProviders(bridge);
