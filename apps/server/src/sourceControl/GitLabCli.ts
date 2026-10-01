@@ -9,6 +9,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -208,6 +210,19 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   }
 }
 
+export class GitLabRepositoryLookupError extends Schema.TaggedError<GitLabRepositoryLookupError>()(
+  "GitLabRepositoryLookupError",
+  {
+    ...gitLabCliDecodeErrorContext,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespaceDecodeError>()(
   "GitLabNamespaceDecodeError",
   {
@@ -234,6 +249,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestListDecodeError,
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
+  GitLabRepositoryLookupError,
   GitLabNamespaceDecodeError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
@@ -531,12 +547,14 @@ export const make = Effect.gen(function* () {
       ),
     getRepositoryCloneUrls: (input) =>
       Effect.gen(function* () {
-        let host = input.host?.trim().toLowerCase() ?? "";
-        const qualifyHost = host.length > 0 && !/:\d+$/u.test(host);
-        // glab keys profiles by hostname, including split SSH/API hosts.
-        // --hostname replaces the Git profile; GITLAB_API_HOST only redirects its API.
-        // Probe api_host before selecting GITLAB_HOST; ported targets keep glab's path.
-        if (qualifyHost) {
+        const requestedHost = input.host?.trim().toLowerCase() ?? "";
+        const targetUrl = URL.canParse(`https://${requestedHost}`)
+          ? new URL(`https://${requestedHost}`)
+          : undefined;
+        let host = targetUrl?.hostname ?? requestedHost;
+        // glab keys remote/login profiles by hostname; API ports belong in api_host.
+        // Preserve a split SSH/API profile only when its endpoint matches the target.
+        if (host.length > 0) {
           const baseUrl = input.context?.provider.baseUrl;
           const profile = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).hostname : undefined;
           if (profile && profile !== host) {
@@ -545,18 +563,57 @@ export const make = Effect.gen(function* () {
               args: ["config", "get", "api_host", "--host", profile],
               maxOutputBytes: 8_000,
             });
-            if (apiHost.stdout.trim().toLowerCase() === host) {
+            if (apiHost.stdout.trim().toLowerCase() === requestedHost) {
               host = profile;
             }
           }
         }
-        return yield* execute(
+        const result = yield* execute(
           {
             cwd: input.cwd,
-            args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+            // glab ignores GITLAB_HOST=gitlab.com when filtering known remotes.
+            args: [
+              "api",
+              `projects/${encodeURIComponent(input.repository)}`,
+              ...(host === "gitlab.com" ? ["--hostname", host] : []),
+            ],
           },
-          qualifyHost ? { GITLAB_HOST: host } : undefined,
+          host.length > 0 ? { GITLAB_HOST: host } : undefined,
         ).pipe(
+          Effect.catchTag("GitLabCliCommandError", (error) =>
+            Effect.gen(function* () {
+              const cause = error.cause;
+              if (!isVcsProcessExitError(cause) || cause.failureKind !== "not-found") {
+                return yield* error;
+              }
+              // glab consults USER before stored login metadata; suppress that OS-user override.
+              const user =
+                host.length > 0
+                  ? yield* execute(
+                      {
+                        cwd: input.cwd,
+                        args: ["config", "get", "user", "--host", host],
+                        maxOutputBytes: 8_000,
+                      },
+                      { USER: "" },
+                    ).pipe(
+                      Effect.map((output) => output.stdout.trim()),
+                      Effect.orElseSucceed(() => ""),
+                    )
+                  : "";
+              return yield* new GitLabRepositoryLookupError({
+                operation: "getRepositoryCloneUrls",
+                command: "glab",
+                cwd: input.cwd,
+                detail:
+                  "Repository not found or inaccessible on GitLab." +
+                  (host.length > 0 && user.length === 0
+                    ? ` If this is a private repository, run \`glab auth login --hostname ${host}${requestedHost === host ? "" : ` --api-host ${requestedHost}`}\` and retry.`
+                    : ""),
+                cause,
+              });
+            }),
+          ),
           Effect.map((result) => result.stdout.trim()),
           Effect.flatMap((raw) =>
             decodeGitLabRepositoryCloneUrls(raw).pipe(
@@ -574,6 +631,22 @@ export const make = Effect.gen(function* () {
           ),
           Effect.map(normalizeRepositoryCloneUrls),
         );
+        if (
+          requestedHost.length > 0 &&
+          (!URL.canParse(result.url) ||
+            new URL(result.url)[targetUrl?.port ? "host" : "hostname"].toLowerCase() !==
+              requestedHost)
+        ) {
+          return yield* new GitLabRepositoryLookupError({
+            operation: "getRepositoryCloneUrls",
+            command: "glab",
+            cwd: input.cwd,
+            detail:
+              "GitLab returned a repository on a different host. Check the glab host profile and retry.",
+            cause: undefined,
+          });
+        }
+        return result;
       }),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);

@@ -1061,29 +1061,39 @@ export const make = Effect.gen(function* () {
   ) =>
     materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
       Effect.catch((primaryCause) =>
-        gitCore
-          .fetchPullRequestBranch({
-            cwd,
-            prNumber: pullRequest.number,
-            branch: localBranch,
-          })
-          .pipe(
-            Effect.mapError(
-              (fallbackCause) =>
-                new GitPullRequestMaterializationError({
-                  cwd,
-                  pullRequestNumber: pullRequest.number,
-                  headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
-                  headBranch: pullRequest.headBranch,
-                  localBranch,
-                  cause: new AggregateError(
-                    [primaryCause, fallbackCause],
-                    `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
-                    { cause: primaryCause },
-                  ),
-                }),
-            ),
-          ),
+        Effect.gen(function* () {
+          // A GitLab lookup refusal must reach the caller, not retry against origin's host.
+          if (
+            primaryCause._tag === "SourceControlProviderError" &&
+            primaryCause.provider === "gitlab" &&
+            primaryCause.operation === "getRepositoryCloneUrls"
+          ) {
+            return yield* primaryCause;
+          }
+          return yield* gitCore
+            .fetchPullRequestBranch({
+              cwd,
+              prNumber: pullRequest.number,
+              branch: localBranch,
+            })
+            .pipe(
+              Effect.mapError(
+                (fallbackCause) =>
+                  new GitPullRequestMaterializationError({
+                    cwd,
+                    pullRequestNumber: pullRequest.number,
+                    headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
+                    headBranch: pullRequest.headBranch,
+                    localBranch,
+                    cause: new AggregateError(
+                      [primaryCause, fallbackCause],
+                      `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
+                      { cause: primaryCause },
+                    ),
+                  }),
+              ),
+            );
+        }),
       ),
     );
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";

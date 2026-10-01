@@ -5715,8 +5715,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
   // answers each clone-URL lookup with `cloneUrl(lookup)`. GitLab lookups run the real glab
-  // adapter against a glab whose `--hostname` rejects any ':', as the real one does. A lookup
-  // without `--hostname` reaches glab's default host, reported to `cloneUrl` as no host.
+  // adapter against a glab whose `--hostname` rejects any ':', as the real one does.
+  // glab selects hostname profiles, with API ports supplied by their configuration.
   const setUpForkPullRequest = (input: {
     readonly kind: "github" | "gitlab";
     readonly number: number;
@@ -5725,6 +5725,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     readonly headBranch: string;
     readonly headRepository: string;
     readonly forkUrl: string;
+    readonly lookupNotFound?: boolean;
     readonly cloneUrl: (lookup: { readonly host?: string; readonly repository: string }) => string;
   }) =>
     Effect.gen(function* () {
@@ -5751,6 +5752,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             Layer.provide(
               Layer.mock(VcsProcess.VcsProcess)({
                 run: (call) => {
+                  if (call.args[0] === "config") {
+                    expect(call.args[2]).toBe("user");
+                    return Effect.succeed(fakeGhOutput(""));
+                  }
+                  if (input.lookupNotFound) {
+                    return Effect.fail(
+                      new VcsProcessExitError({
+                        operation: call.operation,
+                        command: call.command,
+                        cwd: call.cwd,
+                        exitCode: 1,
+                        detail: "Not found on GitLab.",
+                        failureKind: "not-found",
+                      }),
+                    );
+                  }
                   const flag = call.args.indexOf("--hostname");
                   const flagHostname = flag === -1 ? undefined : (call.args[flag + 1] ?? "");
                   const hostname = call.env?.GITLAB_HOST ?? flagHostname;
@@ -5896,8 +5913,70 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
       expect(result.isTrackingPullRequestHead).toBe(true);
       expect(lookups.length).toBeGreaterThan(0);
-      // Fork lookups stay unqualified: glab's own host answers, as before this lane.
-      expect(lookups.every((host) => host === undefined)).toBe(true);
+      expect(lookups.every((host) => host === "forge.example")).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    { host: "gitlab.com", returned: "gitlab.corp.example" },
+    { host: "forge.example:8443", returned: "forge.example:9443" },
+  ])("refuses a GitLab fork on $returned when the MR belongs to $host", ({ host, returned }) =>
+    Effect.gen(function* () {
+      const forkUrl = `https://${returned}/alex/repo.git`;
+      const { repoDir, manager } = yield* setUpForkPullRequest({
+        kind: "gitlab",
+        number: 18,
+        pullRequestUrl: `https://${host}/team/repo/-/merge_requests/18`,
+        originUrl: "https://gitlab.corp.example/team/repo.git",
+        headBranch: "feature/wrong-host-fork",
+        headRepository: "alex/repo",
+        forkUrl,
+        cloneUrl: () => forkUrl,
+      });
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "18",
+        mode: "worktree",
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "SourceControlProviderError",
+        provider: "gitlab",
+        operation: "getRepositoryCloneUrls",
+        detail:
+          "GitLab returned a repository on a different host. Check the glab host profile and retry.",
+      });
+      expect((yield* runGit(repoDir, ["remote"])).stdout.trim()).toBe("origin");
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      expect((yield* runGit(repoDir, ["for-each-ref", "refs/remotes/alex"])).stdout.trim()).toBe(
+        "",
+      );
+    }),
+  );
+
+  it.effect("surfaces a GitLab private-fork login hint without falling back to origin", () =>
+    Effect.gen(function* () {
+      const host = "gitlab-missing.example";
+      const { repoDir, manager } = yield* setUpForkPullRequest({
+        kind: "gitlab",
+        number: 19,
+        pullRequestUrl: `https://${host}/team/repo/-/merge_requests/19`,
+        originUrl: `https://${host}/team/repo.git`,
+        headBranch: "feature/private-fork",
+        headRepository: "alex/repo",
+        forkUrl: `https://${host}/alex/repo.git`,
+        cloneUrl: () => `https://${host}/alex/repo.git`,
+        lookupNotFound: true,
+      });
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "19",
+        mode: "worktree",
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("SourceControlProviderError");
+      expect(error.message).toContain("Repository not found or inaccessible on GitLab.");
+      expect(error.message).toContain(`glab auth login --hostname ${host}`);
+      expect((yield* runGit(repoDir, ["remote"])).stdout.trim()).toBe("origin");
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
     }),
   );
 
