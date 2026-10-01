@@ -79,6 +79,11 @@ function pullRequestHandoffToast(outcome: PullRequestHandoffOutcome) {
         type: "error",
         title: "Could not prepare the pull request checkout",
         ...(outcome.detail ? { description: outcome.detail } : {}),
+        // Split Git/API login hints can outgrow the four-line error clamp. Opt in here,
+        // where both native and extension checkout failures share the same toast.
+        ...(outcome.detail && outcome.detail.length >= 180
+          ? { data: { expandableContent: outcome.detail } }
+          : {}),
       } as const;
     case "thread-move-failed":
       return {

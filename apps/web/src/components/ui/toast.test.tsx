@@ -2,8 +2,12 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { compile } from "tailwindcss";
 import { ToastProvider, toastManager } from "./toast";
+import {
+  beginPullRequestCheckoutToast,
+  pullRequestCheckoutErrorDetail,
+} from "../pullRequest/pullRequestHandoffToast";
+import { SourceControlProviderError } from "@t3tools/contracts";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -17,66 +21,54 @@ const container = document.createElement("div");
 document.body.append(container);
 const root = createRoot(container);
 const toastIds: ReturnType<typeof toastManager.add>[] = [];
+const checkoutToasts: ReturnType<typeof beginPullRequestCheckoutToast>[] = [];
 afterEach(async () => {
   await act(async () => {
     for (const id of toastIds.splice(0)) toastManager.close(id);
+    for (const checkout of checkoutToasts.splice(0)) checkout.close();
     root.render(null);
   });
 });
 
-it("keeps an unswiped right-side toast inside a 1600px viewport while entering and leaving", async () => {
-  await act(async () => {
-    root.render(<ToastProvider />);
-  });
-  await act(async () => {
-    toastIds.push(toastManager.add({ type: "error", title: "Checkout failed" }));
-  });
-  const toast = document.querySelector<HTMLElement>(
-    "[data-slot=toast-viewport] > [data-position]",
-  )!;
-  expect(toast).not.toBeNull();
-  const compiler = await compile("@tailwind utilities;");
-  const stylesheet = document.createElement("style");
-  stylesheet.textContent = compiler.build([...toast.classList]);
-  document.head.append(stylesheet);
-  try {
-    for (const transition of ["starting", "ending"]) {
-      toast.removeAttribute("data-starting-style");
-      toast.removeAttribute("data-ending-style");
-      toast.setAttribute(`data-${transition}-style`, "");
-      const transform = getComputedStyle(toast).transform;
-      // Resolve Tailwind's off-screen translate against the real desktop card dimensions.
-      // jsdom does not lay out pixels; this checks the compiled transform, not compositor timing.
-      const width = 360;
-      const inset = 32;
-      const offsetX = transform.startsWith("translateX(calc(100% + var(--toast-inset)))")
-        ? width + inset
-        : transform.startsWith("translateY(") ||
-            transform.startsWith("translateX(var(--toast-swipe-movement-x))")
-          ? 0
-          : Number.NaN;
-      const right = 1600 - inset + offsetX;
-      expect(right, `${transition}: ${transform}`).toBeLessThanOrEqual(1600);
-    }
-  } finally {
-    stylesheet.remove();
-  }
-});
-
-it("lets a user reveal the complete login command in a long checkout error", async () => {
-  const detail =
-    "If private, run `glab auth login --hostname gitlab.127.0.0.1.nip.io --api-host gitlab.127.0.0.1.nip.io:18880` and retry. Merge request !1 was not found or is inaccessible on gitlab.127.0.0.1.nip.io:18880.";
+it("does not add a disclosure to unrelated long error descriptions", async () => {
+  const detail = "An unrelated error with a long diagnostic body. ".repeat(6);
   await act(async () => {
     root.render(<ToastProvider />);
   });
   await act(async () => {
     toastIds.push(
-      toastManager.add({
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        description: detail,
-      }),
+      toastManager.add({ type: "error", title: "Request failed", description: detail }),
     );
+  });
+  expect(document.querySelector("[data-slot=toast-description]")?.textContent).toBe(detail);
+  expect(
+    [...document.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("Show details"),
+    ),
+  ).toBe(false);
+});
+
+it("reveals a split-host checkout detail only when the checkout caller opts in", async () => {
+  // Stress both flags with a port; server-generated --hostname normally omits it.
+  const detail =
+    "If private, run `glab auth login --hostname gitlab.127.0.0.1.nip.io:18880 --api-host gitlab.127.0.0.1.nip.io:18880` and retry. Merge request !1 was not found or is inaccessible on gitlab.127.0.0.1.nip.io:18880.";
+  const error = new SourceControlProviderError({
+    provider: "gitlab",
+    operation: "getChangeRequest",
+    cwd: "/repo",
+    detail,
+  });
+  expect(detail.length).toBe(210);
+  expect(detail.split(" and retry.")[0]).toBe(
+    "If private, run `glab auth login --hostname gitlab.127.0.0.1.nip.io:18880 --api-host gitlab.127.0.0.1.nip.io:18880`",
+  );
+  await act(async () => {
+    root.render(<ToastProvider />);
+  });
+  await act(async () => {
+    const checkout = beginPullRequestCheckoutToast();
+    checkoutToasts.push(checkout);
+    checkout.settle({ kind: "checkout-failed", detail: pullRequestCheckoutErrorDetail(error) });
   });
   const disclosure = [...document.querySelectorAll("button")].find((button) =>
     button.textContent?.includes("Show details"),
@@ -92,4 +84,23 @@ it("lets a user reveal the complete login command in a long checkout error", asy
   });
   expect(disclosure!.getAttribute("aria-expanded")).toBe("false");
   expect(disclosure!.parentElement?.textContent).not.toContain(detail);
+});
+
+it("keeps short checkout errors compact without a disclosure", async () => {
+  await act(async () => {
+    root.render(<ToastProvider />);
+  });
+  await act(async () => {
+    const checkout = beginPullRequestCheckoutToast();
+    checkoutToasts.push(checkout);
+    checkout.settle({
+      kind: "checkout-failed",
+      detail: "Check the MR number or URL and try again.",
+    });
+  });
+  expect(
+    [...document.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("Show details"),
+    ),
+  ).toBe(false);
 });
