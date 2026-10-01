@@ -713,7 +713,7 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.equal(error.message.includes("Merge request 4888 was not found"), true);
+      assert.equal(error.message.includes("Merge request !4888 was not found"), true);
       assert.strictEqual(error._tag, "GitLabMergeRequestNotFoundError");
       assert.strictEqual(error.command, "glab");
       assert.strictEqual(error.cwd, "/repo");

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the action registry is a plain Map outside a service context.
 import {
+  SourceControlProviderError,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   type ClientProvidersError,
@@ -157,6 +158,7 @@ const progressInput = decode(
 const failure = (operation: string, detail: string) =>
   new ExtensionOperationError({ operation, detail });
 const isOperationError = Schema.is(ExtensionOperationError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
  * Tag-preserving error mapping — `VcsUnsupportedOperationError` and the
@@ -166,6 +168,7 @@ const isOperationError = Schema.is(ExtensionOperationError);
  */
 const operationError = (operation: string) => (cause: unknown) => {
   if (isOperationError(cause)) return cause;
+  if (isSourceControlProviderError(cause)) return failure(operation, cause.detail);
   const tag =
     cause !== null &&
     typeof cause === "object" &&
@@ -590,9 +593,10 @@ export function createVcsActionsApiProvider(
       if (args.chainGrant !== undefined) {
         yield* requireChainGrant(args.operation, args.chainGrant, context, metadata);
       }
-      const result = yield* args
-        .run(safe, scope, { context, metadata, signal })
-        .pipe(Effect.mapError(operationError(args.operation)));
+      const result = yield* args.run(safe, scope, { context, metadata, signal }).pipe(
+        Effect.tapError((cause) => Effect.logDebug("VCS action failed", cause)),
+        Effect.mapError(operationError(args.operation)),
+      );
       if (args.refreshAfter) yield* refreshAfterMutation(scope.cwd);
       yield* Effect.tryPromise({
         try: () => metadata.assertAuthority?.() ?? Promise.resolve(),

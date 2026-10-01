@@ -216,6 +216,15 @@ if (args[0] === "config") {
 
       if (notFound) {
         const error = yield* lookup.pipe(Effect.flip);
+        if (mergeRequest) {
+          expect(error.detail).toBe(
+            storedUser
+              ? `Merge request !1 was not found or is inaccessible on ${host}. Check the MR number or URL and try again.`
+              : `If private, run \`glab auth login --hostname ${new URL(`https://${host}`).hostname}${
+                  host.includes(":") || apiHost ? ` --api-host ${apiHost ?? host}` : ""
+                }\` and retry. Merge request !1 was not found or is inaccessible on ${host}.`,
+          );
+        }
         expect(error.detail).toContain(
           mergeRequest ? "not found" : "Repository not found or inaccessible on GitLab.",
         );

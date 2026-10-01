@@ -1,4 +1,17 @@
 import { toastManager } from "../ui/toast";
+import { SourceControlProviderError } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+
+/** Keep provider diagnostics on the error; show its actionable sentence in either client. */
+export function pullRequestCheckoutErrorDetail(error: unknown): string | null {
+  return isSourceControlProviderError(error)
+    ? error.detail
+    : error instanceof Error
+      ? error.message
+      : null;
+}
 
 /** How a pull-request checkout handoff ended, as native's toast reports it. */
 export type PullRequestHandoffOutcome =
