@@ -1,4 +1,6 @@
-import * as NodeFs from "node:fs";
+// Pack fixtures read source files synchronously, outside Effect services.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 // @vitest-environment jsdom
 
 import * as React from "react";
@@ -94,7 +96,7 @@ afterEach(async () => {
 });
 
 it.skipIf(
-  !NodeFs.existsSync(
+  !NodeFS.existsSync(
     new URL("../../../../packages/first-party-extensions/files/treeRow.tsx", import.meta.url),
   ),
 )("uses native file-type icons, selection and focus without changing the path", async () => {
@@ -294,7 +296,7 @@ it("preserves native address focus, submission and cancellation", async () => {
 });
 
 it.skipIf(
-  !NodeFs.existsSync(
+  !NodeFS.existsSync(
     new URL("../../../../packages/first-party-extensions/files/treeRow.tsx", import.meta.url),
   ),
 )("keeps plain tree controls functional on a host without UI primitives", async () => {

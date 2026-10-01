@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { extractTerminalLinks } from "./terminal-links";
+import { extractTerminalLinks } from "./terminal-links.js";
 
 describe("terminal link punctuation", () => {
   it("drops the separator colon after a compiler path and its line and column", () => {
