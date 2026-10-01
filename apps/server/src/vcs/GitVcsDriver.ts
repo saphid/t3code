@@ -31,6 +31,7 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
   type WorktreeSubmodules,
+  type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
   makeGitVcsDriverCore,
@@ -195,6 +196,7 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  provider?: SourceControlProviderKind | undefined;
 }
 
 export interface GitFetchCommitInput {
