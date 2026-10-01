@@ -5712,6 +5712,82 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each(["gitlab.127.0.0.1.nip.io:18880", "gitlab.127.0.0.1.nip.io"])(
+    "checks out the real glab MR shape from GitLab's published head on %s",
+    (host) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "vc41-fork-feature"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "VC41.txt"), "fork head\n");
+        yield* runGit(repoDir, ["add", "VC41.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fork MR head"]);
+        const headCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/1/head"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        yield* runGit(repoDir, ["branch", "-D", "vc41-fork-feature"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          `http://${host}/proofowner/vc41-upstream.git`,
+          remoteDir,
+        );
+        const mrUrl = `http://${host}/proofowner/vc41-upstream/-/merge_requests/1`;
+        const calls: ReadonlyArray<string>[] = [];
+        const provider = yield* GitLabSourceControlProvider.make.pipe(
+          Effect.provide(
+            GitLabCli.layer.pipe(
+              Layer.provide(
+                Layer.mock(VcsProcess.VcsProcess)({
+                  run: (call) => {
+                    calls.push(call.args);
+                    expect(call.args).toEqual(["mr", "view", mrUrl, "--output", "json"]);
+                    return Effect.succeed(
+                      fakeGhOutput(
+                        // glab v1.80.0, captured by proof/vc41-gitlab: project IDs, no path objects.
+                        encodeCliJson({
+                          iid: 1,
+                          title: "VC41 local fork checkout",
+                          web_url: mrUrl,
+                          source_branch: "vc41-fork-feature",
+                          target_branch: "main",
+                          state: "opened",
+                          source_project_id: 2,
+                          target_project_id: 1,
+                        }),
+                      ),
+                    );
+                  },
+                }),
+              ),
+            ),
+          ),
+        );
+        const summary = yield* provider.getChangeRequest({ cwd: repoDir, reference: mrUrl });
+        expect(summary.isCrossRepository).toBe(true);
+        expect(summary.headRepositoryNameWithOwner).toBeUndefined();
+        calls.length = 0;
+        const { manager } = yield* makeManager({ sourceControlProvider: provider });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: mrUrl,
+          mode: "worktree",
+        });
+        expect(result.branch).toBe("t3code/pr-1/vc41-fork-feature");
+        expect(result.worktreePath).not.toBeNull();
+        const worktreePath = result.worktreePath ?? "";
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headCommit);
+        expect(NodeFS.readFileSync(NodePath.join(worktreePath, "VC41.txt"), "utf8")).toBe(
+          "fork head\n",
+        );
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        expect(calls).toHaveLength(1);
+      }),
+  );
+
   // A checkout whose origin is `originUrl`, and a fork pull request whose head branch, one commit
   // ahead of main, is served from a local bare repository wherever `forkUrl` points. The provider
   // answers each clone-URL lookup with `cloneUrl(lookup)`. GitLab lookups run the real glab
@@ -5753,7 +5829,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               Layer.mock(VcsProcess.VcsProcess)({
                 run: (call) => {
                   if (call.args[0] === "config") {
-                    expect(call.args[2]).toBe("user");
+                    expect(["user", "api_host"]).toContain(call.args[2]);
                     return Effect.succeed(fakeGhOutput(""));
                   }
                   if (input.lookupNotFound) {

@@ -1174,9 +1174,10 @@ export function PullRequestDetailPanel({
     });
     if (prepared._tag === "Failure") {
       setHandoff(null);
+      const failure = squashAtomCommandFailure(prepared);
       toast.settle({
         kind: "checkout-failed",
-        detail: prepareThread.error instanceof Error ? prepareThread.error.message : null,
+        detail: failure instanceof Error ? failure.message : null,
       });
       return;
     }

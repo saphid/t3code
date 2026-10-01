@@ -48,9 +48,57 @@ it.effect.each([
     apiHost: "gitlab-wrong.example",
     mismatch: true,
   },
+  {
+    host: "gitlab-missing.example",
+    profile: "gitlab-missing.example",
+    notFound: true,
+    storedUser: false,
+    mergeRequest: true,
+  },
+  {
+    host: "gitlab-b.example:8443",
+    profile: "gitlab-b.example",
+    notFound: true,
+    storedUser: false,
+    mergeRequest: true,
+  },
+  {
+    host: "gitlab-b.example",
+    profile: "gitlab-b.example",
+    apiHost: "gitlab-b.example:8443",
+    notFound: true,
+    storedUser: false,
+    mergeRequest: true,
+  },
+  {
+    host: "gitlab-b.example",
+    profile: "gitlab-b.example",
+    notFound: true,
+    storedUser: true,
+    mergeRequest: true,
+  },
+  {
+    host: "gitlab-b.example",
+    profile: "gitlab-b.example",
+    apiHost: "gitlab-b.example:8443",
+    notFound: true,
+    storedUser: false,
+    mergeRequest: true,
+    numberReference: true,
+  },
 ])(
-  "enforces fork lookup for $host through a fake glab process (profile: $profile, missing: $notFound)",
-  ({ host, profile, originHost, apiHost, notFound, storedUser, mismatch }) =>
+  "enforces lookup for $host through a fake glab process (profile: $profile, missing: $notFound, MR: $mergeRequest, number: $numberReference)",
+  ({
+    host,
+    profile,
+    originHost,
+    apiHost,
+    notFound,
+    storedUser,
+    mismatch,
+    mergeRequest,
+    numberReference,
+  }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -129,7 +177,16 @@ if (args[0] === "config") {
           Layer.effect(VcsProcess.VcsProcess, VcsProcess.make).pipe(Layer.provide(fakeRunner)),
         ),
       );
-      const lookup = glab.getRepositoryCloneUrls({
+      const context = {
+        provider: {
+          kind: "gitlab" as const,
+          name: "GitLab",
+          baseUrl: `https://${originHost ?? host}`,
+        },
+        remoteName: "origin",
+        remoteUrl: `git@${originHost ?? host}:team/repo.git`,
+      };
+      const repositoryLookup = glab.getRepositoryCloneUrls({
         cwd: directory,
         host,
         repository: "alex/repo",
@@ -147,10 +204,21 @@ if (args[0] === "config") {
             }
           : {}),
       });
+      const lookup = mergeRequest
+        ? glab
+            .getMergeRequest({
+              cwd: directory,
+              reference: numberReference ? "1" : `https://${host}/team/repo/-/merge_requests/1`,
+              context,
+            })
+            .pipe(Effect.asVoid)
+        : repositoryLookup.pipe(Effect.asVoid);
 
       if (notFound) {
         const error = yield* lookup.pipe(Effect.flip);
-        expect(error.detail).toContain("Repository not found or inaccessible on GitLab.");
+        expect(error.detail).toContain(
+          mergeRequest ? "not found" : "Repository not found or inaccessible on GitLab.",
+        );
         if (storedUser) {
           expect(error.detail).not.toContain("glab auth login");
         } else {
@@ -159,6 +227,8 @@ if (args[0] === "config") {
           );
           if (host.includes(":")) {
             expect(error.detail).toContain(`--api-host ${host}`);
+          } else if (apiHost) {
+            expect(error.detail).toContain(`--api-host ${apiHost}`);
           }
         }
         expect(error.cause).toMatchObject({
@@ -171,15 +241,16 @@ if (args[0] === "config") {
         const error = yield* lookup.pipe(Effect.flip);
         expect(error.detail).toContain("different host");
       } else {
-        const result = yield* lookup;
+        const result = yield* repositoryLookup;
         expect(result.url).toBe(`https://${apiHost ?? host}/alex/repo`);
       }
       const calls = decodeCalls(yield* fileSystem.readFileString(recording));
-      const apiCalls = calls.filter((call) => call.args[0] === "api");
-      expect(apiCalls).toHaveLength(1);
-      expect(apiCalls[0]?.host).toBe(
-        originHost && apiHost === host ? profile : new URL(`https://${host}`).hostname,
-      );
+      const lookupCalls = calls.filter((call) => call.args[0] === (mergeRequest ? "mr" : "api"));
+      expect(lookupCalls).toHaveLength(1);
+      if (!mergeRequest)
+        expect(lookupCalls[0]?.host).toBe(
+          originHost && apiHost === host ? profile : new URL(`https://${host}`).hostname,
+        );
       expect(
         calls
           .filter((call) => call.args[0] === "config")

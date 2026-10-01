@@ -3223,16 +3223,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
+      const headRef =
+        input.provider === "gitlab"
+          ? `refs/merge-requests/${input.prNumber}/head`
+          : `refs/pull/${input.prNumber}/head`;
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
-        ],
+        ["fetch", "--quiet", "--no-tags", remoteName, `+${headRef}:refs/heads/${input.branch}`],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
         },

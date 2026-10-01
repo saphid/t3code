@@ -210,6 +210,7 @@ interface ResolvedPullRequest {
 }
 
 interface PullRequestHeadRemoteInfo {
+  provider?: SourceControlProviderKind | undefined;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
   headRepositoryOwnerLogin?: string | null | undefined;
@@ -701,11 +702,13 @@ function shouldPreferSshRemote(url: string | null): boolean {
 }
 
 function toPullRequestHeadRemoteInfo(pr: {
+  provider: SourceControlProviderKind;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
   headRepositoryOwnerLogin?: string | null | undefined;
 }): PullRequestHeadRemoteInfo {
   return {
+    provider: pr.provider,
     ...(pr.isCrossRepository !== undefined ? { isCrossRepository: pr.isCrossRepository } : {}),
     ...(pr.headRepositoryNameWithOwner !== undefined
       ? { headRepositoryNameWithOwner: pr.headRepositoryNameWithOwner }
@@ -1029,6 +1032,7 @@ export const make = Effect.gen(function* () {
           cwd,
           prNumber: pullRequest.number,
           branch: localBranch,
+          provider: pullRequest.provider,
         });
         return;
       }
@@ -1075,6 +1079,7 @@ export const make = Effect.gen(function* () {
               cwd,
               prNumber: pullRequest.number,
               branch: localBranch,
+              provider: pullRequest.provider,
             })
             .pipe(
               Effect.mapError(
