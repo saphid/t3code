@@ -9,6 +9,7 @@ import type {
   ApiStreamInvocation,
 } from "@t3tools/extension-sdk/capabilities";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
+import { readMobileAsset } from "./mobileExtensionAssets";
 import { createPageBridge } from "./mobileExtensionBridge";
 
 export interface MobilePageBootstrap {
@@ -63,43 +64,8 @@ const api: ClientHost = {
     (await bridge.invoke("discover", context, signal)) as readonly ApiDiscovery[],
   invokeTool: async (toolId, input, context, signal) =>
     (await bridge.invoke("tool", { toolId, input, context }, signal)) as Json,
-  async readAsset(path, signal) {
-    let offset = 0;
-    let bytes: Uint8Array | undefined;
-    let mediaType = "";
-    let sha256 = "";
-    do {
-      const chunk = (await bridge.invoke("asset", { path, offset }, signal)) as {
-        bytes: number[];
-        byteLength: number;
-        mediaType: string;
-        sha256: string;
-      };
-      if (!bytes) {
-        if (
-          !Number.isSafeInteger(chunk.byteLength) ||
-          chunk.byteLength < 0 ||
-          chunk.byteLength > 8 * 1024 * 1024
-        )
-          throw new Error("Asset too large");
-        bytes = new Uint8Array(chunk.byteLength);
-        mediaType = chunk.mediaType;
-        sha256 = chunk.sha256;
-      }
-      if (
-        chunk.byteLength !== bytes.length ||
-        chunk.mediaType !== mediaType ||
-        chunk.sha256 !== sha256 ||
-        chunk.bytes.length > 32 * 1024 ||
-        (chunk.bytes.length === 0 && offset < bytes.length) ||
-        offset + chunk.bytes.length > bytes.length
-      )
-        throw new Error("Asset transfer failed");
-      bytes.set(chunk.bytes, offset);
-      offset += chunk.bytes.length;
-    } while (offset < bytes.length);
-    return { bytes, mediaType, sha256 };
-  },
+  readAsset: (path, signal) =>
+    readMobileAsset((offset) => bridge.invoke("asset", { path, offset }, signal)),
   environmentLabel: () => bootstrap.environmentLabel,
 };
 function presentation(value: Pick<MobilePageBootstrap, "cssVars" | "insets" | "keyboardInset">) {

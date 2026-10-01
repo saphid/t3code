@@ -6,8 +6,11 @@ import type {
 } from "@t3tools/extension-sdk/capabilities";
 import { RESUMABLE_API_STREAMS } from "@t3tools/extension-sdk/capabilities";
 import { validateEnvironmentPackage } from "@t3tools/extension-sdk/environment";
+import type { AppStateStatus } from "react-native";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import { sha256 } from "@noble/hashes/sha2";
+import * as Encoding from "effect/Encoding";
+import { MOBILE_ASSET_CHUNK_BYTES } from "./mobileExtensionAssets";
 import { boundMobileRequest, isMobileApiSupported } from "./mobileHostProtocol";
 import type { BridgeOperation } from "./mobileExtensionBridge";
 
@@ -20,7 +23,11 @@ export interface MobileInstallation {
 }
 export interface MobileExtensionTransport extends ApiClient {
   list(signal: AbortSignal): Promise<readonly MobileInstallation[]>;
-  client(id: string, hash: string, signal: AbortSignal): Promise<{ code: string }>;
+  client(
+    id: string,
+    hash: string,
+    signal: AbortSignal,
+  ): Promise<{ code: string; contentHash: string }>;
   asset(id: string, hash: string, path: string, signal: AbortSignal): Promise<Uint8Array>;
   invokeTool(
     toolId: string,
@@ -105,6 +112,10 @@ export function createMobileExtensionHost(options: {
   let disposed = false;
   let lifetime = new AbortController();
   const watchLifetime = new AbortController();
+  let refreshLifetime = new AbortController();
+  let mountedSignature: string | undefined;
+  let terminations: number[] = [];
+  let retryRequired = false;
   let state: MobileHostSnapshot = { phase: "loading", generation: "0" };
   const publish = (value: MobileHostSnapshot) => {
     state = value;
@@ -113,24 +124,29 @@ export function createMobileExtensionHost(options: {
   const fence = (phase: MobileHostSnapshot["phase"]) => {
     lifetime.abort();
     lifetime = new AbortController();
+    mountedSignature = undefined;
     generation += 1;
     publish({ phase, generation: String(generation) });
   };
   const refresh = async () => {
-    if (disposed || !active) return;
-    fence("loading");
-    const own = lifetime;
-    const current = generation;
+    if (disposed || !active || retryRequired) return;
+    // Catalogue replays and unrelated changes must not retire the mounted page.
+    refreshLifetime.abort();
+    const own = new AbortController();
+    refreshLifetime = own;
+    const expired = () => own.signal.aborted || disposed || !active;
+    let catalogueFetched = false;
     try {
       const installations = await options.transport.list(own.signal);
-      if (own.signal.aborted) return;
+      if (expired()) return;
+      catalogueFetched = true;
       const item = installations.find((entry) => entry.id === options.installationId);
       if (
         !item?.enabled ||
         !item.grants.projectIds.includes(options.context.resource.projectId ?? "")
       ) {
         options.cache.invalidate(options.environmentId, options.installationId);
-        publish({ phase: "unavailable", generation: String(current) });
+        fence("unavailable");
         return;
       }
       const pkg = validateEnvironmentPackage(item.package);
@@ -139,33 +155,57 @@ export function createMobileExtensionHost(options: {
         !surface?.clients.includes("mobile") ||
         surface.capabilities.some((capability) => !item.grants.capabilities.includes(capability))
       ) {
-        publish({ phase: "unavailable", generation: String(current) });
+        options.cache.invalidate(options.environmentId, options.installationId);
+        fence("unavailable");
         return;
       }
+      const signature = JSON.stringify([
+        item.contentHash,
+        item.enabled,
+        [...new Set(item.grants.capabilities)].sort(),
+        [...new Set(item.grants.projectIds)].sort(),
+      ]);
+      if (state.phase === "ready" && signature === mountedSignature) return;
+      fence("loading");
       options.cache.invalidate(options.environmentId, item.id, item.contentHash);
       const key: CacheKey = [options.environmentId, item.id, item.contentHash, "code"];
       let code = options.cache.get(key);
       if (typeof code !== "string") {
-        code = (await options.transport.client(item.id, item.contentHash, own.signal)).code;
-        if (own.signal.aborted) return;
-        if (code.length > 4 * 1024 * 1024) throw new Error("Installed code too large");
-        options.cache.set(key, code, code.length * 2);
+        const response = await options.transport.client(item.id, item.contentHash, own.signal);
+        if (expired()) return;
+        const bytes = new TextEncoder().encode(response.code).byteLength;
+        if (response.contentHash !== item.contentHash || bytes > 1024 * 1024)
+          throw new Error("Invalid installed code");
+        code = response.code;
+        options.cache.set(key, code, bytes);
       }
-      if (!own.signal.aborted)
+      if (!expired()) {
+        mountedSignature = signature;
         publish({
           phase: "ready",
-          generation: String(current),
+          generation: String(generation),
           code,
           installation: item,
-          signal: own.signal,
+          signal: lifetime.signal,
         });
+      }
     } catch {
-      if (!own.signal.aborted) publish({ phase: "offline", generation: String(current) });
+      // Keep the page during a dropped connection; a later replay revalidates it.
+      if (!expired() && (catalogueFetched || state.phase !== "ready")) fence("offline");
     }
   };
   const stopWatching = options.transport.watch(() => {
     void refresh();
   }, watchLifetime.signal);
+  const setActive = (value: boolean) => {
+    if (disposed || active === value) return;
+    active = value;
+    if (value) void refresh();
+    else {
+      refreshLifetime.abort();
+      fence(retryRequired ? "offline" : "suspended");
+    }
+  };
   const ready = (signal: AbortSignal) => {
     if (
       disposed ||
@@ -187,15 +227,34 @@ export function createMobileExtensionHost(options: {
   return {
     snapshot: () => state,
     refresh,
-    recover: refresh,
-    fail() {
-      if (!disposed && active) fence("offline");
+    async recover() {
+      if (disposed) return;
+      retryRequired = false;
+      terminations = [];
+      refreshLifetime.abort();
+      fence("loading");
+      await refresh();
     },
-    setActive(value: boolean) {
-      if (disposed || active === value) return;
-      active = value;
-      if (value) void refresh();
-      else fence("suspended");
+    async processTerminated() {
+      if (disposed || !active) return;
+      const now = Date.now();
+      terminations = terminations.filter((time) => now - time < 30_000);
+      terminations.push(now);
+      retryRequired = terminations.length >= 3;
+      refreshLifetime.abort();
+      fence("offline");
+      if (!retryRequired) await refresh();
+    },
+    fail() {
+      if (!disposed && active) {
+        refreshLifetime.abort();
+        fence("offline");
+      }
+    },
+    setActive,
+    setAppState(value: AppStateStatus) {
+      if (value === "background") setActive(false);
+      else if (value === "active") setActive(true);
     },
     async invoke(
       operation: BridgeOperation,
@@ -213,6 +272,9 @@ export function createMobileExtensionHost(options: {
       else if (operation === "tool") {
         const value = payload as { toolId: string; input: Json; context: ViewContext };
         boundMobileRequest(value, options.context);
+        const pkg = validateEnvironmentPackage(item.package);
+        if (!pkg.tools.some((tool) => tool.id === value.toolId))
+          throw new Error("UnsupportedOnMobile: tool unavailable");
         result = await options.transport.invokeTool(
           value.toolId,
           value.input,
@@ -247,7 +309,9 @@ export function createMobileExtensionHost(options: {
           options.cache.set(key, bytes, bytes.length);
         }
         result = {
-          bytes: Array.from(bytes.subarray(value.offset, value.offset + 32 * 1024)),
+          base64: Encoding.encodeBase64(
+            bytes.subarray(value.offset, value.offset + MOBILE_ASSET_CHUNK_BYTES),
+          ),
           byteLength: bytes.length,
           sha256: asset.sha256,
           mediaType: asset.mediaType,
@@ -279,6 +343,7 @@ export function createMobileExtensionHost(options: {
       disposed = true;
       lifetime.abort();
       watchLifetime.abort();
+      refreshLifetime.abort();
       stopWatching();
       publish({ phase: "disposed", generation: String(++generation) });
     },

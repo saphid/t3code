@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createMobileExtensionHost, MobileExtensionCache } from "./mobileExtensionHost";
+import { Encoding, Result } from "effect";
+import { readMobileAsset } from "./mobileExtensionAssets";
+import { MAX_BRIDGE_MESSAGE } from "./mobileExtensionBridge";
 import { sha256 } from "@noble/hashes/sha2";
 import { createNativeBridge, createPageBridge } from "./mobileExtensionBridge";
 import type { MobileExtensionTransport } from "./mobileExtensionHost";
@@ -43,7 +46,7 @@ function fixture() {
   let changed = () => {};
   const transport: MobileExtensionTransport = {
     list: async () => [item],
-    client: vi.fn(async () => ({ code: "installed code" })),
+    client: vi.fn(async (_id, contentHash) => ({ code: "installed code", contentHash })),
     asset: vi.fn(async () => new Uint8Array()),
     invokeApi: vi.fn(async () => null),
     subscribeApi: async function* () {
@@ -94,15 +97,16 @@ describe("production mobile installation lifecycle", () => {
     expect(f.host.snapshot().generation).not.toBe(first.generation);
     f.host.dispose();
   });
-  it("fences calls synchronously on revocation and closes the old lifetime", async () => {
+  it("fences calls after checking revocation and closes the old lifetime", async () => {
     const f = fixture();
     await f.host.refresh();
     const old = f.host.snapshot();
     f.set({ ...installation(), enabled: false });
     const done = f.wait();
     f.change();
-    expect(old.signal?.aborted).toBe(true);
+    expect(old.signal?.aborted).toBe(false);
     await done;
+    expect(old.signal?.aborted).toBe(true);
     expect(f.host.snapshot().phase).toBe("unavailable");
     await expect(f.host.invoke("discover", {}, new AbortController().signal)).rejects.toThrow();
     f.host.dispose();
@@ -155,7 +159,7 @@ describe("production mobile installation lifecycle", () => {
 
 it("chunks and verifies declared assets once per hash, rejects undeclared or corrupt bytes", async () => {
   const f = fixture();
-  const bytes = new Uint8Array(65536).fill(97);
+  const bytes = Uint8Array.from({ length: 300000 }, (_, index) => index % 256);
   const item = installation();
   const digest = Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
   item.package.assets = [
@@ -172,13 +176,45 @@ it("chunks and verifies declared assets once per hash, rejects undeclared or cor
   expect(f.host.snapshot().phase).toBe("ready");
   const signal = new AbortController().signal;
   const a = (await f.host.invoke("asset", { path: "asset.bin", offset: 0 }, signal)) as {
-    bytes: number[];
+    base64: string;
   };
-  const b = (await f.host.invoke("asset", { path: "asset.bin", offset: 32768 }, signal)) as {
-    bytes: number[];
+  const b = (await f.host.invoke("asset", { path: "asset.bin", offset: 256 * 1024 }, signal)) as {
+    base64: string;
   };
-  expect(a.bytes).toHaveLength(32768);
-  expect(b.bytes).toHaveLength(32768);
+  const aBytes = Result.getOrThrow(Encoding.decodeBase64(a.base64));
+  const bBytes = Result.getOrThrow(Encoding.decodeBase64(b.base64));
+  expect(aBytes).toHaveLength(256 * 1024);
+  expect(bBytes).toHaveLength(bytes.length - 256 * 1024);
+  expect(new Uint8Array([...aBytes, ...bBytes])).toEqual(bytes);
+  expect(
+    JSON.stringify({
+      version: 1,
+      generation: f.host.snapshot().generation,
+      id: 1,
+      kind: "result",
+      payload: a,
+    }).length,
+  ).toBeLessThan(MAX_BRIDGE_MESSAGE);
+  const native = createNativeBridge({
+    generation: f.host.snapshot().generation,
+    send: (message) => {
+      page.receive(message);
+    },
+    invoke: f.host.invoke,
+    subscribe: f.host.subscribe,
+  });
+  const page = createPageBridge({
+    generation: f.host.snapshot().generation,
+    send: (message) => {
+      native.receive(message);
+    },
+  });
+  const transferred = await readMobileAsset((offset) =>
+    page.invoke("asset", { path: "asset.bin", offset }, signal),
+  );
+  expect(transferred).toEqual({ bytes, mediaType: "application/octet-stream", sha256: digest });
+  page.dispose();
+  native.dispose();
   expect(f.transport.asset).toHaveBeenCalledTimes(1);
   await expect(f.host.invoke("asset", { path: "other", offset: 0 }, signal)).rejects.toThrow();
   const changed = { ...item, contentHash: "b".repeat(64) };
@@ -202,7 +238,7 @@ it("revoking a surface capability removes the running surface", async () => {
 });
 it("does not commit a stale bundle response after replacement or disposal", async () => {
   const f = fixture();
-  let resolve: (value: { code: string }) => void = () => {};
+  let resolve: (value: { code: string; contentHash: string }) => void = () => {};
   f.transport.client = () =>
     new Promise((done) => {
       resolve = done;
@@ -210,9 +246,9 @@ it("does not commit a stale bundle response after replacement or disposal", asyn
   const first = f.host.refresh();
   await Promise.resolve();
   f.set(installation("b".repeat(64)));
-  f.transport.client = async () => ({ code: "new code" });
+  f.transport.client = async () => ({ code: "new code", contentHash: "b".repeat(64) });
   await f.host.refresh();
-  resolve({ code: "stale code" });
+  resolve({ code: "stale code", contentHash: "a".repeat(64) });
   await first;
   expect(f.host.snapshot().code).toBe("new code");
   f.host.dispose();
@@ -276,4 +312,91 @@ it("fences a failed page and revalidates before reopening cached code", async ()
   expect(f.host.snapshot().phase).toBe("ready");
   expect(f.transport.client).toHaveBeenCalledTimes(1);
   f.host.dispose();
+});
+
+it("rejects undeclared tools before the transport", async () => {
+  const f = fixture();
+  await f.host.refresh();
+  await expect(
+    f.host.invoke(
+      "tool",
+      { toolId: "other/tool", input: {}, context },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow();
+  expect(f.transport.invokeTool).not.toHaveBeenCalled();
+  f.host.dispose();
+});
+
+it.each([
+  ["wrong content hash", "code", "b".repeat(64)],
+  ["UTF-8 byte limit", "é".repeat(524289), "a".repeat(64)],
+])("rejects client code with %s without caching it", async (_label, code, contentHash) => {
+  const f = fixture();
+  f.transport.client = vi.fn(async () => ({ code, contentHash }));
+  await f.host.refresh();
+  expect(f.host.snapshot().phase).toBe("offline");
+  f.transport.client = vi.fn(async (_id, hash) => ({ code: "valid", contentHash: hash }));
+  await f.host.recover();
+  expect(f.host.snapshot().code).toBe("valid");
+  expect(f.transport.client).toHaveBeenCalledOnce();
+  f.host.dispose();
+});
+
+it("keeps the mounted lifetime during a dropped catalogue connection, but fences invalid metadata", async () => {
+  const f = fixture();
+  await f.host.refresh();
+  const first = f.host.snapshot();
+  f.transport.list = async () => {
+    throw new Error("Connection unavailable");
+  };
+  await f.host.refresh();
+  expect(f.host.snapshot()).toBe(first);
+  expect(first.signal?.aborted).toBe(false);
+  f.transport.list = async () => [{ ...installation(), package: null }];
+  await f.host.refresh();
+  expect(first.signal?.aborted).toBe(true);
+  expect(f.host.snapshot().phase).toBe("offline");
+  f.host.dispose();
+});
+
+it("discards a stale catalogue result after a newer revocation or disposal", async () => {
+  const f = fixture();
+  await f.host.refresh();
+  let resolve: (items: ReturnType<typeof installation>[]) => void = () => {};
+  f.transport.list = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  const stale = f.host.refresh();
+  f.transport.list = async () => [{ ...installation(), enabled: false }];
+  await f.host.refresh();
+  resolve([installation()]);
+  await stale;
+  expect(f.host.snapshot().phase).toBe("unavailable");
+  f.transport.list = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  const pending = f.host.refresh();
+  f.host.dispose();
+  resolve([installation()]);
+  await pending;
+  expect(f.host.snapshot().phase).toBe("disposed");
+});
+
+it("only counts WebView process crashes within the recent recovery window", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+  const f = fixture();
+  try {
+    await f.host.refresh();
+    await f.host.processTerminated();
+    await f.host.processTerminated();
+    clock.mockReturnValue(31000);
+    await f.host.processTerminated();
+    expect(f.host.snapshot().phase).toBe("ready");
+  } finally {
+    f.host.dispose();
+    clock.mockRestore();
+  }
 });

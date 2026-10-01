@@ -69,15 +69,13 @@ function SurfaceSession(props: SurfaceProps) {
           },
         });
         setHost(owned);
-        owned.setActive(AppState.currentState === "active");
+        owned.setAppState(AppState.currentState);
         void owned.refresh();
       })
       .catch(() => {
         if (!controller.signal.aborted) setSnapshot({ phase: "offline", generation: "0" });
       });
-    const subscription = AppState.addEventListener("change", (state) =>
-      owned?.setActive(state === "active"),
-    );
+    const subscription = AppState.addEventListener("change", (state) => owned?.setAppState(state));
     return () => {
       controller.abort();
       subscription.remove();
@@ -197,10 +195,10 @@ function MountedSurface(props: {
       originWhitelist={["about:blank"]}
       onShouldStartLoadWithRequest={(request) => request.url === "about:blank"}
       onContentProcessDidTerminate={() => {
-        void props.host.recover();
+        void props.host.processTerminated();
       }}
       onRenderProcessGone={() => {
-        void props.host.recover();
+        void props.host.processTerminated();
       }}
       onError={() => props.host.fail()}
       javaScriptEnabled
