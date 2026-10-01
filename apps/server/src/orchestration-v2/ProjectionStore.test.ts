@@ -1932,6 +1932,118 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("reports a provider-native subagent's runless root turn through its shell", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { minutes: 5 });
+      const parentThreadId = ThreadId.make("thread:native-subagent-shell:parent");
+      const threadId = ThreadId.make("thread:native-subagent-shell:child");
+      const rootNodeId = NodeId.make("node:native-subagent-shell:root");
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:native-subagent-shell:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "provider",
+          id: threadId,
+          projectId: ProjectId.make("project:native-subagent-shell"),
+          title: "Native subagent",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      const shells = Effect.gen(function* () {
+        const sql = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        const memory = ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        );
+        return [sql, memory] as const;
+      });
+      const timestamp = (value: DateTime.Utc | null | undefined) =>
+        value == null ? null : DateTime.toEpochMillis(value);
+
+      for (const shell of yield* shells) {
+        assert.equal(shell.status, "idle");
+        assert.isNull(shell.activityRunStatus);
+      }
+
+      const cases = [
+        { status: "pending", shellStatus: "starting", activity: "starting", done: false },
+        { status: "running", shellStatus: "running", activity: "running", done: false },
+        { status: "waiting", shellStatus: "waiting", activity: "waiting", done: false },
+        { status: "completed", shellStatus: "completed", activity: null, done: true },
+        { status: "failed", shellStatus: "failed", activity: null, done: true },
+      ] as const;
+      for (const { status, shellStatus, activity, done } of cases) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:native-subagent-shell:root:${status}`),
+          type: "node.updated",
+          threadId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: done ? later : now,
+          payload: {
+            id: rootNodeId,
+            threadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId,
+            kind: "root_turn",
+            status,
+            countsForRun: false,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: done ? later : null,
+          },
+        });
+        for (const shell of yield* shells) {
+          assert.equal(shell.status, shellStatus);
+          assert.equal(shell.activityRunStatus, activity);
+          assert.isNull(shell.latestRunId);
+          assert.isNull(shell.activeRunId);
+          assert.equal(timestamp(shell.latestRunStartedAt), DateTime.toEpochMillis(now));
+          assert.equal(
+            timestamp(shell.latestRunCompletedAt),
+            done ? DateTime.toEpochMillis(later) : null,
+          );
+          assert.equal(
+            timestamp(shell.activityRunStartedAt),
+            activity === null ? null : DateTime.toEpochMillis(now),
+          );
+        }
+      }
+    }),
+  );
+
   it.effect("selects only threads with runtime state that needs recovery", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
