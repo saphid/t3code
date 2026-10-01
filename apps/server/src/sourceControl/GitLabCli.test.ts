@@ -330,23 +330,24 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect.each(["gitlab-b.example", "gitlab-b.example:8443"])(
-    "refuses a fork result from the wrong host or port for %s",
-    (host) =>
-      Effect.gen(function* () {
-        fakeGlab({ profiles: { "gitlab-b.example": { apiHost: "gitlab-b.example:9443" } } });
-        const glab = yield* GitLabCli.GitLabCli;
-        const error = yield* glab
-          .getRepositoryCloneUrls({
-            cwd: "/repo",
-            host,
-            repository: "alex/repo",
-          })
-          .pipe(Effect.flip);
-        expect(error.detail).toBe(
-          "GitLab returned a repository on a different host. Check the glab host profile and retry.",
-        );
-      }),
+  it.effect.each([
+    { host: "gitlab-b.example", apiHost: "gitlab-wrong.example:9443" },
+    { host: "gitlab-b.example:8443", apiHost: "gitlab-b.example:9443" },
+  ])("refuses a fork result from the wrong host or port for $host", ({ host, apiHost }) =>
+    Effect.gen(function* () {
+      fakeGlab({ profiles: { "gitlab-b.example": { apiHost } } });
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          host,
+          repository: "alex/repo",
+        })
+        .pipe(Effect.flip);
+      expect(error.detail).toBe(
+        "GitLab returned a repository on a different host. Check the glab host profile and retry.",
+      );
+    }),
   );
 
   it.effect.each(["gitlab.com", "gitlab-b.example"])(

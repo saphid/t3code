@@ -24,6 +24,7 @@ const decodeCalls = Schema.decodeUnknownSync(
 it.effect.each([
   { host: "gitlab.com", profile: "gitlab.com" },
   { host: "gitlab-b.example", profile: "gitlab-b.example" },
+  { host: "gitlab-b.example", profile: "gitlab-b.example", apiHost: "gitlab-b.example:8443" },
   { host: "gitlab.com", profile: "gitlab.corp.example", originHost: "gitlab.corp.example" },
   { host: "gitlab-b.example:8443", profile: "gitlab-b.example", apiHost: "gitlab-b.example:8443" },
   {
@@ -170,7 +171,7 @@ if (args[0] === "config") {
         expect(error.detail).toContain("different host");
       } else {
         const result = yield* lookup;
-        expect(result.url).toBe(`https://${host}/alex/repo`);
+        expect(result.url).toBe(`https://${apiHost ?? host}/alex/repo`);
       }
       const calls = decodeCalls(yield* fileSystem.readFileString(recording));
       const apiCalls = calls.filter((call) => call.args[0] === "api");
