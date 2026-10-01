@@ -131,6 +131,22 @@ describe("host tooltip", () => {
     expect(popupText()).toBeNull();
   });
 
+  it("lets keyboard users focus the disabled reason and dismiss it", async () => {
+    const reason = "Asking someone to review needs write access on this repository";
+    await render(<Control label={reason} disabled showWhenDisabled />);
+    const wrapper = button().parentElement!;
+    await act(async () => wrapper.focus());
+    await settle();
+    expect(document.activeElement).toBe(wrapper);
+    expect(popupText()).toBe(reason);
+    await act(async () => {
+      wrapper.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(popupText()).toBeNull();
+    expect(button().disabled).toBe(true);
+  });
+
   it("keeps an opted-in control's wrapper across enable and disable", async () => {
     await render(<Control label="Annotate elements, regions, and drawings" showWhenDisabled />);
     const wrapper = button().parentElement!;

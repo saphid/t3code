@@ -18,6 +18,11 @@ export const ForgejoUser = Schema.Struct({
   full_name: Schema.optional(Schema.NullOr(Schema.String)),
   avatar_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
+export const ForgejoTeam = Schema.Struct({
+  id: Schema.Int,
+  name: Schema.String,
+  units: Schema.optional(Schema.Array(Schema.String)),
+});
 export const ForgejoLabel = Schema.Struct({
   id: Schema.Int,
   name: Schema.String,
@@ -62,6 +67,7 @@ export const ForgejoPullRequest = Schema.Struct({
   comments: Schema.optional(Schema.Int),
   labels: Schema.NullOr(Schema.Array(ForgejoLabel)),
   requested_reviewers: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
+  requested_reviewers_teams: Schema.optional(Schema.NullOr(Schema.Array(ForgejoTeam))),
 });
 export const ForgejoComment = Schema.Struct({
   id: Schema.Int,
@@ -120,6 +126,10 @@ export function forgejoActor(
     : null;
 }
 
+export function forgejoTeamActor(team: typeof ForgejoTeam.Type): PullRequestActor {
+  return { login: team.name, name: team.name, avatarUrl: null };
+}
+
 function toIsoUtc(value: string): string {
   return Option.match(DateTime.make(value), { onNone: () => value, onSome: DateTime.formatIso });
 }
@@ -143,7 +153,10 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     updatedAt: toIsoUtc(pr.updated_at),
     closedAt: pr.closed_at === null ? null : toIsoUtc(pr.closed_at),
     mergedAt: pr.merged_at === null ? null : toIsoUtc(pr.merged_at),
-    reviewRequestLogins: (pr.requested_reviewers ?? []).map((user) => user.login),
+    reviewRequestLogins: [
+      ...(pr.requested_reviewers ?? []).map((user) => user.login),
+      ...(pr.requested_reviewers_teams ?? []).map((team) => team.name),
+    ],
     labels: (pr.labels ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
   } satisfies ProviderChangeRequest;
 }
