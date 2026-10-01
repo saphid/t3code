@@ -536,6 +536,7 @@ const buildAppUnderTest = (options?: {
     codexInstallation?: Partial<CodexInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+    remoteOpenTargets?: Partial<RemoteOpenTargets.RemoteOpenTargets["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
@@ -874,6 +875,7 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
             resolveTargets: () => Effect.succeed([]),
+            ...options?.layers?.remoteOpenTargets,
           }),
         ),
       ),
@@ -5579,6 +5581,44 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(response.availableEditors, ["file-manager"]);
       assert.equal(response.shellRevealInFileManager, true);
       assert.equal(response.shellRevealInFileManagerKind, "file-explorer");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("runs editor and remote open target discovery side by side for server config", () =>
+    Effect.gen(function* () {
+      // Each discovery finishes only once the other has started, so a config
+      // that ran them one after another would never resolve.
+      const editorsStarted = yield* Deferred.make<void>();
+      const targetsStarted = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            resolveAvailableEditors: () =>
+              Deferred.succeed(editorsStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(targetsStarted)),
+                Effect.as(["file-manager" as const]),
+              ),
+            resolveFileManagerRevealKind: () => Effect.succeed("finder"),
+          },
+          remoteOpenTargets: {
+            resolveTargets: () =>
+              Deferred.succeed(targetsStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(editorsStarted)),
+                Effect.as([]),
+              ),
+          },
+        },
+      });
+
+      const response = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+
+      assert.deepEqual(response.availableEditors, ["file-manager"]);
+      assert.equal(response.shellRevealInFileManagerKind, "finder");
+      assert.deepEqual(response.remoteOpenTargets, []);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
