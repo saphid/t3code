@@ -14,6 +14,8 @@ export function DeviceLoadingView(props: {
   return (
     <div
       role={props.error ? "alert" : "status"}
+      // The opening placeholder fills the pane; the stream stage overlays the stream.
+      data-scene-canvas={props.stage === "opening" || undefined}
       className="flex size-full items-center justify-center bg-background px-6 py-10"
     >
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">

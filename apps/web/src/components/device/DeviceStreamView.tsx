@@ -334,6 +334,7 @@ export function DeviceStreamView(props: {
 
   return (
     <div
+      data-scene-canvas={props.allowPhoneView || undefined}
       className={cn(
         "relative flex size-full min-h-0 min-w-0",
         props.allowPhoneView ? "bg-background" : "bg-black/90",

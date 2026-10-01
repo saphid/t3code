@@ -2288,6 +2288,61 @@ html[data-app-backdrop="on"][data-app-backdrop="on"]
   background-color: transparent;
 }
 
+/* Faded text (text-muted-foreground/70 and the like) cannot meet contrast
+   over the glass, so inside scene canvases and the sidebar it shows at the
+   full, boosted token. This sits in the utilities layer at single-class
+   specificity, after the generated utilities: it replaces only the faded
+   base color, while hover, group-hover, and state variants still win. */
+@layer utilities {
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-muted-foreground/"], [class*=" text-muted-foreground/"]) {
+    color: var(--contrast-muted-foreground);
+  }
+
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-foreground/"], [class*=" text-foreground/"]) {
+    color: var(--contrast-foreground);
+  }
+
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-secondary-label/"], [class*=" text-secondary-label/"]) {
+    color: var(--contrast-secondary-label);
+  }
+
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-placeholder/"], [class*=" text-placeholder/"]) {
+    color: var(--contrast-placeholder);
+  }
+
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-sidebar-muted-foreground/"], [class*=" text-sidebar-muted-foreground/"]) {
+    color: var(--contrast-sidebar-muted-foreground);
+  }
+
+  :where(
+      html[data-app-backdrop="on"][data-app-backdrop="on"]
+        :is([data-slot="sidebar-inset"] [data-scene-canvas], [data-app-sidebar])
+    )
+    :is([class^="text-sidebar-foreground/"], [class*=" text-sidebar-foreground/"]) {
+    color: var(--contrast-sidebar-foreground);
+  }
+}
+
 /* Muted text over the glass loses contrast as more scene shows, so it moves
    toward the foreground in step with transparency: none when solid, 32% at
    the cap. That keeps muted, placeholder, and secondary text at 4.5:1 or
