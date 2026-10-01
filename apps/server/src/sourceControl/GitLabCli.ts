@@ -635,7 +635,7 @@ export const make = Effect.gen(function* () {
           requestedHost.length > 0 &&
           (!URL.canParse(result.url) ||
             new URL(result.url)[targetUrl?.port ? "host" : "hostname"].toLowerCase() !==
-              requestedHost)
+              (targetUrl?.host ?? requestedHost))
         ) {
           return yield* new GitLabRepositoryLookupError({
             operation: "getRepositoryCloneUrls",

@@ -24,6 +24,7 @@ const decodeCalls = Schema.decodeUnknownSync(
 it.effect.each([
   { host: "gitlab.com", profile: "gitlab.com" },
   { host: "gitlab-b.example", profile: "gitlab-b.example" },
+  { host: "gitlab-b.example:443", profile: "gitlab-b.example", apiHost: "gitlab-b.example" },
   { host: "gitlab-b.example", profile: "gitlab-b.example", apiHost: "gitlab-b.example:8443" },
   { host: "gitlab.com", profile: "gitlab.corp.example", originHost: "gitlab.corp.example" },
   { host: "gitlab-b.example:8443", profile: "gitlab-b.example", apiHost: "gitlab-b.example:8443" },
