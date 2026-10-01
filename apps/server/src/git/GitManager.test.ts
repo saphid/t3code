@@ -5063,6 +5063,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
   // origin is a fork holding a different pull request under the same number as the upstream one
   // the provider resolved. The provider reports `upstreamUrl` (or `reportedUrl`) for it.
   const setUpCollidingPullRequestNumbers = (input: {
+    readonly kind?: "github" | "gitlab";
     readonly repository: string;
     readonly originUrl: string;
     readonly upstreamUrl: string;
@@ -5074,6 +5075,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     readonly reportedNameWithOwner?: string;
   }) =>
     Effect.gen(function* () {
+      const kind = input.kind ?? "github";
+      const pullRequestHeadRef =
+        kind === "gitlab" ? "refs/merge-requests/198/head" : "refs/pull/198/head";
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const originDir = yield* createBareRemote();
@@ -5091,13 +5095,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "push",
         "upstream",
         "HEAD:refs/heads/feature/right-pr",
-        "HEAD:refs/pull/198/head",
+        `HEAD:${pullRequestHeadRef}`,
       ]);
       yield* runGit(repoDir, ["checkout", "-b", "wrong-origin-pr"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "wrong.txt"), "unrelated PR in origin\n");
       yield* runGit(repoDir, ["add", "wrong.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Different PR sharing the number"]);
-      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/198/head"]);
+      yield* runGit(repoDir, ["push", "origin", `HEAD:${pullRequestHeadRef}`]);
       yield* runGit(repoDir, ["checkout", "main"]);
       if (input.visibleRemotes) {
         yield* configureVisibleRemoteUrlWithLocalRewrite(
@@ -5122,16 +5126,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         "{upstream}",
         upstreamDir,
       );
-      const pullRequestUrl = `${input.upstreamUrl.replace(/\.git$/u, "")}/pull/198`;
+      const pullRequestPath = kind === "gitlab" ? "-/merge_requests/198" : "pull/198";
+      const pullRequestUrl = `${input.upstreamUrl.replace(/\.git$/u, "")}/${pullRequestPath}`;
       const { service } = createGitHubCliWithFakeGh();
       const base = yield* GitHubSourceControlProvider.make.pipe(
         Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
       );
       const provider: SourceControlProvider["Service"] = {
         ...base,
+        kind,
         getChangeRequest: () =>
           Effect.succeed({
-            provider: "github" as const,
+            provider: kind,
             number: 198,
             title: "Wanted upstream PR",
             url: pullRequestUrl,
@@ -5225,34 +5231,41 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("local PR checkout does not trust clone URLs on another host", () =>
-    Effect.gen(function* () {
-      const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
-        repository: "team/repo",
-        originUrl: "https://github.com/team/repo.git",
-        upstreamUrl: "https://forge.example/team/repo.git",
-        visibleRemotes: true,
-        reportedUrl: "https://github.com/team/repo.git",
-      });
+  for (const kind of ["github", "gitlab"] as const) {
+    it.effect(`local ${kind} PR checkout does not trust clone URLs on another host`, () =>
+      Effect.gen(function* () {
+        const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+          kind,
+          repository: "team/repo",
+          originUrl: "https://other.example/team/repo.git",
+          upstreamUrl: "https://forge.example/team/repo.git",
+          visibleRemotes: true,
+          reportedUrl: "https://other.example/team/repo.git",
+        });
 
-      expect(head).toBe(wanted);
-      expect(result.isOnPullRequestHead).toBe(false);
-    }),
-  );
+        expect(head).toBe(wanted);
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
+    );
 
-  it.effect("local PR checkout does not trust a lookup that names another repository", () =>
-    Effect.gen(function* () {
-      const { result } = yield* setUpCollidingPullRequestNumbers({
-        repository: "upstream/repo",
-        originUrl: "https://github.com/fork/repo.git",
-        upstreamUrl: "https://github.com/upstream/repo.git",
-        visibleRemotes: true,
-        reportedNameWithOwner: "fork/repo",
-      });
+    it.effect(
+      `local ${kind} PR checkout does not trust a lookup that names another repository`,
+      () =>
+        Effect.gen(function* () {
+          const { result, head, wanted } = yield* setUpCollidingPullRequestNumbers({
+            kind,
+            repository: "upstream/repo",
+            originUrl: "https://forge.example/fork/repo.git",
+            upstreamUrl: "https://forge.example/upstream/repo.git",
+            visibleRemotes: true,
+            reportedNameWithOwner: "fork/repo",
+          });
 
-      expect(result.isOnPullRequestHead).toBe(false);
-    }),
-  );
+          expect(head).toBe(wanted);
+          expect(result.isOnPullRequestHead).toBe(false);
+        }),
+    );
+  }
 
   it.effect("local PR checkout ignores a remote that only lists the repository second", () =>
     Effect.gen(function* () {

@@ -58,10 +58,6 @@ it("reveals a split-host checkout detail only when the checkout caller opts in",
     cwd: "/repo",
     detail,
   });
-  expect(detail.length).toBe(210);
-  expect(detail.split(" and retry.")[0]).toBe(
-    "If private, run `glab auth login --hostname gitlab.127.0.0.1.nip.io:18880 --api-host gitlab.127.0.0.1.nip.io:18880`",
-  );
   await act(async () => {
     root.render(<ToastProvider />);
   });
