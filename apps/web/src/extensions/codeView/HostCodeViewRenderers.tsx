@@ -30,13 +30,13 @@ import {
   buildPatchCacheKey,
   getDiffCollapseIconClassName,
   resolveDiffThemeName,
+  resolveFileDiffPath,
 } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 
 import {
   buildCodeViewDiffFiles,
-  codeViewPatchPath,
   createCodeViewContentsLoader,
   parseCodeViewPatch,
 } from "./hostCodeView.logic";
@@ -128,7 +128,7 @@ export function HostCodeDiff(props: CodeViewDiffProps) {
         ? {
             renderHeaderPrefix: (item: CodeViewItem<undefined>) => {
               if (item.type !== "diff") return null;
-              const path = codeViewPatchPath(item.fileDiff);
+              const path = resolveFileDiffPath(item.fileDiff);
               const folded = item.collapsed === true;
               const Icon = folded ? ChevronRightIcon : ChevronDownIcon;
               return (
@@ -153,7 +153,7 @@ export function HostCodeDiff(props: CodeViewDiffProps) {
         ? {
             renderHeaderFilenameSuffix: (item: CodeViewItem<undefined>) => {
               if (item.type !== "diff") return null;
-              const path = codeViewPatchPath(item.fileDiff);
+              const path = resolveFileDiffPath(item.fileDiff);
               return fileActions.map((action) => (
                 <Button
                   key={action.id}

@@ -254,6 +254,28 @@ describe("host code view: Diff", () => {
     expect(lastCodeView().options?.loadDiffFiles).toBeUndefined();
   });
 
+  it("keeps both rename sides and decodes their quoted names for context expansion", async () => {
+    const patch = [
+      'diff --git "a/b/old\\303\\251 space.txt" "b/a/new\\303\\251 space.txt"',
+      "similarity index 90%",
+      'rename from "b/old\\303\\251 space.txt"',
+      'rename to "a/new\\303\\251 space.txt"',
+      '--- "a/b/old\\303\\251 space.txt"',
+      '+++ "b/a/new\\303\\251 space.txt"',
+      "@@ -3 +3 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+    const loadContents = vi.fn(async () => ({ oldContents: "old", newContents: "new" }));
+    await render(<HostCodeDiff {...baseDiff} patch={patch} loadContents={loadContents} />);
+    const loaded = await lastCodeView().options!.loadDiffFiles!(diffItems()[0]!.fileDiff);
+    expect(loadContents).toHaveBeenCalledExactlyOnceWith("a/newé space.txt");
+    expect(loaded.oldFile?.name).toBe("b/oldé space.txt");
+    expect(loaded.newFile.name).toBe("a/newé space.txt");
+    expect(loaded.oldFile?.cacheKey).toContain(":old:b/oldé space.txt");
+    expect(loaded.newFile.cacheKey).toContain(":new:a/newé space.txt");
+  });
+
   it("shows an unparseable patch as raw text instead of mounting the viewer", async () => {
     await render(<HostCodeDiff {...baseDiff} patch={"not a patch\u0000\n@@ nonsense"} />);
     expect(view.codeViews).toHaveLength(0);
