@@ -2249,9 +2249,9 @@ code {
 
    Readability: the veil and the canvas fill together cover the scene with
    the theme tint. At the 85% transparency cap an 82% veil leaves at most
-   about 15% of the scene showing, which keeps text at 4.5:1 and muted text
-   at 3:1 or better for every built-in theme over the darkest and brightest
-   pixels of every shipped scene. */
+   about 15% of the scene showing; with the muted-text boost below, all text
+   stays at 4.5:1 or better for every built-in theme and variant over the
+   darkest and brightest pixels of every shipped scene. */
 html[data-app-backdrop="on"][data-app-backdrop="on"] {
   --backdrop-surface-opacity: calc(100% - var(--backdrop-transparency, 20%));
   --backdrop-dim: 82%;
@@ -2278,31 +2278,76 @@ html[data-app-backdrop="on"][data-app-backdrop="on"]
   );
 }
 
-/* Panels inside the canvas paint bg-background as well; stacked, their fills
-   would hide the scene again, so in-flow ones let the canvas show through.
-   Controls keep their shape, and sticky or positioned surfaces stay solid
-   because they sit on top of other content. Only the exact bg-background
-   class matches: opacity variants keep their own fill over the solid token. */
+/* Full-pane layers that repaint bg-background over the inset opt in with
+   data-scene-canvas (pane subheaders already carry data-surface-subheader),
+   so the inset's glass shows through them. Everything else, including
+   cards, controls, toolbars, and overlays, keeps its own fill. */
 html[data-app-backdrop="on"][data-app-backdrop="on"]
   [data-slot="sidebar-inset"]
-  .bg-background:not(
-    [data-slot="switch-thumb"],
-    [data-slot="checkbox"],
-    [data-slot="radio"],
-    [data-slot="input-control"],
-    [data-slot="textarea-control"],
-    [data-slot="select-trigger"],
-    [data-slot="number-field-group"],
-    [data-slot="input-group"],
-    [data-slot="toggle"],
-    .sticky,
-    .absolute,
-    .fixed
-  ) {
+  :is([data-scene-canvas], [data-surface-subheader]) {
   background-color: transparent;
 }
 
+/* Muted text over the glass loses contrast as more scene shows, so it moves
+   toward the foreground in step with transparency: none when solid, 32% at
+   the cap. That keeps muted, placeholder, and secondary text at 4.5:1 or
+   better for every built-in theme over every shipped scene. These repeat the
+   contrast tokens' formulas with one extra mix. */
+html[data-app-backdrop="on"][data-app-backdrop="on"]
+  :is([data-slot="sidebar-inset"], [data-app-sidebar]) {
+  --backdrop-muted-boost: calc(var(--backdrop-transparency, 20%) * 0.38);
+  --contrast-muted-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--muted-foreground) var(--appearance-contrast-base),
+        var(--background)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--backdrop-muted-boost)
+  );
+  --contrast-placeholder: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      color-mix(in oklab, var(--placeholder) var(--appearance-contrast-base), var(--background)),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--backdrop-muted-boost)
+  );
+  --contrast-secondary-label: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--secondary-label) var(--appearance-contrast-base),
+        var(--background)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--backdrop-muted-boost)
+  );
+}
+
 html[data-app-backdrop="on"][data-app-backdrop="on"] [data-app-sidebar] {
+  /* Mixed from the solid tint: --sidebar is translucent in here. */
+  --contrast-sidebar-muted-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--sidebar-muted-foreground) var(--appearance-contrast-base),
+        var(--app-backdrop-tint-sidebar, var(--app-backdrop-tint))
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--sidebar-foreground) var(--backdrop-muted-boost)
+  );
   --sidebar: color-mix(
     in srgb,
     var(--app-backdrop-tint-sidebar, var(--app-backdrop-tint)) var(--backdrop-surface-opacity),

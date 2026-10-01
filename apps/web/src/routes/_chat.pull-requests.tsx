@@ -2461,7 +2461,10 @@ function PullRequestsColumn({
   return (
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
-    <div className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    <div
+      data-scene-canvas
+      className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col bg-background"
+    >
       {/* A closed right panel leaves this column full-width, so the shared header
           reserves native window controls and hosts the controls strip itself: on
           desktop the header is a drag-region, and only a no-drag descendant wins
@@ -2470,6 +2473,7 @@ function PullRequestsColumn({
           the route level, whose box spans the panel too, so the toggle keeps one
           fixed top-right anchor. */}
       <WorkspacePageHeader
+        data-scene-canvas
         electron={isElectron}
         reserveNativeControls={!rightPanelOpen}
         className="relative bg-background"

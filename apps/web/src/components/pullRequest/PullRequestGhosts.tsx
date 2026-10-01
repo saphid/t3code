@@ -143,6 +143,7 @@ export function PullRequestDetailGhost({
 
   return (
     <div
+      data-scene-canvas
       role="status"
       aria-label="Loading pull request"
       className={cn(

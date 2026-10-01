@@ -1086,7 +1086,7 @@ export default function FilePreviewPanel({
   }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div data-scene-canvas className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath && attachment === undefined ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea
@@ -1285,6 +1285,7 @@ export default function FilePreviewPanel({
         </div>
         {showExplorer ? (
           <aside
+            data-scene-canvas
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
               previewPath

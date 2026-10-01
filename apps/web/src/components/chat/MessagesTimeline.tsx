@@ -1265,7 +1265,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).
-      return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
+      return (
+        <div
+          data-scene-canvas
+          className="h-full min-h-0 bg-background"
+          data-timeline-loading="true"
+        />
+      );
     }
     return (
       <div className="flex h-full items-center justify-center">

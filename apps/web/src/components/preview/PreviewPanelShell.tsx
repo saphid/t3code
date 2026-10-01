@@ -117,6 +117,7 @@ export function PreviewPanelShell(props: {
   }, [suppressWidthTransition]);
   return (
     <div
+      data-scene-canvas
       ref={hostRef}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
