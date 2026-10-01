@@ -2,6 +2,7 @@ import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   animateSidebarLayoutChanges,
@@ -2187,6 +2188,31 @@ describe("deriveSidebarSubagentCounts", () => {
     ]);
     // Interrupted and cancelled subagents were stopped, not failed.
     expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 1 });
+  });
+
+  it("times provider-run subagents, which have no run, by their shell times", () => {
+    const at = (iso: string) => DateTime.makeUnsafe(iso);
+    const counts = deriveSidebarSubagentCounts([
+      // Started first and finished while the other was still working.
+      {
+        ...child("completed", "2026-09-25T10:00:00.000Z"),
+        source: {
+          status: "completed",
+          activityRunStatus: null,
+          latestRunStartedAt: at("2026-09-25T10:00:00.000Z"),
+          latestRunCompletedAt: at("2026-09-25T10:03:00.000Z"),
+        },
+      },
+      {
+        ...child("running", "2026-09-25T10:01:00.000Z"),
+        source: {
+          status: "running",
+          activityRunStatus: "running",
+          activityRunStartedAt: at("2026-09-25T10:01:00.000Z"),
+        },
+      },
+    ]);
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 0 });
   });
 
   it("starts a resumed subagent's batch at its current run, not its creation", () => {

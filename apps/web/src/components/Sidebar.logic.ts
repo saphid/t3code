@@ -11,6 +11,7 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
+import * as DateTime from "effect/DateTime";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
@@ -1386,7 +1387,14 @@ type SidebarSubagentThread = Pick<
   SidebarThreadSummary,
   "environmentId" | "lineage" | "createdAt"
 > & {
-  readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
+  readonly source: Pick<
+    SidebarThreadSummary["source"],
+    | "status"
+    | "activityRunStatus"
+    | "activityRunStartedAt"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+  >;
   readonly runtime: Pick<NonNullable<SidebarThreadSummary["runtime"]>, "activityStartedAt"> | null;
   readonly latestRun: Pick<
     NonNullable<SidebarThreadSummary["latestRun"]>,
@@ -1415,6 +1423,10 @@ const WORKING_SUBAGENT_STATUSES = new Set([
  * Pass the previous result to keep the entries that did not change, so an
  * unrelated thread update does not re-render every row that shows counts.
  */
+function isoOrNull(value: DateTime.Utc | null | undefined): string | null {
+  return value == null ? null : DateTime.formatIso(value);
+}
+
 export function deriveSidebarSubagentCounts(
   threads: ReadonlyArray<SidebarSubagentThread>,
   previous?: ReadonlyMap<string, SidebarSubagentCounts>,
@@ -1428,14 +1440,19 @@ export function deriveSidebarSubagentCounts(
     if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
     const subagents = subagentsByParent.get(parentKey) ?? [];
+    // A subagent the provider runs itself has no run; the shell carries its
+    // root turn's times instead.
+    const runless = thread.latestRun === null ? thread.source : null;
     const startedAt =
       thread.runtime?.activityStartedAt ??
       thread.latestRun?.startedAt ??
       thread.latestRun?.requestedAt ??
+      isoOrNull(runless?.activityRunStartedAt ?? runless?.latestRunStartedAt) ??
       thread.createdAt;
     subagents.push({
       startedAt,
-      finishedAt: thread.latestRun?.completedAt ?? startedAt,
+      finishedAt:
+        thread.latestRun?.completedAt ?? isoOrNull(runless?.latestRunCompletedAt) ?? startedAt,
       status: thread.source.activityRunStatus ?? thread.source.status,
     });
     subagentsByParent.set(parentKey, subagents);
