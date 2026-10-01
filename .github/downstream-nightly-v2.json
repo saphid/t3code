@@ -8,97 +8,97 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "2a5e24a0cd7a7c77d019bc4732691b72e7b3647e",
+      "sha": "52c953e9a13baf22a67742806b77ca48110104f4",
       "name": "fix(nightly-v2): adapt custom updater to V2 profiles"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "3e4626b679edfab42692b609df10c4db441599eb",
+      "sha": "e37dc4aff986630cb5cab2042710e26ae5c5027a",
       "name": "feat(desktop): support fork nightly streams on orchestrator v2"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "07559993c9ae77c4553ac5cdf45a8c12f514435f",
+      "sha": "7e0bc1638b83438dd06d3a4f3a661e9cda9fba10",
       "name": "fix(nightly): reuse nightly artwork for v2 installers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d7b5ea8a42c93004d925c0fb173dc90b6f8ca86b",
+      "sha": "41f3d3d7c1a7af833417f570cccd1065b9d892dc",
       "name": "test(mobile): make cold highlighting independent of runner speed"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "df8c68973a359f6f32da07e5f5355b88b773036f",
+      "sha": "57036db309484c04a8f973719db43493669f2c16",
       "name": "fix(updates): keep OV2 desktop and server releases on the fork"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "7e321df2fed1bdd6d05727abf15666f87ae9b397",
+      "sha": "ab1d1b1bf0d7b0ba37c7e96443e50357fbf78782",
       "name": "test(desktop): provide packaged branding in early startup fixture"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "5732b0dfb46604d5ebd971a43ca00735dc1d9c2a",
+      "sha": "4ea26561fd9fb3d34639865299ca4b0c2348cd1a",
       "name": "fix(build): identify Windows native probes exactly"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "975c01580cdb6a7432623e10aeca93bc77c7682a",
+      "sha": "b382058a1ba6a31f745d2b8b306a1303fb67c120",
       "name": "test(desktop): skip unavailable libsecret helper"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "45c12cfca21600190625450cd591123090596ccf",
+      "sha": "b0a8e55f076ec49dcbe9bc5aee8aa3acaa1083c7",
       "name": "fix(server): resume orphaned provider starts after recovery"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "e483dbe2082e059237700caa630c375a50484963",
+      "sha": "52e13ad8d4658f42b98e1aee77792551dfd3d057",
       "name": "test(server): adapt provider recovery fixture to projection queries"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "e3619c0e8e87bed3469605f1e56110aacc03e50a",
-      "name": "fix(opencode): recover from slow CLI health probes"
+      "sha": "0843a72537e5491c33263bad56c985ea1ca077ea",
+      "name": "chore(ai-enablers): keep the local OpenCode launcher in source control"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "3c41222ddbd66ba82a3fb4e15696ce86378204d1",
+      "sha": "6594f946922216a92e8fa400d363b863aad6d2c3",
       "name": "test(web): keep React completion outside simulated application timers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "addea4feb65acafdd75716d292edb1c49ea0b1b2",
+      "sha": "2f95108dbab59c4f4b7b1e7a9abaac2fab112803",
       "name": "fix(v2): keep startup recovery running past undecodable thread projections"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "c803414d7b566eb3ac0accf5e2a976ef79d518d6",
+      "sha": "75fb480f5f8bdd99d42c047fde03bcd5a2adeb35",
       "name": "fix(web): detect Fork Nightly servers that are behind the client"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "b4783e7f8feb043f1f3a99b466d78202af8edf54",
+      "sha": "7ede135154d8dd0f2ccb9e638d725266ddadd229",
       "name": "test(desktop): adapt fork fixtures to current OV2 test helpers"
     },
     {
       "type": "commit",
       "repository": "saphid/t3code",
-      "sha": "d2c23554e703750d26bc848713c551f1229537fa",
+      "sha": "5515804a43ebe18bfff984ed3d1953a751e2729e",
       "name": "fix(server): fail a recovered run when its final start attempt fails"
     }
   ]
