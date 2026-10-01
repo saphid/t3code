@@ -1,6 +1,10 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
+import * as NodeURL from "node:url";
+import { build } from "esbuild";
 
 import {
   BROWSER_PROFILES,
@@ -13,21 +17,33 @@ import {
 import { EXTENSION_GRANT_CAPABILITIES_MAX } from "@t3tools/contracts";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
-const manifestUrl = new URL("./.t3-extension/t3-extension.json", import.meta.url);
+let manifest;
+NodeTest.before(async () => {
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-browser-manifest-"));
+  const definition = NodePath.join(dir, "definition.mjs");
+  try {
+    await build({
+      entryPoints: [NodeURL.fileURLToPath(new URL("./extension.ts", import.meta.url))],
+      outfile: definition,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node24",
+      logLevel: "silent",
+    });
+    manifest = (await import(NodeURL.pathToFileURL(definition).href)).default.package;
+  } finally {
+    await NodeFSP.rm(dir, { recursive: true, force: true });
+  }
+});
 
-NodeTest.test(
-  "the Browser pack declares the profiles API it consumes",
-  { skip: NodeFS.existsSync(manifestUrl) ? false : "Browser bundle is absent from this split" },
-  () => {
-    const manifest = JSON.parse(NodeFS.readFileSync(manifestUrl, "utf8"));
-    NodeAssert.ok(manifest.requires.some((requirement) => requirement.id === BROWSER_PROFILES));
-  },
-);
+NodeTest.test("the Browser pack declares the profiles API it consumes", () => {
+  NodeAssert.ok(manifest.requires.some((requirement) => requirement.id === BROWSER_PROFILES));
+});
 
 NodeTest.test(
   "the Browser pack's full capability grant set fits the installation cap",
   (testContext) => {
-    const manifest = JSON.parse(NodeFS.readFileSync(manifestUrl, "utf8"));
     const grants = new Set([
       ...BROWSER_SURFACE_REQUIRED_GRANTS,
       ...BROWSER_RECORDING_REQUIRED_GRANTS,
