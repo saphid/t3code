@@ -2263,8 +2263,9 @@ html[data-app-backdrop="on"][data-app-backdrop="on"] {
   }
 }
 
-/* Form controls keep a solid fill: a see-through switch thumb or input on
-   top of the glass would lose its shape. */
+/* Some surfaces keep a solid fill: a see-through switch thumb or input on
+   top of the glass would lose its shape, and a sticky header or an overlay
+   positioned over other content would let that content show through. */
 html[data-app-backdrop="on"][data-app-backdrop="on"]
   :is(
     [data-slot="switch-thumb"],
@@ -2275,7 +2276,8 @@ html[data-app-backdrop="on"][data-app-backdrop="on"]
     [data-slot="select-trigger"],
     [data-slot="number-field-group"],
     [data-slot="input-group"],
-    [data-slot="toggle"]
+    [data-slot="toggle"],
+    .bg-background:is(.sticky, .absolute, .fixed)
   ) {
   --background: var(--app-backdrop-tint);
 }
@@ -2294,7 +2296,10 @@ html[data-app-backdrop="on"][data-app-backdrop="on"]
     [data-slot="select-trigger"],
     [data-slot="number-field-group"],
     [data-slot="input-group"],
-    [data-slot="toggle"]
+    [data-slot="toggle"],
+    .sticky,
+    .absolute,
+    .fixed
   ) {
   background-color: transparent;
 }

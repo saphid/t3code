@@ -1,4 +1,10 @@
-import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
+import {
+  THEME_BACKGROUND_CHOICES,
+  THEME_BACKGROUND_LABELS,
+  THEME_SCENE_UNAVAILABLE_REASON,
+  themeBackgroundLabel,
+} from "../../themeBackground";
+import { useThemeBackground } from "../../hooks/useThemeBackground";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import {
   MAX_INTERFACE_FONT_SIZE,
@@ -483,7 +489,7 @@ export function CustomizePopover({
     interfaceLayout: settings.interfaceLayout,
     chatWidth: settings.chatWidth,
   }));
-  const scene = useClientSettings((settings) => settings.themeBackground);
+  const { choice: scene, themeHasScene, sceneShowing } = useThemeBackground();
   const transparency = useClientSettings((settings) => settings.themeBackgroundTransparency);
   const chatWidth = presetSettings.chatWidth;
   const matched = matchPreset(presetSettings);
@@ -582,14 +588,22 @@ export function CustomizePopover({
                 }}
               >
                 <SelectTrigger aria-label="Background scene">
-                  <SelectValue>{THEME_BACKGROUND_LABELS[scene]}</SelectValue>
+                  <SelectValue>{themeBackgroundLabel(scene, themeHasScene)}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {THEME_BACKGROUND_CHOICES.map((choice) => (
-                    <SelectItem key={choice} value={choice}>
-                      {THEME_BACKGROUND_LABELS[choice]}
-                    </SelectItem>
-                  ))}
+                  {THEME_BACKGROUND_CHOICES.map((choice) => {
+                    const unavailable = choice === "auto" && !themeHasScene;
+                    return (
+                      <SelectItem key={choice} value={choice} disabled={unavailable}>
+                        {THEME_BACKGROUND_LABELS[choice]}
+                        {unavailable ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {THEME_SCENE_UNAVAILABLE_REASON}
+                          </span>
+                        ) : null}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectPopup>
               </Select>
             </div>
@@ -604,7 +618,8 @@ export function CustomizePopover({
                 max={MAX_THEME_BACKGROUND_TRANSPARENCY}
                 step={5}
                 value={transparency}
-                className="settings-slider min-w-0 flex-1"
+                disabled={!sceneShowing}
+                className="settings-slider min-w-0 flex-1 disabled:cursor-not-allowed disabled:opacity-50"
                 style={
                   {
                     "--settings-slider-progress": `${(transparency / MAX_THEME_BACKGROUND_TRANSPARENCY) * 100}%`,

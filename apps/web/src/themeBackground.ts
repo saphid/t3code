@@ -89,6 +89,20 @@ export function resolveThemeBackgroundUrl(
   return builtIn ? THEME_BACKGROUNDS[builtIn] : null;
 }
 
+/** Why Theme scene is unavailable when the active theme has no scene of its own. */
+export const THEME_SCENE_UNAVAILABLE_REASON = "This theme has no scene";
+
+/**
+ * The picker label for a choice. Theme scene on a theme without one shows
+ * nothing, so the picker says so instead of naming a scene that is not there.
+ */
+export function themeBackgroundLabel(
+  choice: ThemeBackgroundChoice,
+  themeHasScene: boolean,
+): string {
+  return choice === "auto" && !themeHasScene ? "No theme scene" : THEME_BACKGROUND_LABELS[choice];
+}
+
 /**
  * Paint (or clear) the scene layer for the active theme. Tints come straight
  * from the theme definition's solid colors — reading them off the document

@@ -7,6 +7,7 @@ import {
   resolveThemeBackgroundUrl,
   STANDALONE_SCENE_IDS,
   THEME_BACKGROUNDS,
+  themeBackgroundLabel,
 } from "./themeBackground";
 import { GROVE_THEME } from "@t3tools/shared/themePalettes";
 
@@ -53,5 +54,13 @@ describe("applyThemeBackground", () => {
       applyThemeBackground("/backgrounds/grove.webp", GROVE_THEME, "light"),
     ).not.toThrow();
     expect(() => applyThemeBackground(null, null, "dark")).not.toThrow();
+  });
+});
+
+describe("themeBackgroundLabel", () => {
+  it("says when Theme scene has nothing to show", () => {
+    expect(themeBackgroundLabel("auto", true)).toBe("Theme scene");
+    expect(themeBackgroundLabel("auto", false)).toBe("No theme scene");
+    expect(themeBackgroundLabel("ocean", false)).toBe("Ocean");
   });
 });

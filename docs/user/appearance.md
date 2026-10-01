@@ -39,14 +39,15 @@ step back. **Done** closes the mode and keeps your changes. Mobile does not have
 
 ## Background scenes
 
-On web and desktop, choose a **Background scene** under **Settings → Appearance** or in **Customize interface** to show a dimmed
-scenic backdrop behind the interface. **Theme scene** follows the active theme, so each built-in
-theme ships with its own matching scene, and a library of standalone scenes (Alpine, Aurora,
-Coastline, Dune, Fjord, Forest Lake, Highlands, Meadow, Nightfall, Terraces) works with any theme.
-A picked scene keeps it across theme changes.
-Scenes are off (**None**) until you pick one. **Background transparency** controls how much of the
-scene shows through the interface, from solid up to fully transparent glass. The backdrop is a
-device-local appearance preference.
+On web and desktop, choose a **Background scene** under **Settings → Appearance** or in
+**Customize interface** to show a dimmed scenic backdrop behind the interface. **Theme scene**
+follows the active theme: the T3 Chat, Grove, Ocean, Ember, and Iris themes each have a matching
+scene, while the standard theme and custom or published themes have none, so Theme scene is
+unavailable with them. The standalone scenes (Alpine, Aurora, Coastline, Dune, Fjord, Forest Lake,
+Highlands, Meadow, Nightfall, Terraces) work with any theme, and a picked scene stays across theme
+changes. Scenes are off (**None**) until you pick one. While a scene shows, **Background
+transparency** controls how much of it shows through the interface, from solid up to 85% so text
+stays readable. The backdrop is saved on each device or browser.
 
 ## Motion
 

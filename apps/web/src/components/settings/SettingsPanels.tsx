@@ -1,4 +1,10 @@
-import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
+import {
+  THEME_BACKGROUND_CHOICES,
+  THEME_BACKGROUND_LABELS,
+  THEME_SCENE_UNAVAILABLE_REASON,
+  themeBackgroundLabel,
+} from "../../themeBackground";
+import { useThemeBackground } from "../../hooks/useThemeBackground";
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -1220,6 +1226,7 @@ export function AppearanceSettingsPanel() {
     themeHalves,
   } = useTheme();
   const customThemes = useCustomThemes();
+  const { themeHasScene, sceneShowing } = useThemeBackground();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1365,7 +1372,9 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-theme-background")}
-          description="Show a dimmed scenic backdrop behind the interface. Theme scene follows the active theme; a picked scene stays across theme changes."
+          description={`Show a dimmed scenic backdrop behind the interface. Theme scene follows the active built-in theme; a picked scene stays across theme changes.${
+            themeHasScene ? "" : ` ${THEME_SCENE_UNAVAILABLE_REASON}.`
+          }`}
           resetAction={
             settings.themeBackground !== DEFAULT_UNIFIED_SETTINGS.themeBackground ? (
               <SettingResetButton
@@ -1388,11 +1397,18 @@ export function AppearanceSettingsPanel() {
               }}
             >
               <SelectTrigger className="w-full sm:w-40" aria-label="Background scene">
-                <SelectValue>{THEME_BACKGROUND_LABELS[settings.themeBackground]}</SelectValue>
+                <SelectValue>
+                  {themeBackgroundLabel(settings.themeBackground, themeHasScene)}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {THEME_BACKGROUND_CHOICES.map((choice) => (
-                  <SelectItem hideIndicator key={choice} value={choice}>
+                  <SelectItem
+                    hideIndicator
+                    key={choice}
+                    value={choice}
+                    disabled={choice === "auto" && !themeHasScene}
+                  >
                     {THEME_BACKGROUND_LABELS[choice]}
                   </SelectItem>
                 ))}
@@ -1403,7 +1419,11 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-theme-background-transparency")}
-          description="How much of the background scene shows through the interface. Higher values are more transparent."
+          description={
+            sceneShowing
+              ? "How much of the background scene shows through the interface. Higher values are more transparent."
+              : "Pick a background scene to adjust how much of it shows through the interface."
+          }
           resetAction={
             settings.themeBackgroundTransparency !==
             DEFAULT_UNIFIED_SETTINGS.themeBackgroundTransparency ? (
@@ -1428,7 +1448,8 @@ export function AppearanceSettingsPanel() {
               </output>
               <input
                 aria-label="Background transparency"
-                className="settings-slider min-w-0 flex-1"
+                className="settings-slider min-w-0 flex-1 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!sceneShowing}
                 id="theme-background-transparency"
                 max={MAX_THEME_BACKGROUND_TRANSPARENCY}
                 min={0}
