@@ -6,17 +6,10 @@ import {
   buildFileDiffIdentityKey,
   fnv1a32,
   getRenderablePatch,
+  resolveFileDiffPath,
+  resolveFileDiffPreviousPath,
   type RenderablePatch,
 } from "~/lib/diffRendering";
-
-/**
- * The path a plugin names a file by: the parser's name with a leftover
- * `a/`/`b/` prefix stripped, the same spelling the plugin's own rows use.
- */
-export function codeViewPatchPath(fileDiff: FileDiffMetadata): string {
-  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
-  return raw.startsWith("a/") || raw.startsWith("b/") ? raw.slice(2) : raw;
-}
 
 /**
  * Parses a plugin patch with the native parser. The theme is part of the
@@ -51,7 +44,7 @@ export function buildCodeViewDiffFiles(
 ): CodeViewDiffFile[] {
   const collapsed = new Set(collapsedPaths);
   return files.map((fileDiff) => {
-    const path = codeViewPatchPath(fileDiff);
+    const path = resolveFileDiffPath(fileDiff);
     const folded = collapsed.has(path);
     return {
       path,
@@ -72,7 +65,7 @@ export function createCodeViewContentsLoader(
   cacheScope: string,
 ): FileDiffContentsLoader {
   return async (fileDiff) => {
-    const path = codeViewPatchPath(fileDiff);
+    const path = resolveFileDiffPath(fileDiff);
     const contents = await loadContents(path);
     const newFile = {
       name: path,
@@ -80,10 +73,7 @@ export function createCodeViewContentsLoader(
       cacheKey: `${cacheScope}:new:${path}`,
     };
     if (fileDiff.type === "rename-pure") return { oldFile: null, newFile };
-    const oldPath =
-      fileDiff.prevName === undefined
-        ? path
-        : codeViewPatchPath({ ...fileDiff, name: fileDiff.prevName });
+    const oldPath = resolveFileDiffPreviousPath(fileDiff);
     return {
       oldFile: {
         name: oldPath,
