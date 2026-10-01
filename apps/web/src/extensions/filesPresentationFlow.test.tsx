@@ -1710,7 +1710,7 @@ describe("a tree whose focused row goes away", () => {
   });
 });
 
-describe("round 3 Files kit regressions", () => {
+describe("Files kit regressions", () => {
   it.each([false, true])(
     "keeps exactly one reachable tab stop after scrolling and blur (kit=%s)",
     async (kit) => {
