@@ -2249,9 +2249,14 @@ code {
 
    Readability: the veil and the canvas fill together cover the scene with
    the theme tint. At the 85% transparency cap an 82% veil leaves at most
-   about 15% of the scene showing; with the muted-text boost below, all text
-   stays at 4.5:1 or better for every built-in theme and variant over the
-   darkest and brightest pixels of every shipped scene. */
+   about 15% of the scene showing. With the muted-text boost and the faded
+   text and sidebar row rules below, body, muted, placeholder, secondary, and
+   sidebar text at rest stay at 4.5:1 or better at the default (or higher)
+   appearance contrast, for every built-in theme and variant over the
+   darkest and brightest pixels of every shipped scene. Where a theme's own
+   solid contrast is lower (settled sidebar labels, 4.23-4.40:1), the scene
+   never takes it below that. Lowered appearance contrast, opacity fades
+   outside the sidebar rows, and custom themes are not covered. */
 html[data-app-backdrop="on"][data-app-backdrop="on"] {
   --backdrop-surface-opacity: calc(100% - var(--backdrop-transparency, 20%));
   --backdrop-dim: 82%;
@@ -2343,10 +2348,26 @@ html[data-app-backdrop="on"][data-app-backdrop="on"]
   }
 }
 
+/* Sidebar rows fade at rest in two ways the rules above cannot reach:
+   settled rows force a faded secondary color onto their contents, and
+   background-work rows fade as a whole with opacity, which no color boost
+   can undo. Over a scene they rest at full strength; status labels and
+   colors still carry the hierarchy, and hover and focus look the same. */
+html[data-app-backdrop="on"][data-app-backdrop="on"]
+  [data-app-sidebar]
+  [data-row-settled]:not(:hover):not(:focus-within)
+  * {
+  color: var(--contrast-secondary-label);
+}
+
+html[data-app-backdrop="on"][data-app-backdrop="on"] [data-app-sidebar] [data-row-receded] {
+  opacity: 1;
+}
+
 /* Muted text over the glass loses contrast as more scene shows, so it moves
    toward the foreground in step with transparency: none when solid, 32% at
-   the cap. That keeps muted, placeholder, and secondary text at 4.5:1 or
-   better for every built-in theme over every shipped scene. These repeat the
+   the cap, which keeps those roles at 4.5:1 or better under the conditions
+   described at the top of this section. These repeat the
    contrast tokens' formulas with one extra mix. */
 html[data-app-backdrop="on"][data-app-backdrop="on"]
   :is([data-slot="sidebar-inset"], [data-app-sidebar]) {
