@@ -42,6 +42,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { pullRequestHeadRef } from "../git/pullRequestRefs.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -3223,10 +3224,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
-      const headRef =
-        input.provider === "gitlab"
-          ? `refs/merge-requests/${input.prNumber}/head`
-          : `refs/pull/${input.prNumber}/head`;
+      const headRef = pullRequestHeadRef(input.provider, input.prNumber);
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,

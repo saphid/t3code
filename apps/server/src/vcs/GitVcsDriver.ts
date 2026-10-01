@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  type SourceControlProviderKind,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -31,7 +32,6 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
   type WorktreeSubmodules,
-  type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
   makeGitVcsDriverCore,

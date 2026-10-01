@@ -65,6 +65,7 @@ import {
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import { pullRequestHeadRef } from "./pullRequestRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -937,10 +938,10 @@ export const make = Effect.gen(function* () {
 
   // `ref` read straight from the URL the provider reports for `repository` on `host`. Never through
   // a configured remote: neither its name nor its URLs prove which repository Git fetches from.
-  // Only GitHub's lookup (`gh repo view host/owner/repo`) names one exact repository. The others
+  // GitHub and GitLab lookups name one exact repository on the requested host. The others
   // ignore the host or resolve a bare name against the checkout's own project (Azure), so they
   // can answer for a different repository; their heads are never read, and a checkout on them is
-  // reported unverified. A GitHub answer for any other host or repository is refused too.
+  // reported unverified. An answer for any other host or repository is refused too.
   const fetchRepositoryCommit = Effect.fn("fetchRepositoryCommit")(function* (
     cwd: string,
     host: string,
@@ -949,7 +950,7 @@ export const make = Effect.gen(function* () {
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const expected = yield* Effect.fromNullishOr(repository);
-    if (provider.kind !== "github") {
+    if (provider.kind !== "github" && provider.kind !== "gitlab") {
       return yield* new GitManagerError({
         operation: "fetchRepositoryCommit",
         cwd,
@@ -969,8 +970,8 @@ export const make = Effect.gen(function* () {
     return (yield* gitCore.fetchCommit({ cwd, url, ref })).commitSha;
   });
 
-  // The commit the host publishes as the pull request's head right now: its `refs/pull/<n>/head`
-  // in the repository the pull request belongs to, otherwise the head branch in the repository
+  // The commit the host publishes as the pull request's head right now: its provider-specific
+  // head ref in the repository the pull request belongs to, otherwise the head branch in the repository
   // the provider says it lives in. Null when neither can be read, so a caller reports the
   // checkout as unverified and leaves it where it is.
   const fetchPullRequestHead = Effect.fn("fetchPullRequestHead")(function* (
@@ -986,7 +987,7 @@ export const make = Effect.gen(function* () {
       cwd,
       base.host,
       base.repository,
-      `refs/pull/${pullRequest.number}/head`,
+      pullRequestHeadRef(pullRequest.provider, pullRequest.number),
     ).pipe(
       Effect.catch(() =>
         fetchRepositoryCommit(

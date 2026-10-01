@@ -4883,7 +4883,43 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }),
   );
 
-  it.effect("PR checkout on GitLab and Bitbucket is reported unverified and never advanced", () =>
+  it.effect.each(["local", "worktree"] as const)(
+    "verifies GitLab's published MR head and advances a clean %s checkout",
+    (mode) =>
+      Effect.gen(function* () {
+        const number = mode === "local" ? 320 : 321;
+        const { repoDir, manager, pullHead } = yield* setUpSwitchOnlyPullRequest({
+          kind: "gitlab",
+          number,
+          headBranch: `feature/gitlab-${mode}-published-head`,
+          pushHeadBranch: false,
+        });
+        yield* runGit(repoDir, [
+          "push",
+          "origin",
+          `${pullHead}:refs/merge-requests/${number}/head`,
+        ]);
+        const branch = `feature/gitlab-${mode}-published-head`;
+        const checkoutPath =
+          mode === "local"
+            ? repoDir
+            : NodePath.join(repoDir, "..", `gitlab-reused-${NodePath.basename(repoDir)}`);
+        if (mode === "worktree") {
+          yield* runGit(repoDir, ["worktree", "add", checkoutPath, branch]);
+        }
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: String(number),
+          mode,
+        });
+
+        expect(result).toMatchObject({ branch, isOnPullRequestHead: true });
+        expect((yield* runGit(checkoutPath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      }),
+  );
+
+  it.effect("PR checkout without a verifiable GitLab or Bitbucket head is never advanced", () =>
     Effect.gen(function* () {
       for (const [index, kind] of (["gitlab", "bitbucket"] as const).entries()) {
         const local = yield* setUpSwitchOnlyPullRequest({
@@ -4891,6 +4927,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           number: 300 + index,
           headBranch: `feature/${kind}-local`,
           publishPullRef: true,
+          pushHeadBranch: false,
         });
         const localResult = yield* preparePullRequestThread(local.manager, {
           cwd: local.repoDir,
@@ -4907,6 +4944,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           number: 310 + index,
           headBranch: `feature/${kind}-reused`,
           publishPullRef: true,
+          pushHeadBranch: false,
         });
         const worktreePath = NodePath.join(
           reused.repoDir,
