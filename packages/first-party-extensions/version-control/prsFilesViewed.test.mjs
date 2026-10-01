@@ -8,15 +8,35 @@ import {
   defaultHandlers,
   deferred,
   detailOf,
-  flush,
+  flush as flushPanel,
   loadPrsPanel,
   mount,
 } from "./prsPanelHarness.mjs";
 
 let panel;
+const pendingDigests = new Set();
 NodeTest.before(async () => {
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  NodeTest.mock.method(crypto.subtle, "digest", (...args) => {
+    const pending = digest(...args);
+    pendingDigests.add(pending);
+    void pending.then(
+      () => pendingDigests.delete(pending),
+      () => pendingDigests.delete(pending),
+    );
+    return pending;
+  });
   panel = await loadPrsPanel();
 });
+NodeTest.after(() => NodeTest.mock.restoreAll());
+
+// Native diff hashing may still be pending after the panel's queued updates land.
+async function flush() {
+  await flushPanel();
+  await act(async () => {
+    await Promise.all(pendingDigests);
+  });
+}
 
 const patch = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n";
 const hash = NodeCrypto.createHash("sha256").update(patch).digest("hex");
