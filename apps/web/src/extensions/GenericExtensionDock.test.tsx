@@ -18,7 +18,7 @@ import {
 } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
-const native = vi.hoisted(() => ({ mounts: 0, disposals: 0 }));
+const native = vi.hoisted(() => ({ mounts: 0, disposals: 0, archived: false }));
 vi.mock("../hooks/useMediaQuery", () => ({ useMediaQuery: () => false }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (select: (value: { panelAnimationDurationMs: number }) => unknown) =>
@@ -53,7 +53,10 @@ vi.mock("../components/pullRequest/PullRequestGhosts", () => ({
 vi.mock("../components/pullRequest/PullRequestsUnavailableState", () => ({
   PullRequestsUnavailableState: () => null,
 }));
-vi.mock("../state/entities", () => ({ useThreadShell: () => ({ projectId: "shared-project" }) }));
+vi.mock("../state/entities", () => ({
+  useThreadShell: () => (native.archived ? null : { projectId: "shared-project" }),
+  useThread: (ref: ScopedThreadRef | null) => (ref ? { projectId: "shared-project" } : null),
+}));
 vi.mock("../composerDraftStore", () => ({
   useComposerDraftStore: (select: (state: { getDraftThreadByRef: () => null }) => unknown) =>
     select({ getDraftThreadByRef: () => null }),
@@ -175,6 +178,7 @@ function Shell({ threadRef }: { threadRef: ScopedThreadRef }) {
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  native.archived = false;
   native.mounts = 0;
   native.disposals = 0;
   useRightPanelStore.setState({
@@ -191,6 +195,22 @@ beforeEach(() => {
 });
 
 describe("generic extension dock composition", () => {
+  it("mounts an active archived thread's terminal dock without a shell", async () => {
+    native.archived = true;
+    let root: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        root = create(<Shell threadRef={a} />);
+      });
+      expect(native.mounts).toBe(1);
+      await act(async () => button(root!, "Native terminal probe").props.onClick());
+      expect(button(root!, "Native terminal probe").children).toEqual(["typed"]);
+    } finally {
+      await act(async () => root?.unmount());
+    }
+    expect(native.disposals).toBe(1);
+  });
+
   it("retains hidden state, restores separate project counters for A/B, and does not tear down the native terminal sibling", async () => {
     const counter = registerCounter();
     const store = useRightPanelStore.getState();

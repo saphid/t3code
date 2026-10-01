@@ -40,6 +40,7 @@ export function PromptFontPreview() {
   return (
     <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
       <ComposerPromptEditor
+        ariaLabel="Prompt font preview"
         editorRef={editorRef}
         value={prompt}
         cursor={cursor}
@@ -47,7 +48,7 @@ export function PromptFontPreview() {
         skills={EMPTY_SKILLS}
         disabled={false}
         placeholder={DISCONNECTED_COMPOSER_PLACEHOLDER}
-        className="max-h-40 min-h-12"
+        className="max-h-42 min-h-14"
         onChange={onChange}
         onPaste={noop}
       />

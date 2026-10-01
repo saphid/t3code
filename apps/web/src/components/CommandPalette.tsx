@@ -48,12 +48,14 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
   PuzzleIcon,
+  RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -101,9 +103,13 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { threadEnvironment } from "../state/threads";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { useScratchProject } from "../hooks/useScratchProject";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
@@ -477,6 +483,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -569,6 +576,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "usage.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        void navigate({ to: "/usage" });
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -582,9 +596,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [
     appearanceMode,
     keybindings,
+    navigate,
     previewOpen,
     resolvedTheme,
     setAppearanceMode,
+    setOpen,
     terminalOpen,
     theme,
     themeHalves,
@@ -706,6 +722,7 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -717,6 +734,12 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
+    reportFailure: false,
+  });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
@@ -961,21 +984,23 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const addProjectEnvironmentOptions = useMemo(() => {
-    const options = environments.map((environment): AddProjectEnvironmentOption => {
-      const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-      return {
-        environmentId: environment.environmentId,
-        label: resolveEnvironmentOptionLabel({
-          isPrimary,
+    const options = environments
+      .filter((environment) => canCreateProjectInEnvironment(environment.connection.phase))
+      .map((environment): AddProjectEnvironmentOption => {
+        const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
+        return {
           environmentId: environment.environmentId,
-          runtimeLabel: environment.label,
-        }),
-        isPrimary,
-        machine: resolveEnvironmentMachineKind(environment.serverConfig),
-        isConnected: canCreateProjectInEnvironment(environment.connection.phase),
-        status: connectionStatusText(environment.connection),
-      };
-    });
+          label: resolveEnvironmentOptionLabel({
+            isPrimary,
+            environmentId: environment.environmentId,
+            runtimeLabel: environment.label,
+          }),
+          isPrimary,
+          machine: resolveEnvironmentMachineKind(environment.serverConfig),
+          isConnected: canCreateProjectInEnvironment(environment.connection.phase),
+          status: connectionStatusText(environment.connection),
+        };
+      });
 
     options.sort((left, right) => {
       if (left.isPrimary !== right.isPrimary) {
@@ -1092,6 +1117,11 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  // Where "without a project" threads start: the current environment when it
+  // offers them, otherwise the first connected one that does.
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    currentProjectEnvironmentId ?? primaryEnvironmentId,
+  );
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
@@ -1262,9 +1292,12 @@ function OpenCommandPaletteDialog(props: {
 
   const projectThreadItems = useMemo(
     () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: pickerProjects,
+      enumerateCommandPaletteItems([
+        ...buildProjectActionItems({
+          // The no-project home shows once, as the "No project" item below.
+          projects: pickerProjects.filter(
+            (project) => !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
+          ),
           valuePrefix: "new-thread-in",
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -1315,13 +1348,29 @@ function OpenCommandPaletteDialog(props: {
             );
           },
         }),
-      ),
+        ...(scratchTargetEnvironmentId === null
+          ? []
+          : [
+              {
+                kind: "action" as const,
+                value: "new-thread-in:no-project",
+                searchTerms: ["no project", "without project", "none"],
+                title: "No project",
+                icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+                shortcutCommand: "chat.newWithoutProject" as const,
+                run: () => startScratchThread(scratchTargetEnvironmentId),
+              },
+            ]),
+      ]),
     [
       contextualProjectRef,
       handleNewThread,
       pickerProjects,
       projectEnvironmentLocationById,
       projectGroupByTargetKey,
+      scratchTargetEnvironmentId,
+      scratchWorkspaceRootFor,
+      startScratchThread,
     ],
   );
 
@@ -1652,7 +1701,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = useCallback(() => {
-    // With no environment at all there is nothing to browse, so the only
+    // With no connected environment there is nothing to browse, so the only
     // useful next step is connecting one.
     if (addProjectEnvironmentOptions.length === 0) {
       setOpen(false);
@@ -1789,6 +1838,18 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (scratchTargetEnvironmentId !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread-without-project",
+      searchTerms: ["new thread", "no project", "without project", "none", "chat"],
+      title: "New thread without a project",
+      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.newWithoutProject",
+      run: () => startScratchThread(scratchTargetEnvironmentId),
+    });
+  }
+
   if (activeThreadReferenceCopyTarget !== null) {
     actionItems.push({
       kind: "action",
@@ -1831,6 +1892,49 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null) {
+    const thread = activeThread;
+    actionItems.push({
+      kind: "action",
+      value: "action:restart-agent-session",
+      searchTerms: ["restart", "reset", "reload", "agent", "session", "skills", "plugins", "mcp"],
+      title: "Restart agent session",
+      icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
+      // Stopping the provider process keeps the conversation: the next message
+      // spawns a fresh one that resumes it and reloads skills, plugins, and MCP
+      // servers. The fresh workspace scan updates the composer's slash menu.
+      // Failures throw into executeItem's error toast.
+      run: async () => {
+        const { environmentId } = thread;
+        if (thread.session && thread.session.status !== "stopped") {
+          const stopped = await stopThreadSession({
+            environmentId,
+            input: { threadId: thread.id },
+          });
+          if (stopped._tag === "Failure") throw squashAtomCommandFailure(stopped);
+        }
+        // The server stops the process after accepting the command. A failed
+        // stop shows in the thread.
+        toastManager.add({
+          type: "success",
+          title: "Agent session will restart",
+          description: "Your next message starts a fresh session.",
+        });
+        const project = projectByKey.get(`${environmentId}:${thread.projectId}`);
+        if (!project) return;
+        const refreshed = await refreshProviders({
+          environmentId,
+          input: {
+            instanceId: thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
+            cwd: thread.worktreePath ?? project.workspaceRoot,
+            fresh: true,
+          },
+        });
+        if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
+      },
+    });
   }
 
   actionItems.push({
@@ -2037,6 +2141,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",
     icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
     },
@@ -3014,7 +3119,6 @@ function OpenCommandPaletteDialog(props: {
         setHighlightedItemValue(typeof value === "string" ? value : null);
       }}
       onValueChange={handleQueryChange}
-      panelClassName="max-h-[min(28rem,70vh)]"
       showBackHint={isSubmenu}
       value={query}
     >

@@ -297,14 +297,14 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         const spec = discoverySpecs.find((candidate) => candidate.kind === kind);
         return spec ? probeRepositoryHosts({ spec, process, cwd: config.cwd }) : Effect.succeed([]);
       },
-      discover: Effect.all(
-        discoverySpecs.map((spec) =>
+      discover: Effect.forEach(
+        discoverySpecs,
+        (spec) =>
           probeSourceControlProvider({
             spec,
             process,
             cwd: config.cwd,
           }),
-        ),
         { concurrency: "unbounded" },
       ),
     });

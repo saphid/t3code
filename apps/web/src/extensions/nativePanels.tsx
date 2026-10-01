@@ -9,7 +9,7 @@ import { useRightPanelStore, type RightPanelSurface } from "../rightPanelStore";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { WorkspaceExtensionSurface } from "./workspaceRegistry";
 import { isElectron } from "../env";
-import { useThreadShell } from "../state/entities";
+import { useThread, useThreadShell } from "../state/entities";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { createNativeSurfaceBridge } from "./nativeBridge";
@@ -157,7 +157,10 @@ export function NativeRightPanel(props: PanelProps) {
 export function NativeTerminalDock(props: PersistentThreadTerminalDrawerProps) {
   const shell = useThreadShell(props.threadRef);
   const draft = useComposerDraftStore((store) => store.getDraftThreadByRef(props.threadRef));
-  const projectId = shell?.projectId ?? draft?.projectId;
+  const activeThread = useThread(props.active ? props.threadRef : null, {
+    waitForShell: draft !== null,
+  });
+  const projectId = activeThread?.projectId ?? shell?.projectId ?? draft?.projectId;
   const terminalOpen = useTerminalUiStateStore(
     (state) =>
       selectThreadTerminalUiState(state.terminalUiStateByThreadKey, props.threadRef).terminalOpen,

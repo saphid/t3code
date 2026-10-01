@@ -169,6 +169,10 @@ export function isProviderRepositoryUrlAllowed(url: string, originUrl?: string |
   return authority !== null && httpAuthority(originUrl ?? "") === authority;
 }
 
+/**
+ * Extracts the normalized host used for provider detection. SCP-style and SSH remotes return the
+ * hostname only, while other URL schemes retain explicit ports for non-default web endpoints.
+ */
 function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -181,7 +185,8 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   try {
-    return new URL(trimmed).host.toLowerCase();
+    const url = new URL(trimmed);
+    return (url.protocol === "ssh:" ? url.hostname : url.host).toLowerCase();
   } catch {
     return null;
   }

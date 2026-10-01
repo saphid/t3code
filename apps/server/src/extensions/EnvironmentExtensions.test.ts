@@ -270,6 +270,7 @@ function fixture() {
       clear: () => Effect.die("unused terminal clear"),
       restart: () => Effect.die("unused terminal restart"),
       close: () => Effect.die("unused terminal close"),
+      closeIdle: () => Effect.die("unused terminal closeIdle"),
       subscribe: () => Effect.die("unused terminal subscribe"),
       subscribeMetadata: () => Effect.die("unused terminal metadata"),
     }),

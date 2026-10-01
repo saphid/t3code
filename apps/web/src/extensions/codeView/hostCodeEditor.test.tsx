@@ -110,10 +110,13 @@ beforeEach(() => {
     value: () => {},
   });
   Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: () => {} });
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
-    font: "",
-    measureText: (text: string) => ({ width: text.length * 8 }),
-  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(((context: string) =>
+    context === "2d"
+      ? {
+          font: "",
+          measureText: (text: string) => ({ width: text.length * 8 }),
+        }
+      : null) as typeof HTMLCanvasElement.prototype.getContext);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);

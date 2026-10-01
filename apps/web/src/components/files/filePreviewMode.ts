@@ -1,9 +1,15 @@
+import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
 import { isAbsolutePath } from "~/terminal-links";
 
 /** Rendered (true) or source (false) for HTML files; shared with extension packs. */
 export const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 /** Whether the file explorer shows beside an open file; shared with extension packs. */
 export const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
+/** Resolve workspace links before choosing between the explorer and a file preview. */
+export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
+  if (path === null) return null;
+  return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
+}
 
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
