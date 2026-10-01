@@ -239,23 +239,34 @@ const streamThrough = (
 const capabilities = (
   deps: Pick<UiClientBridgeDeps, "environmentId" | "clientApiProviders">,
   adapter: string,
-  operationAreas: Readonly<Record<string, string>>,
+  operationAreas: Readonly<
+    Record<string, string | { readonly id: string; readonly range: string }>
+  >,
   metadata: HostApiInvocationMetadata,
 ): Promise<Json> =>
   Effect.runPromise(
     Effect.gen(function* () {
       // Provider-session callers can see the contracts but reach none of the ops.
-      const reachable = metadata.principal?.kind !== "provider-session";
+      const connectionId = yield* resolveConnectionId(deps, metadata).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      const targets = yield* deps.clientApiProviders.listTargets(deps.environmentId);
+      const selected =
+        metadata.principal?.kind === "provider-session"
+          ? undefined
+          : targets.find((target) => target.connectionId === connectionId);
       const operations: Record<string, boolean> = {};
-      for (const [operation, apiId] of Object.entries(operationAreas)) {
+      for (const [operation, area] of Object.entries(operationAreas)) {
+        const apiId = typeof area === "string" ? area : area.id;
+        const provider = selected?.providers.find((candidate) => candidate.id === apiId);
         operations[operation] =
-          reachable && (yield* deps.clientApiProviders.hasProvider(deps.environmentId, apiId));
+          provider !== undefined &&
+          (typeof area === "string" || satisfiesSemverRange(provider.version, area.range));
       }
       // The client directory is scoped like targeting itself: host callers see
       // every connection, environment sessions see only their own, provider
       // sessions see none — a cross-session directory would leak sibling
       // connection ids and device metadata the caller cannot legitimately use.
-      const targets = yield* deps.clientApiProviders.listTargets(deps.environmentId);
       const clients: (typeof targets)[number][] = [];
       if (metadata.principal?.kind === "host") {
         clients.push(...targets);
@@ -1326,7 +1337,7 @@ export function createUiClientApiProviders(deps: UiClientBridgeDeps): readonly H
             {
               openThread: CLIENT_NAVIGATION,
               openAgentSession: CLIENT_NAVIGATION,
-              openFile: CLIENT_NAVIGATION,
+              openFile: { id: CLIENT_NAVIGATION, range: CLIENT_NAVIGATION_V11_RANGE },
             },
             metadata,
           )) as { readonly operations: Record<string, boolean> };
