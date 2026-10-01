@@ -46,8 +46,9 @@ scene, while the standard theme and custom or published themes have none, so The
 unavailable with them. The standalone scenes (Alpine, Aurora, Coastline, Dune, Fjord, Forest Lake,
 Highlands, Meadow, Nightfall, Terraces) work with any theme, and a picked scene stays across theme
 changes. Scenes are off (**None**) until you pick one. While a scene shows, **Background
-transparency** controls how much of it shows through the interface, from solid up to 85% so text
-stays readable. The backdrop is saved on each device or browser.
+transparency** controls how much of it shows through the sidebar and main area, from none to a
+subtle glimpse. The scene stays dimmed at every setting so text stays readable with the built-in
+themes; menus, dialogs, and controls stay solid. The backdrop is saved on each device or browser.
 
 ## Motion
 
