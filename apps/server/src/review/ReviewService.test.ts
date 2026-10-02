@@ -5,6 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
+import { ProjectId } from "@t3tools/contracts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -13,9 +17,29 @@ import * as ReviewService from "./ReviewService.ts";
 function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
+  readonly registeredRoots?: ReadonlyArray<string>;
+  readonly readProjects?: ProjectionSnapshotQuery["Service"]["getProjectShells"];
   readonly detectCalls?: Array<{ readonly cwd: string }>;
 }) {
   return ReviewService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProjectionSnapshotQuery)({
+        getProjectShells:
+          input.readProjects ??
+          (() =>
+            Effect.succeed(
+              (input.registeredRoots ?? []).map((workspaceRoot, index) => ({
+                id: ProjectId.make(`p${index}`),
+                title: "Registered",
+                workspaceRoot,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-01T00:00:00Z",
+              })),
+            )),
+      }),
+    ),
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
         get: () => Effect.die("unexpected VCS registry get"),
@@ -131,3 +155,111 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+it.effect("allows review previews within a live registered project outside the launch root", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-launch-" });
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+    const nested = `${projectRoot}/nested`;
+    yield* fs.makeDirectory(nested);
+    const registeredRoots = [projectRoot];
+    const detectCalls: Array<{ readonly cwd: string }> = [];
+    yield* Effect.gen(function* () {
+      const review = yield* ReviewService.ReviewService;
+      assert.deepStrictEqual((yield* review.getDiffPreview({ cwd: projectRoot })).sources, []);
+      assert.deepStrictEqual((yield* review.getDiffPreview({ cwd: nested })).sources, []);
+      assert.deepStrictEqual(detectCalls, [{ cwd: projectRoot }, { cwd: nested }]);
+      registeredRoots.length = 0;
+      const removed = yield* review.getDiffPreview({ cwd: projectRoot }).pipe(Effect.flip);
+      assert.strictEqual(removed._tag, "VcsRepositoryDetectionError");
+      assert.strictEqual(detectCalls.length, 2);
+    }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, registeredRoots, detectCalls })));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("allows registered project roots through file-content workspace validation", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-launch-" });
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+    const detectCalls: Array<{ readonly cwd: string }> = [];
+    const error = yield* Effect.gen(function* () {
+      const review = yield* ReviewService.ReviewService;
+      return yield* review
+        .getDiffFileContents({
+          cwd: projectRoot,
+          sourceKind: "working-tree",
+          changeType: "change",
+          baseRef: "HEAD",
+          headRef: null,
+          oldPath: "file.ts",
+          newPath: "file.ts",
+        })
+        .pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(
+        makeLayer({ workspaceRoot, baseDir, registeredRoots: [projectRoot], detectCalls }),
+      ),
+    );
+    // The fixture has no Git repository: validation succeeds and detection decides the error.
+    assert.strictEqual(error._tag, "VcsUnsupportedOperationError");
+    assert.deepStrictEqual(detectCalls, [{ cwd: projectRoot }]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!symlinksSupported)("rejects symlink escapes from registered review roots", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-launch-" });
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+    const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+    yield* fs.symlink(outsideRoot, `${projectRoot}/escape`);
+    const detectCalls: Array<{ readonly cwd: string }> = [];
+    const error = yield* Effect.gen(function* () {
+      const review = yield* ReviewService.ReviewService;
+      return yield* review.getDiffPreview({ cwd: `${projectRoot}/escape` }).pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(
+        makeLayer({ workspaceRoot, baseDir, registeredRoots: [projectRoot], detectCalls }),
+      ),
+    );
+    assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+    assert.deepStrictEqual(detectCalls, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reports project snapshot failures while validating review roots", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-launch-" });
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+    const failure = new PersistenceSqlError({
+      operation: "getProjectShells",
+      detail: "database unavailable",
+    });
+    const detectCalls: Array<{ readonly cwd: string }> = [];
+    const error = yield* Effect.gen(function* () {
+      const review = yield* ReviewService.ReviewService;
+      return yield* review.getDiffPreview({ cwd: projectRoot }).pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          workspaceRoot,
+          baseDir,
+          readProjects: () => Effect.fail(failure),
+          detectCalls,
+        }),
+      ),
+    );
+    assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+    if (error._tag !== "VcsRepositoryDetectionError") return;
+    assert.match(error.detail, /Failed to read project roots/);
+    assert.strictEqual(error.cause, failure);
+    assert.deepStrictEqual(detectCalls, []);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

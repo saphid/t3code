@@ -1045,6 +1045,7 @@ const buildAppUnderTest = (options?: {
             }),
           searchThreads: () => Effect.succeed({ matches: [] }),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+          getProjectShells: () => Effect.succeed([]),
           getProjectShellById: () => Effect.succeedNone,
           getThreadShellById: () => Effect.succeedNone,
           getThreadDetailById: () => Effect.succeedNone,
