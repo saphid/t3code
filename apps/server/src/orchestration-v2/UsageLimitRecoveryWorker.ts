@@ -1,4 +1,10 @@
-import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2Command,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,13 +13,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-/** The persisted run and reset form the identity of one recovery opportunity. */
-export function limitRecoveryCommand(
-  thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
-  autoResume: boolean,
-  nowMs: number,
-  snooze = false,
-): OrchestrationV2Command | null {
+type LimitRecoveryCandidate = ProjectionStore.ProjectionLimitRecoveryCandidate;
+
+/** The reset time of a thread whose latest run stopped on a usage limit it can recover from. */
+function blockingResetMs(thread: LimitRecoveryCandidate): number | null {
   if (
     thread.status !== "failed" ||
     thread.lastErrorClass !== "usage_limit" ||
@@ -26,14 +29,31 @@ export function limitRecoveryCommand(
     return null;
   const resetMs = Date.parse(thread.usageLimitResetAt);
   // An already-expired window reported with a fresh failure cannot start a retry loop.
-  if (
-    !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
-  )
-    return null;
+  if (!Number.isFinite(resetMs) || resetMs <= stoppedAtMs(thread)) return null;
+  return resetMs;
+}
+
+const stoppedAtMs = (thread: LimitRecoveryCandidate) =>
+  DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt);
+
+const matchingRecovery = (thread: LimitRecoveryCandidate) =>
+  thread.limitRecovery?.runId === thread.latestRunId &&
+  thread.limitRecovery.resetAt === thread.usageLimitResetAt
+    ? thread.limitRecovery
+    : null;
+
+/** The persisted run and reset form the identity of one recovery opportunity. */
+export function limitRecoveryCommand(
+  thread: LimitRecoveryCandidate,
+  autoResume: boolean,
+  nowMs: number,
+  snooze = false,
+): OrchestrationV2Command | null {
+  const resetMs = blockingResetMs(thread);
+  if (resetMs === null || !thread.latestRunId || !thread.usageLimitResetAt) return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
-  const recovery = thread.limitRecovery;
-  if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
+  const recovery = matchingRecovery(thread);
+  if (recovery === null) {
     if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
@@ -49,7 +69,7 @@ export function limitRecoveryCommand(
   }
   if (
     !recovery.autoResume ||
-    resetMs > nowMs ||
+    Date.parse(recovery.clearedAt ?? recovery.resetAt) > nowMs ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;
@@ -71,11 +91,63 @@ export function limitRecoveryCommand(
   };
 }
 
-const makeSweep = Effect.gen(function* () {
+/**
+ * Records that a redeemed reset credit lifted a limit before its reported reset.
+ * Only a limit that stopped the run before the redeem is cleared by it.
+ */
+export function limitClearedCommand(
+  thread: LimitRecoveryCandidate,
+  autoResume: boolean,
+  clearedAtMs: number,
+): OrchestrationV2Command | null {
+  const resetMs = blockingResetMs(thread);
+  if (
+    resetMs === null ||
+    !thread.latestRunId ||
+    !thread.usageLimitResetAt ||
+    resetMs <= clearedAtMs ||
+    stoppedAtMs(thread) >= clearedAtMs
+  )
+    return null;
+  const recovery = matchingRecovery(thread);
+  if (recovery?.clearedAt !== undefined) return null;
+  return {
+    type: "thread.metadata.update",
+    commandId: CommandId.make(`limit-clear:${thread.id}:${thread.latestRunId}:${resetMs}`),
+    threadId: thread.id,
+    limitRecovery: {
+      runId: thread.latestRunId,
+      resetAt: thread.usageLimitResetAt,
+      clearedAt: DateTime.formatIso(DateTime.makeUnsafe(clearedAtMs)),
+      // An unarmed thread takes the global default it would have been armed with.
+      ...(recovery === null ? { autoResume } : {}),
+    },
+  };
+}
+
+/** Applies provider limit changes to threads waiting on usage-limit recovery. */
+export class UsageLimitRecovery extends Context.Service<
+  UsageLimitRecovery,
+  {
+    /** A reset credit on this instance lifted its limits now. */
+    readonly limitCleared: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+  }
+>()("t3/orchestration-v2/UsageLimitRecoveryWorker/UsageLimitRecovery") {}
+
+const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;
-  return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
+  const dispatch = (thread: LimitRecoveryCandidate, command: OrchestrationV2Command) =>
+    threads.dispatch(command).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("orchestration-v2.limit-recovery.dispatch-failed", {
+          threadId: thread.id,
+          cause,
+        }),
+      ),
+    );
+  const sweep = Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
     const candidates = yield* projections.getLimitRecoveryCandidates({
@@ -92,24 +164,40 @@ const makeSweep = Effect.gen(function* () {
         preferences.snoozeLimitedThreads,
       );
       if (command === null) continue;
-      yield* threads.dispatch(command).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("orchestration-v2.limit-recovery.dispatch-failed", {
-            threadId: thread.id,
-            cause,
-          }),
-        ),
-      );
+      yield* dispatch(thread, command);
     }
   });
+  const limitCleared = Effect.fn("UsageLimitRecovery.limitCleared")(
+    function* (instanceId: ProviderInstanceId) {
+      const preferences = yield* settings.getSettings;
+      const now = yield* DateTime.now;
+      const candidates = yield* projections.getLimitRecoveryCandidates({
+        now,
+        autoResume: preferences.autoResumeLimitedThreads,
+        snooze: preferences.snoozeLimitedThreads,
+        limitedOn: instanceId,
+      });
+      for (const thread of candidates) {
+        const command = limitClearedCommand(
+          thread,
+          preferences.autoResumeLimitedThreads,
+          DateTime.toEpochMillis(now),
+        );
+        if (command !== null) yield* dispatch(thread, command);
+      }
+    },
+    (effect, instanceId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.limit-recovery.clear-failed", { instanceId, cause }),
+        ),
+      ),
+  );
+  // The shared scheduler derives due work from persisted failures and recovery
+  // choices, so restarts need no timer restoration or connected client.
+  const scheduler = yield* Scheduler.Scheduler;
+  yield* scheduler.register("usage-limit-recovery", sweep());
+  return UsageLimitRecovery.of({ limitCleared });
 });
 
-// The shared scheduler derives due work from persisted failures and recovery
-// choices, so restarts need no timer restoration or connected client.
-export const workerLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sweep = yield* makeSweep;
-    const scheduler = yield* Scheduler.Scheduler;
-    yield* scheduler.register("usage-limit-recovery", sweep());
-  }),
-);
+export const workerLive = Layer.effect(UsageLimitRecovery, make);

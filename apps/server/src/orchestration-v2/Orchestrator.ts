@@ -2427,13 +2427,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
-      if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
+      const clearedAt =
+        command.limitRecovery.clearedAt ??
+        (thread.limitRecovery?.runId === command.limitRecovery.runId &&
+        thread.limitRecovery.resetAt === command.limitRecovery.resetAt
+          ? thread.limitRecovery.clearedAt
+          : undefined);
+      if (
+        command.limitRecovery.snooze === true &&
+        (resetMs <= DateTime.toEpochMillis(now) || clearedAt !== undefined)
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: "The reset time has passed. Retry the thread manually.",
         });
       }
+      const stoppedMs = DateTime.toEpochMillis(run?.completedAt ?? run?.requestedAt ?? now);
+      const clearedMs =
+        command.limitRecovery.clearedAt === undefined
+          ? undefined
+          : Date.parse(command.limitRecovery.clearedAt);
       if (
         !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
@@ -2441,7 +2455,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
-        resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
+        resetMs <= stoppedMs ||
+        // An early reset must fall between the failure and the reported reset.
+        (clearedMs !== undefined &&
+          !(
+            clearedMs > stoppedMs &&
+            clearedMs < resetMs &&
+            clearedMs <= DateTime.toEpochMillis(now)
+          )) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
         return yield* new OrchestratorDispatchError({
@@ -2621,6 +2642,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
               ? thread.limitRecovery
               : null;
+          const clearedAt = command.limitRecovery?.clearedAt ?? previousRecovery?.clearedAt;
           const limitRecovery =
             command.limitRecovery === undefined
               ? thread.limitRecovery
@@ -2631,14 +2653,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     autoResume:
                       command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
+                    ...(clearedAt === undefined ? {} : { clearedAt }),
                     requestId: command.commandId,
                   };
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
+            // An early reset ends the snooze this recovery owns.
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
+            limitRecovery.clearedAt === undefined &&
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
@@ -4122,7 +4147,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           recovery.requestId !== command.usageLimitRecoveryRequestId ||
           recovery.runId !== run.id ||
           recovery.resetAt !== failure.resetAt ||
-          Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+          Date.parse(recovery.clearedAt ?? recovery.resetAt) > DateTime.toEpochMillis(now) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.settledOverride === "settled" ||

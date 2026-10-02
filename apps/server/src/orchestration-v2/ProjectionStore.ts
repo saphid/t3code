@@ -336,10 +336,15 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /**
+   * Threads with due recovery work, or with `limitedOn`, every thread whose
+   * latest run is still blocked by a future reset on that provider instance.
+   */
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
     readonly snooze: boolean;
+    readonly limitedOn?: ProviderInstanceId;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   /** Every candidate, or only `threadId` when a sweep checks one thread. */
   readonly getSettlementCandidates: (
@@ -3313,12 +3318,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
-            AND (
+            AND ${
+              options.limitedOn !== undefined
+                ? sql`
+            json_extract(r.payload_json, '$.providerInstanceId') = ${options.limitedOn}
+            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)})`
+                : sql`
+            (
               (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
                 AND json_extract(t.payload_json, '$.limitRecovery.resetAt') IS json_extract(item.payload_json, '$.failure.resetAt')
                 AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-                AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) <= julianday(${DateTime.formatIso(options.now)})
+                AND julianday(COALESCE(json_extract(t.payload_json, '$.limitRecovery.clearedAt'), json_extract(item.payload_json, '$.failure.resetAt'))) <= julianday(${DateTime.formatIso(options.now)})
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
                   OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
@@ -3334,7 +3345,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
               )
-            )
+            )`
+            }
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request
               WHERE request.thread_id = t.thread_id AND request.status = 'pending'
@@ -5625,6 +5637,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
                 )
                   return false;
+                if (options.limitedOn !== undefined) {
+                  const run = state.projections
+                    .get(thread.id)
+                    ?.runs.find((candidate) => candidate.id === thread.latestRunId);
+                  return run?.providerInstanceId === options.limitedOn && resetMs > nowMs;
+                }
                 if (
                   thread.limitRecovery?.runId !== thread.latestRunId ||
                   thread.limitRecovery.resetAt !== thread.usageLimitResetAt
@@ -5633,7 +5651,8 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 }
                 return (
                   thread.limitRecovery.autoResume &&
-                  resetMs <= nowMs &&
+                  Date.parse(thread.limitRecovery.clearedAt ?? thread.limitRecovery.resetAt) <=
+                    nowMs &&
                   (thread.snoozedUntil == null ||
                     DateTime.toEpochMillis(thread.snoozedUntil) <= nowMs)
                 );

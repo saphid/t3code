@@ -2302,6 +2302,33 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         now: reset,
       })).find((row) => row.id === threadId)!;
       assert.deepEqual(due.limitRecovery, recovery);
+      // A redeemed reset credit makes the armed retry due before the reported reset.
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.limitRecovery.clearedAt', ${DateTime.formatIso(now)})
+        WHERE thread_id = ${threadId}`;
+      assert.isDefined(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_remove(payload_json, '$.limitRecovery.clearedAt')
+        WHERE thread_id = ${threadId}`;
+      // A redeem finds every thread its instance still blocks, armed or not.
+      assert.isDefined(
+        (yield* store.getLimitRecoveryCandidates({
+          ...recoveryOptions,
+          limitedOn: providerInstanceId,
+        })).find((row) => row.id === threadId),
+      );
+      for (const options of [
+        { ...recoveryOptions, limitedOn: ProviderInstanceId.make("codex_other") },
+        { ...recoveryOptions, now: reset, limitedOn: providerInstanceId },
+      ]) {
+        assert.isUndefined(
+          (yield* store.getLimitRecoveryCandidates(options)).find((row) => row.id === threadId),
+        );
+      }
       yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
         (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
         VALUES ('limit-shell:pending-request', ${threadId}, ${original.rootNodeId}, 'approval', 'pending', ${DateTime.formatIso(now)}, '{}')`;

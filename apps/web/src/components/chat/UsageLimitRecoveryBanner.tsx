@@ -17,23 +17,33 @@ type RecoveryProps = {
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
+/** When a redeemed reset credit lifted this run's limit before its reported reset. */
+function clearedAt({ runId, resetAt, recovery }: RecoveryProps) {
+  return recovery?.runId === runId && recovery.resetAt === resetAt ? recovery.clearedAt : undefined;
+}
+
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
   const { runId, resetAt, stoppedAt } = props;
+  const cleared = clearedAt(props);
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   return {
     id: `usage-limit-recovery:${runId}`,
-    variant: "warning",
+    variant: cleared ? "info" : "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${new Date(resetAt).toLocaleString()}`
-      : "Reset time unavailable; retry manually",
+    title: cleared ? "Usage limit reset early" : "Usage limit reached",
+    description: cleared
+      ? `Reset ${new Date(cleared).toLocaleString()}`
+      : resetAt
+        ? `Resets ${new Date(resetAt).toLocaleString()}`
+        : "Reset time unavailable; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+function RecoveryActions(props: RecoveryProps) {
+  const { runId, resetAt, recovery, snoozedUntil, onChange } = props;
+  const cleared = clearedAt(props) !== undefined;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -76,9 +86,15 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending
+          ? "Saving..."
+          : scheduled
+            ? "Cancel auto-resume"
+            : cleared
+              ? "Resume now"
+              : "Resume at reset"}
       </Button>
-      {!snoozed ? (
+      {!snoozed && !cleared ? (
         <Button
           size="xs"
           variant="ghost"

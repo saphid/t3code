@@ -1236,13 +1236,16 @@ describe("limit recovery choice updates", () => {
   const decode = Schema.decodeUnknownSync(OrchestrationV2LimitRecoveryUpdate);
   const identity = { runId: "run:limited", resetAt: "2026-09-20T21:00:00.000Z" };
   it("rejects updates that would disable defaults without choosing an option", () => {
-    expect(() => decode(identity)).toThrow("A recovery update must include autoResume or snooze");
+    expect(() => decode(identity)).toThrow(
+      "A recovery update must include autoResume, snooze, or clearedAt",
+    );
   });
   it.each([
     { autoResume: true },
     { autoResume: false },
     { snooze: true },
     { snooze: false },
+    { clearedAt: "2026-09-20T20:00:00.000Z" },
     { autoResume: true, snooze: false },
   ])("accepts an explicit independent choice %j", (choice) => {
     expect(decode({ ...identity, ...choice })).toEqual({ ...identity, ...choice });

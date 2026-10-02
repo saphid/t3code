@@ -112,6 +112,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as UsageLimitRecovery from "./orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -1148,6 +1149,7 @@ const makeWsRpcLayer = (
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+      const usageLimitRecovery = yield* UsageLimitRecovery.UsageLimitRecovery;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const acpRegistryRuntimeCoordinator =
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
@@ -2344,6 +2346,8 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
+              // Threads waiting for this instance's reset can continue now.
+              if (outcome === "reset") yield* usageLimitRecovery.limitCleared(input.instanceId);
               return { outcome };
             }),
             { "rpc.aggregate": "provider" },

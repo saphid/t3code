@@ -334,6 +334,8 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
   snooze: Schema.optional(Schema.Boolean),
+  /** When a redeemed reset credit lifted this limit before `resetAt`. */
+  clearedAt: Schema.optional(IsoDateTime),
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
@@ -343,12 +345,14 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
   resetAt: IsoDateTime,
   autoResume: Schema.optional(Schema.Boolean),
   snooze: Schema.optional(Schema.Boolean),
+  clearedAt: Schema.optional(IsoDateTime),
 }).check(
   Schema.makeFilter(
     (update) =>
       update.autoResume !== undefined ||
       update.snooze !== undefined ||
-      "A recovery update must include autoResume or snooze.",
+      update.clearedAt !== undefined ||
+      "A recovery update must include autoResume, snooze, or clearedAt.",
   ),
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;

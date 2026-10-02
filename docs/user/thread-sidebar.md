@@ -185,6 +185,9 @@ sending a message; enabling both wakes and continues it. **Wake now** cancels
 the snooze. Enable **Snooze limited threads** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
+Using a reset credit for the provider that stopped the thread ends the wait
+early: a scheduled continuation starts within seconds, a snoozed thread wakes,
+and otherwise the thread offers **Resume now**.
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
 
