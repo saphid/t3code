@@ -30,7 +30,7 @@ const makeRecord = (capabilities) => ({
     manifest: { id: "t3.agents", version: "0.1.0", apiVersion: 1, surfaces: [] },
     tools: [],
     provides: [],
-    requires: [{ id: ORCHESTRATION_CONTROL_API.id, versionRange: "^1.1.0" }],
+    requires: [{ id: ORCHESTRATION_CONTROL_API.id, versionRange: "^2.0.0" }],
     dependencies: [],
   },
 });
@@ -74,7 +74,7 @@ const launch = (broker, record, input = { workflowName: "review" }) =>
     record,
     {
       id: ORCHESTRATION_CONTROL_API.id,
-      versionRange: "^1.1.0",
+      versionRange: "^2.0.0",
       method: "workflow.launch",
       input,
       context,
@@ -92,13 +92,13 @@ NodeTest.test("workflow.launch requires the launch grant on top of operate", asy
     /API capability denied: t3\.orchestration\/launch-workflow/,
   );
   NodeAssert.equal(f.calls.length, 0);
-  // Operate alone still covers the pre-1.1.0 operations.
+  // Operate alone still covers operations that do not launch workflows.
   NodeAssert.deepEqual(
     await f.broker.invoke(
       record,
       {
         id: ORCHESTRATION_CONTROL_API.id,
-        versionRange: "^1.0.0",
+        versionRange: "^2.0.0",
         method: "thread.settle",
         input: {},
         context,
@@ -130,3 +130,29 @@ NodeTest.test("granted launches reach the host; non-slug names fail at the schem
     await NodeAssert.rejects(launch(f.broker, record, input), /API input does not match schema/);
   NodeAssert.equal(f.calls.length, 1);
 });
+
+NodeTest.test(
+  "legacy control ranges cannot reach the host after the approval boundary major",
+  async () => {
+    const record = makeRecord([ORCHESTRATION_OPERATE, ORCHESTRATION_LAUNCH_WORKFLOW]);
+    record.package.requires[0].versionRange = "^1.1.0";
+    const f = makeBroker(record);
+    await NodeAssert.rejects(
+      f.broker.invoke(
+        record,
+        {
+          id: ORCHESTRATION_CONTROL_API.id,
+          versionRange: "^1.1.0",
+          method: "workflow.launch",
+          input: { workflowName: "review" },
+          context,
+        },
+        new AbortController().signal,
+        undefined,
+        root,
+      ),
+      /incompatible-api/,
+    );
+    NodeAssert.equal(f.calls.length, 0);
+  },
+);
