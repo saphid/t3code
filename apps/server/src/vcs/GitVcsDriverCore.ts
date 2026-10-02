@@ -35,6 +35,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { pullRequestHeadRef } from "../git/pullRequestRefs.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -3208,7 +3209,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--quiet",
           "--no-tags",
           remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+          `+${pullRequestHeadRef(input.provider, input.prNumber)}:refs/heads/${input.branch}`,
         ],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
@@ -3236,7 +3237,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          pullRequestHeadRef(input.provider, input.prNumber),
+        ],
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },

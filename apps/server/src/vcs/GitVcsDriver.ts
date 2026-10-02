@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type SourceControlProviderKind,
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -195,11 +196,13 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  provider?: SourceControlProviderKind | undefined;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
   prNumber: number;
+  provider?: SourceControlProviderKind | undefined;
 }
 
 export interface GitResolveCommitInput {
