@@ -278,6 +278,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./client-provider-connection": {
+      "types": "./src/clientProviderConnection.ts",
+      "default": "./src/clientProviderConnection.ts"
     }
   },
   "scripts": {

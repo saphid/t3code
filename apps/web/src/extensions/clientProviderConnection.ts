@@ -3,11 +3,9 @@ import * as Stream from "effect/Stream";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import type {
   ClientProviderEmitEvent,
-  ClientProviderServerFrame,
   ClientProvidersRespondInput,
   EnvironmentId,
 } from "@t3tools/contracts";
-import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import {
   environmentClientProviderEmit,
   environmentClientProviderRespond,
@@ -16,7 +14,13 @@ import {
 } from "@t3tools/client-runtime/state/extensions";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { ClientProviderOpError, type ClientLocalProvider } from "./clientProviderTypes";
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import type { ClientLocalProvider } from "./clientProviderTypes";
+import {
+  createClientProviderSession,
+  createClientProviderConnectionHint,
+  type ClientLocalProvider as SharedLocalProvider,
+} from "@t3tools/client-runtime/client-provider-connection";
 import { noteClientProviderConnection } from "./extensionCommandRegistry";
 
 /**
@@ -47,10 +51,25 @@ const connectionIds = new Map<string, string>();
 /** The loop instance that minted the current connection id — a stale teardown must not clear a replacement's identity. */
 const connectionOwners = new Map<string, object>();
 
-/** Loops whose connect is in flight: a registration (or its failure) is imminent. */
+/** Live loops holding calls until registration, including across reconnects. */
 const connectingSeams = new Map<string, Set<object>>();
-/** Wakes calls held until the in-flight connect settles. */
-const connectionWaiters = new Map<string, Set<() => void>>();
+/** Wakes calls held until registration, stop or an unsupported-server result. */
+const connectionHints = new Map<string, ReturnType<typeof createClientProviderConnectionHint>>();
+function connectionHint(environmentId: string) {
+  let hint = connectionHints.get(environmentId);
+  if (!hint) {
+    hint = createClientProviderConnectionHint(() => ({
+      connectionId: connectionIds.get(environmentId),
+      waitFor:
+        connectingSeams.has(environmentId) && !unsupportedSeams.has(environmentId)
+          ? "reconnect"
+          : undefined,
+    }));
+    if (connectingSeams.has(environmentId) || connectionIds.has(environmentId))
+      connectionHints.set(environmentId, hint);
+  }
+  return hint;
+}
 /** Environments whose server lacks the seam: calls leave unstamped at once until the next connection. */
 const unsupportedSeams = new Set<string>();
 
@@ -66,10 +85,12 @@ function markConnecting(environmentId: string, owner: object) {
 }
 
 function wakeWaiters(environmentId: string) {
-  for (const wake of connectionWaiters.get(environmentId) ?? []) wake();
+  connectionHints.get(environmentId)?.changed();
+  if (!connectingSeams.has(environmentId) && !connectionIds.has(environmentId))
+    connectionHints.delete(environmentId);
 }
 
-/** The connect registered or ended: release held calls either way. */
+/** The loop registered or stopped: release held calls. */
 function settleConnecting(environmentId: string, owner: object) {
   const owners = connectingSeams.get(environmentId);
   if (!owners?.delete(owner)) return;
@@ -83,53 +104,13 @@ function isUnknownRequestTag(error: unknown) {
   return message.startsWith("Unknown request tag:");
 }
 
-/**
- * The hint for an outbound call. Until a live seam registers — including while
- * it waits for the transport's first or next session — the call is held
- * (bounded) so it leaves stamped the first time; calls are never replayed,
- * because the server may already have run them. An absent seam, or a server
- * known to lack it, releases the call at once; one the server never registers
- * releases it at the bound.
- */
-async function clientConnectionIdForCall(
-  environmentId: string,
-  signal: AbortSignal,
-  timeoutMs = 10_000,
-): Promise<string | undefined> {
-  signal.throwIfAborted();
-  const current = connectionIds.get(environmentId);
-  if (
-    current !== undefined ||
-    !connectingSeams.has(environmentId) ||
-    unsupportedSeams.has(environmentId)
-  )
-    return current;
-  await new Promise<void>((resolve) => {
-    const waiters = connectionWaiters.get(environmentId) ?? new Set();
-    connectionWaiters.set(environmentId, waiters);
-    const done = () => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", done);
-      waiters.delete(done);
-      if (waiters.size === 0 && connectionWaiters.get(environmentId) === waiters)
-        connectionWaiters.delete(environmentId);
-      resolve();
-    };
-    const timer = setTimeout(done, timeoutMs);
-    signal.addEventListener("abort", done, { once: true });
-    waiters.add(done);
-  });
-  signal.throwIfAborted();
-  return connectionIds.get(environmentId);
-}
-
-/** Sends an installed-API call once, stamped with this client's connection hint when it has one. */
+/** Waits at most one registration bound, then sends once with the host's hint when available. */
 export async function withClientConnectionId<A>(
   environmentId: string,
   signal: AbortSignal,
   send: (clientConnectionId: string | undefined) => Promise<A>,
 ): Promise<A> {
-  return send(await clientConnectionIdForCall(environmentId, signal));
+  return send(await connectionHint(environmentId).connectionId(signal));
 }
 
 /** `withClientConnectionId` for streams. */
@@ -138,7 +119,7 @@ export async function* withClientConnectionIdFrames<A>(
   signal: AbortSignal,
   open: (clientConnectionId: string | undefined) => AsyncIterable<A>,
 ): AsyncGenerator<A, void> {
-  yield* open(await clientConnectionIdForCall(environmentId, signal));
+  yield* open(await connectionHint(environmentId).connectionId(signal));
 }
 
 /** Provider-facing emit — fire-and-forget over the current session. */
@@ -160,10 +141,7 @@ export function emitClientProviderEvent(
 
 /** Per-iteration seam state, shared with `stop` so teardown never waits on the iterator. */
 interface ConnectionIteration {
-  connectionId: string | undefined;
-  subscriptions: Map<string, () => void>;
-  pending: Map<string, AbortController>;
-  disposed: boolean;
+  session?: ReturnType<typeof createClientProviderSession> | undefined;
 }
 
 export function startClientProviderConnection(
@@ -171,48 +149,18 @@ export function startClientProviderConnection(
 ): ClientProviderConnection {
   const lifecycle = new AbortController();
   const owner = {};
-  const iteration: ConnectionIteration = {
-    connectionId: undefined,
-    subscriptions: new Map(),
-    pending: new Map(),
-    disposed: true,
-  };
-  /**
-   * Tears down whatever the current iteration owns. Runs from the loop's
-   * finally AND synchronously from `stop()` — the stream iterator may never
-   * yield again, so cleanup cannot wait for the next frame. The ownership
-   * guards keep a stale iteration from clearing a replacement's identity.
-   */
+  const iteration: ConnectionIteration = {};
   const teardownIteration = () => {
-    iteration.disposed = true;
-    // A live loop reconnects, so calls made meanwhile keep waiting for its
-    // next registration; only a stopped loop releases them.
-    if (lifecycle.signal.aborted) settleConnecting(deps.environmentId, owner);
-    else markConnecting(deps.environmentId, owner);
+    iteration.session?.dispose();
+    iteration.session = undefined;
     if (connectionOwners.get(deps.environmentId) === owner) {
-      // Only the owner may clear the identity it minted — a replacement loop
-      // reusing the same socket-derived id keeps it across this teardown.
-      if (
-        iteration.connectionId !== undefined &&
-        connectionIds.get(deps.environmentId) === iteration.connectionId
-      ) {
-        connectionIds.delete(deps.environmentId);
-      }
+      connectionIds.delete(deps.environmentId);
       connectionOwners.delete(deps.environmentId);
-      // The seam is down: registrations fence until the next connect replays them.
       noteClientProviderConnection(deps.environmentId, false);
     }
-    iteration.connectionId = undefined;
-    for (const close of [...iteration.subscriptions.values()]) {
-      try {
-        close();
-      } catch {
-        /* a throwing watcher must not break teardown */
-      }
-    }
-    for (const controller of [...iteration.pending.values()]) controller.abort();
-    iteration.subscriptions.clear();
-    iteration.pending.clear();
+    // A live web loop holds calls across transport drops until re-registration.
+    if (lifecycle.signal.aborted) settleConnecting(deps.environmentId, owner);
+    else markConnecting(deps.environmentId, owner);
   };
   const flush = () => {
     if (!connectionIds.has(deps.environmentId) || lifecycle.signal.aborted) return;
@@ -249,6 +197,22 @@ async function runConnectionLoop(
     AtomRegistry.getResult(appAtomRegistry, connectionAtomRuntime),
     { signal },
   );
+  // The web SDK uses plain resource IDs and exact optional fields; the wire
+  // contract brands those IDs. Keep that existing type boundary in this adapter.
+  const providers = new Map<string, SharedLocalProvider>(
+    [...deps.providers].map(([id, provider]) => [
+      id,
+      {
+        invoke: (call) => provider.invoke({ ...call, context: call.context as ViewContext }),
+        ...(provider.openStream
+          ? {
+              openStream: (call) =>
+                provider.openStream!({ ...call, context: call.context as ViewContext }),
+            }
+          : {}),
+      },
+    ]),
+  );
   const emitEvent = (correlationId: string, event: ClientProviderEmitEvent) =>
     emitClientProviderEvent(deps.environmentId, correlationId, event);
   const respond = (payload: ClientProvidersRespondInput) => {
@@ -258,10 +222,20 @@ async function runConnectionLoop(
   };
   while (!signal.aborted) {
     let unsupported = false;
-    iteration.connectionId = undefined;
-    iteration.subscriptions = new Map();
-    iteration.pending = new Map();
-    iteration.disposed = false;
+    const session = createClientProviderSession({
+      providers,
+      emit: emitEvent,
+      respond,
+      registered: (connectionId) => {
+        connectionIds.set(deps.environmentId, connectionId);
+        connectionOwners.set(deps.environmentId, owner);
+        unsupportedSeams.delete(deps.environmentId);
+        settleConnecting(deps.environmentId, owner);
+        noteClientProviderConnection(deps.environmentId, true);
+        void deps.flushGlobalCommands(signal).catch(() => {});
+      },
+    });
+    iteration.session = session;
     markConnecting(deps.environmentId, owner);
     try {
       const iterable = Stream.toAsyncIterableWith(
@@ -285,11 +259,7 @@ async function runConnectionLoop(
           // A clean EOF ends this iteration only — teardown runs, then the
           // loop waits for the transport's next connected phase and reopens.
           if (next.done) break;
-          try {
-            handleFrame(deps, next.value, emitEvent, respond, iteration, signal, owner);
-          } catch {
-            // A malformed frame or throwing provider hook must not kill the seam.
-          }
+          void session.receive(next.value).catch(() => {});
         }
       } finally {
         signal.removeEventListener("abort", resolveAborted);
@@ -315,134 +285,13 @@ async function runConnectionLoop(
     await waitForReconnect(
       deps.environmentId,
       signal,
-      unsupported ? () => unsupportedSeams.delete(deps.environmentId) : undefined,
+      unsupported
+        ? () => {
+            unsupportedSeams.delete(deps.environmentId);
+            markConnecting(deps.environmentId, owner);
+          }
+        : undefined,
     ).catch(() => {});
-  }
-}
-
-function handleFrame(
-  deps: ClientProviderConnectionDeps,
-  frame: ClientProviderServerFrame,
-  emitEvent: (correlationId: string, event: ClientProviderEmitEvent) => void,
-  respond: (payload: ClientProvidersRespondInput) => void,
-  iteration: ConnectionIteration,
-  signal: AbortSignal,
-  owner: object,
-) {
-  const { subscriptions, pending } = iteration;
-  switch (frame.type) {
-    case "registered": {
-      connectionIds.set(deps.environmentId, frame.connectionId);
-      connectionOwners.set(deps.environmentId, owner);
-      unsupportedSeams.delete(deps.environmentId);
-      iteration.connectionId = frame.connectionId;
-      settleConnecting(deps.environmentId, owner);
-      // A new connection epoch: prior registrations stay fenced until the
-      // flush replays them onto this socket.
-      noteClientProviderConnection(deps.environmentId, true);
-      void deps.flushGlobalCommands(signal).catch(() => {});
-      return;
-    }
-    case "invoke": {
-      const provider = deps.providers.get(frame.apiId);
-      const controller = new AbortController();
-      pending.set(frame.requestId, controller);
-      void (async () => {
-        try {
-          if (!provider)
-            throw new ClientProviderOpError(
-              "client-provider-unavailable",
-              `No local provider for ${frame.apiId}`,
-            );
-          const value = await provider.invoke({
-            method: frame.method,
-            input: frame.input,
-            context: frame.context as ViewContext,
-            caller: frame.caller,
-            signal: controller.signal,
-          });
-          respond({ requestId: frame.requestId, ok: true, value: value ?? null });
-        } catch (error) {
-          respond({
-            requestId: frame.requestId,
-            ok: false,
-            error: {
-              code: error instanceof ClientProviderOpError ? error.code : "provider-rejected",
-              message: (error instanceof Error ? error.message : "Provider failed").slice(0, 2000),
-            },
-          });
-        } finally {
-          pending.delete(frame.requestId);
-        }
-      })();
-      return;
-    }
-    case "cancel": {
-      pending.get(frame.requestId)?.abort();
-      return;
-    }
-    case "subscriptionOpen": {
-      const provider = deps.providers.get(frame.apiId);
-      const emit = (event: ClientProviderEmitEvent) => emitEvent(frame.subscriptionId, event);
-      if (!provider?.openStream) {
-        emit({ type: "closed", value: null });
-        return;
-      }
-      // The async wrapper confines synchronous throws and rejections to this
-      // subscription — a failing open never tears down the connection.
-      void (async () => {
-        let close: () => void;
-        try {
-          close = await provider.openStream!({
-            name: frame.name,
-            input: frame.input,
-            context: frame.context as ViewContext,
-            caller: frame.caller,
-            emit,
-          });
-        } catch {
-          emit({ type: "closed", value: null });
-          return;
-        }
-        // An open that resolves after teardown or a racing close must not
-        // install a live subscription into a dead iteration.
-        if (iteration.disposed || iteration.subscriptions !== subscriptions) {
-          try {
-            close();
-          } catch {
-            /* teardown-only path */
-          }
-          return;
-        }
-        if (subscriptions.has(frame.subscriptionId)) {
-          // Remove the close-pending marker so the map does not retain it.
-          subscriptions.delete(frame.subscriptionId);
-          try {
-            close();
-          } catch {
-            /* teardown-only path */
-          }
-          return;
-        }
-        subscriptions.set(frame.subscriptionId, close);
-      })();
-      return;
-    }
-    case "subscriptionClose": {
-      const close = subscriptions.get(frame.subscriptionId);
-      if (close === undefined) {
-        // The open is still resolving — mark it so its completion closes.
-        subscriptions.set(frame.subscriptionId, () => {});
-        return;
-      }
-      subscriptions.delete(frame.subscriptionId);
-      try {
-        close();
-      } catch {
-        /* a throwing watcher must not kill the seam */
-      }
-      return;
-    }
   }
 }
 

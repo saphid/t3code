@@ -216,7 +216,7 @@ describe("startClientProviderConnection", () => {
     });
     expect(byId.get("req-crash")).toMatchObject({
       ok: false,
-      error: { code: "provider-rejected", message: "boom" },
+      error: { code: "provider-rejected", message: "Provider failed" },
     });
   });
 
@@ -299,7 +299,11 @@ describe("startClientProviderConnection", () => {
     await vi.waitFor(() => {
       expect(mocks.emit).toHaveBeenCalledWith(ENV, {
         correlationId: "sub-2",
-        event: { type: "closed", value: null },
+        event: {
+          type: "closed",
+          value: null,
+          error: { code: "client-provider-unavailable", message: "Provider stream is unavailable" },
+        },
       });
     });
   });
@@ -570,6 +574,9 @@ describe("client connection hint on early calls", () => {
         if (hint === undefined) throw targetRequired();
         return { theme: "dark" };
       });
+      void result.catch(() => {});
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hints).toEqual([]);
       await vi.advanceTimersByTimeAsync(1000);
       expect(hints).toEqual([]);
       queue.offer(registered);
@@ -677,5 +684,131 @@ describe("client connection hint on early calls", () => {
     });
     expect(hints).toEqual(["conn-early"]);
     await frames.return();
+  });
+});
+
+describe("shared dispatcher regressions at the web boundary", () => {
+  it.each(["missing", "sync", "async", "named"])(
+    "names failed subscription opens: %s",
+    async (failure) => {
+      const queue = new Mailbox();
+      start({
+        stream: queue.stream,
+        providers:
+          failure === "missing"
+            ? new Map()
+            : new Map([
+                [
+                  "t3.client/theme",
+                  {
+                    invoke: () => null,
+                    openStream: () => {
+                      if (failure === "async")
+                        return Promise.reject(new Error("native bridge details"));
+                      if (failure === "named")
+                        throw new ClientProviderOpError("client-target-denied", "Missing grant");
+                      throw new Error("native bridge details");
+                    },
+                  },
+                ],
+              ]),
+      });
+      queue.offer({
+        type: "subscriptionOpen",
+        subscriptionId: "failed",
+        apiId: "t3.client/theme",
+        name: "watchState",
+        input: {},
+        caller,
+        context: {
+          ...frameContext,
+          resource: {
+            ...frameContext.resource,
+            environmentId: EnvironmentId.make(ENV),
+            projectId: undefined,
+            threadId: undefined,
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(mocks.emit).toHaveBeenCalledWith(ENV, {
+          correlationId: "failed",
+          event: {
+            type: "closed",
+            value: null,
+            error:
+              failure === "named"
+                ? { code: "client-target-denied", message: "Missing grant" }
+                : {
+                    code: "client-provider-unavailable",
+                    message: "Provider stream is unavailable",
+                  },
+          },
+        }),
+      );
+      queue.shutdown();
+    },
+  );
+
+  it.each(["resolve", "reject"])(
+    "suppresses a late invoke %s after replacement",
+    async (outcome) => {
+      const queue = new Mailbox();
+      let finish!: () => void;
+      let began!: () => void;
+      const started = new Promise<void>((resolve) => (began = resolve));
+      const pending = new Promise<null>(
+        (resolve, reject) =>
+          (finish = () =>
+            outcome === "resolve" ? resolve(null) : reject(new Error("bridge details"))),
+      );
+      const connection = start({
+        stream: queue.stream,
+        providers: new Map([
+          [
+            "t3.client/theme",
+            {
+              invoke: () => {
+                began();
+                return pending;
+              },
+            },
+          ],
+        ]),
+      });
+      queue.offer(invokeFrame("stale"));
+      await started;
+      connection.stop();
+      start({ stream: Stream.never });
+      finish();
+      // Drain the provider completion without relying on a timeout for a negative assertion.
+      await pending.catch(() => {});
+      await Promise.resolve();
+      expect(mocks.respond).not.toHaveBeenCalled();
+      queue.shutdown();
+    },
+  );
+
+  it.each(["bound", "stop"])("holds calls across EOF until %s", async (release) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const queue = new Mailbox();
+    try {
+      const connection = start({ stream: queue.stream });
+      const send = vi.fn(async (hint: string | undefined) => hint);
+      const held = withClientConnectionId(ENV, new AbortController().signal, send);
+      queue.shutdown();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).not.toHaveBeenCalled();
+      if (release === "stop") connection.stop();
+      else {
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(send).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      await expect(held).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

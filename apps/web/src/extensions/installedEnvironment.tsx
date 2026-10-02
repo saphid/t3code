@@ -1,3 +1,4 @@
+import { stampClientProviderRequest } from "@t3tools/client-runtime/client-provider-connection";
 import * as React from "react";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -429,8 +430,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           const payload = decodeApiInvoke({
             installationId,
             expectedContentHash,
-            request:
-              clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+            request: stampClientProviderRequest(request, clientConnectionId),
           });
           return connected(signal, async (connection, callSignal) => {
             const { result } = await run(
@@ -473,8 +473,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
               decodeApiSubscribe({
                 installationId,
                 expectedContentHash,
-                request:
-                  clientConnectionId === undefined ? request : { ...request, clientConnectionId },
+                request: stampClientProviderRequest(request, clientConnectionId),
               }),
             ),
             signal,

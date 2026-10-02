@@ -1,3 +1,4 @@
+import { stampClientProviderRequest } from "@t3tools/client-runtime/client-provider-connection";
 import {
   environmentExtensionApiStream,
   environmentResumableExtensionApiStream,
@@ -71,7 +72,10 @@ export async function* resumableApiFrames(
   signal: AbortSignal,
   onSuspended?: () => void,
 ) {
-  const stream = environmentResumableExtensionApiStream(environmentId, () => payload);
+  const stream = environmentResumableExtensionApiStream(environmentId, () => ({
+    ...payload,
+    request: stampClientProviderRequest(payload.request, undefined),
+  }));
   for await (const value of authenticatedValues(stream, signal)) {
     if (Option.isSome(value)) yield apiFrame(value.value);
     else onSuspended?.();
