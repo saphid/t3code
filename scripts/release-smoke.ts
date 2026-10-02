@@ -25,6 +25,7 @@ const workspaceFiles = [
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
+  "packages/ghostty-terminal/package.json",
   "packages/shared/package.json",
   "packages/ssh/package.json",
   "packages/tailscale/package.json",
@@ -218,6 +219,11 @@ try {
 
   const lockfile = NodeFS.readFileSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), "utf8");
   assertContains(lockfile, "lockfileVersion:", "Expected pnpm-lock.yaml to be regenerated.");
+  assertContains(
+    lockfile,
+    "  packages/ghostty-terminal:",
+    "Expected the regenerated lockfile to include the Ghostty terminal workspace package.",
+  );
 
   for (const relativePath of [
     "apps/server/package.json",
