@@ -282,8 +282,6 @@ NodeTest.test(
       NodeAssert.match(css, /@container agents \(max-width:\s*600px\)/);
       NodeAssert.match(css, /min-height:\s*44px/);
       NodeAssert.match(css, /min-width:\s*44px/);
-      NodeAssert.match(css, /--t3-safe-area-bottom/);
-      NodeAssert.match(css, /--t3-keyboard-inset/);
       NodeAssert.match(css, /prefers-reduced-motion/);
       NodeAssert.match(css, /:focus-visible/);
       const container = css.slice(css.indexOf("@container"), css.indexOf("@media"));
@@ -296,6 +294,16 @@ NodeTest.test(
           selector,
           /\[data-client="mobile"\]/,
           "desktop rails retain their original layout",
+        );
+      const mobileOnlyRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((match) =>
+        /(?:container(?:-type)?|outline(?:-offset)?|scroll-padding-block):/.test(match[2]),
+      );
+      NodeAssert.equal(mobileOnlyRules.length, 3);
+      for (const [_, selector] of mobileOnlyRules)
+        NodeAssert.match(
+          selector,
+          /\[data-client="mobile"\]/,
+          "web and desktop retain their original containment, focus outline and scroll padding",
         );
       const { transform } = sdkRequire("esbuild");
       const parsed = await transform(css, { loader: "css", target: "safari18" });
@@ -314,3 +322,21 @@ NodeTest.test("eligible shared bundle does not claim it is web/desktop only", as
     await panel.close();
   }
 });
+
+NodeTest.test(
+  "mobile focus scroll spacing leaves keyboard and safe-area insets to the host",
+  async () => {
+    const panel = await renderPanel();
+    try {
+      const css = panel.root.root.findAllByType("style").map(textOf).join("\n");
+      const spacing = [...css.matchAll(/scroll-(?:margin|padding)(?:-[a-z]+)*:\s*([^;{}]+);/g)];
+      NodeAssert.equal(spacing.length, 2);
+      for (const [_, value] of spacing) {
+        NodeAssert.doesNotMatch(value, /--t3-keyboard-inset|safe-area/);
+        NodeAssert.equal(value.trim(), "12px");
+      }
+    } finally {
+      await panel.close();
+    }
+  },
+);

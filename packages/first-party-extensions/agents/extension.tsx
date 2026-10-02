@@ -92,20 +92,20 @@ import {
 
 const manifestId = "t3.agents";
 
-// The native host owns safe-area/keyboard padding; use those same inputs for
-// focus scrolling without applying the physical insets twice.
+// The native host owns safe-area/keyboard padding; focus scrolling only needs
+// a small gap inside the already inset viewport.
 const presentationCss = `
-.t3-agents { container: agents / inline-size; container-type: inline-size; min-width: 0; }
-.t3-agents :focus-visible { outline: 2px solid var(--info, #2e90fa); outline-offset: 2px; }
-.t3-agents[data-client="mobile"] { overflow-wrap: anywhere; }
+.t3-agents { min-width: 0; }
+.t3-agents[data-client="mobile"] :focus-visible { outline: 2px solid var(--info, #2e90fa); outline-offset: 2px; }
+.t3-agents[data-client="mobile"] { container: agents / inline-size; container-type: inline-size; overflow-wrap: anywhere; }
 .t3-agents[data-client="mobile"] :is(button, input, textarea, select, summary) {
   min-height: 44px; min-width: 44px; max-width: 100%; box-sizing: border-box;
-  scroll-margin-block: 12px max(12px, var(--t3-keyboard-inset, 0px));
+  scroll-margin-block: 12px;
 }
 .t3-agents[data-client="mobile"] :is(input, textarea, select) { font-size: 16px !important; }
 .t3-agents[data-client="mobile"] button { white-space: normal; }
 .t3-agents[data-client="mobile"] summary { padding: 12px 10px; cursor: pointer; }
-.t3-agents-scroll { scroll-padding-block: 12px max(12px, var(--t3-safe-area-bottom, 0px)); }
+.t3-agents[data-client="mobile"] .t3-agents-scroll { scroll-padding-block: 12px; }
 @container agents (max-width: 600px) {
   .t3-agents[data-client="mobile"] .t3-agents-controls { flex-direction: column; align-items: stretch !important; }
   .t3-agents[data-client="mobile"] .t3-agents-controls > * { margin-inline: 0 !important; }
