@@ -1,7 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestReviewerCandidate,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
 import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
@@ -493,29 +497,33 @@ export const make = Effect.gen(function* () {
     }),
     listReviewerCandidates: Effect.fn("ForgejoPullRequestProvider.listReviewerCandidates")(
       function* (input) {
+        // Forgejo returns the complete assignee list and ignores pagination parameters.
         const [pr, users] = yield* Effect.all(
-          [getPull(input), page({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser)],
+          [
+            getPull(input),
+            readArray({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser),
+          ],
           { concurrency: 2 },
         );
+        const author = pr.user?.login.toLowerCase();
+        const requested = new Set(
+          (pr.requested_reviewers ?? []).map((user) => user.login.toLowerCase()),
+        );
+        const candidates = new Map<string, PullRequestReviewerCandidate>();
+        for (const user of users) {
+          const identity = user.login.toLowerCase();
+          const actor = forgejoActor(user);
+          if (!actor || identity === author || candidates.has(identity)) continue;
+          candidates.set(identity, {
+            ...actor,
+            id: user.login,
+            kind: "user",
+            isRequested: requested.has(identity),
+          });
+        }
         return {
-          candidates: users.items
-            .filter((user) => user.login !== pr.user?.login)
-            .flatMap((user) => {
-              const actor = forgejoActor(user);
-              return actor
-                ? [
-                    {
-                      ...actor,
-                      id: user.login,
-                      kind: "user" as const,
-                      isRequested:
-                        pr.requested_reviewers?.some((reviewer) => reviewer.login === user.login) ??
-                        false,
-                    },
-                  ]
-                : [];
-            }),
-          truncated: users.truncated,
+          candidates: [...candidates.values()].slice(0, 500),
+          truncated: candidates.size > 500,
         };
       },
     ),
