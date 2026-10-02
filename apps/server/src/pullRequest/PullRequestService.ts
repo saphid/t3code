@@ -4,6 +4,7 @@ import {
   sourceControlRepositorySelector,
 } from "@t3tools/shared/sourceControl";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { normalizeGitPatchPaths } from "@t3tools/shared/gitPatchPath";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1800,7 +1801,13 @@ export const make = Effect.gen(function* () {
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
                 ...(input.commit === undefined ? {} : { commit: input.commit }),
               })
-              .pipe(Effect.mapError(toPullRequestError("diff")))
+              .pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  patch: normalizeGitPatchPaths(result.patch),
+                })),
+                Effect.mapError(toPullRequestError("diff")),
+              )
           : Effect.fail(
               new PullRequestOperationError({
                 operation: "diff",

@@ -1,10 +1,48 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { quoteGitPatchPath, unquoteGitPatchPath } from "./gitPatchPath.ts";
+import { normalizeGitPatchPaths, quoteGitPatchPath, unquoteGitPatchPath } from "./gitPatchPath.ts";
 
 const BELL = "\u0007";
 const UNIT_SEPARATOR = "\u001f";
 const DELETE = "\u007f";
+
+describe("normalizeGitPatchPaths", () => {
+  it("normalizes rename and binary paths while retaining required C quoting", () => {
+    const patch = [
+      'diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251\\tnew.txt"',
+      'rename from "caf\\303\\251.txt"',
+      'rename to "caf\\303\\251\\tnew.txt"',
+      'Binary files "a/caf\\303\\251.txt" and "b/caf\\303\\251\\tnew.txt" differ',
+      "",
+    ].join("\r\n");
+    const expected = [
+      'diff --git a/café.txt "b/café\\tnew.txt"',
+      "rename from café.txt",
+      'rename to "café\\tnew.txt"',
+      'Binary files a/café.txt and "b/café\\tnew.txt" differ',
+      "",
+    ].join("\r\n");
+    expect(normalizeGitPatchPaths(patch)).toBe(expected);
+    expect(normalizeGitPatchPaths(expected)).toBe(expected);
+  });
+
+  it("does not decode an already literal backslash or a header-shaped hunk line", () => {
+    const patch = [
+      "diff --git a/first.txt b/first.txt",
+      "@@ -1 +1 @@",
+      '--- "a/caf\\303\\251.txt"',
+      '+++ "b/caf\\303\\251.txt"',
+      'diff --git "a/literal\\\\303.txt" "b/literal\\\\303.txt"',
+      '--- "a/literal\\\\303.txt"',
+      '+++ "b/literal\\\\303.txt"',
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+    expect(normalizeGitPatchPaths(patch)).toBe(patch);
+  });
+});
 
 describe("quoteGitPatchPath", () => {
   it("leaves a name a header can carry as itself", () => {
@@ -94,4 +132,24 @@ describe("a name a parser handed back with its quotes already off", () => {
     expect(unquoteGitPatchPath("trailing\\")).toBe("trailing\\");
     expect(unquoteGitPatchPath("short\\12.txt")).toBe("short12.txt");
   });
+});
+
+it("normalizes copy headers without touching header-shaped changes or hunk strings", () => {
+  const patch = String.raw`diff --git "a/caf\303\251.txt" "b/b/caf\303\251.txt"
+copy from "caf\303\251.txt"
+copy to "b/caf\303\251.txt"
+--- "a/caf\303\251.txt"
++++ "b/b/caf\303\251.txt"
+@@ -1,2 +1,2 @@
+--- "a/caf\303\251.txt"
++++ "b/caf\303\251.txt"
+-const path = "caf\303\251.txt";
++const path = "caf\303\251-new.txt";
+`;
+  const expected = patch.replace(
+    patch.slice(0, patch.indexOf("@@")),
+    `diff --git a/café.txt b/b/café.txt\ncopy from café.txt\ncopy to b/café.txt\n--- a/café.txt\n+++ b/b/café.txt\n`,
+  );
+  expect(normalizeGitPatchPaths(patch)).toBe(expected);
+  expect(normalizeGitPatchPaths(expected)).toBe(expected);
 });

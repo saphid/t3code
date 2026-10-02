@@ -6889,3 +6889,28 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
     assert.deepStrictEqual(seen, ["/org-b"]);
   }),
 );
+
+it.effect("delivers Unicode PR diff headers without changing quoted hunk contents", () =>
+  Effect.gen(function* () {
+    const path = String.raw`caf\303\251-\346\227\245\346\234\254.txt`;
+    const hunk = String.raw`@@ -1 +1 @@
+-const path = "caf\303\251.txt";
++const path = "caf\303\251-new.txt";
+`;
+    const patch = `diff --git "a/${path}" "b/${path}"\n--- "a/${path}"\n+++ "b/${path}"\n${hunk}`;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () => Effect.succeed({ patch, truncated: true, nextCursor: "page-two" }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    assert.deepStrictEqual(yield* service.diff(reference), {
+      patch: `diff --git a/café-日本.txt b/café-日本.txt\n--- a/café-日本.txt\n+++ b/café-日本.txt\n${hunk}`,
+      truncated: true,
+      nextCursor: "page-two",
+    });
+  }),
+);
