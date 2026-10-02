@@ -972,20 +972,55 @@ export class BoundedTerminalHistory {
         this.discardChunk();
         continue;
       }
-      if (first.byteLength === first.data.length && first.lineBreaks === 0) {
-        // ASCII without newlines needs no scan to find the byte cutoff.
-        this.trimChunk(bytesToDrop, bytesToDrop, 0);
+      const ascii = first.byteLength === first.data.length;
+      if (ascii && first.lineBreaks === 0) {
+        // indexOf quickly skips plain ASCII; only styled prefixes need a backward search.
+        const escape = first.data.indexOf("\u001b");
+        const offset =
+          escape === -1 || escape >= bytesToDrop
+            ? bytesToDrop
+            : alignTerminalHistoryByteCut(
+                first.data,
+                bytesToDrop,
+                first.data.lastIndexOf("\u001b", bytesToDrop - 1),
+              );
+        this.trimChunk(offset, offset, 0);
         continue;
       }
       let offset = 0;
       let bytes = 0;
       let lineBreaks = 0;
+      let sequenceStart = -1;
       // Scan only the discarded prefix of one small chunk, never all history.
       while (bytes < bytesToDrop) {
         const codePoint = first.data.codePointAt(offset)!;
+        if (
+          codePoint <= 0x9f &&
+          (codePoint === 0x1b ||
+            codePoint === 0x90 ||
+            codePoint === 0x9b ||
+            codePoint === 0x9d ||
+            codePoint === 0x9e ||
+            codePoint === 0x9f)
+        )
+          sequenceStart = offset;
         bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
         offset += codePoint <= 0xffff ? 1 : 2;
         if (codePoint === 10) lineBreaks += 1;
+      }
+      // Drop the remainder of a byte-cut line when possible. Like line eviction,
+      // this approximates string controls containing embedded newlines.
+      const lineBoundary = first.data.charCodeAt(offset - 1) === 10;
+      const newline = lineBoundary ? -1 : first.data.indexOf("\n", offset);
+      const aligned = lineBoundary
+        ? offset
+        : newline === -1
+          ? alignTerminalHistoryByteCut(first.data, offset, sequenceStart)
+          : newline + 1;
+      if (aligned > offset) {
+        bytes += ascii ? aligned - offset : Buffer.byteLength(first.data.slice(offset, aligned));
+        if (newline !== -1) lineBreaks += 1;
+        offset = aligned;
       }
       this.trimChunk(offset, bytes, lineBreaks);
     }
@@ -1016,6 +1051,35 @@ export class BoundedTerminalHistory {
       .join("");
     return this.cachedValue;
   }
+}
+
+// Only inspect the byte-cut chunk; whole discarded chunks need no parsing.
+// Sanitized appends contain complete sequences. If an introducer or terminator
+// lies outside this chunk, keep the existing cut rather than track parser state.
+function alignTerminalHistoryByteCut(input: string, offset: number, start: number): number {
+  if (start === -1) return offset;
+  const escape = input.charCodeAt(start) === 0x1b;
+  const kind = input.charCodeAt(start + (escape ? 1 : 0));
+  const body = start + (escape ? 2 : 1);
+  let end: number | null;
+  if (kind === (escape ? 0x5b : 0x9b)) {
+    end = null;
+    for (let cursor = body; cursor < input.length; cursor += 1) {
+      if (isCsiFinalByte(input.charCodeAt(cursor))) {
+        end = cursor + 1;
+        break;
+      }
+    }
+  } else if (
+    escape
+      ? kind === 0x5d || kind === 0x50 || kind === 0x5e || kind === 0x5f
+      : kind === 0x9d || kind === 0x90 || kind === 0x9e || kind === 0x9f
+  ) {
+    end = findStringTerminatorIndex(input, body);
+  } else {
+    end = findEscapeSequenceEndIndex(input, start + 1);
+  }
+  return Math.max(offset, end ?? offset);
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
@@ -1789,6 +1853,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (offset > 0n) {
       // A tail read can start inside a UTF-8 code point. Skip its remaining bytes.
       while (start < length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start += 1;
+      // The introducer may be outside this read. Align once to the next line,
+      // with the same embedded-newline approximation as in-memory eviction.
+      const newline = bytes.indexOf(10, start);
+      if (newline !== -1) start = newline + 1;
     }
     return {
       history: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes.subarray(start, length)),

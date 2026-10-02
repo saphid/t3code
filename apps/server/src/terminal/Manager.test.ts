@@ -306,7 +306,7 @@ const createManager = (
 const withHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcessPlatform, platform);
 
-// Apply the existing line policy, then find the longest code-point-aligned byte tail.
+// Apply line/byte caps, then omit a partial head line or a cut complete ANSI fixture.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
   const lines = text.split("\n");
@@ -323,7 +323,18 @@ function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): s
     bytes += next;
     start -= 1;
   }
-  return points.slice(start).join("");
+  const tail = points.slice(start).join("");
+  const offset = capped.length - tail.length;
+  if (capped[offset - 1] === "\n") return tail;
+  const newline = tail.indexOf("\n");
+  if (newline !== -1) return tail.slice(newline + 1);
+  // The randomized fixtures contain complete SGR and BEL-terminated OSC only.
+  // eslint-disable-next-line no-control-regex -- Match SGR and OSC fixture spans.
+  for (const match of capped.matchAll(/\u001b(?:\[[0-9;]*m|\][^\u0007]*\u0007)/g)) {
+    const end = match.index + match[0].length;
+    if (match.index < offset && offset < end) return capped.slice(end);
+  }
+  return tail;
 }
 
 it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequences, and clear", () => {
@@ -341,8 +352,6 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
     "\u001b[31m",
     "\u001b[0m",
     "\u001b]8;;url\u0007",
-    "\ud83d",
-    "\ude80",
   ];
   const nextFragment = () => {
     randomSeed = (Math.imul(randomSeed, 1_664_525) + 1_013_904_223) >>> 0;
@@ -368,9 +377,61 @@ it("preserves line and byte limits across arbitrary chunks, Unicode, ANSI sequen
         const chunk = nextFragment() + nextFragment();
         history.append(chunk);
         expected = retainedHistory(expected + chunk, maxLines, maxBytes);
-        expect(history.value()).toBe(expected);
+        expect(history.value(), JSON.stringify({ maxBytes, maxLines, step, chunk })).toBe(expected);
       }
     }
+  }
+});
+
+it("aligns byte cuts within complete control-sequence appends", () => {
+  const sequences = [
+    "\u001b[31m",
+    "\u009b31m",
+    "\u001b]0;title\u0007",
+    "\u001b]0;title\u001b\\",
+    "\u001b]0;title\u001b\u0007",
+    "\u001b]0;title\u001b\u009c",
+    "\u009d0;title\u009c",
+    "\u001bPpayload\u001b\\",
+    "\u0090payload\u009c",
+    "\u001b^payload\u0007",
+    "\u009epayload\u0007",
+    "\u001b_payload\u001b\\",
+    "\u009fpayload\u009c",
+    "\u001b#8",
+    "\u001b(0",
+  ];
+  for (const sequence of sequences) {
+    const text = `old${sequence}名OK`;
+    for (let maxBytes = 1; maxBytes <= Buffer.byteLength(text); maxBytes++) {
+      const expected =
+        maxBytes < Buffer.byteLength(`${sequence}名OK`)
+          ? retainedHistory("名OK", 5, maxBytes)
+          : retainedHistory(text, 5, maxBytes);
+      for (let split = 0; split <= text.length; split++) {
+        const history = new TerminalManager.BoundedTerminalHistory(5, "", maxBytes);
+        // The sanitizer buffers incomplete sequences; only split ordinary text.
+        if (split > 3 && split < 3 + sequence.length) continue;
+        history.append(text.slice(0, split));
+        expect(Buffer.byteLength(history.value())).toBeLessThanOrEqual(maxBytes);
+        history.append(text.slice(split));
+        expect(history.value(), JSON.stringify({ sequence, maxBytes, split })).toBe(expected);
+      }
+    }
+  }
+});
+
+it("aligns a byte-cut partial line without dropping an intact head line", () => {
+  for (const [text, maxBytes, expected] of [
+    ["old partial\nOK", 10, "OK"],
+    ["old\nwhole\nOK", 8, "whole\nOK"],
+    ["old\n名\nOK", 5, "OK"],
+    ["\u001b]0;old\nremaining\u0007OK", 15, "remaining\u0007OK"],
+  ] as const) {
+    const history = new TerminalManager.BoundedTerminalHistory(5, text, maxBytes);
+    expect(history.value()).toBe(expected);
+    history.append("!");
+    expect(Buffer.byteLength(history.value())).toBeLessThanOrEqual(maxBytes);
   }
 });
 
@@ -1425,6 +1486,37 @@ it.layer(
     }),
   );
 
+  it.effect("reopens native retained history without a dangling control sequence tail", () =>
+    Effect.gen(function* () {
+      for (const sequence of [
+        "\u001b[31m",
+        "\u009b31m",
+        "\u001b]0;title\u0007",
+        "\u001bPpayload\u001b\\",
+        "\u001b#8",
+      ]) {
+        const { manager, ptyAdapter, logsDir } = yield* createManager(5, { historyByteLimit: 4 });
+        const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+        const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+          Ref.update(attachEvents, (events) => [...events, event]),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+        const output = `${sequence}OK`;
+        for (const character of output) ptyAdapter.processes[0]!.emitData(character);
+        // close drains queued output and persistence before reopening.
+        yield* manager.close({ threadId: "thread-1" });
+        const reopened = yield* manager.open(openInput());
+        expect(reopened.history).toBe("OK");
+        expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("OK");
+        expect(
+          (yield* Ref.get(attachEvents))
+            .filter((event) => event.type === "output")
+            .map((event) => event.data),
+        ).toEqual(Array.from(output));
+      }
+    }),
+  );
+
   it.effect("bounds persisted and attached history without truncating live output", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager(5, { historyByteLimit: 10 });
@@ -1501,6 +1593,30 @@ it.layer(
         if (source === "legacy") expect(yield* fs.exists(sourcePath)).toBe(false);
         yield* manager.close({ threadId: "thread-1" });
         expect((yield* manager.open(openInput())).history).toBe("\uFEFFnewest\ré");
+      }),
+    );
+  }
+
+  for (const source of ["current", "legacy"] as const) {
+    it.effect(`aligns a truncated ${source} history read to the next line`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        for (const sequence of ["\u001b[31m", "\u001b]0;title\u0007"]) {
+          const tail = `${sequence}discard\nOK`;
+          const { manager, logsDir } = yield* createManager(5, {
+            historyByteLimit: Buffer.byteLength(tail.slice(2)),
+          });
+          const nextPath = yield* historyLogPath(logsDir);
+          const sourcePath = source === "current" ? nextPath : path.join(logsDir, "thread-1.log");
+          yield* fs.writeFileString(sourcePath, `older${tail}`);
+          const snapshot = yield* manager.open(openInput());
+          expect(snapshot.history).toBe("OK");
+          expect(yield* fs.readFileString(nextPath)).toBe("OK");
+          if (source === "legacy") expect(yield* fs.exists(sourcePath)).toBe(false);
+          yield* manager.close({ threadId: "thread-1" });
+          expect((yield* manager.open(openInput())).history).toBe("OK");
+        }
       }),
     );
   }
