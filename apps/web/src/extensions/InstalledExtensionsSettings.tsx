@@ -11,6 +11,7 @@ import {
   GENERIC_API_CATALOGUE,
   HOST_CAPABILITY_GRANTS,
   HOST_CAPABILITY_GRANT_DESCRIPTIONS,
+  ORCHESTRATION_APPROVE_REQUESTS,
 } from "@t3tools/extension-sdk/catalogue";
 import { WORKSPACE_READ_TEXT } from "@t3tools/extension-sdk/workspace";
 import { Button } from "../components/ui/button";
@@ -39,6 +40,7 @@ interface Project {
   readonly workspaceRoot: string;
 }
 const NO_GRANTS: Grants = { capabilities: [], projectIds: [] };
+const APPROVAL_GRANT_DESCRIPTION = "Answer the agent's approval requests on your behalf";
 const operationsOf = (api: (typeof GENERIC_API_CATALOGUE)[number]) => [
   ...(api.methods ?? []),
   ...(api.streams ?? []),
@@ -56,6 +58,7 @@ const GRANT_CHOICES = [
 
 /** What a grant allows: the catalogue API calls that check it, or null when this client cannot tell. */
 function grantUses(grant: string): string | null {
+  if (grant === ORCHESTRATION_APPROVE_REQUESTS) return APPROVAL_GRANT_DESCRIPTION;
   if (HOST_CAPABILITY_GRANT_DESCRIPTIONS[grant]) return HOST_CAPABILITY_GRANT_DESCRIPTIONS[grant];
   if (HOST_CAPABILITY_GRANTS.includes(grant)) return "Host service " + grant;
   const uses = GENERIC_API_CATALOGUE.flatMap((api) => {
@@ -131,7 +134,9 @@ function PermissionChoices(props: {
             checked={value.capabilities.includes(grant)}
             onCheckedChange={(checked) => setGrant(grant, checked === true)}
           />
-          {grant === "t3.projects/create" || grant === "t3.source-control/read"
+          {grant === "t3.projects/create" ||
+          grant === "t3.source-control/read" ||
+          grant === ORCHESTRATION_APPROVE_REQUESTS
             ? grantUses(grant)
             : `Allow ${grant} in selected projects`}
         </label>
@@ -161,7 +166,8 @@ export const PERMISSION_SUGGESTION_NOTE =
 /**
  * An installation's permissions. Only explicit clicks here add grants: the
  * editor starts from the current set so applying it never silently revokes,
- * and "Grant new permissions" adds exactly the missing required grants.
+ * and "Grant new permissions" adds missing required grants except approval
+ * authority, which requires its own selection in the editor.
  */
 function InstallationPermissions(props: {
   environmentId: EnvironmentId;
@@ -176,6 +182,7 @@ function InstallationPermissions(props: {
   const missing = (item.requiredGrants ?? []).filter(
     (grant) => !current.capabilities.includes(grant),
   );
+  const bulkGrants = missing.filter((grant) => grant !== ORCHESTRATION_APPROVE_REQUESTS);
   const [draft, setDraft] = useState<Grants | null>(null);
   const apply = (grants: Grants) =>
     act(() => manageInstalledExtension(environmentId, { id: item.id, action: "grants", grants }));
@@ -195,11 +202,17 @@ function InstallationPermissions(props: {
           </p>
           <GrantList grants={missing} />
           <p className="text-sm text-muted-foreground">{PERMISSION_SUGGESTION_NOTE}</p>
-          {current.capabilities.length + missing.length > EXTENSION_GRANT_CAPABILITIES_MAX ? (
+          {missing.includes(ORCHESTRATION_APPROVE_REQUESTS) ? (
+            <p className="text-sm text-muted-foreground">
+              To grant approval authority, use Edit permissions and select “
+              {APPROVAL_GRANT_DESCRIPTION}”.
+            </p>
+          ) : null}
+          {current.capabilities.length + bulkGrants.length > EXTENSION_GRANT_CAPABILITIES_MAX ? (
             <p role="status" className="text-sm">
               {`An installation can hold at most ${EXTENSION_GRANT_CAPABILITIES_MAX} permissions and this one has ${current.capabilities.length}. Use Edit permissions to remove ones it does not need, then grant these.`}
             </p>
-          ) : (
+          ) : bulkGrants.length ? (
             <Button
               variant="outline"
               disabled={disabled}
@@ -209,14 +222,14 @@ function InstallationPermissions(props: {
                   manageInstalledExtension(environmentId, {
                     id: item.id,
                     action: "addGrants",
-                    grants: { capabilities: missing, projectIds: [] },
+                    grants: { capabilities: bulkGrants, projectIds: [] },
                   }),
                 )
               }
             >
-              Grant {missing.length} new permission{missing.length === 1 ? "" : "s"}
+              Grant {bulkGrants.length} new permission{bulkGrants.length === 1 ? "" : "s"}
             </Button>
-          )}
+          ) : null}
         </>
       ) : null}
       {draft ? (

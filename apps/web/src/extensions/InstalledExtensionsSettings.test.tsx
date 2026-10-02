@@ -454,6 +454,66 @@ it("grants exactly the missing required permissions and never removes a held one
   }
 });
 
+it("requires a separate selection for approval authority while granting other missing permissions", async () => {
+  fixture.manage = true;
+  fixture.update.mockClear();
+  const approvalGrant = "t3.orchestration/approve-requests";
+  const description = "Answer the agent's approval requests on your behalf";
+  const projectIds = ["project-a" as InstalledPackage["grants"]["projectIds"][number]];
+  fixture.installations = [
+    installed({ capabilities: [], projectIds }, [AGENT_SESSIONS_SCAN, approvalGrant]),
+  ];
+  let root!: ReactTestRenderer;
+  try {
+    await act(async () => {
+      root = create(<InstalledExtensionsSettings />);
+    });
+    const bulkGrant = root.root
+      .findAllByType("button")
+      .find((button) => /^Grant \d+ new permission/.test(button.children.join("")))!;
+    await act(async () => bulkGrant.props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      action: "addGrants",
+      grants: { capabilities: [AGENT_SESSIONS_SCAN], projectIds: [] },
+    });
+    const text = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(text).join("");
+    expect(text(root.root)).toContain(`${approvalGrant} — ${description}`);
+
+    // When only approval authority is missing, there is no bulk grant action.
+    fixture.installations = [
+      installed({ capabilities: [AGENT_SESSIONS_SCAN], projectIds }, [
+        AGENT_SESSIONS_SCAN,
+        approvalGrant,
+      ]),
+    ];
+    await act(async () => root.update(<InstalledExtensionsSettings />));
+    expect(buttonIn(root, "Grant 1 new permission")).toBeUndefined();
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+    expect(checkboxIn(root, description).props.checked).toBe(false);
+    await act(async () => buttonIn(root, "Apply selected permissions").props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      action: "grants",
+      grants: { capabilities: [AGENT_SESSIONS_SCAN], projectIds },
+    });
+    await act(async () => buttonIn(root, "Edit permissions").props.onClick());
+    await act(async () =>
+      checkboxIn(root, description).props.onChange({ target: { checked: true } }),
+    );
+    await act(async () => buttonIn(root, "Apply selected permissions").props.onClick());
+    expect(fixture.update).toHaveBeenLastCalledWith("env-a", {
+      id: "example.agents",
+      action: "grants",
+      grants: { capabilities: [AGENT_SESSIONS_SCAN, approvalGrant], projectIds },
+    });
+  } finally {
+    fixture.installations = [];
+    await act(async () => root?.unmount());
+  }
+});
+
 it("lists missing host-checked grants with what they allow and lets them be granted", async () => {
   fixture.manage = true;
   fixture.update.mockClear();
