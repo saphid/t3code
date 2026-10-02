@@ -113,8 +113,19 @@ export type ClientProvidersRespondInput = typeof ClientProvidersRespondInput.Typ
  */
 export const ClientProviderEmitEvent = Schema.Union([
   Schema.Struct({
-    type: Schema.Literals(["snapshot", "data", "reset", "closed"]),
+    type: Schema.Literals(["snapshot", "data", "reset"]),
     value: Schema.Json,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("closed"),
+    value: Schema.Json,
+    /** An unavailable stream must fail its caller rather than silently complete. */
+    error: Schema.optional(
+      Schema.Struct({
+        code: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80)),
+        message: Schema.String.check(Schema.isMaxLength(2000)),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("notificationOutcome"),

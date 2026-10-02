@@ -160,10 +160,11 @@ describe("mobile transport borrowing the environment supervisor", () => {
   );
 });
 
-const socketFixture = Effect.fnUntraced(function* (connectionId: string) {
+const socketFixture = Effect.fnUntraced(function* (connectionId: string, register = true) {
   const frames = yield* Queue.unbounded<ClientProviderServerFrame>();
   const opened = yield* Deferred.make<void>();
   const closed = yield* Deferred.make<void>();
+  const end = yield* Deferred.make<boolean>();
   const sent = yield* Queue.unbounded<unknown>();
   const apiOpened = yield* Queue.unbounded<unknown>();
   const apiFrames = yield* Queue.unbounded<import("@t3tools/contracts").ExtensionApiStreamFrame>();
@@ -179,18 +180,31 @@ const socketFixture = Effect.fnUntraced(function* (connectionId: string) {
       ),
     [WS_METHODS.extensionsClientProvidersConnect]: (input: { providers: typeof descriptors }) => {
       expect(input.providers).toEqual(descriptors);
-      return Stream.concat(
-        Stream.fromEffect(
-          Deferred.succeed(opened, undefined).pipe(
-            Effect.as({
-              type: "registered",
-              connectionId,
-              accepted: descriptors,
-              rejected: [],
-            } as ClientProviderServerFrame),
-          ),
+      const registration = Stream.fromEffect(
+        Deferred.succeed(opened, undefined).pipe(
+          Effect.as({
+            type: "registered",
+            connectionId,
+            accepted: descriptors,
+            rejected: [],
+          } as ClientProviderServerFrame),
         ),
-        Stream.fromQueue(frames),
+      );
+      return Stream.concat(
+        register ? registration : registration.pipe(Stream.drain),
+        Stream.merge(
+          Stream.fromQueue(frames),
+          Stream.fromEffect(
+            Deferred.await(end).pipe(
+              Effect.flatMap((fail) =>
+                fail
+                  ? Effect.fail(new Error("Unknown request tag: clientProviders.connect"))
+                  : Effect.void,
+              ),
+            ),
+          ).pipe(Stream.drain),
+          { haltStrategy: "either" },
+        ),
       ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined)));
     },
     [WS_METHODS.extensionsClientProvidersRespond]: (payload: unknown) =>
@@ -199,8 +213,204 @@ const socketFixture = Effect.fnUntraced(function* (connectionId: string) {
       Queue.offer(sent, payload).pipe(Effect.asVoid),
   } as unknown as RpcSession["client"];
   const socket = { client } as RpcSession;
-  return { socket, frames, opened, closed, sent, apiOpened, apiFrames };
+  return { socket, frames, opened, closed, sent, apiOpened, apiFrames, end };
 });
+
+const unstampedRequest = {
+  id: "t3.orchestration/status",
+  versionRange: "^1.0.0",
+  method: "getCapabilities",
+  input: {},
+  context: {
+    resource: { namespace: "t3.thread", id: "t", environmentId: "e" },
+    client: "mobile",
+  },
+  clientConnectionId: "borrowed",
+};
+
+function unavailableUi(
+  resetConnection: MobileUiProviders["resetConnection"] = vi.fn(),
+): MobileUiProviders {
+  return {
+    providers: new Map(),
+    descriptors: [
+      { id: "t3.client/theme", version: "1.0.0" },
+      { id: "t3.client/navigation", version: "1.0.0" },
+    ],
+    capabilities: MOBILE_UI_CAPABILITIES,
+    resetConnection,
+    dispose: vi.fn(),
+    notifyAppearanceChanged: vi.fn(),
+    notifyInstallationsChanged: vi.fn(),
+  };
+}
+
+/** Capture the registration bound; advancing it is explicit, never a wall-clock sleep. */
+function registrationTimer() {
+  let fire!: () => void;
+  let scheduled!: () => void;
+  const ready = new Promise<void>((resolve) => (scheduled = resolve));
+  const original = globalThis.setTimeout;
+  const timer = vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation((callback, delay, ...args) => {
+      if (
+        delay !== undefined &&
+        delay > 9_000 &&
+        delay <= 10_000 &&
+        typeof callback === "function"
+      ) {
+        fire = () => callback(...args);
+        scheduled();
+      }
+      return original(callback, delay, ...args);
+    });
+  return {
+    ready,
+    fire: () => fire(),
+    refuseWaiting: () =>
+      timer.mockImplementation((callback, delay, ...args) => {
+        if (delay !== undefined && delay > 9_000 && delay <= 10_000)
+          throw new Error("Registration wait after connect ended");
+        return original(callback, delay, ...args);
+      }),
+  };
+}
+
+function unavailableServer(bodies: { request: { clientConnectionId?: string; id: string } }[]) {
+  return async (url: RequestInfo | URL, init?: RequestInit) => {
+    const body = (await new Request(String(url), init).json()) as {
+      request: { clientConnectionId?: string; id: string };
+    };
+    bodies.push(body);
+    expect(body.request).not.toHaveProperty("clientConnectionId");
+    return body.request.id.startsWith("t3.ui/")
+      ? Response.json(
+          {
+            _tag: "ExtensionOperationError",
+            operation: "invoke",
+            detail: "client-target-required",
+          },
+          { status: 400 },
+        )
+      : Response.json({ result: { ok: true } });
+  };
+}
+
+it.effect("does not hold non-UI calls when no socket registration is current", () =>
+  Effect.gen(function* () {
+    const bodies: { request: { clientConnectionId?: string; id: string } }[] = [];
+    const f = yield* fixture(unavailableServer(bodies), unavailableUi());
+    registrationTimer().refuseWaiting();
+    expect(
+      yield* Effect.promise(() =>
+        f.transport.invokeApi(unstampedRequest, new AbortController().signal),
+      ),
+    ).toEqual({ ok: true });
+    expect(bodies).toHaveLength(1);
+    f.owner.abort();
+  }),
+);
+
+for (const failure of [true, false]) {
+  it.effect(
+    `releases held and subsequent non-UI calls when connect ${failure ? "errors" : "ends"}`,
+    () =>
+      Effect.gen(function* () {
+        let dispose!: () => void;
+        const disposed = new Promise<void>((resolve) => (dispose = resolve));
+        const ui = unavailableUi(dispose);
+        const bodies: { request: { clientConnectionId?: string; id: string } }[] = [];
+        const f = yield* fixture(unavailableServer(bodies), ui);
+        const socket = yield* socketFixture("unused", false);
+        yield* SubscriptionRef.set(f.session, Option.some(socket.socket));
+        yield* Deferred.await(socket.opened);
+        const bound = registrationTimer();
+        const pending = f.transport.invokeApi(unstampedRequest, new AbortController().signal);
+        const result = pending.then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        );
+        yield* Effect.promise(() => bound.ready);
+        yield* Deferred.succeed(socket.end, failure);
+        yield* Effect.promise(() => disposed);
+        expect(yield* Effect.promise(() => result)).toEqual({ value: { ok: true } });
+        bound.refuseWaiting();
+        expect(
+          yield* Effect.promise(() =>
+            f.transport.invokeApi(unstampedRequest, new AbortController().signal),
+          ),
+        ).toEqual({ ok: true });
+        yield* Effect.promise(() =>
+          expect(
+            f.transport.invokeApi(
+              { ...unstampedRequest, id: "t3.ui/theme", method: "getState" },
+              new AbortController().signal,
+            ),
+          ).rejects.toThrow("client-target-required"),
+        );
+        expect(bodies).toHaveLength(3);
+        f.owner.abort();
+      }),
+  );
+}
+
+it.effect("sends unstamped non-UI calls and honest UI errors after the registration bound", () =>
+  Effect.gen(function* () {
+    const bodies: { request: { clientConnectionId?: string; id: string } }[] = [];
+    const f = yield* fixture(unavailableServer(bodies), unavailableUi());
+    const socket = yield* socketFixture("unused", false);
+    yield* SubscriptionRef.set(f.session, Option.some(socket.socket));
+    yield* Deferred.await(socket.opened);
+    const bound = registrationTimer();
+    const invoke = async (id: string, method: string) => {
+      const pending = f.transport.invokeApi(
+        { ...unstampedRequest, id, method },
+        new AbortController().signal,
+      );
+      const result = pending.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      await bound.ready;
+      bound.fire();
+      return result;
+    };
+    expect(
+      yield* Effect.promise(() => invoke(unstampedRequest.id, unstampedRequest.method)),
+    ).toEqual({ value: { ok: true } });
+    expect(yield* Effect.promise(() => invoke("t3.ui/theme", "getState"))).toEqual({
+      error: expect.objectContaining({
+        message: expect.stringContaining("client-target-required"),
+      }),
+    });
+    expect(bodies).toHaveLength(2);
+    f.owner.abort();
+    yield* Deferred.await(socket.closed);
+  }),
+);
+
+it.effect("preserves the server's UI error when registration never arrives", () =>
+  Effect.gen(function* () {
+    const bodies: { request: { clientConnectionId?: string; id: string } }[] = [];
+    const f = yield* fixture(unavailableServer(bodies), unavailableUi());
+    const socket = yield* socketFixture("unused", false);
+    yield* SubscriptionRef.set(f.session, Option.some(socket.socket));
+    yield* Deferred.await(socket.opened);
+    const bound = registrationTimer();
+    const pending = f.transport.invokeApi(
+      { ...unstampedRequest, id: "t3.ui/theme", method: "getState" },
+      new AbortController().signal,
+    );
+    const result = expect(pending).rejects.toThrow("client-target-required");
+    yield* Effect.promise(() => bound.ready);
+    bound.fire();
+    yield* Effect.promise(() => result);
+    expect(bodies).toHaveLength(1);
+    f.owner.abort();
+    yield* Deferred.await(socket.closed);
+  }),
+);
 
 it.effect(
   "stamps only the registered mobile identity and cleans registrations on socket replacement and unmount",

@@ -1,4 +1,8 @@
-import { EnvironmentId, type ClientProviderServerFrame } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ClientProvidersEmitInput,
+  type ClientProviderServerFrame,
+} from "@t3tools/contracts";
 import type { ExtensionViewContext } from "@t3tools/contracts";
 import type { HostApiPrincipal } from "@t3tools/extension-runtime";
 import { it, expect } from "@effect/vitest";
@@ -8,11 +12,13 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ClientApiProviders, layer as clientApiProvidersLayer } from "./ClientApiProviders.ts";
 
 const ENV = "env-a";
+const decodeEmit = Schema.decodeUnknownSync(ClientProvidersEmitInput);
 const DESCRIPTORS = [
   { id: "t3.client/theme", version: "1.0.0" },
   { id: "t3.client/notifications", version: "1.0.0" },
@@ -560,6 +566,43 @@ it.effect("enforces the declared private schemas in both directions", () =>
       });
     }
     expect(yield* Fiber.join(followUp)).toEqual(THEME_STATE);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("a named subscription-open failure survives the wire and rejects the stream", () =>
+  Effect.gen(function* () {
+    const providers = yield* ClientApiProviders;
+    const stream = yield* providers.connect(socket("open-failure"), connectInput());
+    const frames = frameIterator(stream);
+    yield* nextFrame(frames);
+    const subscription = yield* providers.openSubscription({
+      connectionId: "open-failure",
+      apiId: "t3.client/theme",
+      name: "watchState",
+      input: SELF_INPUT,
+      context,
+      caller,
+    });
+    const open = yield* nextFrame(frames);
+    expect(open?.type).toBe("subscriptionOpen");
+    if (open?.type !== "subscriptionOpen") return;
+    const payload = decodeEmit({
+      correlationId: open.subscriptionId,
+      event: {
+        type: "closed",
+        value: null,
+        error: { code: "client-provider-unavailable", message: "Mobile UI stream is unavailable" },
+      },
+    });
+    yield* providers.emit("open-failure", payload);
+    yield* Effect.promise(() =>
+      expect(subscription.events[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+        code: "client-provider-unavailable",
+        detail: "Mobile UI stream is unavailable",
+      }),
+    );
+    yield* subscription.close();
+    expect(yield* providers.hasProvider(ENV, "t3.client/theme")).toBe(true);
   }).pipe(Effect.provide(testLayer)),
 );
 

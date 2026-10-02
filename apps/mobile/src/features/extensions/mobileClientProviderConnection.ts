@@ -37,7 +37,7 @@ export function createMobileClientProviderSession(
     return value;
   };
   return {
-    async connectionId(signal: AbortSignal) {
+    async connectionId(signal: AbortSignal, timeoutMs = 10_000) {
       checkMobileUiAbort(signal);
       if (!identity && !disposed)
         await new Promise<void>((resolve) => {
@@ -47,17 +47,12 @@ export function createMobileClientProviderSession(
             waiters.delete(done);
             resolve();
           };
-          const timer = setTimeout(done, 10_000);
+          const timer = setTimeout(done, timeoutMs);
           waiters.add(done);
           signal.addEventListener("abort", done, { once: true });
         });
       checkMobileUiAbort(signal);
-      if (disposed || !identity)
-        throw new MobileUiProviderError(
-          "client-provider-unavailable",
-          "Mobile UI connection is unavailable",
-        );
-      return identity;
+      return disposed ? undefined : identity;
     },
     async receive(frame: ClientProviderServerFrame) {
       if (disposed) return;
@@ -111,8 +106,21 @@ export function createMobileClientProviderSession(
               );
             subscriptions.get(frame.subscriptionId)?.();
             subscriptions.set(frame.subscriptionId, local.openStream({ ...frame, emit }));
-          } catch {
-            emit({ type: "closed", value: null });
+          } catch (error) {
+            emit({
+              type: "closed",
+              value: null,
+              error: {
+                code:
+                  error instanceof MobileUiProviderError
+                    ? error.code
+                    : "client-provider-unavailable",
+                message: (error instanceof Error
+                  ? error.message
+                  : "Mobile UI stream is unavailable"
+                ).slice(0, 2000),
+              },
+            });
           }
           return;
         }

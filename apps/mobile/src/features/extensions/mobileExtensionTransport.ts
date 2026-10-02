@@ -48,6 +48,8 @@ export async function mobileExtensionTransport(
   if (signal.aborted) throw new Error("Extension transport cancelled");
   const release = appAtomRegistry.mount(connectionAtomRuntime);
   let released = false;
+  let connectionStreamEnded = false;
+  const endedSockets = new WeakSet<RpcSession>();
   let current:
     | { socket: RpcSession; dispatcher: ReturnType<typeof createMobileClientProviderSession> }
     | undefined;
@@ -87,6 +89,20 @@ export async function mobileExtensionTransport(
     if (!ui) return undefined;
     checkMobileUiAbort(signal);
     checkMobileUiAbort(callSignal);
+    if (connectionStreamEnded || (socket && endedSockets.has(socket))) return undefined;
+    if (!current && !socket) {
+      const active = await run(
+        registry.run(
+          environmentId,
+          Effect.flatMap(EnvironmentSupervisor, (supervisor) =>
+            SubscriptionRef.get(supervisor.session),
+          ),
+        ),
+        callSignal,
+      );
+      if (Option.isNone(active) || endedSockets.has(active.value)) return undefined;
+    }
+    const deadline = Date.now() + 10_000;
     if (!current || (socket && current.socket !== socket))
       await new Promise<void>((resolve) => {
         const done = () => {
@@ -101,9 +117,8 @@ export async function mobileExtensionTransport(
       });
     checkMobileUiAbort(signal);
     checkMobileUiAbort(callSignal);
-    if (!current || (socket && current.socket !== socket))
-      throw new Error("client-provider-unavailable");
-    return current.dispatcher.connectionId(callSignal);
+    if (!current || (socket && current.socket !== socket)) return undefined;
+    return current.dispatcher.connectionId(callSignal, Math.max(0, deadline - Date.now()));
   };
   if (ui) {
     const connections = registry.followStream(
@@ -114,7 +129,10 @@ export async function mobileExtensionTransport(
           return SubscriptionRef.changes(supervisor.session).pipe(
             Stream.switchMap(
               Option.match({
-                onNone: () => Stream.empty,
+                onNone: () => {
+                  wakeConnections();
+                  return Stream.empty;
+                },
                 onSome: (socket) =>
                   Stream.unwrap(
                     Effect.gen(function* () {
@@ -144,7 +162,11 @@ export async function mobileExtensionTransport(
                         (dispatcher) =>
                           Effect.sync(() => {
                             dispatcher.dispose();
-                            if (current?.dispatcher === dispatcher) current = undefined;
+                            endedSockets.add(socket);
+                            if (current?.dispatcher === dispatcher) {
+                              current = undefined;
+                            }
+                            wakeConnections();
                           }),
                       );
                       return socket.client[WS_METHODS.extensionsClientProvidersConnect](
@@ -171,6 +193,7 @@ export async function mobileExtensionTransport(
       .finally(() => {
         current?.dispatcher.dispose();
         current = undefined;
+        connectionStreamEnded = true;
         wakeConnections();
       });
   }

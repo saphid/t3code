@@ -580,6 +580,10 @@ export const make = Effect.gen(function* () {
             // `closed` terminates the stream; payload events must satisfy the
             // declared event schema — an invalid event fails the subscription.
             if (event.type === "closed") {
+              if (event.error) {
+                sinkClose(sink, error(event.error.code, event.error.message));
+                return;
+              }
               sinkPush(sink, { type: event.type, value });
               sinkClose(sink);
               return;

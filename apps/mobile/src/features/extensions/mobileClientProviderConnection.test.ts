@@ -165,7 +165,7 @@ describe("socket-owned mobile UI dispatch", () => {
     const count = f.emit.mock.calls.length;
     f.ui.notifyAppearanceChanged();
     expect(f.emit).toHaveBeenCalledTimes(count);
-    await expect(f.session.connectionId(new AbortController().signal)).rejects.toThrow();
+    await expect(f.session.connectionId(new AbortController().signal)).resolves.toBeUndefined();
     const replacement = createMobileClientProviderSession(f.ui, {
       respond: f.respond,
       emit: f.emit,
@@ -203,6 +203,58 @@ describe("socket-owned mobile UI dispatch", () => {
       f.ui.dispose();
     }
   });
+  it("releases registration waiters without a hint when the connection is disposed", async () => {
+    const f = fixture();
+    try {
+      const waiting = f.session.connectionId(new AbortController().signal);
+      f.session.dispose();
+      await expect(waiting).resolves.toBeUndefined();
+    } finally {
+      f.session.dispose();
+      f.ui.dispose();
+    }
+  });
+  it.each(["unregistered", "not accepted", "no stream", "open throws"])(
+    "emits a named unavailable error when subscriptionOpen fails: %s",
+    async (failure) => {
+      const f = fixture();
+      try {
+        if (failure !== "unregistered")
+          await f.session.receive({
+            ...f.registered,
+            accepted: failure === "not accepted" ? [] : f.registered.accepted,
+          });
+        if (failure === "no stream" || failure === "open throws")
+          f.ui.providers.set("t3.client/theme", {
+            invoke: async () => null,
+            ...(failure === "open throws"
+              ? {
+                  openStream: () => {
+                    throw new Error("Open failed");
+                  },
+                }
+              : {}),
+          });
+        await f.session.receive({
+          type: "subscriptionOpen",
+          subscriptionId: "unavailable",
+          apiId: "t3.client/theme",
+          name: "watchState",
+          input: {},
+          caller: f.caller,
+          context: f.context,
+        });
+        expect(f.emit).toHaveBeenCalledWith("unavailable", {
+          type: "closed",
+          value: null,
+          error: expect.objectContaining({ code: "client-provider-unavailable" }),
+        });
+      } finally {
+        f.session.dispose();
+        f.ui.dispose();
+      }
+    },
+  );
   it("aborts a pending invocation and sends no stale response into a replacement session", async () => {
     const f = fixture();
     let finish!: () => void;
