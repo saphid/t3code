@@ -247,6 +247,97 @@ it("reads a symlinked transcript tail at a line boundary with a truncation marke
 });
 
 const limits = { maxBytes: 8192, maxLines: 1000 };
+const oversizedRecord = (length: number, suffix: string) => {
+  const empty = JSON.stringify({ type: "assistant", content: suffix });
+  const record = JSON.stringify({
+    type: "assistant",
+    content: "x".repeat(length - Buffer.byteLength(empty)) + suffix,
+  });
+  expect(Buffer.byteLength(record)).toBe(length);
+  return record;
+};
+
+it.each([28939, 70000])(
+  "returns useful output from a %i-byte final JSONL record",
+  async (length) => {
+    const f = await fixture();
+    const record = oversizedRecord(length, "A5-SUBAGENT-OK");
+    // Match the proof transcript's total size for the 28,939-byte case.
+    const earlier = lines(11);
+    const padding = oversizedRecord(115638 - length - earlier.length - 2, "earlier");
+    for (const ending of ["", "\n"]) {
+      const source = `${earlier}${padding}\n${record}${ending}`;
+      const transcript = await f.write(
+        NodePath.join(f.projects, SLUG, "sess", "subagents", "agent-a.jsonl"),
+        source,
+      );
+      f.rosters.set("thread", [task("a", { outputFile: transcript })]);
+      const tail = (await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail;
+      expect(tail.contents).toContain("A5-SUBAGENT-OK");
+      expect(source.endsWith(tail.contents)).toBe(true);
+      expect(Buffer.byteLength(tail.contents)).toBeLessThanOrEqual(8192);
+      expect(tail.truncated).toBe(true);
+      expect(tail.byteLength).toBe(Buffer.byteLength(source));
+      if (length === 28939 && ending === "\n") expect(tail.byteLength).toBe(115638);
+    }
+  },
+);
+
+it.each([0, 1, 2])("redacts oversized final records with %i escaping layers", async (depth) => {
+  const f = await fixture();
+  const secret = "SENSITIVE-FRAGMENT-".repeat(4000);
+  let record = JSON.stringify({ token: secret, result: "A5-SUBAGENT-OK" });
+  for (let layer = 0; layer < depth; layer++) record = JSON.stringify({ content: record });
+  expect(record.length).toBeGreaterThan(8192 * 2);
+  const transcript = await f.write(
+    NodePath.join(f.projects, SLUG, "sess", "subagents", "agent-a.jsonl"),
+    `${lines(1000)}${record}\n`,
+  );
+  f.rosters.set("thread", [task("a", { outputFile: transcript })]);
+  const tail = (await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail;
+  expect(tail.contents).toContain("A5-SUBAGENT-OK");
+  expect(tail.contents).toContain("[REDACTED]");
+  expect(tail.contents).not.toContain("SENSITIVE");
+  expect(tail.truncated).toBe(true);
+});
+
+it("marks a final line beyond the scan cap without exposing its unclassified suffix", async () => {
+  const { counter, open } = countingOpen();
+  const f = await fixture({ open });
+  const secret = "SENSITIVE-FRAGMENT-".repeat(20000);
+  const transcript = await f.write(
+    NodePath.join(f.projects, SLUG, "sess", "subagents", "agent-a.jsonl"),
+    `${lines(10)}${JSON.stringify({ token: secret })}\n`,
+  );
+  f.rosters.set("thread", [task("a", { outputFile: transcript })]);
+  for (const maxBytes of [8192, 10, 1]) {
+    counter.bytes = 0;
+    const tail = (await f.call("readTail", {
+      runId: "a",
+      source: "output",
+      maxBytes,
+    })) as AgentLogTail;
+    expect(tail.contents).not.toBe("");
+    expect(tail.contents).not.toContain("SENSITIVE");
+    expect(Buffer.byteLength(tail.contents)).toBeLessThanOrEqual(maxBytes);
+    expect(tail.truncated).toBe(true);
+    expect(counter.bytes).toBeLessThanOrEqual(maxBytes + 8192 + 256 * 1024);
+  }
+});
+
+it("preserves the private-key state before a recovered final record", async () => {
+  const f = await fixture();
+  const record = oversizedRecord(28939, "SENSITIVE-FRAGMENT");
+  const transcript = await f.write(
+    NodePath.join(f.projects, SLUG, "sess", "subagents", "agent-a.jsonl"),
+    `${lines(1000)}-----BEGIN PRIVATE KEY-----\n${record}\n`,
+  );
+  f.rosters.set("thread", [task("a", { outputFile: transcript })]);
+  const tail = (await f.call("readTail", { runId: "a", source: "output" })) as AgentLogTail;
+  expect(tail.contents).toBe("[REDACTED]\n");
+  expect(tail.truncated).toBe(true);
+});
+
 it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
   const encoded = new TextEncoder().encode("é first\nsecond\n");
   // Window starts inside the two-byte "é"; the lead read before it reaches
@@ -255,16 +346,21 @@ it("never splits a UTF-8 sequence or keeps an unbounded partial line", () => {
     contents: "second\n",
     truncated: true,
   });
-  // A line whose start was never read cannot be classified, so it is withheld
-  // even when it is the only line.
+  // A line whose start was never read cannot be classified, so mark it as
+  // withheld rather than presenting an empty source.
   expect(shapeLogTail(new TextEncoder().encode("abcdef\n"), 10, limits)).toEqual({
-    contents: "",
+    contents: "[REDACTED] (oversized output line omitted)",
     truncated: true,
   });
   expect(shapeLogTail(new TextEncoder().encode("a\nb\nc"), 0, { ...limits, maxLines: 2 })).toEqual({
     contents: "b\nc",
     truncated: true,
   });
+  expect(shapeLogTail(new TextEncoder().encode("💛"), 0, { ...limits, maxBytes: 1 })).toEqual({
+    contents: "[",
+    truncated: true,
+  });
+  expect(shapeLogTail(new Uint8Array(), 0, limits)).toEqual({ contents: "", truncated: false });
 });
 
 it("keeps whole lines when the byte cut lands exactly on a line boundary", () => {
@@ -706,7 +802,7 @@ it("fails closed through the provider on encoded markers and invalid continuatio
   }
 });
 
-it("withholds a leading line whose secret name fell before the read", async () => {
+it("recovers and redacts a leading line whose secret name fell before the window", async () => {
   const f = await fixture();
   const file = await f.write(
     NodePath.join(f.projects, SLUG, "s", "a.jsonl"),
@@ -722,7 +818,7 @@ it("withholds a leading line whose secret name fell before the read", async () =
     expect(tail).toEqual({
       runId: "a",
       source: "output",
-      contents: "",
+      contents: "PASSWORD=[REDACTED]",
       byteLength: 20_009,
       truncated: true,
     });
