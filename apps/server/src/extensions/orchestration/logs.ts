@@ -121,11 +121,6 @@ export function shapeLogTail(
   before: Uint8Array | KeyStart = new Uint8Array(),
 ): { readonly contents: string; readonly truncated: boolean } {
   const offset = start > 0 ? region.indexOf(0x0a) + 1 || region.length : 0;
-  if (start > 0 && offset === region.length)
-    return {
-      contents: boundedPrefix(OMITTED_LOG_LINE, limits.maxBytes),
-      truncated: true,
-    };
   const key =
     start === 0
       ? "outside"
