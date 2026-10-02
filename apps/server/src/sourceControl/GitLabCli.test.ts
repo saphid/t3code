@@ -1,12 +1,15 @@
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const mockedRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
 const layer = it.layer(
@@ -34,6 +37,75 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  for (const input of [
+    {
+      host: "gitlab-b.example:8443",
+      profile: "ssh.gitlab-b.example",
+      apiHost: "gitlab-b.example:8443",
+    },
+    { host: "gitlab.com", profile: "gitlab-a.example", apiHost: "gitlab-a.example" },
+  ]) {
+    it.effect(`looks up same-named repositories on ${input.host}`, () =>
+      Effect.gen(function* () {
+        mockedRun.mockImplementation((command) => {
+          if (command.args[0] === "config") return Effect.succeed(processOutput(input.apiHost));
+          const explicit = command.args.indexOf("--hostname");
+          const selected =
+            explicit >= 0
+              ? command.args[explicit + 1]
+              : (command.env?.GITLAB_HOST ?? "gitlab-a.example");
+          const host = selected === input.profile ? input.apiHost : selected;
+          return Effect.succeed(
+            processOutput(
+              encodeJson({
+                path_with_namespace: "acme/repo",
+                web_url: `https://${host}/acme/repo`,
+                http_url_to_repo: `https://${host}/acme/repo.git`,
+                ssh_url_to_repo: `git@${selected}:acme/repo.git`,
+              }),
+            ),
+          );
+        });
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "acme/repo",
+          host: input.host,
+          context: {
+            remoteName: "origin",
+            remoteUrl: "git@ssh.gitlab-b.example:acme/repo.git",
+            provider: { kind: "gitlab", name: "GitLab", baseUrl: `https://${input.profile}` },
+          },
+        });
+        assert.strictEqual(new URL(result.url).host, input.host);
+      }),
+    );
+  }
+
+  it.effect("refuses a repository returned from another GitLab host", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValue(
+        Effect.succeed(
+          processOutput(
+            encodeJson({
+              path_with_namespace: "acme/repo",
+              web_url: "https://wrong.example/acme/repo",
+              http_url_to_repo: "https://wrong.example/acme/repo.git",
+              ssh_url_to_repo: "git@wrong.example:acme/repo.git",
+            }),
+          ),
+        ),
+      );
+      const glab = yield* GitLabCli.GitLabCli;
+      const outcome = yield* glab
+        .getRepositoryCloneUrls({ cwd: "/repo", repository: "acme/repo", host: "wanted.example" })
+        .pipe(
+          Effect.match({ onFailure: (error) => error.message, onSuccess: (result) => result.url }),
+        );
+      expect(outcome).toContain("different host");
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

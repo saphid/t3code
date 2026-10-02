@@ -35,6 +35,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { pullRequestHeadRef } from "../git/pullRequestRefs.ts";
 import {
   parseRemoteNames,
@@ -3252,6 +3253,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
     });
 
+  const fetchCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchCommit"] = Effect.fn("fetchCommit")(
+    function* (input) {
+      const url = input.url;
+      if (
+        !(isSshRemoteUrl(url) || (URL.canParse(url) && new URL(url).protocol === "https:")) ||
+        !input.ref.startsWith("refs/") ||
+        input.ref.includes(":")
+      ) {
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.fetchCommit",
+          command: "git fetch",
+          cwd: input.cwd,
+          detail: "Refusing to fetch from a repository URL that is not HTTPS or SSH.",
+        });
+      }
+      // A URL rather than a remote, and no refspec destination: the commit lands only in FETCH_HEAD
+      // (per worktree), so no remote-tracking ref moves and a branch checked out elsewhere can
+      // still be read.
+      yield* executeGit(
+        "GitVcsDriver.fetchCommit",
+        input.cwd,
+        ["fetch", "--quiet", "--no-tags", "--no-recurse-submodules", url, input.ref],
+        { fallbackErrorDetail: "git fetch failed" },
+      );
+      return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
+    },
+  );
+
   const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
     Effect.fn("refreshCheckedOutBranch")(function* (input) {
       const { commitSha: headCommit } = yield* resolveCommit({ cwd: input.cwd, revision: "HEAD" });
@@ -3694,6 +3723,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
     fetchPullRequestHeadCommit,
+    fetchCommit,
     resolveCommit,
     refreshCheckedOutBranch: (input) =>
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),

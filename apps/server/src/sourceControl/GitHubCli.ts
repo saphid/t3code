@@ -60,7 +60,10 @@ function commandHosts(args: ReadonlyArray<string>): Array<string | null> {
     const parts = repository.split("/");
     return parts.length === 3 ? parts[0]!.toLowerCase() : null;
   };
-  if (args[0] === "repo" && args[1] === "view") hosts.push(repositoryHost(args[2]));
+  if (args[0] === "repo" && args[1] === "view") {
+    const separator = args.indexOf("--");
+    hosts.push(repositoryHost(separator < 0 ? args[2] : args[separator + 1]));
+  }
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
     if (arg === "--hostname") hosts.push(args[++index]?.toLowerCase() ?? null);
@@ -329,6 +332,7 @@ export class GitHubCli extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
     readonly createRepository: (input: {
@@ -985,7 +989,14 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        args: [
+          "repo",
+          "view",
+          "--json",
+          "nameWithOwner,url,sshUrl",
+          "--",
+          input.host === undefined ? input.repository : `${input.host}/${input.repository}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>

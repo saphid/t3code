@@ -940,3 +940,28 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+it.effect("looks up same-named repositories on the requested GitHub host", () =>
+  Effect.gen(function* () {
+    mockRun.mockImplementation((input) => {
+      const target = input.args.at(-1);
+      const host = target === "enterprise.example/acme/repo" ? "enterprise.example" : "github.com";
+      return Effect.succeed(
+        processOutput(
+          JSON.stringify({
+            nameWithOwner: "acme/repo",
+            url: `https://${host}/acme/repo`,
+            sshUrl: `git@${host}:acme/repo.git`,
+          }),
+        ),
+      );
+    });
+    const gh = yield* GitHubCli.GitHubCli;
+    const result = yield* gh.getRepositoryCloneUrls({
+      cwd: "/repo",
+      repository: "acme/repo",
+      host: "enterprise.example",
+    });
+    assert.strictEqual(new URL(result.url).host, "enterprise.example");
+  }).pipe(Effect.provide(layer)),
+);

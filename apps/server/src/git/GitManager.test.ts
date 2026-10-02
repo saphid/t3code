@@ -289,6 +289,28 @@ function configureVisibleRemoteUrlWithLocalRewrite(
   });
 }
 
+const PULL_REQUEST_REPOSITORY_URL = "https://github.com/pingdotgg/codething-mvp.git";
+
+// What the fake provider reports as the clone URLs of the pull requests' repository.
+const pullRequestRepositoryCloneUrls = {
+  "pingdotgg/codething-mvp": {
+    url: PULL_REQUEST_REPOSITORY_URL,
+    sshUrl: "git@github.com:pingdotgg/codething-mvp.git",
+  },
+};
+
+// Points the provider-reported repository URL at a local bare repository, as a user's own
+// `insteadOf` rewrite would, without touching any remote.
+function servePullRequestRepository(
+  cwd: string,
+  localRemotePath: string,
+  url = PULL_REQUEST_REPOSITORY_URL,
+) {
+  return runGit(cwd, ["config", "--add", `url.${localRemotePath}.insteadOf`, url]).pipe(
+    Effect.asVoid,
+  );
+}
+
 function createTextGeneration(
   overrides: Partial<FakeGitTextGeneration> = {},
 ): TextGeneration.TextGeneration["Service"] {
@@ -477,7 +499,11 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     if (args[0] === "repo" && args[1] === "view") {
       const repository = args[2];
       if (typeof repository === "string" && args.includes("nameWithOwner,url,sshUrl")) {
-        const cloneUrls = scenario.repositoryCloneUrls?.[repository];
+        const cloneUrls =
+          scenario.repositoryCloneUrls?.[repository] ??
+          (repository === "pingdotgg/codething-mvp"
+            ? pullRequestRepositoryCloneUrls[repository]
+            : undefined);
         if (!cloneUrls) {
           return Effect.fail(
             new GitHubCli.GitHubCliCommandError({
@@ -4370,6 +4396,83 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("worktree checkout fetches a same-named fork from the pull request host", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const rightRemote = yield* createBareRemote();
+      const wrongRemote = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", rightRemote]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/host"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "host.txt"), "enterprise fork\n");
+      yield* runGit(repoDir, ["add", "host.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Enterprise fork"]);
+      const expected = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", "feature/host"]);
+      yield* runGit(repoDir, ["push", wrongRemote, "main:feature/host"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://enterprise.example/owner/base.git",
+        rightRemote,
+      );
+      yield* runGit(repoDir, [
+        "config",
+        "--add",
+        `url.${rightRemote}.insteadOf`,
+        "https://enterprise.example/fork/repo.git",
+      ]);
+      yield* runGit(repoDir, [
+        "config",
+        "--add",
+        `url.${wrongRemote}.insteadOf`,
+        "https://github.com/fork/repo.git",
+      ]);
+      const { service } = createGitHubCliWithFakeGh();
+      const base = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(Layer.succeed(GitHubCli.GitHubCli, service)),
+      );
+      const provider: SourceControlProvider["Service"] = {
+        ...base,
+        getChangeRequest: () =>
+          Effect.succeed({
+            provider: "github",
+            number: 42,
+            title: "Enterprise fork",
+            url: "https://enterprise.example/owner/base/pull/42",
+            baseRefName: "main",
+            headRefName: "feature/host",
+            state: "open",
+            updatedAt: Option.none(),
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "fork/repo",
+          }),
+        getRepositoryCloneUrls: (lookup) => {
+          const host = lookup.host ?? "github.com";
+          return Effect.succeed({
+            nameWithOwner: "fork/repo",
+            url: `https://${host}/fork/repo.git`,
+            sshUrl: `git@${host}:fork/repo.git`,
+          });
+        },
+      };
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "42",
+        mode: "worktree",
+      });
+      expect((yield* runGit(result.worktreePath!, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+        expected,
+      );
+      expect(NodeFS.readFileSync(NodePath.join(result.worktreePath!, "host.txt"), "utf8")).toBe(
+        "enterprise fork\n",
+      );
+    }),
+  );
+
   it.effect("resolves pull requests from #number references", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4937,6 +5040,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-stale"]);
@@ -4992,6 +5096,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-setup"]);
@@ -5057,6 +5162,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-current"]);
@@ -5112,6 +5218,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-force-pushed"]);
@@ -5341,6 +5448,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
+      yield* servePullRequestRepository(repoDir, remoteDir);
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-ref-only"]);

@@ -205,6 +205,14 @@ export interface GitFetchPullRequestHeadCommitInput {
   provider?: SourceControlProviderKind | undefined;
 }
 
+export interface GitFetchCommitInput {
+  cwd: string;
+  /** An `https://` or SSH repository URL; anything else is refused. */
+  url: string;
+  /** A full ref name, such as `refs/pull/<n>/head`. */
+  ref: string;
+}
+
 export interface GitResolveCommitInput {
   cwd: string;
   revision: string;
@@ -340,6 +348,9 @@ export class GitVcsDriver extends Context.Service<
     /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
+    ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
+    readonly fetchCommit: (
+      input: GitFetchCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
     readonly resolveCommit: (
       input: GitResolveCommitInput,

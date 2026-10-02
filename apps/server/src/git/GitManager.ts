@@ -65,6 +65,7 @@ import {
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import { pullRequestHeadRef } from "./pullRequestRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -241,6 +242,29 @@ export function pullRequestRepositoryKey(value: string): string | null {
     url.search = "";
     url.hash = "";
     return normalizeGitRemoteUrl(url.toString());
+  } catch {
+    return null;
+  }
+}
+
+// The repository a pull request URL names, as the provider looks it up: `owner/repo`, a nested
+// GitLab group path, or an Azure DevOps repository name, plus the host (with any port) serving it.
+function parsePullRequestRepository(value: string): { host: string; repository: string } | null {
+  try {
+    const url = new URL(value);
+    const match =
+      /^\/(?:.*\/_git\/)?(.+?)\/(?:-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/iu.exec(
+        url.pathname,
+      );
+    return match?.[1] === undefined ? null : { host: url.host, repository: match[1] };
+  } catch {
+    return null;
+  }
+}
+
+function urlHost(value: string): string | null {
+  try {
+    return new URL(value).host;
   } catch {
     return null;
   }
@@ -846,49 +870,57 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The remote for the pull request's named head repository, added when none matches. The lookup
+  // names the pull request's own host: without it `gh repo view` answers for github.com (or
+  // GH_HOST), which can hold a different repository of the same name.
+  const ensureHeadRepositoryRemote = Effect.fn("ensureHeadRepositoryRemote")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+    repositoryNameWithOwner: string,
+  ) {
+    const host = urlHost(pullRequest.url);
+    const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      cwd,
+      ...(host === null ? {} : { host }),
+      repository: repositoryNameWithOwner,
+    });
+    const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+    return yield* gitCore.ensureRemote({
+      cwd,
+      preferredName:
+        pullRequest.headRepositoryOwnerLogin?.trim() ||
+        repositoryNameWithOwner.split("/")[0]?.trim() ||
+        "fork",
+      url: shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url,
+    });
+  });
+
+  // The remote the pull request's head branch lives on, added when it is a fork. Null for a
+  // cross-repository head whose repository the provider did not name.
+  const resolvePullRequestHeadRemoteName = Effect.fn("resolvePullRequestHeadRemoteName")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+  ) {
+    const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
+    if (repositoryNameWithOwner.length === 0) {
+      return pullRequest.isCrossRepository === true
+        ? null
+        : yield* gitCore.resolvePrimaryRemoteName(cwd);
+    }
+
+    return yield* ensureHeadRepositoryRemote(cwd, pullRequest, repositoryNameWithOwner);
+  });
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
       localBranch = pullRequest.headBranch,
     ) {
-      const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
-      if (repositoryNameWithOwner.length === 0 && pullRequest.isCrossRepository !== true) {
-        const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
-        yield* gitCore.fetchRemoteTrackingBranch({
-          cwd,
-          remoteName,
-          remoteBranch: pullRequest.headBranch,
-        });
-        yield* gitCore.setBranchUpstream({
-          cwd,
-          branch: localBranch,
-          remoteName,
-          remoteBranch: pullRequest.headBranch,
-        });
-        return;
+      const remoteName = yield* resolvePullRequestHeadRemoteName(cwd, pullRequest);
+      if (remoteName === null) {
+        return false;
       }
-
-      if (repositoryNameWithOwner.length === 0) {
-        return;
-      }
-
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
-        cwd,
-        repository: repositoryNameWithOwner,
-      });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
-      const preferredRemoteName =
-        pullRequest.headRepositoryOwnerLogin?.trim() ||
-        repositoryNameWithOwner.split("/")[0]?.trim() ||
-        "fork";
-      const remoteName = yield* gitCore.ensureRemote({
-        cwd,
-        preferredName: preferredRemoteName,
-        url: remoteUrl,
-      });
-
       yield* gitCore.fetchRemoteTrackingBranch({
         cwd,
         remoteName,
@@ -900,8 +932,74 @@ export const make = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
+      return true;
     },
   );
+
+  // `ref` read straight from the URL the provider reports for `repository` on `host`. Never through
+  // a configured remote: neither its name nor its URLs prove which repository Git fetches from.
+  // GitHub and GitLab lookups name one exact repository on the requested host. The others
+  // ignore the host or resolve a bare name against the checkout's own project (Azure), so they
+  // can answer for a different repository; their heads are never read, and a checkout on them is
+  // reported unverified. An answer for any other host or repository is refused too.
+  const fetchRepositoryCommit = Effect.fn("fetchRepositoryCommit")(function* (
+    cwd: string,
+    host: string,
+    repository: string | null,
+    ref: string,
+  ) {
+    const provider = yield* sourceControlProvider(cwd);
+    const expected = yield* Effect.fromNullishOr(repository);
+    if (provider.kind !== "github" && provider.kind !== "gitlab") {
+      return yield* new GitManagerError({
+        operation: "fetchRepositoryCommit",
+        cwd,
+        detail: "The provider cannot name the pull request's exact repository.",
+      });
+    }
+    const cloneUrls = yield* provider.getRepositoryCloneUrls({ cwd, host, repository: expected });
+    if (urlHost(cloneUrls.url) !== host || cloneUrls.nameWithOwner !== expected) {
+      return yield* new GitManagerError({
+        operation: "fetchRepositoryCommit",
+        cwd,
+        detail: "The provider's repository is not the pull request's repository.",
+      });
+    }
+    const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+    const url = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
+    return (yield* gitCore.fetchCommit({ cwd, url, ref })).commitSha;
+  });
+
+  // The commit the host publishes as the pull request's head right now: its provider-specific
+  // head ref in the repository the pull request belongs to, otherwise the head branch in the repository
+  // the provider says it lives in. Null when neither can be read, so a caller reports the
+  // checkout as unverified and leaves it where it is.
+  const fetchPullRequestHead = Effect.fn("fetchPullRequestHead")(function* (
+    cwd: string,
+    pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+  ) {
+    const base = parsePullRequestRepository(pullRequest.url);
+    if (base === null) return null;
+    const headRepository =
+      resolveHeadRepositoryNameWithOwner(pullRequest) ??
+      (pullRequest.isCrossRepository === true ? null : base.repository);
+    return yield* fetchRepositoryCommit(
+      cwd,
+      base.host,
+      base.repository,
+      pullRequestHeadRef(pullRequest.provider, pullRequest.number),
+    ).pipe(
+      Effect.catch(() =>
+        fetchRepositoryCommit(
+          cwd,
+          base.host,
+          headRepository,
+          `refs/heads/${pullRequest.headBranch}`,
+        ),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+  });
 
   const configurePullRequestHeadUpstream = (
     cwd: string,
@@ -931,27 +1029,17 @@ export const make = Effect.gen(function* () {
         yield* gitCore.fetchPullRequestBranch({
           cwd,
           prNumber: pullRequest.number,
-          provider: pullRequest.provider,
           branch: localBranch,
+          provider: pullRequest.provider,
         });
         return;
       }
 
-      const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
+      const remoteName = yield* ensureHeadRepositoryRemote(
         cwd,
-        repository: repositoryNameWithOwner,
-      });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
-      const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
-      const preferredRemoteName =
-        pullRequest.headRepositoryOwnerLogin?.trim() ||
-        repositoryNameWithOwner.split("/")[0]?.trim() ||
-        "fork";
-      const remoteName = yield* gitCore.ensureRemote({
-        cwd,
-        preferredName: preferredRemoteName,
-        url: remoteUrl,
-      });
+        pullRequest,
+        repositoryNameWithOwner,
+      );
 
       yield* gitCore.fetchRemoteBranch({
         cwd,
@@ -975,30 +1063,40 @@ export const make = Effect.gen(function* () {
   ) =>
     materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
       Effect.catch((primaryCause) =>
-        gitCore
-          .fetchPullRequestBranch({
-            cwd,
-            prNumber: pullRequest.number,
-            provider: pullRequest.provider,
-            branch: localBranch,
-          })
-          .pipe(
-            Effect.mapError(
-              (fallbackCause) =>
-                new GitPullRequestMaterializationError({
-                  cwd,
-                  pullRequestNumber: pullRequest.number,
-                  headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
-                  headBranch: pullRequest.headBranch,
-                  localBranch,
-                  cause: new AggregateError(
-                    [primaryCause, fallbackCause],
-                    `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
-                    { cause: primaryCause },
-                  ),
-                }),
-            ),
-          ),
+        Effect.gen(function* () {
+          // A GitLab lookup refusal must reach the caller, not retry against origin's host.
+          if (
+            primaryCause._tag === "SourceControlProviderError" &&
+            primaryCause.provider === "gitlab" &&
+            primaryCause.operation === "getRepositoryCloneUrls"
+          ) {
+            return yield* primaryCause;
+          }
+          return yield* gitCore
+            .fetchPullRequestBranch({
+              cwd,
+              prNumber: pullRequest.number,
+              branch: localBranch,
+              provider: pullRequest.provider,
+            })
+            .pipe(
+              Effect.mapError(
+                (fallbackCause) =>
+                  new GitPullRequestMaterializationError({
+                    cwd,
+                    pullRequestNumber: pullRequest.number,
+                    headRepository: resolveHeadRepositoryNameWithOwner(pullRequest),
+                    headBranch: pullRequest.headBranch,
+                    localBranch,
+                    cause: new AggregateError(
+                      [primaryCause, fallbackCause],
+                      `Repository-head and pull-request-ref fetches both failed for pull request #${pullRequest.number}.`,
+                      { cause: primaryCause },
+                    ),
+                  }),
+              ),
+            );
+        }),
       ),
     );
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
@@ -2442,57 +2540,27 @@ export const make = Effect.gen(function* () {
 
         yield* ensureExistingWorktreeUpstream(worktreePath);
 
-        const refreshed = yield* gitCore
-          // The pull request's own ref, because it is the only thing that certainly names its
-          // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
-          // from `origin/main` whose head branch has since been deleted still resolves — and
-          // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({
-            cwd: worktreePath,
-            prNumber: pullRequest.number,
-            provider: pullRequestSummary.provider,
-          })
-          .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
-            // taken only where it is the head branch's own rather than whatever the checkout
-            // happened to be cut from.
-            Effect.catch(() =>
-              Effect.gen(function* () {
-                const details = yield* gitCore.statusDetails(worktreePath);
-                if (
-                  details.upstreamRef === null ||
-                  !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
-                ) {
-                  return yield* new GitManagerError({
-                    operation: "preparePullRequestThread",
-                    cwd: worktreePath,
-                    detail: "The pull request head could not be resolved for this checkout.",
-                  });
-                }
-                return yield* gitCore.resolveCommit({
+        const refreshed = yield* fetchPullRequestHead(worktreePath, pullRequestWithRemoteInfo).pipe(
+          Effect.flatMap((target) =>
+            target === null
+              ? Effect.succeed({ moved: false, onTarget: false })
+              : gitCore.refreshCheckedOutBranch({
                   cwd: worktreePath,
-                  revision: details.upstreamRef,
-                });
-              }),
-            ),
-            Effect.flatMap((target) =>
-              gitCore.refreshCheckedOutBranch({
-                cwd: worktreePath,
-                targetCommit: target.commitSha,
-                resetWhenHeadCommit: upstreamCommitBeforeFetch,
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "GitManager.preparePullRequestThread reused worktree refresh failed",
-                {
-                  worktreePath,
-                  localBranch: localPullRequestBranch,
-                  cause: error,
-                },
-              ).pipe(Effect.as({ moved: false, onTarget: false })),
-            ),
-          );
+                  targetCommit: target,
+                  resetWhenHeadCommit: upstreamCommitBeforeFetch,
+                }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "GitManager.preparePullRequestThread reused worktree refresh failed",
+              {
+                worktreePath,
+                localBranch: localPullRequestBranch,
+                cause: error,
+              },
+            ).pipe(Effect.as({ moved: false, onTarget: false })),
+          ),
+        );
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.
