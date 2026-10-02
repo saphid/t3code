@@ -65,7 +65,7 @@ const tailInput = Schema.decodeUnknownSync(
 /**
  * Bytes read ahead of the delivered window so a secret straddling the tail
  * cut is redacted whole. A line that starts before them is withheld rather
- * than delivered unclassified (`shapeLogTail`).
+ * than delivered unclassified unless the bounded key scan recovers its start.
  */
 const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
 /**
@@ -75,6 +75,7 @@ const AGENT_LOG_REDACTION_CONTEXT_BYTES = 8192;
  * the state is unknown and leading key-like lines are withheld.
  */
 const AGENT_LOG_KEY_SCAN_BYTES = 256 * 1024;
+const OMITTED_LOG_LINE = "[REDACTED] (oversized output line omitted)";
 
 /**
  * Directories the Claude harness writes agent output under: transcripts in
@@ -105,7 +106,8 @@ export const keyStateBefore = (scan: Uint8Array, complete: boolean): KeyStart =>
  * the bytes directly before the region to find it in (`keyStateBefore`). A
  * region starting mid-source first drops its leading partial line: that
  * line's start (and any secret name on it) is unread, so redaction cannot
- * classify it, even when it is the only line. The rest is decoded and redacted, from the key state at its
+ * classify it. When it is the only line, a fixed omission marker replaces it.
+ * The rest is decoded and redacted, from the key state at its
  * first line: inside a key it is redacted through END, and where the state
  * is unknown its leading lines of possible key material are withheld. It is
  * then cut to `maxBytes` UTF-8 bytes. A cut inside a line drops leading UTF-8
@@ -155,6 +157,8 @@ export function shapeLogTail(
     contents = lines.slice(count - limits.maxLines).join("\n");
     truncated = true;
   }
+  if (contents.length === 0 && region.length > 0)
+    return { contents: boundedPrefix(OMITTED_LOG_LINE, limits.maxBytes), truncated: true };
   return { contents, truncated };
 }
 
@@ -282,8 +286,9 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
         !sameFile(stat, pathStat)
       )
         throw fail("AgentLogsSourceChanged");
-      const start = Math.max(0, stat.size - maxBytes - AGENT_LOG_REDACTION_CONTEXT_BYTES);
-      const region = await readFully(file, start, stat.size - start);
+      let start = Math.max(0, stat.size - maxBytes - AGENT_LOG_REDACTION_CONTEXT_BYTES);
+      const truncated = start > 0;
+      let region = await readFully(file, start, stat.size - start);
       // The key state comes from a fixed scan of the bytes before the first
       // whole line, re-read every call: nothing is cached to go stale.
       const lineStart = start + (region.indexOf(0x0a) + 1 || region.length);
@@ -295,8 +300,23 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
               await readFully(file, from, start - from),
               region.subarray(0, lineStart - start),
             ]);
-      const key = start === 0 ? ("outside" as const) : keyStateBefore(scan, from === 0);
-      return { region, key, start, byteLength: stat.size };
+      let keyScan = scan;
+      if (start > 0 && lineStart === stat.size) {
+        // The window holds only a partial final line. Reuse the existing scan
+        // to recover its start so redaction sees field names before trimming.
+        // Include the preceding newline: shapeLogTail drops it as the partial
+        // first line. If the scan cannot find a boundary, it emits a marker.
+        const preceding = scan.subarray(0, scan.length - (scan.at(-1) === 0x0a ? 1 : 0));
+        const boundary = preceding.lastIndexOf(0x0a);
+        if (boundary !== -1 || from === 0) {
+          const offset = Math.max(0, boundary);
+          region = scan.subarray(offset);
+          start = from + offset;
+          keyScan = scan.subarray(0, offset + 1);
+        }
+      }
+      const key = start === 0 ? ("outside" as const) : keyStateBefore(keyScan, from === 0);
+      return { region, key, start, truncated, byteLength: stat.size };
     } catch (error) {
       // Raw filesystem errors carry host paths; only fixed codes leave here.
       if (isOperationError(error)) throw error;
@@ -359,7 +379,7 @@ export function createOrchestrationLogsApiProvider(deps: Dependencies): HostApiP
         source: "output",
         contents: shaped.contents,
         byteLength: read.byteLength,
-        truncated: shaped.truncated,
+        truncated: read.truncated || shaped.truncated,
       };
       return result;
     },
