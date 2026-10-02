@@ -414,11 +414,17 @@ export const DEFERRED_SECTIONS: readonly DeferredSection[] = [
     blocker:
       "per-agent output tails are served by t3.orchestration/logs; the output file itself has no public binding — net-new design",
   },
-  {
-    title: "Mobile Agents surface",
-    blocker: "web/desktop only — the same client restriction the native manifest declares",
-  },
 ];
+
+/** Client-local presentation support; server grants still authorize every call. */
+export function agentsClientCapabilities(client: string) {
+  return {
+    projectScripts:
+      client === "mobile"
+        ? { supported: false, reason: "Project scripts require the desktop Terminal surface." }
+        : { supported: true, reason: null },
+  };
+}
 
 /** Why the scripts list covers only the checked-in file — the settings-backed half is deferred. */
 export const SCRIPTS_SCOPE_NOTE =

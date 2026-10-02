@@ -43,6 +43,7 @@ import {
   agentStatusVisual,
   agentVisibleRole,
   agentsFooterSummary,
+  agentsClientCapabilities,
   agentsTabBadge,
   applyAgentsEvent,
   approvalKindLabel,
@@ -90,6 +91,35 @@ import {
 } from "./viewModel.js";
 
 const manifestId = "t3.agents";
+
+// The native host owns safe-area/keyboard padding; use those same inputs for
+// focus scrolling without applying the physical insets twice.
+const presentationCss = `
+.t3-agents { container: agents / inline-size; container-type: inline-size; min-width: 0; }
+.t3-agents :focus-visible { outline: 2px solid var(--info, #2e90fa); outline-offset: 2px; }
+.t3-agents[data-client="mobile"] { overflow-wrap: anywhere; }
+.t3-agents[data-client="mobile"] :is(button, input, textarea, select, summary) {
+  min-height: 44px; min-width: 44px; max-width: 100%; box-sizing: border-box;
+  scroll-margin-block: 12px max(12px, var(--t3-keyboard-inset, 0px));
+}
+.t3-agents[data-client="mobile"] :is(input, textarea, select) { font-size: 16px !important; }
+.t3-agents[data-client="mobile"] button { white-space: normal; }
+.t3-agents[data-client="mobile"] summary { padding: 12px 10px; cursor: pointer; }
+.t3-agents-scroll { scroll-padding-block: 12px max(12px, var(--t3-safe-area-bottom, 0px)); }
+@container agents (max-width: 600px) {
+  .t3-agents[data-client="mobile"] .t3-agents-controls { flex-direction: column; align-items: stretch !important; }
+  .t3-agents[data-client="mobile"] .t3-agents-controls > * { margin-inline: 0 !important; }
+  .t3-agents[data-client="mobile"] .t3-agents-row { --t3-agents-row-columns: 8px minmax(0, 1fr); }
+  .t3-agents[data-client="mobile"] .t3-agents-row-title { flex-wrap: wrap; }
+  .t3-agents[data-client="mobile"] .t3-agents-row-text { white-space: normal !important; }
+  .t3-agents[data-client="mobile"] .t3-agents-elapsed { grid-column: 2; text-align: start !important; }
+  .t3-agents[data-client="mobile"] .t3-agents-output { grid-column: 2 !important; }
+  .t3-agents[data-client="mobile"] .t3-agents-session-link { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .t3-agents, .t3-agents * { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}
+`;
 
 // Every theme-backed value chains a `--t3-agents-*` hop (published on the view
 // root from `t3.ui/theme` tokens) ahead of the legacy host vars. When the
@@ -359,7 +389,10 @@ function useAgentSessionControl(
       };
       const text = unavailable ?? outcomes[agent.id];
       return (
-        <span style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
+        <span
+          className="t3-agents-session-link"
+          style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}
+        >
           <button
             type="button"
             onClick={open}
@@ -580,7 +613,10 @@ function SessionControls(props: {
 
   return (
     <section aria-label="Session controls" style={{ padding: "6px 10px", borderBottom: border }}>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        className="t3-agents-controls"
+        style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+      >
         <input
           aria-label="Start a turn"
           placeholder="Start a turn…"
@@ -678,7 +714,10 @@ function WorkflowLaunchSection(props: {
   const outcome = outcomeText("workflow.launch", describeLaunchReceipt);
   return (
     <section aria-label="Launch workflow" style={{ padding: "6px 10px", borderBottom: border }}>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        className="t3-agents-controls"
+        style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+      >
         <input
           aria-label="Workflow name"
           placeholder="Workflow name…"
@@ -868,7 +907,10 @@ function UserInputRow(props: {
           </fieldset>
         );
       })}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        className="t3-agents-controls"
+        style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+      >
         {respondSupport.kind === "unsupported" ? (
           <span style={{ fontSize: 11, color: muted }}>{respondSupport.detail}</span>
         ) : (
@@ -1046,10 +1088,11 @@ function AgentOutput(props: { readonly agent: RuntimeSubagent; readonly readLog:
   const tail = view?.kind === "ready" ? view.tail : null;
   const marker = tail ? agentLogTailMarker(tail) : null;
   return (
-    <span style={{ gridColumn: "2 / 4", minWidth: 0 }}>
+    <span className="t3-agents-output" style={{ gridColumn: "2 / 4", minWidth: 0 }}>
       <button
         type="button"
         aria-expanded={open}
+        aria-label={`${open ? "Hide" : "Show"} output for ${agent.title}`}
         onClick={() => setOpen((value) => !value)}
         style={{ ...control, padding: "1px 6px", fontSize: 11, marginTop: 2 }}
       >
@@ -1095,9 +1138,10 @@ function AgentRow(props: {
   const role = agentVisibleRole(agent);
   return (
     <li
+      className="t3-agents-row"
       style={{
         display: "grid",
-        gridTemplateColumns: "8px minmax(0,1fr) auto",
+        gridTemplateColumns: "var(--t3-agents-row-columns, 8px minmax(0,1fr) auto)",
         columnGap: 8,
         alignItems: "center",
         padding: "4px 0",
@@ -1114,6 +1158,7 @@ function AgentRow(props: {
       />
       <span style={{ minWidth: 0 }}>
         <span
+          className="t3-agents-row-title"
           style={{
             display: "flex",
             gap: 6,
@@ -1122,6 +1167,7 @@ function AgentRow(props: {
           }}
         >
           <span
+            className="t3-agents-row-text"
             style={{
               fontSize: 12,
               fontWeight: 500,
@@ -1154,6 +1200,7 @@ function AgentRow(props: {
         </span>
         {agentActivityText(agent) && (
           <span
+            className="t3-agents-row-text"
             style={{
               display: "block",
               fontSize: 11,
@@ -1168,7 +1215,10 @@ function AgentRow(props: {
         )}
         {sessionControl(agent)}
       </span>
-      <span style={{ fontFamily: mono, fontSize: 11, color: muted, textAlign: "right" }}>
+      <span
+        className="t3-agents-elapsed"
+        style={{ fontFamily: mono, fontSize: 11, color: muted, textAlign: "right" }}
+      >
         <AgentElapsed agent={agent} />
       </span>
       {agent.outputFile !== null && <AgentOutput agent={agent} readLog={readLog} />}
@@ -1371,7 +1421,10 @@ function CheckpointsSection(props: {
                 key={checkpoint.turnId}
                 style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 2 }}
               >
-                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  className="t3-agents-controls"
+                  style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+                >
                   <span style={{ fontSize: 12 }}>{checkpointLabel(checkpoint)}</span>
                   <span style={{ fontSize: 11, color: muted }}>
                     {checkpoint.status}
@@ -1541,7 +1594,10 @@ function SessionImportSection(props: { readonly host: ClientHost; readonly sessi
                 key={key}
                 style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 2 }}
               >
-                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  className="t3-agents-controls"
+                  style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+                >
                   <span
                     style={{
                       fontSize: 12,
@@ -1681,14 +1737,136 @@ async function runScript(
 // View
 // ---------------------------------------------------------------------------
 
-function AgentsView(props: { host: ClientHost; session: ViewSession }) {
-  const { host, session } = props;
-  const visible = useVisible(session);
-  const themeVars = useThemeVars(host, session, visible);
+function ProjectScripts({ host, session }: { host: ClientHost; session: ViewSession }) {
   const workspace = workspaceFromRevision(session.context.workspaceRevision);
   const scriptsRead = useApiRead(host, session, workspaceFilesApi, "readText", {
     relativePath: "t3.json",
   });
+  const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
+  // Fresh per panel mount: recreated panels never re-pick overflow ids their
+  // previous incarnation may have left running; concurrent clients allocate
+  // disjoint families.
+  const [runNonce] = useState(scriptRunNonce);
+  const runScriptEntry = (script: WorkspaceScript) => {
+    if (!workspace || runs[script.name]?.kind === "running") return;
+    void runScript(host, session, script, workspace, runNonce, (next) =>
+      setRuns((current) => ({ ...current, [script.name]: next })),
+    );
+  };
+
+  return (
+    <section aria-label="Project scripts" style={{ padding: "6px 10px", borderBottom: border }}>
+      <div style={sectionTitle}>Project scripts</div>
+      {scriptsRead.status === "loading" && (
+        <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>Reading t3.json…</p>
+      )}
+      {scriptsRead.status === "unavailable" && (
+        <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
+          {describeAgentsError(scriptsRead.error, "t3.json is not readable in this workspace.")}
+        </p>
+      )}
+      {scriptsRead.status === "ready" &&
+        (() => {
+          const source = parseT3ProjectFile(scriptsRead.value.contents);
+          if (source.kind === "invalid")
+            return (
+              <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
+                {source.message} — fix t3.json to list its scripts here.
+              </p>
+            );
+          if (source.kind === "empty")
+            return (
+              <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
+                No checked-in t3.json scripts in this workspace.
+              </p>
+            );
+          return (
+            <ul
+              aria-label="Checked-in t3.json scripts"
+              style={{
+                listStyle: "none",
+                margin: 0,
+                padding: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              {source.scripts.map((script) => {
+                const runState = runs[script.name];
+                return (
+                  <li
+                    key={script.name}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                      padding: "4px 0",
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        aria-label={`Run ${script.name}`}
+                        disabled={!workspace || runState?.kind === "running"}
+                        onClick={() => runScriptEntry(script)}
+                        style={control}
+                      >
+                        Run
+                      </button>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {script.name}
+                        {script.runOnWorktreeCreate && (
+                          <span style={{ color: muted }}> · setup</span>
+                        )}
+                        {script.previewUrl && (
+                          <span style={{ color: muted }}> · preview is host-only</span>
+                        )}
+                      </span>
+                    </div>
+                    <code
+                      style={{
+                        fontFamily: mono,
+                        fontSize: 11,
+                        color: muted,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {script.command}
+                    </code>
+                    {runState && (
+                      <output
+                        aria-label={`Run status for ${script.name}`}
+                        style={{ fontSize: 11, color: muted }}
+                      >
+                        {describeScriptRun(runState)}
+                      </output>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        })()}
+      <p style={{ margin: "6px 0 0", color: muted, fontSize: 11 }}>{SCRIPTS_SCOPE_NOTE}</p>
+    </section>
+  );
+}
+
+function AgentsView(props: { host: ClientHost; session: ViewSession }) {
+  const { host, session } = props;
+  const clientCapabilities = agentsClientCapabilities(session.context.client);
+  const visible = useVisible(session);
+  const themeVars = useThemeVars(host, session, visible);
   const { feed, problem } = useAgentsFeed(host, session, visible);
   const { read: capabilitiesRead, refresh: refreshCapabilities } = useCapabilities(
     host,
@@ -1698,20 +1876,8 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   const capabilities = capabilitiesRead.status === "ready" ? capabilitiesRead.value : null;
   const { run, outcomeText } = useControls(host, session, feed);
   const sessionControl = useAgentSessionControl(host, session);
-  const [runs, setRuns] = useState<Record<string, ScriptRun>>({});
-  // Fresh per panel mount: recreated panels never re-pick overflow ids their
-  // previous incarnation may have left running; concurrent clients allocate
-  // disjoint families.
-  const [runNonce] = useState(scriptRunNonce);
   const [scripts, setScripts] = useState<Record<string, WorkflowScriptViewState>>({});
   const scriptsRef = useRef(scripts);
-
-  const runScriptEntry = (script: WorkspaceScript) => {
-    if (!workspace || runs[script.name]?.kind === "running") return;
-    void runScript(host, session, script, workspace, runNonce, (next) =>
-      setRuns((current) => ({ ...current, [script.name]: next })),
-    );
-  };
 
   const updateWorkflowScript = (key: string, value: WorkflowScriptViewState) => {
     scriptsRef.current = { ...scriptsRef.current, [key]: value };
@@ -1764,6 +1930,8 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   return (
     <section
       aria-label="Agents"
+      className="t3-agents"
+      data-client={session.context.client}
       style={{
         height: "100%",
         display: "flex",
@@ -1776,6 +1944,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
         ...themeVars,
       }}
     >
+      <style>{presentationCss}</style>
       <header
         style={{
           display: "flex",
@@ -1802,7 +1971,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
         )}
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div className="t3-agents-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {problem && (
           <div
             role="status"
@@ -1833,18 +2002,38 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
         {state && (
           <>
-            <SessionControls
-              feed={feed}
-              capabilities={capabilities}
-              run={run}
-              outcomeText={outcomeText}
-              onRefreshCapabilities={refreshCapabilities}
-            />
-            <WorkflowLaunchSection
-              capabilities={capabilities}
-              run={run}
-              outcomeText={outcomeText}
-            />
+            {session.context.client === "mobile" ? (
+              <details>
+                <summary>Session actions</summary>
+                <SessionControls
+                  feed={feed}
+                  capabilities={capabilities}
+                  run={run}
+                  outcomeText={outcomeText}
+                  onRefreshCapabilities={refreshCapabilities}
+                />
+                <WorkflowLaunchSection
+                  capabilities={capabilities}
+                  run={run}
+                  outcomeText={outcomeText}
+                />
+              </details>
+            ) : (
+              <>
+                <SessionControls
+                  feed={feed}
+                  capabilities={capabilities}
+                  run={run}
+                  outcomeText={outcomeText}
+                  onRefreshCapabilities={refreshCapabilities}
+                />
+                <WorkflowLaunchSection
+                  capabilities={capabilities}
+                  run={run}
+                  outcomeText={outcomeText}
+                />
+              </>
+            )}
             <PendingSection
               feed={feed}
               capabilities={capabilities}
@@ -1901,110 +2090,13 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
           </>
         )}
 
-        <section aria-label="Project scripts" style={{ padding: "6px 10px", borderBottom: border }}>
-          <div style={sectionTitle}>Project scripts</div>
-          {scriptsRead.status === "loading" && (
-            <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>Reading t3.json…</p>
-          )}
-          {scriptsRead.status === "unavailable" && (
-            <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
-              {describeAgentsError(scriptsRead.error, "t3.json is not readable in this workspace.")}
-            </p>
-          )}
-          {scriptsRead.status === "ready" &&
-            (() => {
-              const source = parseT3ProjectFile(scriptsRead.value.contents);
-              if (source.kind === "invalid")
-                return (
-                  <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
-                    {source.message} — fix t3.json to list its scripts here.
-                  </p>
-                );
-              if (source.kind === "empty")
-                return (
-                  <p style={{ margin: "0 0 6px", color: muted, fontSize: 12 }}>
-                    No checked-in t3.json scripts in this workspace.
-                  </p>
-                );
-              return (
-                <ul
-                  aria-label="Checked-in t3.json scripts"
-                  style={{
-                    listStyle: "none",
-                    margin: 0,
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
-                >
-                  {source.scripts.map((script) => {
-                    const runState = runs[script.name];
-                    return (
-                      <li
-                        key={script.name}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 2,
-                          padding: "4px 0",
-                        }}
-                      >
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <button
-                            type="button"
-                            aria-label={`Run ${script.name}`}
-                            disabled={!workspace || runState?.kind === "running"}
-                            onClick={() => runScriptEntry(script)}
-                            style={control}
-                          >
-                            Run
-                          </button>
-                          <span
-                            style={{
-                              fontSize: 12,
-                              minWidth: 0,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            {script.name}
-                            {script.runOnWorktreeCreate && (
-                              <span style={{ color: muted }}> · setup</span>
-                            )}
-                            {script.previewUrl && (
-                              <span style={{ color: muted }}> · preview is host-only</span>
-                            )}
-                          </span>
-                        </div>
-                        <code
-                          style={{
-                            fontFamily: mono,
-                            fontSize: 11,
-                            color: muted,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {script.command}
-                        </code>
-                        {runState && (
-                          <output
-                            aria-label={`Run status for ${script.name}`}
-                            style={{ fontSize: 11, color: muted }}
-                          >
-                            {describeScriptRun(runState)}
-                          </output>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              );
-            })()}
-          <p style={{ margin: "6px 0 0", color: muted, fontSize: 11 }}>{SCRIPTS_SCOPE_NOTE}</p>
-        </section>
+        {!clientCapabilities.projectScripts.supported ? (
+          <p role="note" style={{ padding: "6px 10px", color: muted, fontSize: 12 }}>
+            {clientCapabilities.projectScripts.reason}
+          </p>
+        ) : (
+          <ProjectScripts host={host} session={session} />
+        )}
 
         <SessionImportSection host={host} session={session} />
 
@@ -2048,7 +2140,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.2.1",
+  version: "0.2.2",
   requires: [
     requireApi(workspaceFilesApi),
     requireApi(terminalControlApi),
@@ -2065,7 +2157,7 @@ export default defineExtension({
       title: "Agents",
       scope: "thread",
       placements: ["side-panel"],
-      clients: ["web", "desktop"],
+      clients: ["web", "desktop", "mobile"],
       capabilities: [],
       stateVersion: 1,
       // The panel keeps no persisted state — same null-only rule as native.
