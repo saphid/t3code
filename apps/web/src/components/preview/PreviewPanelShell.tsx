@@ -108,6 +108,7 @@ function PreviewPanelShellFrame(
   return (
     <div
       ref={hostRef}
+      inert={collapsible && !open}
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
