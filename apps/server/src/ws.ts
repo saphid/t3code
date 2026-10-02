@@ -2335,7 +2335,8 @@ const makeWsRpcLayer = (
                   detail: "This provider does not bank reset credits.",
                 });
               }
-              const outcome = yield* instance.consumeResetCredit().pipe(
+              const requestedAt = yield* DateTime.now;
+              const result = yield* instance.consumeResetCredit().pipe(
                 Effect.mapError(
                   (error) =>
                     new ProviderSetupError({
@@ -2346,9 +2347,11 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
-              // Threads waiting for this instance's reset can continue now.
-              if (outcome === "reset") yield* usageLimitRecovery.limitCleared(input.instanceId);
-              return { outcome };
+              // Threads this instance's limit stopped before the redeem can continue now.
+              if (result.outcome === "reset") {
+                yield* usageLimitRecovery.limitCleared(input.instanceId, requestedAt);
+              }
+              return result;
             }),
             { "rpc.aggregate": "provider" },
           ),

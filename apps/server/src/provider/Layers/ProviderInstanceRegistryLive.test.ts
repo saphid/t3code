@@ -417,7 +417,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(codex).toBeDefined();
       // The usage read fails, so the re-probe cannot confirm new limits.
       yield* codex!.snapshot.refresh;
-      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
+      expect(yield* codex!.consumeResetCredit!()).toEqual({ outcome: "alreadyRedeemed" });
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -550,8 +550,25 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         result: "reset",
         usageFailsAfterClaim: false,
       });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "reset" });
+      expect(outcome).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
       expect(after.usageLimits?.windows[0]?.usedPercent).toBe(0);
+    }),
+  );
+
+  it.live("reports an applied Claude reset with a warning when the re-probe fails", () =>
+    Effect.gen(function* () {
+      const { outcome } = yield* redeemClaudeReset({
+        result: "reset",
+        usageFailsAfterClaim: true,
+      });
+      expect(outcome).toMatchObject({
+        _tag: "Success",
+        success: {
+          outcome: "reset",
+          warning:
+            "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
+        },
+      });
     }),
   );
 
@@ -561,7 +578,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         result: "already_used",
         usageFailsAfterClaim: true,
       });
-      expect(outcome).toMatchObject({ _tag: "Success", success: "alreadyRedeemed" });
+      expect(outcome).toMatchObject({ _tag: "Success", success: { outcome: "alreadyRedeemed" } });
     }),
   );
 

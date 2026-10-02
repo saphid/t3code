@@ -312,7 +312,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           ),
           // Re-probe after any answer, but only a reset claims the limits
           // changed, so only a reset reports an unconfirmed refresh.
-          Effect.tap((outcome) =>
+          Effect.flatMap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
               yield* Cache.invalidateAll(capabilitiesProbeCache);
@@ -324,13 +324,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                   after === before ||
                   refreshed.usageLimits?.unavailable?.reason === "probeFailed")
               ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
+                return {
+                  outcome,
+                  warning:
                     "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
-                });
+                };
               }
+              return { outcome };
             }),
           ),
         );

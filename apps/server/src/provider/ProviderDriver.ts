@@ -22,7 +22,7 @@
  * @module provider/ProviderDriver
  */
 import type {
-  ProviderConsumeResetCreditOutcome,
+  ProviderConsumeResetCreditResult,
   AcpRegistryListSessionsResult,
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
@@ -84,9 +84,10 @@ export interface ProviderInstance {
    * Redeem one banked rate-limit reset credit on the signed-in account, then
    * re-probe so the snapshot reflects the cleared windows. Account-level,
    * not thread-level, which is why it lives here rather than on the adapter.
+   * A reset whose re-probe fails still reports `reset`, with a warning.
    */
   readonly consumeResetCredit?: () => Effect.Effect<
-    ProviderConsumeResetCreditOutcome,
+    ProviderConsumeResetCreditResult,
     ProviderDriverError
   >;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;

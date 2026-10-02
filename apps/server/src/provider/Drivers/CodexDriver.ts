@@ -344,7 +344,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             // past what was published before the redemption started. Only a
             // reset claims the limits changed, so only a reset reports an
             // unconfirmed refresh.
-            Effect.tap((outcome) =>
+            Effect.flatMap((outcome) =>
               Effect.gen(function* () {
                 const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
                 const refreshed = yield* snapshot.refresh;
@@ -355,13 +355,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                     after === before ||
                     refreshed.usageLimits?.unavailable?.reason === "probeFailed")
                 ) {
-                  return yield* new ProviderDriverError({
-                    driver: DRIVER_KIND,
-                    instanceId,
-                    detail:
+                  return {
+                    outcome,
+                    warning:
                       "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                  });
+                  };
                 }
+                return { outcome };
               }),
             ),
           );

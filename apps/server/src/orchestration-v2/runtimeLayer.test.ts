@@ -1,4 +1,5 @@
 import {
+  limitClearedCommand,
   limitRecoveryCommand,
   UsageLimitRecovery,
   workerLive as usageLimitRecoveryLive,
@@ -4254,109 +4255,134 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each(["resume", "snooze", "unarmed", "other-instance"] as const)(
-    "a redeemed reset credit lifts the usage limit of a %s thread early",
-    (scenario) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const events = yield* EventSink.EventSinkV2;
-        const threads = yield* ThreadManagementService.ThreadManagementService;
-        const threadId = ThreadId.make(`reset-credit:${scenario}`);
-        const projectId = ProjectId.make(`reset-credit:project:${scenario}`);
-        yield* seedProject({
-          projectId,
-          title: "Reset credit project",
-          workspaceRoot: process.cwd(),
-          defaultModelSelection: modelSelection,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(`reset-credit:create:${scenario}`),
-          threadId,
-          projectId,
-          title: "Limited thread",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`reset-credit:message:${scenario}`),
-          threadId,
-          messageId: MessageId.make(`reset-credit:message:${scenario}`),
-          text: "Work on this.",
-          attachments: [],
-          dispatchMode: { type: "defer_start" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-        const now = yield* DateTime.now;
-        const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
-        yield* events.write({
-          commandId: CommandId.make(`reset-credit:failure:${scenario}`),
-          events: [
-            {
-              id: EventId.make(`reset-credit:run:${scenario}`),
-              type: "run.updated",
+  it.effect.each([
+    "resume",
+    "snooze",
+    "unarmed",
+    "choice-race",
+    "other-instance",
+    "failed-after-redeem",
+  ] as const)("a redeemed reset credit lifts the usage limit of a %s thread early", (scenario) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = ThreadId.make(`reset-credit:${scenario}`);
+      const projectId = ProjectId.make(`reset-credit:project:${scenario}`);
+      yield* seedProject({
+        projectId,
+        title: "Reset credit project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`reset-credit:create:${scenario}`),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`reset-credit:message:${scenario}`),
+        threadId,
+        messageId: MessageId.make(`reset-credit:message:${scenario}`),
+        text: "Work on this.",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      yield* events.write({
+        commandId: CommandId.make(`reset-credit:failure:${scenario}`),
+        events: [
+          {
+            id: EventId.make(`reset-credit:run:${scenario}`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...run, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make(`reset-credit:error:${scenario}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`reset-credit:error:${scenario}`),
+              type: "error",
               threadId,
-              occurredAt: now,
-              payload: { ...run, status: "failed", completedAt: now },
-            },
-            {
-              id: EventId.make(`reset-credit:error:${scenario}`),
-              type: "turn-item.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: TurnItemId.make(`reset-credit:error:${scenario}`),
-                type: "error",
-                threadId,
-                runId: run.id,
-                nodeId: run.rootNodeId,
-                providerThreadId: null,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 2,
-                status: "failed",
-                title: "Usage limit reached",
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-                failure: {
-                  class: "usage_limit",
-                  message: "Plan limit reached.",
-                  code: "usageLimitExceeded",
-                  retryable: null,
-                  resetAt,
-                },
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt,
               },
             },
-          ],
+          },
+        ],
+      });
+      if (scenario !== "unarmed") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`reset-credit:arm:${scenario}`),
+          threadId,
+          limitRecovery:
+            scenario === "snooze"
+              ? { runId: run.id, resetAt, snooze: true }
+              : { runId: run.id, resetAt, autoResume: true },
         });
-        if (scenario !== "unarmed") {
-          yield* orchestrator.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`reset-credit:arm:${scenario}`),
-            threadId,
-            limitRecovery:
-              scenario === "snooze"
-                ? { runId: run.id, resetAt, snooze: true }
-                : { runId: run.id, resetAt, autoResume: true },
-          });
-        }
-        yield* TestClock.adjust("10 seconds");
-        const clearedAt = yield* DateTime.now;
+      }
+      yield* TestClock.adjust("10 seconds");
+      // A failure that lands after the redeem started is not cleared by it.
+      const clearedAt =
+        scenario === "failed-after-redeem"
+          ? DateTime.subtract(now, { seconds: 1 })
+          : yield* DateTime.now;
+      if (scenario === "choice-race") {
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (candidate) => candidate.id === threadId,
+        )!;
+        const clear = limitClearedCommand(shell, DateTime.toEpochMillis(clearedAt));
+        assert.isNotNull(clear);
+        // The user chooses after the clear read the thread but before it lands.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("reset-credit:raced-choice"),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* orchestrator.dispatch(clear!);
+      } else {
         yield* Effect.gen(function* () {
           const recovery = yield* UsageLimitRecovery;
           yield* recovery.limitCleared(
             scenario === "other-instance" ? alternateInstanceId : modelSelection.instanceId,
+            clearedAt,
           );
         }).pipe(
           Effect.provide(
@@ -4372,53 +4398,61 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
             ),
           ),
         );
-        const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
-        if (scenario === "other-instance") {
-          // Another account's reset leaves this limit in force.
-          assert.isUndefined(thread.limitRecovery?.clearedAt);
-          const futureClear = yield* orchestrator
-            .dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make("reset-credit:future-clear"),
-              threadId,
-              limitRecovery: {
-                runId: run.id,
-                resetAt,
-                clearedAt: DateTime.formatIso(DateTime.add(clearedAt, { minutes: 1 })),
-              },
-            })
-            .pipe(Effect.exit);
-          assert.equal(futureClear._tag, "Failure");
-          return;
-        }
-        assert.equal(thread.limitRecovery?.clearedAt, DateTime.formatIso(clearedAt));
-        assert.equal(thread.limitRecovery?.autoResume, scenario === "resume");
-        assert.isNull(thread.snoozedUntil);
-        const lateSnooze = yield* orchestrator
+      }
+      const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      if (scenario === "failed-after-redeem") {
+        assert.isUndefined(thread.limitRecovery?.clearedAt);
+        return;
+      }
+      if (scenario === "other-instance") {
+        // Another account's reset leaves this limit in force.
+        assert.isUndefined(thread.limitRecovery?.clearedAt);
+        const futureClear = yield* orchestrator
           .dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make(`reset-credit:late-snooze:${scenario}`),
+            commandId: CommandId.make("reset-credit:future-clear"),
             threadId,
-            limitRecovery: { runId: run.id, resetAt, snooze: true },
+            limitRecovery: {
+              runId: run.id,
+              resetAt,
+              clearedAt: DateTime.formatIso(DateTime.add(clearedAt, { minutes: 1 })),
+            },
           })
           .pipe(Effect.exit);
-        assert.equal(lateSnooze._tag, "Failure");
-        if (scenario !== "resume") {
-          // "Resume now" arms the same recovery, which is already due.
-          yield* orchestrator.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`reset-credit:resume-now:${scenario}`),
-            threadId,
-            limitRecovery: { runId: run.id, resetAt, autoResume: true },
-          });
-        }
-        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
-          (candidate) => candidate.id === threadId,
-        )!;
-        const resume = limitRecoveryCommand(shell, false, DateTime.toEpochMillis(clearedAt));
-        assert.isNotNull(resume);
-        yield* orchestrator.dispatch(resume!);
-        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
-      }),
+        assert.equal(futureClear._tag, "Failure");
+        return;
+      }
+      assert.equal(thread.limitRecovery?.clearedAt, DateTime.formatIso(clearedAt));
+      assert.equal(
+        thread.limitRecovery?.autoResume,
+        scenario === "resume" || scenario === "choice-race",
+      );
+      assert.isNull(thread.snoozedUntil);
+      const lateSnooze = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`reset-credit:late-snooze:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, snooze: true },
+        })
+        .pipe(Effect.exit);
+      assert.equal(lateSnooze._tag, "Failure");
+      if (scenario === "snooze" || scenario === "unarmed") {
+        // "Resume now" arms the same recovery, which is already due.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`reset-credit:resume-now:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+      }
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      )!;
+      const resume = limitRecoveryCommand(shell, false, DateTime.toEpochMillis(clearedAt));
+      assert.isNotNull(resume);
+      yield* orchestrator.dispatch(resume!);
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+    }),
   );
 });

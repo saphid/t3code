@@ -92,12 +92,13 @@ export function limitRecoveryCommand(
 }
 
 /**
- * Records that a redeemed reset credit lifted a limit before its reported reset.
- * Only a limit that stopped the run before the redeem is cleared by it.
+ * Records that a reset credit redeemed at `clearedAtMs` lifted a limit before
+ * its reported reset. Only a limit that stopped the run before the redeem is
+ * cleared by it. Recovery choices are left to the thread, so a choice made
+ * while this command is in flight is never overwritten.
  */
 export function limitClearedCommand(
   thread: LimitRecoveryCandidate,
-  autoResume: boolean,
   clearedAtMs: number,
 ): OrchestrationV2Command | null {
   const resetMs = blockingResetMs(thread);
@@ -109,8 +110,7 @@ export function limitClearedCommand(
     stoppedAtMs(thread) >= clearedAtMs
   )
     return null;
-  const recovery = matchingRecovery(thread);
-  if (recovery?.clearedAt !== undefined) return null;
+  if (matchingRecovery(thread)?.clearedAt !== undefined) return null;
   return {
     type: "thread.metadata.update",
     commandId: CommandId.make(`limit-clear:${thread.id}:${thread.latestRunId}:${resetMs}`),
@@ -119,8 +119,6 @@ export function limitClearedCommand(
       runId: thread.latestRunId,
       resetAt: thread.usageLimitResetAt,
       clearedAt: DateTime.formatIso(DateTime.makeUnsafe(clearedAtMs)),
-      // An unarmed thread takes the global default it would have been armed with.
-      ...(recovery === null ? { autoResume } : {}),
     },
   };
 }
@@ -129,8 +127,11 @@ export function limitClearedCommand(
 export class UsageLimitRecovery extends Context.Service<
   UsageLimitRecovery,
   {
-    /** A reset credit on this instance lifted its limits now. */
-    readonly limitCleared: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+    /** A reset credit redeemed on this instance at `redeemedAt` lifted its limits. */
+    readonly limitCleared: (
+      instanceId: ProviderInstanceId,
+      redeemedAt: DateTime.Utc,
+    ) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/UsageLimitRecoveryWorker/UsageLimitRecovery") {}
 
@@ -168,21 +169,15 @@ const make = Effect.gen(function* () {
     }
   });
   const limitCleared = Effect.fn("UsageLimitRecovery.limitCleared")(
-    function* (instanceId: ProviderInstanceId) {
-      const preferences = yield* settings.getSettings;
-      const now = yield* DateTime.now;
+    function* (instanceId: ProviderInstanceId, redeemedAt: DateTime.Utc) {
       const candidates = yield* projections.getLimitRecoveryCandidates({
-        now,
-        autoResume: preferences.autoResumeLimitedThreads,
-        snooze: preferences.snoozeLimitedThreads,
+        now: yield* DateTime.now,
+        autoResume: false,
+        snooze: false,
         limitedOn: instanceId,
       });
       for (const thread of candidates) {
-        const command = limitClearedCommand(
-          thread,
-          preferences.autoResumeLimitedThreads,
-          DateTime.toEpochMillis(now),
-        );
+        const command = limitClearedCommand(thread, DateTime.toEpochMillis(redeemedAt));
         if (command !== null) yield* dispatch(thread, command);
       }
     },
