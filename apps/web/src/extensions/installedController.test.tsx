@@ -14,10 +14,34 @@ import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { createCatalogueRefreshQueue } from "./catalogueRefresh";
 import { authorizeCaller } from "./clientProviderTypes";
-import { createInstalledExtensionController, type InstalledSnapshot } from "./installedController";
+import {
+  createInstalledExtensionController as createLazyInstalledExtensionController,
+  type InstalledSnapshot,
+} from "./installedController";
 import { registerWorkspaceExtension, WorkspaceExtensionSurface } from "./workspaceRegistry";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+/** These binding/lifetime tests request every fixture client after catalogue discovery. */
+function createInstalledExtensionController(
+  options: Parameters<typeof createLazyInstalledExtensionController>[0],
+) {
+  let ids: readonly string[] = [];
+  const lazy = createLazyInstalledExtensionController({
+    ...options,
+    changed: (snapshot) => {
+      ids = snapshot.installations.map((item) => item.id);
+      options.changed(snapshot);
+    },
+  });
+  return {
+    ...lazy,
+    async refresh() {
+      await lazy.refresh();
+      await Promise.all(ids.map((id) => lazy.activate(id).catch(() => {})));
+    },
+  };
+}
 
 const manifest = { id: "test.installed", version: "1.0.0", apiVersion: 1 as const, surfaces: [] };
 const installation: ExtensionInstallation = {
@@ -1058,6 +1082,26 @@ it("offers host stream resumption only where the host has it, and only for resum
       ),
     ).toThrow("not resumable");
   } finally {
+    h.controller.dispose();
+  }
+});
+
+it("fetches no client code during discovery and shares the first concurrent activation", async () => {
+  const h = harness();
+  const controller = createLazyInstalledExtensionController(h.options);
+  try {
+    await controller.refresh();
+    expect(h.options.client).not.toHaveBeenCalled();
+    expect(h.register).not.toHaveBeenCalled();
+    await Promise.all([controller.activate(installation.id), controller.activate(installation.id)]);
+    expect(h.options.client).toHaveBeenCalledOnce();
+    expect(h.options.load).toHaveBeenCalledOnce();
+    expect(h.register).toHaveBeenCalledOnce();
+    await controller.refresh();
+    await controller.activate(installation.id);
+    expect(h.options.client).toHaveBeenCalledOnce();
+  } finally {
+    controller.dispose();
     h.controller.dispose();
   }
 });

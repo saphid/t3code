@@ -205,6 +205,8 @@ export function createInstalledExtensionController(options: {
   readonly load: (code: string, signal: AbortSignal) => Promise<unknown>;
   readonly register: (extension: Extension<SurfaceRenderer>, client: ClientHost) => () => void;
   readonly changed: (snapshot: InstalledSnapshot) => void;
+  /** Publishes manifest metadata without fetching code; the host calls activate on demand. */
+  readonly registerLazy?: (item: InstalledPackage, activate: () => Promise<void>) => () => void;
   /**
    * `t3.browser/surface@2.0.0` host bridge factory — bound per installation so
    * the resulting `host.browserSurface` enforces that installation's grants
@@ -238,7 +240,15 @@ export function createInstalledExtensionController(options: {
   /** Backs `ClientHost.environmentLabel`: this environment's cached label, never a request. */
   readonly environmentLabel?: () => string | null;
 }) {
-  const active = new Map<string, { signature: string; stop: () => void }>();
+  const active = new Map<string, { stop: () => void }>();
+  const available = new Map<
+    string,
+    {
+      signature: string;
+      load: () => Promise<void>;
+      stop: () => void;
+    }
+  >();
   // One epoch per live registration — a re-registered installation gets a new
   // one so stale command bindings can be told apart from live ones.
   const epochs = new Map<string, number>();
@@ -252,7 +262,8 @@ export function createInstalledExtensionController(options: {
     options.changed(next);
   };
   const clear = () => {
-    for (const entry of active.values()) entry.stop();
+    for (const entry of available.values()) entry.stop();
+    available.clear();
     active.clear();
   };
   return {
@@ -355,7 +366,7 @@ export function createInstalledExtensionController(options: {
           signatures.set(item.id, value);
           return value;
         };
-        for (const [id, entry] of active) {
+        for (const [id, entry] of available) {
           const item = installations.find((candidate) => candidate.id === id);
           if (
             !item ||
@@ -364,6 +375,7 @@ export function createInstalledExtensionController(options: {
             signature(item) !== entry.signature
           ) {
             entry.stop();
+            available.delete(id);
             active.delete(id);
           }
         }
@@ -382,309 +394,340 @@ export function createInstalledExtensionController(options: {
             (item) =>
               item.id + ": This host does not support package format " + item.package.format + ".",
           );
-        // Clients load one by one and a registered client may call client-backed
-        // APIs at once (a restored panel does); the provider-side caller check
-        // reads installations from the snapshot, so publish them before loading.
         publish({ ...snapshot, installations });
         for (const item of installations) {
-          if (!live()) return;
-          if (!eligible(item) || !item.package.clientEntry || active.has(item.id)) continue;
+          if (!eligible(item) || !item.package.clientEntry || available.has(item.id)) continue;
           const lifetime = new AbortController();
           let registered = false;
-          try {
-            const code = await options.client(item.id, item.contentHash, controller.signal);
-            if (!live()) return;
-            if (
-              code.contentHash !== item.contentHash ||
-              new TextEncoder().encode(code.code).length > 1024 * 1024
-            )
-              throw new Error("Installed client changed or exceeds size limit");
-            const factory = await waitForClient(
-              (signal) => options.load(code.code, signal),
-              controller.signal,
-            );
-            if (!live()) return;
-            if (typeof factory !== "function")
-              throw new Error("Installed client must export a factory");
-            const identity = signature(item);
-            const browserSurface = options.browserSurface?.({
-              installationId: item.id,
-              grants: item.grants,
-              lifetime: lifetime.signal,
-            });
-            const browserFrames = options.browserFrames?.({
-              grants: item.grants,
-              lifetime: lifetime.signal,
-            });
-            const browserCapture = options.browserCapture?.({
-              installationId: item.id,
-              grants: item.grants,
-              lifetime: lifetime.signal,
-            });
-            const browserMiniPlayer = options.browserMiniPlayer?.({
-              grants: item.grants,
-              lifetime: lifetime.signal,
-            });
-            const keybindings = options.keybindings?.({
-              grants: item.grants,
-              lifetime: lifetime.signal,
-            });
-            const subscribe = (
-              source: typeof options.subscribeResumableApi,
-              request: ApiStreamInvocation,
-              callerSignal: AbortSignal,
-              onSuspended?: () => void,
-            ) => {
-              const signal = AbortSignal.any([callerSignal, lifetime.signal]);
-              const context = validateContext(request.context);
-              const validate = () => {
-                if (
-                  !registered ||
-                  disposed ||
-                  signal.aborted ||
-                  context.resource.environmentId !== options.environmentId ||
-                  !context.resource.projectId ||
-                  !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
-                  response.supportsApiStreams !== true ||
-                  !source
-                )
-                  throw new Error("Installed API stream is unavailable in this scope");
-              };
-              return installedStream(
-                (streamSignal) => {
-                  validate();
-                  const scoped = { ...request, input: copyJson(request.input), context };
-                  if (!onSuspended) return source!(item.id, item.contentHash, scoped, streamSignal);
-                  return source!(item.id, item.contentHash, scoped, streamSignal, () => {
-                    // Plugin code: never after the stream ends, never into the host.
-                    if (streamSignal.aborted) return;
-                    try {
-                      onSuspended();
-                    } catch {}
-                  });
-                },
-                signal,
-                validate,
+          let loading: Promise<void> | undefined;
+          const identity = signature(item);
+          const entry = {
+            signature: identity,
+            load: () => {
+              if (!isAvailable())
+                return Promise.reject(new Error("Installation is no longer available"));
+              return (loading ??= load());
+            },
+            stop: () => {
+              lifetime.abort();
+              stopLazy?.();
+              active.get(item.id)?.stop();
+              unregisterInstallationCommands(options.environmentId, item.id);
+            },
+          };
+          const isAvailable = () =>
+            !disposed && !lifetime.signal.aborted && available.get(item.id) === entry;
+          const load = async () => {
+            try {
+              const code = await options.client(item.id, item.contentHash, lifetime.signal);
+              if (!isAvailable()) throw new Error("Installed client load cancelled");
+              if (
+                code.contentHash !== item.contentHash ||
+                new TextEncoder().encode(code.code).length > 1024 * 1024
+              )
+                throw new Error("Installed client changed or exceeds size limit");
+              const factory = await waitForClient(
+                (signal) => options.load(code.code, signal),
+                lifetime.signal,
               );
-            };
-            const subscribeResumableApi = options.subscribeResumableApi;
-            const clientHost: ClientHost = {
-              React: options.React,
-              async invokeApi(request, callerSignal) {
+              if (!isAvailable()) throw new Error("Installed client load cancelled");
+              if (typeof factory !== "function")
+                throw new Error("Installed client must export a factory");
+              const browserSurface = options.browserSurface?.({
+                installationId: item.id,
+                grants: item.grants,
+                lifetime: lifetime.signal,
+              });
+              const browserFrames = options.browserFrames?.({
+                grants: item.grants,
+                lifetime: lifetime.signal,
+              });
+              const browserCapture = options.browserCapture?.({
+                installationId: item.id,
+                grants: item.grants,
+                lifetime: lifetime.signal,
+              });
+              const browserMiniPlayer = options.browserMiniPlayer?.({
+                grants: item.grants,
+                lifetime: lifetime.signal,
+              });
+              const keybindings = options.keybindings?.({
+                grants: item.grants,
+                lifetime: lifetime.signal,
+              });
+              const subscribe = (
+                source: typeof options.subscribeResumableApi,
+                request: ApiStreamInvocation,
+                callerSignal: AbortSignal,
+                onSuspended?: () => void,
+              ) => {
                 const signal = AbortSignal.any([callerSignal, lifetime.signal]);
                 const context = validateContext(request.context);
-                if (
-                  !registered ||
-                  disposed ||
-                  signal.aborted ||
-                  context.resource.environmentId !== options.environmentId ||
-                  !context.resource.projectId ||
-                  !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
-                  !options.invokeApi
-                )
-                  throw new Error("Installed API is unavailable in this scope");
-                const result = await options.invokeApi(
-                  item.id,
-                  item.contentHash,
-                  { ...request, context },
-                  signal,
-                );
-                if (!registered || disposed || signal.aborted)
-                  throw new Error("Installed API invocation expired");
-                return copyJson(result);
-              },
-              ...(options.openEditorPath && item.grants.capabilities.includes("t3.ui/editor.open")
-                ? {
-                    async openEditorPath(
-                      input: UiEditorOpenInput,
-                      suppliedContext: ViewContext,
-                      callerSignal: AbortSignal,
-                    ) {
-                      const signal = AbortSignal.any([callerSignal, lifetime.signal]);
-                      const context = validateContext(suppliedContext);
-                      if (
-                        !registered ||
-                        disposed ||
-                        signal.aborted ||
-                        context.resource.environmentId !== options.environmentId ||
-                        !context.resource.projectId ||
-                        !item.grants.projectIds.some((id) => id === context.resource.projectId)
-                      )
-                        throw new Error("Installed editor is unavailable in this scope");
-                      const result = await options.openEditorPath!(
-                        item.id,
-                        item.contentHash,
-                        input,
-                        context,
-                        signal,
-                      );
-                      if (!registered || disposed || signal.aborted)
-                        throw new Error("Installed editor invocation expired");
-                      return result;
-                    },
-                  }
-                : {}),
-              subscribeApi(request, callerSignal) {
-                return subscribe(options.subscribeApi, request, callerSignal);
-              },
-              async discoverApis(context, callerSignal) {
-                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
-                const captured = validateContext(context);
-                if (
-                  !registered ||
-                  disposed ||
-                  signal.aborted ||
-                  captured.resource.environmentId !== options.environmentId ||
-                  !captured.resource.projectId ||
-                  !item.grants.projectIds.some((id) => id === captured.resource.projectId) ||
-                  !options.discoverApis
-                )
-                  throw new Error("Installed API discovery is unavailable in this scope");
-                const result = await options.discoverApis(
-                  item.id,
-                  item.contentHash,
-                  captured,
-                  signal,
-                );
-                if (!registered || disposed || signal.aborted)
-                  throw new Error("Installed API discovery expired");
-                return copyJson(result);
-              },
-              async readAsset(path, callerSignal) {
-                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
                 const validate = () => {
-                  if (!registered || disposed || signal.aborted)
-                    throw new Error("Installed asset lifetime expired");
+                  if (
+                    !registered ||
+                    disposed ||
+                    signal.aborted ||
+                    context.resource.environmentId !== options.environmentId ||
+                    !context.resource.projectId ||
+                    !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
+                    response.supportsApiStreams !== true ||
+                    !source
+                  )
+                    throw new Error("Installed API stream is unavailable in this scope");
                 };
-                validate();
-                const declaration =
-                  item.package.format === 4
-                    ? item.package.assets.find((asset) => asset.path === path)
-                    : undefined;
-                if (!declaration || !options.readAsset)
-                  throw new Error("Installed asset is not declared or supported");
-                const bytes = await options.readAsset(item.id, item.contentHash, path, signal);
-                validate();
-                if (!(bytes instanceof Uint8Array) || bytes.byteLength !== declaration.byteLength)
-                  throw new Error("Installed asset length mismatch");
-                // The existing browser-safe hash also works for direct HTTP environments.
-                const digest = Array.from(sha256(bytes), (byte) =>
-                  byte.toString(16).padStart(2, "0"),
-                ).join("");
-                if (digest !== declaration.sha256)
-                  throw new Error("Installed asset digest mismatch");
-                validate();
-                return { bytes, mediaType: declaration.mediaType, sha256: digest };
-              },
-              async invokeTool(toolId, input, context, callerSignal) {
-                const signal = AbortSignal.any([callerSignal, lifetime.signal]);
-                const captured = validateContext(context);
-                if (
-                  !registered ||
-                  disposed ||
-                  signal.aborted ||
-                  captured.resource.environmentId !== options.environmentId ||
-                  !captured.resource.projectId ||
-                  !item.grants.projectIds.some((id) => id === captured.resource.projectId) ||
-                  !item.package.tools.some((tool) => tool.id === toolId)
-                )
-                  throw new Error("Installed tool is unavailable in this scope");
-                const result = await options.invoke(
-                  toolId,
-                  copyJson(input),
-                  captured,
-                  item.contentHash,
+                return installedStream(
+                  (streamSignal) => {
+                    validate();
+                    const scoped = { ...request, input: copyJson(request.input), context };
+                    if (!onSuspended)
+                      return source!(item.id, item.contentHash, scoped, streamSignal);
+                    return source!(item.id, item.contentHash, scoped, streamSignal, () => {
+                      // Plugin code: never after the stream ends, never into the host.
+                      if (streamSignal.aborted) return;
+                      try {
+                        onSuspended();
+                      } catch {}
+                    });
+                  },
                   signal,
+                  validate,
                 );
-                if (disposed || signal.aborted)
-                  throw new Error("Installed tool invocation expired");
-                return copyJson(result);
-              },
-              registerGlobalCommands(commands, handler) {
-                // Factory-time staging only: the commit flush runs once the
-                // installation is registered and a seam socket is live.
-                const entry = stageGlobalCommands(
-                  options.environmentId,
-                  item.id,
-                  commands,
-                  handler,
-                );
-                const handle: GlobalCommandsHandle = {
-                  get status() {
-                    return entry.status;
-                  },
-                  get token() {
-                    return entry.token;
-                  },
-                  get rejections() {
-                    return entry.rejections;
-                  },
-                  onDidChange(listener) {
-                    entry.listeners.add(listener);
-                    return () => {
-                      entry.listeners.delete(listener);
-                    };
-                  },
-                };
-                return handle;
-              },
-              ...(browserSurface ? { browserSurface } : {}),
-              ...(browserFrames ? { browserFrames } : {}),
-              ...(browserCapture ? { browserCapture } : {}),
-              ...(browserMiniPlayer ? { browserMiniPlayer } : {}),
-              ...(keybindings ? { keybindings } : {}),
-              ...(options.codeView ? { codeView: options.codeView } : {}),
-              ...(options.tooltip ? { tooltip: options.tooltip } : {}),
-              ...(options.uiKit ? { uiKit: options.uiKit } : {}),
-              ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
-              ...(subscribeResumableApi
-                ? {
-                    resumableStreams: {
-                      version: 4,
-                      subscribeApi(request, callerSignal, streamOptions) {
-                        if (!Object.hasOwn(RESUMABLE_API_STREAMS, `${request.id}#${request.name}`))
-                          throw new Error(`${request.id}#${request.name} is not resumable`);
-                        const onSuspended = streamOptions?.onSuspended;
-                        return subscribe(
-                          subscribeResumableApi,
-                          request,
-                          callerSignal,
-                          typeof onSuspended === "function" ? onSuspended : undefined,
+              };
+              const subscribeResumableApi = options.subscribeResumableApi;
+              const clientHost: ClientHost = {
+                React: options.React,
+                async invokeApi(request, callerSignal) {
+                  const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                  const context = validateContext(request.context);
+                  if (
+                    !registered ||
+                    disposed ||
+                    signal.aborted ||
+                    context.resource.environmentId !== options.environmentId ||
+                    !context.resource.projectId ||
+                    !item.grants.projectIds.some((id) => id === context.resource.projectId) ||
+                    !options.invokeApi
+                  )
+                    throw new Error("Installed API is unavailable in this scope");
+                  const result = await options.invokeApi(
+                    item.id,
+                    item.contentHash,
+                    { ...request, context },
+                    signal,
+                  );
+                  if (!registered || disposed || signal.aborted)
+                    throw new Error("Installed API invocation expired");
+                  return copyJson(result);
+                },
+                ...(options.openEditorPath && item.grants.capabilities.includes("t3.ui/editor.open")
+                  ? {
+                      async openEditorPath(
+                        input: UiEditorOpenInput,
+                        suppliedContext: ViewContext,
+                        callerSignal: AbortSignal,
+                      ) {
+                        const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                        const context = validateContext(suppliedContext);
+                        if (
+                          !registered ||
+                          disposed ||
+                          signal.aborted ||
+                          context.resource.environmentId !== options.environmentId ||
+                          !context.resource.projectId ||
+                          !item.grants.projectIds.some((id) => id === context.resource.projectId)
+                        )
+                          throw new Error("Installed editor is unavailable in this scope");
+                        const result = await options.openEditorPath!(
+                          item.id,
+                          item.contentHash,
+                          input,
+                          context,
+                          signal,
                         );
+                        if (!registered || disposed || signal.aborted)
+                          throw new Error("Installed editor invocation expired");
+                        return result;
                       },
+                    }
+                  : {}),
+                subscribeApi(request, callerSignal) {
+                  return subscribe(options.subscribeApi, request, callerSignal);
+                },
+                async discoverApis(context, callerSignal) {
+                  const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                  const captured = validateContext(context);
+                  if (
+                    !registered ||
+                    disposed ||
+                    signal.aborted ||
+                    captured.resource.environmentId !== options.environmentId ||
+                    !captured.resource.projectId ||
+                    !item.grants.projectIds.some((id) => id === captured.resource.projectId) ||
+                    !options.discoverApis
+                  )
+                    throw new Error("Installed API discovery is unavailable in this scope");
+                  const result = await options.discoverApis(
+                    item.id,
+                    item.contentHash,
+                    captured,
+                    signal,
+                  );
+                  if (!registered || disposed || signal.aborted)
+                    throw new Error("Installed API discovery expired");
+                  return copyJson(result);
+                },
+                async readAsset(path, callerSignal) {
+                  const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                  const validate = () => {
+                    if (!registered || disposed || signal.aborted)
+                      throw new Error("Installed asset lifetime expired");
+                  };
+                  validate();
+                  const declaration =
+                    item.package.format === 4
+                      ? item.package.assets.find((asset) => asset.path === path)
+                      : undefined;
+                  if (!declaration || !options.readAsset)
+                    throw new Error("Installed asset is not declared or supported");
+                  const bytes = await options.readAsset(item.id, item.contentHash, path, signal);
+                  validate();
+                  if (!(bytes instanceof Uint8Array) || bytes.byteLength !== declaration.byteLength)
+                    throw new Error("Installed asset length mismatch");
+                  // The existing browser-safe hash also works for direct HTTP environments.
+                  const digest = Array.from(sha256(bytes), (byte) =>
+                    byte.toString(16).padStart(2, "0"),
+                  ).join("");
+                  if (digest !== declaration.sha256)
+                    throw new Error("Installed asset digest mismatch");
+                  validate();
+                  return { bytes, mediaType: declaration.mediaType, sha256: digest };
+                },
+                async invokeTool(toolId, input, context, callerSignal) {
+                  const signal = AbortSignal.any([callerSignal, lifetime.signal]);
+                  const captured = validateContext(context);
+                  if (
+                    !registered ||
+                    disposed ||
+                    signal.aborted ||
+                    captured.resource.environmentId !== options.environmentId ||
+                    !captured.resource.projectId ||
+                    !item.grants.projectIds.some((id) => id === captured.resource.projectId) ||
+                    !item.package.tools.some((tool) => tool.id === toolId)
+                  )
+                    throw new Error("Installed tool is unavailable in this scope");
+                  const result = await options.invoke(
+                    toolId,
+                    copyJson(input),
+                    captured,
+                    item.contentHash,
+                    signal,
+                  );
+                  if (disposed || signal.aborted)
+                    throw new Error("Installed tool invocation expired");
+                  return copyJson(result);
+                },
+                registerGlobalCommands(commands, handler) {
+                  // Factory-time staging only: the commit flush runs once the
+                  // installation is registered and a seam socket is live.
+                  const entry = stageGlobalCommands(
+                    options.environmentId,
+                    item.id,
+                    commands,
+                    handler,
+                  );
+                  const handle: GlobalCommandsHandle = {
+                    get status() {
+                      return entry.status;
                     },
-                  }
-                : {}),
-              ...(options.pullRequestPreferences
-                ? { pullRequestPreferences: options.pullRequestPreferences }
-                : {}),
-              ...(options.environmentLabel ? { environmentLabel: options.environmentLabel } : {}),
-            };
-            const extension = (factory as ClientFactory)(clientHost);
-            if (canonical(extension.manifest) !== canonical(item.package.manifest))
-              throw new Error("Installed client manifest does not match its package");
-            const unregister = options.register(extension, clientHost);
-            epochs.set(item.id, ++epochCounter);
-            active.set(item.id, {
-              signature: identity,
-              stop: () => {
+                    get token() {
+                      return entry.token;
+                    },
+                    get rejections() {
+                      return entry.rejections;
+                    },
+                    onDidChange(listener) {
+                      entry.listeners.add(listener);
+                      return () => {
+                        entry.listeners.delete(listener);
+                      };
+                    },
+                  };
+                  return handle;
+                },
+                ...(browserSurface ? { browserSurface } : {}),
+                ...(browserFrames ? { browserFrames } : {}),
+                ...(browserCapture ? { browserCapture } : {}),
+                ...(browserMiniPlayer ? { browserMiniPlayer } : {}),
+                ...(keybindings ? { keybindings } : {}),
+                ...(options.codeView ? { codeView: options.codeView } : {}),
+                ...(options.tooltip ? { tooltip: options.tooltip } : {}),
+                ...(options.uiKit ? { uiKit: options.uiKit } : {}),
+                ...(options.floatingLayer ? { floatingLayer: options.floatingLayer } : {}),
+                ...(subscribeResumableApi
+                  ? {
+                      resumableStreams: {
+                        version: 4,
+                        subscribeApi(request, callerSignal, streamOptions) {
+                          if (
+                            !Object.hasOwn(RESUMABLE_API_STREAMS, `${request.id}#${request.name}`)
+                          )
+                            throw new Error(`${request.id}#${request.name} is not resumable`);
+                          const onSuspended = streamOptions?.onSuspended;
+                          return subscribe(
+                            subscribeResumableApi,
+                            request,
+                            callerSignal,
+                            typeof onSuspended === "function" ? onSuspended : undefined,
+                          );
+                        },
+                      },
+                    }
+                  : {}),
+                ...(options.pullRequestPreferences
+                  ? { pullRequestPreferences: options.pullRequestPreferences }
+                  : {}),
+                ...(options.environmentLabel ? { environmentLabel: options.environmentLabel } : {}),
+              };
+              const extension = (factory as ClientFactory)(clientHost);
+              if (canonical(extension.manifest) !== canonical(item.package.manifest))
+                throw new Error("Installed client manifest does not match its package");
+              const unregister = options.register(extension, clientHost);
+              active.set(item.id, {
+                stop: () => {
+                  lifetime.abort();
+                  unregister();
+                  unregisterInstallationCommands(options.environmentId, item.id);
+                },
+              });
+              registered = true;
+            } catch (error) {
+              if (isAvailable()) {
+                entry.stop();
+                available.delete(item.id);
+                active.delete(item.id);
+                publish({
+                  ...snapshot,
+                  error: (
+                    item.id +
+                    ": " +
+                    (error instanceof Error ? error.message : "Client unavailable")
+                  ).slice(0, 2048),
+                });
+              }
+              throw error;
+            } finally {
+              if (!registered) {
                 lifetime.abort();
-                unregister();
-                unregisterInstallationCommands(options.environmentId, item.id);
-              },
-            });
-            registered = true;
-          } catch (error) {
-            if (!live()) return;
-            errors.push(
-              item.id + ": " + (error instanceof Error ? error.message : "Client unavailable"),
-            );
-          } finally {
-            if (!registered) {
-              lifetime.abort();
-              discardStagedGlobalCommands(options.environmentId, item.id);
+                discardStagedGlobalCommands(options.environmentId, item.id);
+              }
             }
-          }
+            if (isAvailable()) publish({ ...snapshot });
+          };
+          available.set(item.id, entry);
+          epochs.set(item.id, ++epochCounter);
+          let stopLazy: (() => void) | undefined;
+          stopLazy = options.registerLazy?.(item, entry.load);
         }
         if (live())
           publish({
@@ -714,9 +757,16 @@ export function createInstalledExtensionController(options: {
         });
       }
     },
-    /** Live registration epoch for an installation, or null when it is not active. */
+    /** Activates exactly one eligible client; concurrent opens share the same load. */
+    activate(installationId: string) {
+      return (
+        available.get(installationId)?.load() ??
+        Promise.reject(new Error("Installation is no longer available"))
+      );
+    },
+    /** Eligible installation epoch, including clients awaiting their first open. */
     installationEpoch(installationId: string) {
-      return active.has(installationId) ? (epochs.get(installationId) ?? null) : null;
+      return available.has(installationId) ? (epochs.get(installationId) ?? null) : null;
     },
     dispose() {
       disposed = true;

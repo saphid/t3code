@@ -1,9 +1,12 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { Extension } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
 import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import {
+  activateWorkspaceContext,
+  activateWorkspaceMessageDecorations,
+  registerLazyWorkspaceExtension,
   decorateWorkspaceMessage,
   useWorkspaceTextRevision,
   captureWorkspaceContext,
@@ -414,5 +417,61 @@ it("marks a declared terminal-focus surface's frame as extension-owned", async (
       root?.unmount();
       stop();
     });
+  }
+});
+
+it("keeps text contributions dormant until context selection or a visible message", async () => {
+  const manifest = {
+    id: "lazy.text",
+    apiVersion: 1 as const,
+    version: "1.0.0",
+    surfaces: [],
+    composerContexts: [{ id: "lazy.text/context", title: "Context", clients: ["web"] }],
+    messageDecorations: [{ id: "lazy.text/card", title: "Card", clients: ["web"] }],
+  };
+  let stopClient = () => {};
+  const activate = vi.fn(async () => {
+    stopClient = registerWorkspaceExtension(
+      {
+        manifest,
+        surfaces: [],
+        composerContexts: [
+          { id: "lazy.text/context", select: () => ({ title: "Captured", text: "Lazy context" }) },
+        ],
+        messageDecorations: [
+          { id: "lazy.text/card", decorate: () => ({ title: "Card", text: "Lazy message" }) },
+        ],
+      },
+      undefined,
+      { environmentId: "lazy-text-env" },
+    );
+  });
+  const stop = registerLazyWorkspaceExtension("lazy-text-env", manifest, activate);
+  const context = {
+    client: "web",
+    resource: {
+      namespace: "lazy.text",
+      id: "view",
+      environmentId: "lazy-text-env",
+      projectId: "project",
+    },
+  };
+  try {
+    expect(activate).not.toHaveBeenCalled();
+    await activateWorkspaceContext("lazy.text/context", {
+      ...context,
+      resource: { ...context.resource, environmentId: "other" },
+    });
+    await activateWorkspaceMessageDecorations("other", "web");
+    expect(activate).not.toHaveBeenCalled();
+    await activateWorkspaceContext("lazy.text/context", context);
+    expect(captureWorkspaceContext("lazy.text/context", context).text).toBe("Lazy context");
+    expect(activate).toHaveBeenCalledOnce();
+    stopClient();
+    await activateWorkspaceMessageDecorations("lazy-text-env", "web");
+    expect(activate).toHaveBeenCalledTimes(2);
+  } finally {
+    stop();
+    stopClient();
   }
 });

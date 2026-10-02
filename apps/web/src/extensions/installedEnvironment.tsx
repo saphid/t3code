@@ -35,14 +35,18 @@ import { readProject } from "../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useEnvironments } from "../state/environments";
 import { environmentPresentations } from "../state/presentation";
-import { registerWorkspaceExtension } from "./workspaceRegistry";
+import { registerWorkspaceExtension, registerLazyWorkspaceExtension } from "./workspaceRegistry";
 import {
   createInstalledExtensionController,
   EMPTY_INSTALLED,
   type InstalledSnapshot,
 } from "./installedController";
 
-import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
+import {
+  registerInstalledApiClient,
+  registerInstalledApiLoader,
+  setInstalledApiPolicy,
+} from "./installedApiClients";
 import type { UiEditorOpenReceipt } from "@t3tools/extension-sdk/catalogue";
 import { createBrowserCaptureBridge } from "./browserCaptureBridge";
 import { createBrowserMiniPlayerBridge } from "./browserMiniPlayerBridge";
@@ -184,6 +188,8 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
     null,
   );
   const installed = useInstalledExtensions(environmentId);
+  // This metadata-only receipt is the only push signal for installs made by
+  // other clients, including the first install in an empty remote environment.
   const catalogue = useAtomValue(
     installed.supportsCatalogueChanges === true
       ? catalogueChanges({ environmentId, input: {} })
@@ -205,21 +211,23 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       if (current.signal.aborted) throw new Error("Environment connection changed");
       return result;
     };
-    const providers = createClientProviders(
-      {
-        environmentId,
-        client: CLIENT_PROVIDER_CLIENT_TAG,
-        emit: (correlationId, event) =>
-          emitClientProviderEvent(environmentId, correlationId, event),
-        installations: () => snapshots.get(environmentId)?.installations,
-      },
-      (ref) =>
-        router.navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) }),
-      {
-        openThread: (projectRef, workspace) => newThreadRef.current(projectRef, workspace),
-        prepare: nativePrHandoffPrepare,
-      },
-    );
+    let providers: ReturnType<typeof createClientProviders> | undefined;
+    const getProviders = () =>
+      (providers ??= createClientProviders(
+        {
+          environmentId,
+          client: CLIENT_PROVIDER_CLIENT_TAG,
+          emit: (correlationId, event) =>
+            emitClientProviderEvent(environmentId, correlationId, event),
+          installations: () => snapshots.get(environmentId)?.installations,
+        },
+        (ref) =>
+          router.navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) }),
+        {
+          openThread: (projectRef, workspace) => newThreadRef.current(projectRef, workspace),
+          prepare: nativePrHandoffPrepare,
+        },
+      ));
     const flushStagedCommands = async (signal: AbortSignal) => {
       const snapshot = snapshots.get(environmentId);
       if (!snapshot) return;
@@ -349,12 +357,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
         }
       }
     };
-    const providerConnection = startClientProviderConnection({
-      environmentId,
-      providers,
-      descriptors: CLIENT_PROVIDER_DESCRIPTORS,
-      flushGlobalCommands: flushStagedCommands,
-    });
+    let providerConnection: ReturnType<typeof startClientProviderConnection> | undefined;
     const controller = createInstalledExtensionController({
       environmentId,
       React,
@@ -453,7 +456,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
           (selected && selected !== "host.ui.editor")
         )
           throw new Error("The native editor provider is no longer selected.");
-        const provider = providers.get("t3.client/editor");
+        const provider = getProviders().get("t3.client/editor");
         const installationGeneration = controller.installationEpoch(installationId);
         if (!provider || installationGeneration === null)
           throw new Error("The editor host is unavailable.");
@@ -518,6 +521,23 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       environmentLabel: () =>
         appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.entry.target
           .label ?? null,
+      registerLazy: (item, activate) => {
+        const stopSurface = registerLazyWorkspaceExtension(
+          environmentId,
+          item.package.manifest,
+          activate,
+        );
+        const stopApi = registerInstalledApiLoader(
+          environmentId,
+          item.id,
+          (item.package.provides ?? []).map((api) => api.id),
+          activate,
+        );
+        return () => {
+          stopSurface();
+          stopApi();
+        };
+      },
       register: (extension, client) => {
         const unregister = registerWorkspaceExtension(
           extension,
@@ -535,11 +555,26 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
       },
       changed: (snapshot) => {
         changed(environmentId, snapshot);
-        providerConnection.notifyInstallationsChanged();
+        const needed = snapshot.installations.some(
+          (item) => controller.installationEpoch(item.id) !== null,
+        );
+        if (needed) {
+          providerConnection ??= startClientProviderConnection({
+            environmentId,
+            providers: getProviders(),
+            descriptors: CLIENT_PROVIDER_DESCRIPTORS,
+            flushGlobalCommands: flushStagedCommands,
+          });
+          providerConnection.notifyInstallationsChanged();
+        } else {
+          providerConnection?.stop();
+          providerConnection = undefined;
+        }
       },
     });
     configureExtensionCommandEnvironment(environmentId, {
       installationGeneration: (id) => controller.installationEpoch(id),
+      activateInstallation: (id) => controller.activate(id),
       installationSurfaces: (id) =>
         snapshots.get(environmentId)?.installations.find((item) => item.id === id)?.package.manifest
           .surfaces ?? null,
@@ -553,7 +588,7 @@ function EnvironmentExtensions({ environmentId }: { environmentId: EnvironmentId
     controllers.set(environmentId, controller);
     refreshQueues.set(environmentId, refreshQueue);
     return () => {
-      providerConnection.stop();
+      providerConnection?.stop();
       unconfigureExtensionCommandEnvironment(environmentId);
       refreshQueue.dispose();
       controller.dispose();

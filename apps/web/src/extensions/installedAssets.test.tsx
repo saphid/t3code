@@ -3,7 +3,31 @@ import * as NodeCrypto from "node:crypto";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ExtensionInstallation } from "@t3tools/contracts";
 import type { ClientHost } from "@t3tools/extension-sdk/environment";
-import { createInstalledExtensionController, type InstalledSnapshot } from "./installedController";
+import {
+  createInstalledExtensionController as createLazyInstalledExtensionController,
+  type InstalledSnapshot,
+} from "./installedController";
+
+/** These binding/lifetime tests request every fixture client after catalogue discovery. */
+function createInstalledExtensionController(
+  options: Parameters<typeof createLazyInstalledExtensionController>[0],
+) {
+  let ids: readonly string[] = [];
+  const lazy = createLazyInstalledExtensionController({
+    ...options,
+    changed: (snapshot) => {
+      ids = snapshot.installations.map((item) => item.id);
+      options.changed(snapshot);
+    },
+  });
+  return {
+    ...lazy,
+    async refresh() {
+      await lazy.refresh();
+      await Promise.all(ids.map((id) => lazy.activate(id).catch(() => {})));
+    },
+  };
+}
 
 const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");

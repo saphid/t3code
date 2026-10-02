@@ -5,13 +5,14 @@ import type {
 } from "@t3tools/extension-sdk/context";
 import {
   validateManifest,
+  type ExtensionManifest,
   type Json,
   type ViewContext,
   type ViewRecord,
 } from "@t3tools/extension-sdk/contracts";
 import { createExtensionHost, type Extension, type HostOptions } from "@t3tools/extension-sdk/host";
 import type { SurfaceRenderer } from "@t3tools/extension-sdk/react";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { createNativeSurfaceBridge } from "./nativeBridge";
 
 type Registration = {
@@ -21,6 +22,14 @@ type Registration = {
   host: ReturnType<typeof createExtensionHost<SurfaceRenderer>>;
 };
 const registrations = new Map<string, Registration>();
+const lazyRegistrations = new Map<
+  string,
+  {
+    environmentId: string;
+    manifest: ExtensionManifest;
+    activate: () => Promise<void>;
+  }
+>();
 const listeners = new Set<() => void>();
 let textRevision = 0;
 let titlesByEnvironment = new Map<string, ReadonlyMap<string, string>>();
@@ -47,6 +56,7 @@ function notify() {
   const scopes = new Set([
     "",
     ...[...registrations.values()].map((entry) => entry.environmentId ?? ""),
+    ...[...lazyRegistrations.values()].map((entry) => entry.environmentId),
   ]);
   const titles = new Map<string, ReadonlyMap<string, string>>();
   const contexts = new Map<string, readonly TextContributionDescriptor[]>();
@@ -54,20 +64,28 @@ function notify() {
     const entries = scoped(scope || undefined);
     titles.set(
       scope,
-      new Map(
-        entries.flatMap((entry) =>
+      new Map([
+        ...[...lazyRegistrations.values()]
+          .filter((entry) => entry.environmentId === scope)
+          .flatMap((entry) =>
+            entry.manifest.surfaces.map((surface) => [surface.id, surface.title] as const),
+          ),
+        ...entries.flatMap((entry) =>
           entry.extension.manifest.surfaces.map((surface) => [surface.id, surface.title] as const),
         ),
-      ),
+      ]),
     );
     contexts.set(scope, [
       ...new Map(
-        entries
-          .flatMap((entry) => [
+        [
+          ...[...lazyRegistrations.values()]
+            .filter((entry) => entry.environmentId === scope)
+            .flatMap((entry) => entry.manifest.composerContexts ?? []),
+          ...entries.flatMap((entry) => [
             ...entry.host.contextDescriptors("web"),
             ...entry.host.contextDescriptors("desktop"),
-          ])
-          .map((item) => [item.id, item]),
+          ]),
+        ].map((item) => [item.id, item]),
       ).values(),
     ]);
   }
@@ -76,6 +94,22 @@ function notify() {
   for (const listener of listeners) listener();
 }
 
+/** Installed manifests advertise surfaces before their client code is needed. */
+export function registerLazyWorkspaceExtension(
+  environmentId: string,
+  manifest: ExtensionManifest,
+  activate: () => Promise<void>,
+) {
+  const key = JSON.stringify([environmentId, manifest.id]);
+  const entry = { environmentId, manifest: validateManifest(manifest), activate };
+  lazyRegistrations.set(key, entry);
+  notify();
+  return () => {
+    if (lazyRegistrations.get(key) !== entry) return;
+    lazyRegistrations.delete(key);
+    notify();
+  };
+}
 /** Trusted bootstrap remains global; installed packages register for exactly one authenticated environment. */
 export function registerWorkspaceExtension(
   extension: Extension<SurfaceRenderer>,
@@ -124,9 +158,10 @@ export function installedSurfaceDescriptor(
   extensionId: string,
   surfaceId: string,
 ) {
-  return registrations
-    .get(JSON.stringify([environmentId, extensionId]))
-    ?.extension.manifest.surfaces.find((surface) => surface.id === surfaceId);
+  const key = JSON.stringify([environmentId, extensionId]);
+  return (
+    registrations.get(key)?.extension.manifest ?? lazyRegistrations.get(key)?.manifest
+  )?.surfaces.find((surface) => surface.id === surfaceId);
 }
 export function useWorkspaceSurfaceTitles(environmentId?: string) {
   const get = useCallback(
@@ -154,6 +189,31 @@ export function WorkspaceExtensionSurface(props: {
     [props.record.surfaceId, props.record.context.resource.environmentId],
   );
   const bridge = useSyncExternalStore(subscribe, get, get);
+  const getLazy = useCallback(
+    () =>
+      [...lazyRegistrations.values()].find(
+        (entry) =>
+          entry.environmentId === props.record.context.resource.environmentId &&
+          entry.manifest.surfaces.some((surface) => surface.id === props.record.surfaceId),
+      ) ?? null,
+    [props.record.surfaceId, props.record.context.resource.environmentId],
+  );
+  const lazy = useSyncExternalStore(subscribe, getLazy, getLazy);
+  const [failure, setFailure] = useState<{ entry: typeof lazy; message: string } | null>(null);
+  useEffect(() => {
+    if (bridge || !lazy || !props.visible) return;
+    let cancelled = false;
+    void lazy.activate().catch((error: unknown) => {
+      if (!cancelled)
+        setFailure({
+          entry: lazy,
+          message: error instanceof Error ? error.message : "Client unavailable",
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, lazy, props.visible]);
   return bridge ? (
     <bridge.Surface
       record={props.record}
@@ -164,7 +224,13 @@ export function WorkspaceExtensionSurface(props: {
       retainHiddenPresentation
     />
   ) : (
-    <div role="status">{props.record.fallback}</div>
+    <div role="status">
+      {failure?.entry === lazy
+        ? failure.message
+        : lazy
+          ? "Loading extension…"
+          : props.record.fallback}
+    </div>
   );
 }
 export function useWorkspaceContextDescriptors(environmentId?: string) {
@@ -177,6 +243,33 @@ export function useWorkspaceContextDescriptors(environmentId?: string) {
   );
   return useSyncExternalStore(subscribe, get, get);
 }
+/** Context selection is a first open for a client with text contributions. */
+export async function activateWorkspaceContext(id: string, context: ViewContext) {
+  const entry = [...lazyRegistrations.values()].find(
+    (entry) =>
+      entry.environmentId === context.resource.environmentId &&
+      entry.manifest.composerContexts?.some(
+        (descriptor) => descriptor.id === id && descriptor.clients.includes(context.client),
+      ),
+  );
+  await entry?.activate();
+}
+
+/** A visible message is the first surface for a declared message decoration. */
+export async function activateWorkspaceMessageDecorations(environmentId: string, client: string) {
+  await Promise.all(
+    [...lazyRegistrations.values()]
+      .filter(
+        (entry) =>
+          entry.environmentId === environmentId &&
+          entry.manifest.messageDecorations?.some((descriptor) =>
+            descriptor.clients.includes(client),
+          ),
+      )
+      .map((entry) => entry.activate()),
+  );
+}
+
 export function captureWorkspaceContext(id: string, context: ViewContext) {
   const host = scoped(context.resource.environmentId)
     .reverse()
@@ -213,7 +306,12 @@ export function decorateWorkspaceMessage(
   return cards;
 }
 function workspaceHasMessageDecorations() {
-  return [...registrations.values()].some((entry) => entry.host.messageDecorationCount() > 0);
+  return (
+    [...registrations.values()].some((entry) => entry.host.messageDecorationCount() > 0) ||
+    [...lazyRegistrations.values()].some(
+      (entry) => (entry.manifest.messageDecorations?.length ?? 0) > 0,
+    )
+  );
 }
 /** Reactivity must be observed even when a compiled row mounted before registration. */
 export function useWorkspaceHasMessageDecorations() {

@@ -2,6 +2,7 @@ import { isElectron } from "../env";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MessageContext } from "@t3tools/extension-sdk/context";
 import {
+  activateWorkspaceMessageDecorations,
   decorateWorkspaceMessage,
   useWorkspaceTextRevision,
   useWorkspaceHasMessageDecorations,
@@ -29,6 +30,12 @@ export function MessageDecorations(props: { readonly message: MessageContext }) 
       observer.disconnect();
     };
   }, [enabled, revision]);
+  useEffect(() => {
+    if (enabled && visible)
+      void activateWorkspaceMessageDecorations(environmentId, isElectron ? "desktop" : "web").catch(
+        () => {},
+      );
+  }, [enabled, visible, environmentId]);
   const cards = useMemo(
     () =>
       enabled && visible

@@ -140,6 +140,8 @@ export interface CommandRegistrationResult {
 export interface ExtensionCommandEnvironmentDeps {
   /** Current generation for an installation id, or null when uninstalled/ineligible. */
   readonly installationGeneration: (installationId: string) => number | null;
+  /** A command registered by server code can be the first use of this client. */
+  readonly activateInstallation?: (installationId: string) => Promise<void>;
   /** Manifest surfaces for an installation id (for activation eligibility checks). */
   readonly installationSurfaces: (installationId: string) =>
     | readonly {
@@ -386,6 +388,7 @@ export function registerCommands(input: {
     accepted.push(command);
     results.push({ commandId: command.id, status: "registered" });
   }
+  if (accepted.length) void deps?.activateInstallation?.(input.installationId).catch(() => {});
   const contextKey = contextKeyFor(input.context);
   const commandSetHash = canonicalJson(input.commands as unknown as Json);
   for (const registration of registrations.values()) {

@@ -256,8 +256,10 @@ async function runConnectionLoop(
       environmentClientProviderRespond(deps.environmentId, payload).pipe(Effect.provide(context)),
     ).catch(() => {});
   };
+  let retryMs = 1000;
   while (!signal.aborted) {
     let unsupported = false;
+    let rejected = false;
     iteration.connectionId = undefined;
     iteration.subscriptions = new Map();
     iteration.pending = new Map();
@@ -286,6 +288,7 @@ async function runConnectionLoop(
           // loop waits for the transport's next connected phase and reopens.
           if (next.done) break;
           try {
+            if (next.value.type === "registered") retryMs = 1000;
             handleFrame(deps, next.value, emitEvent, respond, iteration, signal, owner);
           } catch {
             // A malformed frame or throwing provider hook must not kill the seam.
@@ -298,6 +301,7 @@ async function runConnectionLoop(
     } catch (error) {
       // Transport or session failure — fall through to the reconnect wait.
       unsupported = isUnknownRequestTag(error);
+      rejected = !unsupported;
     } finally {
       teardownIteration();
     }
@@ -309,8 +313,18 @@ async function runConnectionLoop(
       unsupportedSeams.add(deps.environmentId);
       wakeWaiters(deps.environmentId);
     }
-    // A non-transport failure (e.g. a rejected connect) would otherwise spin.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Rejections may leave the transport connected. Bound retries without
+    // releasing web's held calls or mistaking the current state for a new session.
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = setTimeout(done, retryMs);
+      signal.addEventListener("abort", done, { once: true });
+    });
+    if (rejected) retryMs = Math.min(retryMs * 2, 30_000);
     if (signal.aborted) return;
     await waitForReconnect(
       deps.environmentId,

@@ -19,6 +19,29 @@ export function setInstalledApiPolicy(environmentId: string, policy: InstalledAp
   else policies.delete(environmentId);
   changed();
 }
+const loaders = new Map<
+  string,
+  Map<string, { apiIds: readonly string[]; activate: () => Promise<void>; revision: number }>
+>();
+/** Selected API presentations activate only their owning installation. */
+export function registerInstalledApiLoader(
+  environmentId: string,
+  pluginId: string,
+  apiIds: readonly string[],
+  activate: () => Promise<void>,
+) {
+  const environment = loaders.get(environmentId) ?? new Map();
+  loaders.set(environmentId, environment);
+  const entry = { apiIds, activate, revision: revision + 1 };
+  environment.set(pluginId, entry);
+  changed();
+  return () => {
+    if (environment.get(pluginId) !== entry) return;
+    environment.delete(pluginId);
+    if (!environment.size) loaders.delete(environmentId);
+    changed();
+  };
+}
 const clients = new Map<string, Map<string, ApiClient>>();
 const listeners = new Set<() => void>();
 let revision = 0;
@@ -42,7 +65,11 @@ export function installedApiSelectionRevision(environmentId: string, apiId: stri
     selection ?? null,
     [...new Set(relevantIds)].sort().map((id) => {
       const client = environment?.get(id);
-      return [id, client ? (clientRevisions.get(client) ?? null) : null];
+      return [
+        id,
+        loaders.get(environmentId)?.get(id)?.revision ??
+          (client ? (clientRevisions.get(client) ?? null) : null),
+      ];
     }),
   ]);
 }
@@ -99,6 +126,18 @@ export async function resolveInstalledApiProvider(
   const policy = policies.get(context.resource.environmentId);
   const resolution = policy?.apiResolution.find((item) => item.id === id);
   const selection = policy?.apiSelections.find((item) => item.id === id);
+  const pending = loaders.get(context.resource.environmentId);
+  const selectedId = resolution?.providerId ?? selection?.providerId;
+  const loader = selectedId
+    ? (pending?.get(selectedId) ??
+      selection?.fallbackProviderIds
+        .map((id) => pending?.get(id))
+        .find((entry) => entry !== undefined))
+    : [...(pending?.values() ?? [])].find((entry) => entry.apiIds.includes(id));
+  if (!resolution?.reason && loader) {
+    await loader.activate();
+    signal.throwIfAborted();
+  }
   const environment = clients.get(context.resource.environmentId);
   if (!environment?.size) {
     if (noProvider(resolution?.reason, selection)) return null;

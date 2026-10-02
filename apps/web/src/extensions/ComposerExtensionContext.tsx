@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   appendContextSnapshot,
   readContextSnapshots,
@@ -7,7 +7,11 @@ import {
 import type { ViewContext } from "@t3tools/extension-sdk/contracts";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
-import { captureWorkspaceContext, useWorkspaceContextDescriptors } from "./workspaceRegistry";
+import {
+  activateWorkspaceContext,
+  captureWorkspaceContext,
+  useWorkspaceContextDescriptors,
+} from "./workspaceRegistry";
 
 /** Selected context is readable prompt text, so existing draft persistence and recovery own it. */
 export function ComposerExtensionContext(props: {
@@ -15,6 +19,10 @@ export function ComposerExtensionContext(props: {
   readonly context: ViewContext;
   readonly onChange: (prompt: string) => void;
 }) {
+  const latest = useRef(props);
+  useLayoutEffect(() => {
+    latest.current = props;
+  });
   const descriptors = useWorkspaceContextDescriptors(props.context.resource.environmentId).filter(
     (item) => item.clients.includes(props.context.client),
   );
@@ -32,10 +40,13 @@ export function ComposerExtensionContext(props: {
             {descriptors.map((descriptor) => (
               <MenuItem
                 key={descriptor.id}
-                onClick={() => {
+                onClick={async () => {
                   try {
+                    await activateWorkspaceContext(descriptor.id, props.context);
+                    if (JSON.stringify(latest.current.context) !== JSON.stringify(props.context))
+                      throw new Error("Context changed while loading the extension");
                     const snapshot = captureWorkspaceContext(descriptor.id, props.context);
-                    props.onChange(appendContextSnapshot(props.prompt, snapshot));
+                    latest.current.onChange(appendContextSnapshot(latest.current.prompt, snapshot));
                     setError(null);
                   } catch (cause) {
                     setError(cause instanceof Error ? cause.message : "Context unavailable");

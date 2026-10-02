@@ -123,7 +123,7 @@ afterEach(() => {
 function start(options?: {
   providers?: ReadonlyMap<string, ClientLocalProvider>;
   flush?: () => Promise<void>;
-  stream?: Stream.Stream<ClientProviderServerFrame>;
+  stream?: Stream.Stream<ClientProviderServerFrame, unknown>;
 }) {
   mocks.respond.mockImplementation(() => Effect.succeed(null));
   mocks.emit.mockImplementation(() => Effect.succeed(null));
@@ -678,4 +678,25 @@ describe("client connection hint on early calls", () => {
     expect(hints).toEqual(["conn-early"]);
     await frames.return();
   });
+});
+
+describe("rejected connect attempts", () => {
+  it.each(["Missing scope: orchestration:operate", "Provider registration rejected"])(
+    "does not retry %s at 1 Hz on a connected session",
+    async (message) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        start({ stream: Stream.fail(new Error(message)) });
+        mocks.stateChanges.mockReturnValue(
+          Stream.concat(Stream.make({ phase: "connected" }), Stream.never),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mocks.providersStream).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(mocks.providersStream.mock.calls.length).toBeLessThanOrEqual(6);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });

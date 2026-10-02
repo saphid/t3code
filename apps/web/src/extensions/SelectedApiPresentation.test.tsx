@@ -9,8 +9,12 @@ import { EnvironmentId, ThreadId, ProjectId, ExtensionInstallation } from "@t3to
 import type { ApiInvocation } from "@t3tools/extension-sdk/capabilities";
 import { validateEnvironmentPackage } from "@t3tools/extension-sdk/environment";
 import { createInstalledExtensionController } from "./installedController";
-import { registerInstalledApiClient, setInstalledApiPolicy } from "./installedApiClients";
-import { registerWorkspaceExtension } from "./workspaceRegistry";
+import {
+  registerInstalledApiClient,
+  registerInstalledApiLoader,
+  setInstalledApiPolicy,
+} from "./installedApiClients";
+import { registerWorkspaceExtension, registerLazyWorkspaceExtension } from "./workspaceRegistry";
 import { installedWorkspaceContext } from "./installedContext";
 import { extensionWorkspaceRevision } from "@t3tools/contracts";
 import {
@@ -149,6 +153,23 @@ it.each([1, 2])(
             truncated: false,
           };
         throw new Error("Unexpected API");
+      },
+      registerLazy: (item, activate) => {
+        const stopSurface = registerLazyWorkspaceExtension(
+          context.resource.environmentId,
+          item.package.manifest,
+          activate,
+        );
+        const stopApi = registerInstalledApiLoader(
+          context.resource.environmentId,
+          item.id,
+          (item.package.provides ?? []).map((api) => api.id),
+          activate,
+        );
+        return () => {
+          stopSurface();
+          stopApi();
+        };
       },
       register: (extension, client) => {
         const surface = registerWorkspaceExtension(extension, undefined, {

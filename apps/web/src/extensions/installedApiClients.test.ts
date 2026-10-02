@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { ApiClient, ApiDiscovery } from "@t3tools/extension-sdk/capabilities";
 import {
   registerInstalledApiClient,
+  registerInstalledApiLoader,
   resolveInstalledApiProvider,
   setInstalledApiPolicy,
 } from "./installedApiClients";
@@ -215,5 +216,41 @@ it("falls back when the only provider is disabled and nothing was selected", asy
   } finally {
     stop();
     setInstalledApiPolicy("gone-env", null);
+  }
+});
+
+it("activates the selected presentation provider without loading unrelated clients", async () => {
+  const winner = client([selected]);
+  let stopClient = () => {};
+  const activate = vi.fn(async () => {
+    stopClient = registerInstalledApiClient("lazy-api-env", "example.files", winner);
+  });
+  const unrelated = vi.fn(async () => {});
+  const stopLazy = registerInstalledApiLoader(
+    "lazy-api-env",
+    "example.files",
+    [selected.id],
+    activate,
+  );
+  const stopOther = registerInstalledApiLoader("lazy-api-env", "other", ["other/api"], unrelated);
+  setInstalledApiPolicy("lazy-api-env", {
+    apiSelections: [],
+    apiResolution: [{ id: selected.id, providerId: "example.files" }],
+  });
+  try {
+    expect(activate).not.toHaveBeenCalled();
+    const result = await resolveInstalledApiProvider(
+      selected.id,
+      { ...context, resource: { ...context.resource, environmentId: "lazy-api-env" } },
+      new AbortController().signal,
+    );
+    expect(result?.client).toBe(winner);
+    expect(activate).toHaveBeenCalledOnce();
+    expect(unrelated).not.toHaveBeenCalled();
+  } finally {
+    stopLazy();
+    stopOther();
+    stopClient();
+    setInstalledApiPolicy("lazy-api-env", null);
   }
 });

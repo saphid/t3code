@@ -1,7 +1,6 @@
 import * as React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { ProjectId, type ExtensionInstallation } from "@t3tools/contracts";
 import { resolveResumableStreams, type ApiStreamFrame } from "@t3tools/extension-sdk/capabilities";
@@ -16,6 +15,7 @@ const env = vi.hoisted(() => {
   const prepared = new Map<string, unknown>();
   const online = new Map<string, boolean>();
   const installed = new Map<string, unknown[]>();
+  const unavailable = new Set<string>();
   const waiters = new Set<() => void>();
   // Environments whose catalogue list never answers, like a black-holed request.
   const heldLists = new Set<string>();
@@ -25,7 +25,21 @@ const env = vi.hoisted(() => {
     for (const listener of listeners) listener();
     for (const waiter of [...waiters]) waiter();
   };
-  return { listeners, prepared, online, installed, waiters, heldLists, discovery, notify };
+  return {
+    listeners,
+    prepared,
+    online,
+    installed,
+    unavailable,
+    waiters,
+    heldLists,
+    discovery,
+    notify,
+    lists: vi.fn(),
+    clients: vi.fn(),
+    connects: vi.fn(),
+    stops: vi.fn(),
+  };
 });
 
 vi.mock("../connection/runtime", async () => {
@@ -78,19 +92,25 @@ vi.mock("@t3tools/client-runtime/state/extensions", async () => {
     environmentExtensionApiStream: () => undefined,
     environmentExtensionsHttp: {
       list: (connection: { environmentId: string }) =>
-        Effect.suspend(() =>
-          env.heldLists.has(connection.environmentId)
+        Effect.suspend(() => {
+          env.lists(connection.environmentId);
+          return env.heldLists.has(connection.environmentId)
             ? Effect.never
             : reachable(connection)
               ? Effect.succeed({
                   installations: env.installed.get(connection.environmentId) ?? [],
                   supportsApiStreams: true,
                   supportedPackageFormats: [1, 2, 3],
+                  ...(env.unavailable.has(connection.environmentId)
+                    ? { pluginResolution: [{ id: "test.pack", status: "unavailable" }] }
+                    : {}),
                 })
-              : Effect.fail(new Unreachable({ message: "Failed to fetch" })),
-        ),
-      client: (_connection: unknown, input: { expectedContentHash: string }) =>
-        Effect.succeed({ code: "pack", contentHash: input.expectedContentHash }),
+              : Effect.fail(new Unreachable({ message: "Failed to fetch" }));
+        }),
+      client: (connection: { environmentId: string }, input: { expectedContentHash: string }) => {
+        env.clients(connection.environmentId);
+        return Effect.succeed({ code: "pack", contentHash: input.expectedContentHash });
+      },
       discoverApis: () =>
         Effect.promise(
           () =>
@@ -143,7 +163,10 @@ vi.mock("./clientProviderConnection", () => ({
   withClientConnectionId: () => undefined,
   withClientConnectionIdFrames: () => undefined,
   emitClientProviderEvent: () => {},
-  startClientProviderConnection: () => ({ stop: () => {}, notifyInstallationsChanged: () => {} }),
+  startClientProviderConnection: (deps: { environmentId: string }) => {
+    env.connects(deps.environmentId);
+    return { stop: () => env.stops(deps.environmentId), notifyInstallationsChanged: () => {} };
+  },
 }));
 vi.mock("./browserSurfaceBridge", () => ({ createBrowserSurfaceBridge: () => undefined }));
 vi.mock("./browserFramesBridge", () => ({ createBrowserFramesBridge: () => undefined }));
@@ -270,7 +293,12 @@ afterEach(async () => {
   env.prepared.clear();
   env.online.clear();
   env.installed.clear();
+  env.unavailable.clear();
   env.waiters.clear();
+  env.lists.mockClear();
+  env.clients.mockClear();
+  env.connects.mockClear();
+  env.stops.mockClear();
 });
 
 async function mountHost() {
@@ -365,4 +393,129 @@ it("does not let a catalogue list from a dropped connection hold the reconnect r
   await settle();
 
   expect(text(a)).toContain("Pack is unavailable");
+});
+
+it("opens no provider stream or client entry for an empty installed set", async () => {
+  setConnected("env-a", true);
+  setConnected("env-b", true);
+  await act(async () => {
+    roots.push(create(<InstalledExtensionsBootstrap />));
+  });
+  await settle();
+  expect(env.lists.mock.calls).toEqual([["env-a"], ["env-b"]]);
+  expect({
+    lists: env.lists.mock.calls.length,
+    connects: env.connects.mock.calls.length,
+    clients: env.clients.mock.calls.length,
+  }).toEqual({ lists: 2, connects: 0, clients: 0 });
+});
+
+it("opens the provider stream only for eligible clients and loads entries on first surface open", async () => {
+  env.installed.set("env-a", [pack]);
+  setConnected("env-a", true);
+  setConnected("env-b", true);
+  await act(async () => {
+    roots.push(create(<InstalledExtensionsBootstrap />));
+  });
+  await settle();
+  expect({
+    lists: env.lists.mock.calls.length,
+    connects: env.connects.mock.calls.length,
+    clients: env.clients.mock.calls.length,
+  }).toEqual({ lists: 2, connects: 1, clients: 0 });
+  expect(env.connects.mock.calls).toEqual([["env-a"]]);
+  let view!: ReactTestRenderer;
+  await act(async () => {
+    view = create(<WorkspaceExtensionSurface record={record("env-a")} visible />);
+    roots.push(view);
+  });
+  await settle();
+  expect(text(view)).toContain("live 1");
+  expect(env.clients.mock.calls).toEqual([["env-a"]]);
+  await act(() => refreshInstalledExtensions("env-a"));
+  expect(env.connects).toHaveBeenCalledOnce();
+  expect(env.clients).toHaveBeenCalledOnce();
+  env.installed.set("env-a", []);
+  await act(() => refreshInstalledExtensions("env-a"));
+  expect(env.stops.mock.calls).toEqual([["env-a"]]);
+});
+
+it("activates a client on its first accepted command registration", async () => {
+  const { registerCommands } = await import("./extensionCommandRegistry");
+  env.installed.set("env-a", [pack]);
+  setConnected("env-a", true);
+  await act(async () => {
+    roots.push(create(<InstalledExtensionsBootstrap />));
+  });
+  await settle();
+  expect(env.clients).not.toHaveBeenCalled();
+  await act(async () => {
+    const result = registerCommands({
+      environmentId: "env-a",
+      installationId: pack.id,
+      installationGeneration: 1,
+      context: record("env-a").context,
+      capabilities: ["t3.ui/keybindings"],
+      commands: [{ id: "refresh", title: "Refresh", scope: "thread" }],
+    });
+    expect(result.results).toEqual([{ commandId: "refresh", status: "registered" }]);
+  });
+  await settle();
+  expect(env.clients.mock.calls).toEqual([["env-a"]]);
+  expect(mounts).toEqual([]);
+});
+
+it.each(["disabled", "server-only", "unavailable", "unsupported"])(
+  "does not open the provider stream for a %s installation",
+  async (state) => {
+    env.installed.set("env-a", [
+      {
+        ...pack,
+        enabled: state !== "disabled",
+        package:
+          state === "server-only"
+            ? { format: 1, manifest, tools: [] }
+            : state === "unsupported"
+              ? {
+                  ...pack.package,
+                  format: 4,
+                  dependencies: [],
+                  requires: [],
+                  provides: [],
+                  assets: [],
+                }
+              : pack.package,
+      },
+    ]);
+    if (state === "unavailable") env.unavailable.add("env-a");
+    setConnected("env-a", true);
+    await act(async () => {
+      roots.push(create(<InstalledExtensionsBootstrap />));
+    });
+    await settle();
+    expect(env.connects).not.toHaveBeenCalled();
+    expect(env.clients).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps an unopened hidden surface dormant until it becomes visible", async () => {
+  env.installed.set("env-a", [pack]);
+  setConnected("env-a", true);
+  await act(async () => {
+    roots.push(create(<InstalledExtensionsBootstrap />));
+  });
+  await settle();
+  let view!: ReactTestRenderer;
+  await act(async () => {
+    view = create(<WorkspaceExtensionSurface record={record("env-a")} visible={false} />);
+    roots.push(view);
+  });
+  await settle();
+  expect(env.clients).not.toHaveBeenCalled();
+  await act(async () =>
+    view.update(<WorkspaceExtensionSurface record={record("env-a")} visible />),
+  );
+  await settle();
+  expect(env.clients).toHaveBeenCalledOnce();
+  expect(text(view)).toContain("live 1");
 });
