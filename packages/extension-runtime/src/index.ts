@@ -96,6 +96,8 @@ export interface ExtensionRuntime {
   addGrants(id: string, additions: InstallationGrants): Promise<Installation>;
   /** Grants the installation's declared APIs check at call time; see the broker. */
   requiredGrants(id: string): readonly string[];
+  /** The exact epoch forwarded with broker-verified client-provider calls. */
+  installationGeneration(id: string): number;
   enable(id: string): Promise<Installation>;
   disable(id: string): Promise<Installation>;
   remove(id: string): Promise<void>;
@@ -1200,6 +1202,10 @@ export async function createExtensionRuntime(options: RuntimeOptions): Promise<E
     list() {
       live();
       return [...installations.values()].map(clone);
+    },
+    installationGeneration(id) {
+      live();
+      return broker.installationGeneration(required(id));
     },
     requiredGrants(id) {
       live();

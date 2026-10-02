@@ -1,8 +1,16 @@
 import { validateContext, type ViewContext } from "@t3tools/extension-sdk/contracts";
+import { MOBILE_UI_CAPABILITIES } from "./mobileUiProviders";
 import type { MobilePageBootstrap } from "./mobileHostPage";
 
-export function isMobileApiSupported(id: string) {
-  return !id.startsWith("t3.ui/");
+export function isMobileApiSupported(id: string, operation?: string) {
+  if (!id.startsWith("t3.ui/")) return true;
+  const support = MOBILE_UI_CAPABILITIES[id];
+  if (!support || !Object.values(support.operations).some(Boolean)) return false;
+  return (
+    operation === undefined ||
+    operation === "getCapabilities" ||
+    support.operations[operation] === true
+  );
 }
 
 export function buildMobileHostHtml(pageSource: string, bootstrap: MobilePageBootstrap) {

@@ -948,6 +948,7 @@ export function createApiBroker(options: {
     validatePackage,
     resolution,
     requiredGrants,
+    installationGeneration: (record: Installation) => captureCaller(record).installationGeneration,
     invalidate(affectedPluginIds?: readonly string[]) {
       const liveKeys = new Set(
         providers().map((provider) =>

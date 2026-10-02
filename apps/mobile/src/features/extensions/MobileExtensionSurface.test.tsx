@@ -2,6 +2,8 @@ import * as React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import type { MobileExtensionTransport, MobileInstallation } from "./mobileExtensionHost";
+import type { MobileUiProviders } from "./mobileClientProviderConnection";
+import { DEFAULT_MOBILE_THEME_ID, getMobileThemeVariables } from "../../lib/mobileTheme";
 import { MobileExtensionSurface } from "./MobileExtensionSurface";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -10,6 +12,8 @@ const native = vi.hoisted(() => ({
   appStateChanged: (_state: string) => {},
   changed: () => {},
   transport: undefined as MobileExtensionTransport | undefined,
+  ui: undefined as MobileUiProviders | undefined,
+  linkTo: vi.fn(),
 }));
 vi.mock("react-native", () => ({
   AppState: {
@@ -41,8 +45,43 @@ vi.mock("react-native-safe-area-context", () => ({
 }));
 vi.mock("../../../.generated/mobile-extension/page", () => ({ default: "fixture page" }));
 vi.mock("./mobileExtensionTransport", () => ({
-  mobileExtensionTransport: async () => native.transport,
+  mobileExtensionTransport: async (
+    _environment: string,
+    _installation: string,
+    _hash: () => string,
+    _signal: AbortSignal,
+    ui: MobileUiProviders,
+  ) => {
+    native.ui = ui;
+    return native.transport;
+  },
 }));
+
+vi.mock("@effect/atom-react", () => ({ useAtomSet: () => async () => {} }));
+vi.mock("@react-navigation/native", () => ({ useLinkTo: () => native.linkTo }));
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({
+    isReady: true,
+    storedThemeId: DEFAULT_MOBILE_THEME_ID,
+    storedThemeIds: { light: DEFAULT_MOBILE_THEME_ID, dark: DEFAULT_MOBILE_THEME_ID },
+    storedThemeMode: "system",
+    systemDark: false,
+    themeId: DEFAULT_MOBILE_THEME_ID,
+    themeIds: { light: DEFAULT_MOBILE_THEME_ID, dark: DEFAULT_MOBILE_THEME_ID },
+    themeMode: "system",
+    themeAppearance: "light",
+    themeVariablesByAppearance: {
+      light: getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light"),
+      dark: getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "dark"),
+    },
+  }),
+}));
+vi.mock("../../state/preferences", () => ({ updateMobilePreferencesAtom: {} }));
+vi.mock("../../state/shell", () => ({ environmentSnapshotAtom: (id: string) => id }));
+vi.mock("../../state/atom-registry", () => ({
+  appAtomRegistry: { get: () => ({ threads: [{ id: "target", projectId: "p" }] }) },
+}));
+vi.mock("../../lib/openExternalUrl", () => ({ tryOpenExternalUrl: async () => true }));
 
 const context = {
   resource: { namespace: "t3.thread", id: "t", environmentId: "e", projectId: "p", threadId: "t" },
@@ -53,7 +92,11 @@ function installation(): MobileInstallation {
     id: "t3.pack",
     enabled: true,
     contentHash: "a".repeat(64),
-    grants: { capabilities: ["t3.test/read"], projectIds: ["p"] },
+    installationGeneration: 37,
+    grants: {
+      capabilities: ["t3.test/read", "t3.ui/theme.read", "t3.ui/navigation.open"],
+      projectIds: ["p"],
+    },
     package: {
       format: 4,
       clientEntry: "client.mjs",
@@ -88,6 +131,8 @@ afterEach(async () => {
   });
   renderer = undefined;
   native.currentState = "active";
+  native.ui = undefined;
+  native.linkTo.mockClear();
   vi.restoreAllMocks();
 });
 async function mount() {
@@ -252,4 +297,44 @@ it("stops automatic recovery after three WebView process crashes until Retry", a
     f.webview().props.onRenderProcessGone();
   });
   expect(renderer!.root.findAllByType("webview")).toHaveLength(1);
+});
+
+it("mounts native UI providers with the catalogue epoch and disposes them with the surface owner", async () => {
+  await mount();
+  const ui = native.ui!;
+  const caller = {
+    installationId: "t3.pack",
+    contentHash: "a".repeat(64),
+    installationGeneration: 37,
+  };
+  const request = {
+    method: "openThread",
+    input: { threadId: "target" },
+    context: {
+      ...context,
+      resource: {
+        ...context.resource,
+        environmentId: "e" as import("@t3tools/contracts").EnvironmentId,
+        projectId: "p" as import("@t3tools/contracts").ProjectId,
+        threadId: "t" as import("@t3tools/contracts").ThreadId,
+      },
+    },
+    caller,
+    signal: new AbortController().signal,
+  };
+  expect(await ui.providers.get("t3.client/navigation")!.invoke(request)).toEqual({
+    status: "opened",
+    threadId: "target",
+  });
+  expect(native.linkTo).toHaveBeenCalledWith("/threads/e/target");
+  await expect(
+    ui.providers
+      .get("t3.client/navigation")!
+      .invoke({ ...request, caller: { ...caller, installationGeneration: 1 } }),
+  ).rejects.toMatchObject({ code: "client-target-denied" });
+  await act(async () => renderer!.unmount());
+  renderer = undefined;
+  await expect(ui.providers.get("t3.client/navigation")!.invoke(request)).rejects.toMatchObject({
+    code: "client-provider-unavailable",
+  });
 });

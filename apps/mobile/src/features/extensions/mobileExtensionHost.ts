@@ -10,6 +10,7 @@ import type { AppStateStatus } from "react-native";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import { sha256 } from "@noble/hashes/sha2";
 import * as Encoding from "effect/Encoding";
+import { mobileUiLifetime } from "./mobileUiAbort";
 import { MOBILE_ASSET_CHUNK_BYTES } from "./mobileExtensionAssets";
 import { boundMobileRequest, isMobileApiSupported } from "./mobileHostProtocol";
 import type { BridgeOperation } from "./mobileExtensionBridge";
@@ -18,6 +19,7 @@ export interface MobileInstallation {
   id: string;
   contentHash: string;
   enabled: boolean;
+  installationGeneration?: number;
   grants: { capabilities: readonly string[]; projectIds: readonly string[] };
   package: unknown;
 }
@@ -161,6 +163,7 @@ export function createMobileExtensionHost(options: {
       }
       const signature = JSON.stringify([
         item.contentHash,
+        item.installationGeneration,
         item.enabled,
         [...new Set(item.grants.capabilities)].sort(),
         [...new Set(item.grants.projectIds)].sort(),
@@ -216,11 +219,11 @@ export function createMobileExtensionHost(options: {
       lifetime.signal.aborted
     )
       throw new Error("Installation unavailable");
-    return { item: state.installation, signal: AbortSignal.any([signal, lifetime.signal]) };
+    return { item: state.installation, ...mobileUiLifetime([signal, lifetime.signal]) };
   };
   const request = <T extends ApiInvocation | ApiStreamInvocation>(value: T) => {
     const bound = boundMobileRequest(value, options.context);
-    if (!isMobileApiSupported(bound.id))
+    if (!isMobileApiSupported(bound.id, "method" in bound ? bound.method : bound.name))
       throw new Error("UnsupportedOnMobile: this capability is unavailable");
     return bound;
   };
@@ -261,81 +264,89 @@ export function createMobileExtensionHost(options: {
       payload: unknown,
       callerSignal: AbortSignal,
     ): Promise<unknown> {
-      const { item, signal } = ready(callerSignal);
-      let result: unknown;
-      if (operation === "discover")
-        result = (await options.transport.discoverApis(options.context, signal)).filter((api) =>
-          isMobileApiSupported(api.id),
-        );
-      else if (operation === "invoke")
-        result = await options.transport.invokeApi(request(payload as ApiInvocation), signal);
-      else if (operation === "tool") {
-        const value = payload as { toolId: string; input: Json; context: ViewContext };
-        boundMobileRequest(value, options.context);
-        const pkg = validateEnvironmentPackage(item.package);
-        if (!pkg.tools.some((tool) => tool.id === value.toolId))
-          throw new Error("UnsupportedOnMobile: tool unavailable");
-        result = await options.transport.invokeTool(
-          value.toolId,
-          value.input,
-          options.context,
-          item.contentHash,
-          signal,
-        );
-      } else {
-        const value = payload as { path: string; offset: number };
-        if (!Number.isSafeInteger(value.offset) || value.offset < 0)
-          throw new Error("Invalid asset offset");
-        const pkg = validateEnvironmentPackage(item.package);
-        const asset =
-          pkg.format === 4 ? pkg.assets.find((entry) => entry.path === value.path) : undefined;
-        if (!asset || asset.byteLength > 8 * 1024 * 1024 || value.offset > asset.byteLength)
-          throw new Error("UnsupportedOnMobile: asset unavailable");
-        const key: CacheKey = [
-          options.environmentId,
-          item.id,
-          item.contentHash,
-          `asset:${value.path}`,
-        ];
-        let bytes = options.cache.get(key);
-        if (!(bytes instanceof Uint8Array)) {
-          bytes = await options.transport.asset(item.id, item.contentHash, value.path, signal);
-          if (signal.aborted) throw new Error("Installation expired");
-          const digest = Array.from(sha256(bytes), (byte) =>
-            byte.toString(16).padStart(2, "0"),
-          ).join("");
-          if (bytes.length !== asset.byteLength || digest !== asset.sha256)
-            throw new Error("Asset verification failed");
-          options.cache.set(key, bytes, bytes.length);
+      const { item, signal, dispose } = ready(callerSignal);
+      try {
+        let result: unknown;
+        if (operation === "discover")
+          result = (await options.transport.discoverApis(options.context, signal)).filter((api) =>
+            isMobileApiSupported(api.id),
+          );
+        else if (operation === "invoke")
+          result = await options.transport.invokeApi(request(payload as ApiInvocation), signal);
+        else if (operation === "tool") {
+          const value = payload as { toolId: string; input: Json; context: ViewContext };
+          boundMobileRequest(value, options.context);
+          const pkg = validateEnvironmentPackage(item.package);
+          if (!pkg.tools.some((tool) => tool.id === value.toolId))
+            throw new Error("UnsupportedOnMobile: tool unavailable");
+          result = await options.transport.invokeTool(
+            value.toolId,
+            value.input,
+            options.context,
+            item.contentHash,
+            signal,
+          );
+        } else {
+          const value = payload as { path: string; offset: number };
+          if (!Number.isSafeInteger(value.offset) || value.offset < 0)
+            throw new Error("Invalid asset offset");
+          const pkg = validateEnvironmentPackage(item.package);
+          const asset =
+            pkg.format === 4 ? pkg.assets.find((entry) => entry.path === value.path) : undefined;
+          if (!asset || asset.byteLength > 8 * 1024 * 1024 || value.offset > asset.byteLength)
+            throw new Error("UnsupportedOnMobile: asset unavailable");
+          const key: CacheKey = [
+            options.environmentId,
+            item.id,
+            item.contentHash,
+            `asset:${value.path}`,
+          ];
+          let bytes = options.cache.get(key);
+          if (!(bytes instanceof Uint8Array)) {
+            bytes = await options.transport.asset(item.id, item.contentHash, value.path, signal);
+            if (signal.aborted) throw new Error("Installation expired");
+            const digest = Array.from(sha256(bytes), (byte) =>
+              byte.toString(16).padStart(2, "0"),
+            ).join("");
+            if (bytes.length !== asset.byteLength || digest !== asset.sha256)
+              throw new Error("Asset verification failed");
+            options.cache.set(key, bytes, bytes.length);
+          }
+          result = {
+            base64: Encoding.encodeBase64(
+              bytes.subarray(value.offset, value.offset + MOBILE_ASSET_CHUNK_BYTES),
+            ),
+            byteLength: bytes.length,
+            sha256: asset.sha256,
+            mediaType: asset.mediaType,
+          };
         }
-        result = {
-          base64: Encoding.encodeBase64(
-            bytes.subarray(value.offset, value.offset + MOBILE_ASSET_CHUNK_BYTES),
-          ),
-          byteLength: bytes.length,
-          sha256: asset.sha256,
-          mediaType: asset.mediaType,
-        };
+        if (signal.aborted) throw new Error("Installation expired");
+        return result;
+      } finally {
+        dispose();
       }
-      if (signal.aborted) throw new Error("Installation expired");
-      return result;
     },
     async *subscribe(payload: unknown, callerSignal: AbortSignal) {
-      const { signal } = ready(callerSignal);
-      const value = payload as { request: ApiStreamInvocation; resumable?: boolean };
-      const bound = request(value.request);
-      if (
-        value.resumable &&
-        (!RESUMABLE_API_STREAMS[`${bound.id}#${bound.name}`] ||
-          !options.transport.subscribeResumableApi)
-      )
-        throw new Error("UnsupportedOnMobile: stream cannot resume");
-      const stream = value.resumable
-        ? options.transport.subscribeResumableApi!(bound, signal)
-        : options.transport.subscribeApi(bound, signal);
-      for await (const frame of stream) {
-        if (signal.aborted) return;
-        yield frame;
+      const { signal, dispose } = ready(callerSignal);
+      try {
+        const value = payload as { request: ApiStreamInvocation; resumable?: boolean };
+        const bound = request(value.request);
+        if (
+          value.resumable &&
+          (!RESUMABLE_API_STREAMS[`${bound.id}#${bound.name}`] ||
+            !options.transport.subscribeResumableApi)
+        )
+          throw new Error("UnsupportedOnMobile: stream cannot resume");
+        const stream = value.resumable
+          ? options.transport.subscribeResumableApi!(bound, signal)
+          : options.transport.subscribeApi(bound, signal);
+        for await (const frame of stream) {
+          if (signal.aborted) return;
+          yield frame;
+        }
+      } finally {
+        dispose();
       }
     },
     dispose() {

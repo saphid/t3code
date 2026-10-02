@@ -400,3 +400,115 @@ it("only counts WebView process crashes within the recent recovery window", asyn
     clock.mockRestore();
   }
 });
+
+it("allows pack theme/navigation calls through the page bridge and refuses unsupported operations", async () => {
+  const f = fixture();
+  const invoke = vi.mocked(f.transport.invokeApi);
+  invoke.mockImplementation(
+    async (request): Promise<import("@t3tools/extension-sdk/contracts").Json> =>
+      request.id === "t3.ui/theme"
+        ? { theme: "default" }
+        : { status: "opened", threadId: "target" },
+  );
+  await f.host.refresh();
+  let native!: ReturnType<typeof createNativeBridge>;
+  const page = createPageBridge({
+    generation: f.host.snapshot().generation,
+    send: (message) => native.receive(message),
+  });
+  native = createNativeBridge({
+    generation: f.host.snapshot().generation,
+    send: (message) => page.receive(message),
+    invoke: f.host.invoke,
+    subscribe: f.host.subscribe,
+  });
+  const request = {
+    id: "t3.ui/theme",
+    versionRange: "^1",
+    method: "getState",
+    input: {},
+    context,
+    clientConnectionId: "borrowed",
+  };
+  try {
+    expect(await page.invoke("invoke", request, new AbortController().signal)).toEqual({
+      theme: "default",
+    });
+    expect(
+      await page.invoke(
+        "invoke",
+        { ...request, id: "t3.ui/navigation", method: "openThread" },
+        new AbortController().signal,
+      ),
+    ).toEqual({ status: "opened", threadId: "target" });
+    expect(invoke.mock.calls[0]?.[0]).not.toHaveProperty("clientConnectionId");
+    for (const [id, method] of [
+      ["t3.ui/preferences", "getPreferences"],
+      ["t3.ui/theme", "getTerminalAppearance"],
+      ["t3.ui/navigation", "openFile"],
+    ])
+      await expect(
+        page.invoke("invoke", { ...request, id, method }, new AbortController().signal),
+      ).rejects.toThrow("unavailable");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  } finally {
+    page.dispose();
+    native.dispose();
+    f.host.dispose();
+  }
+});
+
+it("invokes supported UI APIs with React Native's AbortSignal implementation", async () => {
+  const f = fixture();
+  const any = vi.spyOn(AbortSignal, "any").mockImplementation(() => {
+    throw new Error("Native AbortSignal.any is unavailable");
+  });
+  try {
+    await f.host.refresh();
+    await expect(
+      f.host.invoke(
+        "invoke",
+        { id: "t3.ui/theme", method: "getState", versionRange: "^1", input: {}, context },
+        new AbortController().signal,
+      ),
+    ).resolves.toBeNull();
+  } finally {
+    any.mockRestore();
+    f.host.dispose();
+  }
+});
+
+it("filters discovery by native UI policy even when a web sibling exposes other UI APIs", async () => {
+  const f = fixture();
+  f.transport.discoverApis = async () =>
+    [
+      "t3.ui/theme",
+      "t3.ui/navigation",
+      "t3.ui/preferences",
+      "t3.ui/notifications",
+      "t3.orchestration/status",
+    ].map((id) => ({
+      id,
+      providerId: "host",
+      version: "1.0.0",
+      generation: 1,
+      health: "ready" as const,
+      selected: true,
+    }));
+  try {
+    await f.host.refresh();
+    const result = await f.host.invoke("discover", context, new AbortController().signal);
+    expect(result).toEqual(
+      ["t3.ui/theme", "t3.ui/navigation", "t3.orchestration/status"].map((id) => ({
+        id,
+        providerId: "host",
+        version: "1.0.0",
+        generation: 1,
+        health: "ready",
+        selected: true,
+      })),
+    );
+  } finally {
+    f.host.dispose();
+  }
+});

@@ -161,6 +161,7 @@ function fixture() {
   const runtime: Awaited<ReturnType<typeof createExtensionRuntime>> = {
     list: () => [entry],
     requiredGrants: () => [WORKSPACE_READ_TEXT, "fixture.reader/extra"],
+    installationGeneration: () => 37,
     catalogue: () => ({ apiSelections: [], apiResolution: [], pluginResolution: [] }),
     rollback: async () => entry,
     selectApi: async () => {},
@@ -744,6 +745,7 @@ it.effect("list reports the grants each installation's APIs require beside its o
       const service = yield* make(f.factory);
       const [listed] = yield* service.list;
       expect(listed?.requiredGrants).toEqual([WORKSPACE_READ_TEXT, "fixture.reader/extra"]);
+      expect(listed?.installationGeneration).toBe(37);
       expect(listed?.grants.capabilities).toEqual([WORKSPACE_READ_TEXT]);
     }).pipe(Effect.provide(f.services)),
   );

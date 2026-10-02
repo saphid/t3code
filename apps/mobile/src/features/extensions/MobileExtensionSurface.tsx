@@ -1,4 +1,7 @@
 import * as React from "react";
+import { EnvironmentId, ExtensionInstallation } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { useMobileUiProviders } from "./useMobileUiProviders";
 import { AppState, Keyboard, Pressable, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -13,6 +16,8 @@ import {
 import { mobileExtensionTransport } from "./mobileExtensionTransport";
 import { buildMobileHostHtml } from "./mobileHostProtocol";
 import type { MobilePageBootstrap } from "./mobileHostPage";
+
+const decodeInstallation = Schema.decodeUnknownSync(ExtensionInstallation);
 
 type Host = ReturnType<typeof createMobileExtensionHost>;
 type SurfaceProps = {
@@ -49,7 +54,24 @@ function SurfaceSession(props: SurfaceProps) {
     generation: "0",
   });
   const [host, setHost] = React.useState<Host | null>(null);
+  const installations = React.useMemo(
+    () => (snapshot.installation ? [decodeInstallation(snapshot.installation)] : undefined),
+    [snapshot.installation],
+  );
+  const installationGeneration = React.useCallback(
+    (id: string) =>
+      id === binding.installationId
+        ? (host?.snapshot().installation?.installationGeneration ?? null)
+        : null,
+    [binding.installationId, host],
+  );
+  const ui = useMobileUiProviders({
+    environmentId: EnvironmentId.make(binding.environmentId),
+    installations,
+    installationGeneration,
+  });
   React.useEffect(() => {
+    if (!ui) return;
     const controller = new AbortController();
     let owned: Host | undefined;
     void mobileExtensionTransport(
@@ -57,6 +79,7 @@ function SurfaceSession(props: SurfaceProps) {
       binding.installationId,
       () => owned?.snapshot().installation?.contentHash ?? "",
       controller.signal,
+      ui,
     )
       .then((transport) => {
         if (controller.signal.aborted) return;
@@ -81,7 +104,7 @@ function SurfaceSession(props: SurfaceProps) {
       subscription.remove();
       owned?.dispose();
     };
-  }, [binding]);
+  }, [binding, ui]);
   if (snapshot.phase === "ready" && host && snapshot.code)
     return <MountedSurface key={snapshot.generation} host={host} snapshot={snapshot} {...props} />;
   const label =

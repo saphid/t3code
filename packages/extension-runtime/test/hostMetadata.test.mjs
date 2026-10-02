@@ -114,6 +114,14 @@ NodeTest.test(
       );
     NodeAssert.equal(await invoke(), "ok");
     NodeAssert.equal(await invoke(), "ok");
+    NodeAssert.equal(
+      runtime.installationGeneration(provider.id),
+      captured[0].callerGenerations.at(-1).installationGeneration,
+    );
+    NodeAssert.equal(
+      runtime.installationGeneration(consumer.id),
+      captured[0].callerGenerations[0].installationGeneration,
+    );
     const first = captured[0],
       second = captured[1];
     NodeAssert.equal(first.callerId, provider.id);
@@ -148,6 +156,10 @@ NodeTest.test(
       first.callerGenerations[1].installationGeneration,
     );
     NodeAssert.equal(third.callerGenerations[1].contentHash, updated.contentHash);
+    NodeAssert.equal(
+      runtime.installationGeneration(provider.id),
+      third.callerGenerations[1].installationGeneration,
+    );
     NodeAssert.equal(third.providerGeneration, first.providerGeneration);
     await runtime.updateGrants(provider.id, {
       capabilities: [],
@@ -164,5 +176,9 @@ NodeTest.test(
       third.callerGenerations[1].installationGeneration,
     );
     NodeAssert.equal(fourth.providerGeneration, third.providerGeneration);
+    NodeAssert.equal(
+      runtime.installationGeneration(provider.id),
+      fourth.callerGenerations[1].installationGeneration,
+    );
   },
 );

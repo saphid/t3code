@@ -4,7 +4,11 @@ import {
   environmentExtensionApiStream,
   environmentResumableExtensionApiStream,
 } from "@t3tools/client-runtime/state/extensions";
-import { subscribe } from "@t3tools/client-runtime/rpc";
+import {
+  subscribe,
+  subscribeDynamicUntilCompleteWithSuspensions,
+  type RpcSession,
+} from "@t3tools/client-runtime/rpc";
 import {
   EnvironmentId,
   ExtensionApiInvokeInput,
@@ -22,6 +26,11 @@ import { AtomRegistry } from "effect/unstable/reactivity";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { MobileExtensionTransport } from "./mobileExtensionHost";
+import {
+  createMobileClientProviderSession,
+  type MobileUiProviders,
+} from "./mobileClientProviderConnection";
+import { withMobileUiSignal, checkMobileUiAbort, mobileUiLifetime } from "./mobileUiAbort";
 
 const decodeInvoke = Schema.decodeUnknownSync(ExtensionApiInvokeInput);
 const decodeSubscribe = Schema.decodeUnknownSync(ExtensionApiSubscribeInput);
@@ -34,12 +43,23 @@ export async function mobileExtensionTransport(
   installationId: string,
   hash: () => string,
   signal: AbortSignal,
+  ui?: MobileUiProviders,
 ): Promise<MobileExtensionTransport> {
   if (signal.aborted) throw new Error("Extension transport cancelled");
   const release = appAtomRegistry.mount(connectionAtomRuntime);
   let released = false;
+  let current:
+    | { socket: RpcSession; dispatcher: ReturnType<typeof createMobileClientProviderSession> }
+    | undefined;
+  const connectionWaiters = new Set<() => void>();
+  const wakeConnections = () => {
+    for (const wake of connectionWaiters) wake();
+  };
   const abort = () => {
     signal.removeEventListener("abort", abort);
+    current?.dispatcher.dispose();
+    current = undefined;
+    wakeConnections();
     if (!released) {
       released = true;
       release();
@@ -55,14 +75,114 @@ export async function mobileExtensionTransport(
   });
   type Services = typeof context extends import("effect/Context").Context<infer S> ? S : never;
   const run = <A, E>(effect: Effect.Effect<A, E, Services>, callSignal: AbortSignal) =>
-    Effect.runPromise(effect.pipe(Effect.provide(context)), {
-      signal: AbortSignal.any([signal, callSignal]),
-    });
+    withMobileUiSignal([signal, callSignal], (lifetime) =>
+      Effect.runPromise(effect.pipe(Effect.provide(context)), { signal: lifetime }),
+    );
   const environmentId = EnvironmentId.make(environment);
   const registry = await run(EnvironmentRegistry, signal).catch((error) => {
     abort();
     throw error;
   });
+  const connectionId = async (callSignal: AbortSignal, socket?: RpcSession) => {
+    if (!ui) return undefined;
+    checkMobileUiAbort(signal);
+    checkMobileUiAbort(callSignal);
+    if (!current || (socket && current.socket !== socket))
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          connectionWaiters.delete(done);
+          callSignal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, 10_000);
+        connectionWaiters.add(done);
+        callSignal.addEventListener("abort", done, { once: true });
+      });
+    checkMobileUiAbort(signal);
+    checkMobileUiAbort(callSignal);
+    if (!current || (socket && current.socket !== socket))
+      throw new Error("client-provider-unavailable");
+    return current.dispatcher.connectionId(callSignal);
+  };
+  if (ui) {
+    const connections = registry.followStream(
+      environmentId,
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const supervisor = yield* EnvironmentSupervisor;
+          return SubscriptionRef.changes(supervisor.session).pipe(
+            Stream.switchMap(
+              Option.match({
+                onNone: () => Stream.empty,
+                onSome: (socket) =>
+                  Stream.unwrap(
+                    Effect.gen(function* () {
+                      const dispatcher = yield* Effect.acquireRelease(
+                        Effect.sync(() => {
+                          const dispatcher = createMobileClientProviderSession(ui, {
+                            respond: (payload) => {
+                              void Effect.runPromise(
+                                socket.client[WS_METHODS.extensionsClientProvidersRespond](payload),
+                                { signal },
+                              ).catch(() => {});
+                            },
+                            emit: (correlationId, event) => {
+                              void Effect.runPromise(
+                                socket.client[WS_METHODS.extensionsClientProvidersEmit]({
+                                  correlationId,
+                                  event,
+                                }),
+                                { signal },
+                              ).catch(() => {});
+                            },
+                          });
+                          current = { socket, dispatcher };
+                          wakeConnections();
+                          return dispatcher;
+                        }),
+                        (dispatcher) =>
+                          Effect.sync(() => {
+                            dispatcher.dispose();
+                            if (current?.dispatcher === dispatcher) current = undefined;
+                          }),
+                      );
+                      return socket.client[WS_METHODS.extensionsClientProvidersConnect](
+                        { providers: ui.descriptors },
+                        { streamBufferSize: 8 },
+                      ).pipe(
+                        Stream.tap((frame) =>
+                          Effect.sync(() => {
+                            void dispatcher.receive(frame).catch(() => {});
+                          }),
+                        ),
+                        Stream.catchCause(() => Stream.empty),
+                      );
+                    }),
+                  ),
+              }),
+            ),
+          );
+        }),
+      ),
+    );
+    void run(Stream.runDrain(connections), signal)
+      .catch(() => {})
+      .finally(() => {
+        current?.dispatcher.dispose();
+        current = undefined;
+        wakeConnections();
+      });
+  }
+  const stamp = async <A extends { clientConnectionId?: string }>(
+    request: A,
+    callSignal: AbortSignal,
+    socket?: RpcSession,
+  ) => {
+    const { clientConnectionId: _untrusted, ...rest } = request;
+    const id = await connectionId(callSignal, socket);
+    return { ...rest, ...(id === undefined ? {} : { clientConnectionId: id }) };
+  };
   const connected = Effect.gen(function* () {
     const supervisor = yield* EnvironmentSupervisor;
     const prepared = yield* SubscriptionRef.get(supervisor.prepared);
@@ -70,22 +190,26 @@ export async function mobileExtensionTransport(
     return prepared.value;
   });
   async function* values<A, E>(stream: Stream.Stream<A, E, Services>, callSignal: AbortSignal) {
-    const lifetime = AbortSignal.any([signal, callSignal]);
+    const lifetime = mobileUiLifetime([signal, callSignal]);
     const iterator = Stream.toAsyncIterableWith(stream, context)[Symbol.asyncIterator]();
     const abort = () => {
       void iterator.return?.().catch(() => {});
     };
-    lifetime.addEventListener("abort", abort, { once: true });
+    lifetime.signal.addEventListener("abort", abort, { once: true });
     try {
-      if (lifetime.aborted) throw new Error("Cancelled");
-      while (!lifetime.aborted) {
+      if (lifetime.signal.aborted) throw new Error("Cancelled");
+      while (!lifetime.signal.aborted) {
         const next = await iterator.next();
-        if (next.done || lifetime.aborted) return;
+        if (next.done || lifetime.signal.aborted) return;
         yield next.value;
       }
     } finally {
-      lifetime.removeEventListener("abort", abort);
-      await iterator.return?.();
+      lifetime.signal.removeEventListener("abort", abort);
+      try {
+        await iterator.return?.();
+      } finally {
+        lifetime.dispose();
+      }
     }
   }
   const http = async <A, E>(
@@ -110,27 +234,49 @@ export async function mobileExtensionTransport(
         (prepared) => environmentExtensionsHttp.asset(prepared, { id, expectedContentHash, path }),
         callSignal,
       ),
-    invokeApi: async (request, callSignal) =>
-      (
+    invokeApi: async (request, callSignal) => {
+      const bound = await stamp(request, callSignal);
+      return (
         await http(
           (prepared) =>
             environmentExtensionsHttp.invokeApi(
               prepared,
-              decodeInvoke({ installationId, expectedContentHash: hash(), request }),
+              decodeInvoke({ installationId, expectedContentHash: hash(), request: bound }),
             ),
           callSignal,
         )
-      ).result,
+      ).result;
+    },
     async *subscribeApi(request, callSignal) {
       for await (const { cursor, ...frame } of values(
-        environmentExtensionApiStream(environmentId, subscribePayload(request)),
+        environmentExtensionApiStream(
+          environmentId,
+          subscribePayload(await stamp(request, callSignal)),
+        ),
         callSignal,
       ))
         yield { ...frame, ...(cursor === undefined ? {} : { cursor }) };
     },
     async *subscribeResumableApi(request, callSignal) {
       for await (const value of values(
-        environmentResumableExtensionApiStream(environmentId, () => subscribePayload(request)),
+        ui
+          ? registry
+              .followStream(
+                environmentId,
+                subscribeDynamicUntilCompleteWithSuspensions(
+                  WS_METHODS.subscribeExtensionApi,
+                  (socket) =>
+                    Effect.promise(async () =>
+                      subscribePayload(await stamp(request, callSignal, socket)),
+                    ),
+                  { streamBufferSize: 1 },
+                ).pipe(Stream.map(Option.some), Stream.concat(Stream.succeed(Option.none()))),
+              )
+              .pipe(
+                Stream.takeWhile(Option.isSome),
+                Stream.map((frame) => frame.value),
+              )
+          : environmentResumableExtensionApiStream(environmentId, () => subscribePayload(request)),
         callSignal,
       )) {
         if (Option.isNone(value)) yield null;
@@ -164,18 +310,23 @@ export async function mobileExtensionTransport(
       ).result,
     watch(changed, callSignal) {
       const controller = new AbortController();
-      const lifetime = AbortSignal.any([callSignal, controller.signal]);
+      const lifetime = mobileUiLifetime([callSignal, controller.signal]);
       const changes = registry.followStream(
         environmentId,
         subscribe(WS_METHODS.subscribeExtensionCatalogue, {}, { streamBufferSize: 1 }),
       );
       void run(
         Stream.runForEach(changes, () => Effect.sync(changed)),
-        lifetime,
-      ).catch(() => {
-        if (!lifetime.aborted) changed();
-      });
-      return () => controller.abort();
+        lifetime.signal,
+      )
+        .catch(() => {
+          if (!lifetime.signal.aborted) changed();
+        })
+        .finally(() => lifetime.dispose());
+      return () => {
+        controller.abort();
+        lifetime.dispose();
+      };
     },
   };
 }

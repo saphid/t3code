@@ -454,6 +454,12 @@ export function createMobileUiProviders(deps: MobileUiProviderDeps) {
     ],
     capabilities: MOBILE_UI_CAPABILITIES,
     notifyAppearanceChanged,
+    resetConnection() {
+      for (const watcher of watchers) closeWatcher(watcher);
+      const overlay = deps.overlay.getSnapshot();
+      if (overlay && overlay === ownedOverlay) deps.overlay.clear(overlay.owner);
+      ownedOverlay = null;
+    },
     notifyInstallationsChanged() {
       if (disposed) return;
       const overlay = deps.overlay.getSnapshot();

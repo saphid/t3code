@@ -30,9 +30,16 @@ describe("mobile host authority and page boundary", () => {
     ).toThrow("MobileContextDenied");
   });
   it("exposes only bridged mobile UI APIs", () => {
-    expect(isMobileApiSupported("t3.ui/theme")).toBe(false);
+    expect(isMobileApiSupported("t3.ui/theme")).toBe(true);
+    expect(isMobileApiSupported("t3.ui/theme", "getState")).toBe(true);
+    expect(isMobileApiSupported("t3.ui/theme", "getTerminalAppearance")).toBe(false);
+    expect(isMobileApiSupported("t3.ui/theme", "subscribeTerminalAppearance")).toBe(false);
     expect(isMobileApiSupported("t3.orchestration/status")).toBe(true);
-    expect(isMobileApiSupported("t3.ui/navigation")).toBe(false);
+    expect(isMobileApiSupported("t3.ui/navigation")).toBe(true);
+    expect(isMobileApiSupported("t3.ui/navigation", "openThread")).toBe(true);
+    expect(isMobileApiSupported("t3.ui/navigation", "openAgentSession")).toBe(true);
+    expect(isMobileApiSupported("t3.ui/navigation", "openFile")).toBe(false);
+    expect(isMobileApiSupported("t3.ui/preferences")).toBe(false);
     expect(isMobileApiSupported("t3.ui/terminal")).toBe(false);
   });
   it("keeps bootstrap data in its script and denies page network access", () => {

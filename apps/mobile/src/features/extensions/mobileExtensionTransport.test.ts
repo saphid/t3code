@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS, type ClientProviderServerFrame } from "@t3tools/contracts";
 import {
   EnvironmentRegistry,
   EnvironmentSupervisor,
@@ -10,6 +10,12 @@ import {
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import type { RpcSession } from "@t3tools/client-runtime/rpc";
+import { MOBILE_UI_CAPABILITIES } from "./mobileUiProviders";
+import type { MobileUiProviders } from "./mobileClientProviderConnection";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -26,7 +32,7 @@ vi.mock("effect/unstable/reactivity", async (importOriginal) => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-const fixture = Effect.fnUntraced(function* (fetcher: typeof fetch) {
+const fixture = Effect.fnUntraced(function* (fetcher: typeof fetch, ui?: MobileUiProviders) {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("e"),
     label: "Fixture",
@@ -42,13 +48,22 @@ const fixture = Effect.fnUntraced(function* (fetcher: typeof fetch) {
     target,
   };
   const prepared = yield* SubscriptionRef.make(Option.some(connection));
-  const supervisor = { prepared } as EnvironmentSupervisor["Service"];
+  const session = yield* SubscriptionRef.make(Option.none<RpcSession>());
+  const supervisor = { prepared, session, target } as EnvironmentSupervisor["Service"];
   const registry = {
     run: (id, effect) => {
       expect(id).toBe(target.environmentId);
       return Effect.provideService(effect, EnvironmentSupervisor, supervisor);
     },
-  } satisfies Pick<EnvironmentRegistry["Service"], "run">;
+    runStream: (id, stream) => {
+      expect(id).toBe(target.environmentId);
+      return Stream.provideService(stream, EnvironmentSupervisor, supervisor);
+    },
+    followStream: (id, stream) => {
+      expect(id).toBe(target.environmentId);
+      return Stream.provideService(stream, EnvironmentSupervisor, supervisor);
+    },
+  } satisfies Pick<EnvironmentRegistry["Service"], "run" | "followStream" | "runStream">;
   const http = yield* Layer.build(remoteHttpClientLayer(fetcher));
   const context = Context.merge(
     http,
@@ -60,10 +75,17 @@ const fixture = Effect.fnUntraced(function* (fetcher: typeof fetch) {
   const owner = new AbortController();
   let hash = "a".repeat(64);
   const transport = yield* Effect.promise(() =>
-    mobileExtensionTransport("e", "t3.pack", () => hash, owner.signal),
+    mobileExtensionTransport("e", "t3.pack", () => hash, owner.signal, ui),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => owner.abort()));
-  return { transport, owner, release, prepared, setHash: (value: string) => (hash = value) };
+  return {
+    transport,
+    owner,
+    release,
+    prepared,
+    session,
+    setHash: (value: string) => (hash = value),
+  };
 });
 
 describe("mobile transport borrowing the environment supervisor", () => {
@@ -137,3 +159,233 @@ describe("mobile transport borrowing the environment supervisor", () => {
     }),
   );
 });
+
+const socketFixture = Effect.fnUntraced(function* (connectionId: string) {
+  const frames = yield* Queue.unbounded<ClientProviderServerFrame>();
+  const opened = yield* Deferred.make<void>();
+  const closed = yield* Deferred.make<void>();
+  const sent = yield* Queue.unbounded<unknown>();
+  const apiOpened = yield* Queue.unbounded<unknown>();
+  const apiFrames = yield* Queue.unbounded<import("@t3tools/contracts").ExtensionApiStreamFrame>();
+  const descriptors = [
+    { id: "t3.client/theme", version: "1.0.0" },
+    { id: "t3.client/navigation", version: "1.0.0" },
+  ];
+  const client = {
+    [WS_METHODS.subscribeExtensionApi]: (input: unknown) =>
+      Stream.concat(
+        Stream.fromEffect(Queue.offer(apiOpened, input)).pipe(Stream.drain),
+        Stream.fromQueue(apiFrames),
+      ),
+    [WS_METHODS.extensionsClientProvidersConnect]: (input: { providers: typeof descriptors }) => {
+      expect(input.providers).toEqual(descriptors);
+      return Stream.concat(
+        Stream.fromEffect(
+          Deferred.succeed(opened, undefined).pipe(
+            Effect.as({
+              type: "registered",
+              connectionId,
+              accepted: descriptors,
+              rejected: [],
+            } as ClientProviderServerFrame),
+          ),
+        ),
+        Stream.fromQueue(frames),
+      ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined)));
+    },
+    [WS_METHODS.extensionsClientProvidersRespond]: (payload: unknown) =>
+      Queue.offer(sent, payload).pipe(Effect.asVoid),
+    [WS_METHODS.extensionsClientProvidersEmit]: (payload: unknown) =>
+      Queue.offer(sent, payload).pipe(Effect.asVoid),
+  } as unknown as RpcSession["client"];
+  const socket = { client } as RpcSession;
+  return { socket, frames, opened, closed, sent, apiOpened, apiFrames };
+});
+
+it.effect(
+  "stamps only the registered mobile identity and cleans registrations on socket replacement and unmount",
+  () =>
+    Effect.gen(function* () {
+      const closeWatcher = vi.fn();
+      const resetConnection = vi.fn();
+      const ui: MobileUiProviders = {
+        providers: new Map([
+          [
+            "t3.client/theme",
+            {
+              invoke: async () => null,
+              openStream: (call) => {
+                call.emit({ type: "snapshot", value: null });
+                return closeWatcher;
+              },
+            },
+          ],
+        ]),
+        descriptors: [
+          { id: "t3.client/theme", version: "1.0.0" },
+          { id: "t3.client/navigation", version: "1.0.0" },
+        ],
+        capabilities: MOBILE_UI_CAPABILITIES,
+        resetConnection,
+        dispose: vi.fn(),
+        notifyAppearanceChanged: vi.fn(),
+        notifyInstallationsChanged: vi.fn(),
+      };
+      let expectedId = "first";
+      const bodies: unknown[] = [];
+      const f = yield* fixture(async (url, init) => {
+        const body = (await new Request(String(url), init).json()) as {
+          request: { clientConnectionId?: string };
+        };
+        bodies.push(body);
+        if (body.request.clientConnectionId !== expectedId)
+          return Response.json(
+            {
+              _tag: "ExtensionOperationError",
+              operation: "invoke",
+              detail: "client-target-denied",
+            },
+            { status: 400 },
+          );
+        return Response.json({ result: { ok: true } });
+      }, ui);
+      const first = yield* socketFixture("first");
+      yield* SubscriptionRef.set(f.session, Option.some(first.socket));
+      const request = {
+        id: "t3.ui/theme",
+        versionRange: "^1",
+        method: "getState",
+        input: {},
+        context: {
+          resource: { namespace: "t3.thread", id: "t", environmentId: "e" },
+          client: "mobile",
+        },
+        clientConnectionId: "borrowed",
+      };
+      expect(
+        yield* Effect.promise(() => f.transport.invokeApi(request, new AbortController().signal)),
+      ).toEqual({ ok: true });
+      yield* Deferred.await(first.opened);
+      yield* Queue.offer(first.frames, {
+        type: "subscriptionOpen",
+        subscriptionId: "s",
+        apiId: "t3.client/theme",
+        name: "watchState",
+        input: {},
+        caller: {
+          installationId: "t3.pack",
+          contentHash: "a".repeat(64),
+          installationGeneration: 37,
+        },
+        context: {
+          ...request.context,
+          resource: { ...request.context.resource, environmentId: EnvironmentId.make("e") },
+        },
+      });
+      expect(yield* Queue.take(first.sent)).toEqual({
+        correlationId: "s",
+        event: { type: "snapshot", value: null },
+      });
+      const replacement = yield* socketFixture("replacement");
+      expectedId = "replacement";
+      yield* SubscriptionRef.set(f.session, Option.some(replacement.socket));
+      yield* Deferred.await(first.closed);
+      yield* Deferred.await(replacement.opened);
+      expect(closeWatcher).toHaveBeenCalledTimes(1);
+      expect(resetConnection).toHaveBeenCalledTimes(1);
+      expect(
+        yield* Effect.promise(() => f.transport.invokeApi(request, new AbortController().signal)),
+      ).toEqual({ ok: true });
+      expect(bodies).toEqual(
+        ["first", "replacement"].map((clientConnectionId) => ({
+          installationId: "t3.pack",
+          expectedContentHash: "a".repeat(64),
+          request: { ...request, clientConnectionId },
+        })),
+      );
+      f.owner.abort();
+      expect(resetConnection).toHaveBeenCalledTimes(2);
+      yield* Deferred.await(replacement.closed);
+      expect(f.release).toHaveBeenCalledTimes(1);
+      yield* Effect.promise(() =>
+        expect(f.transport.invokeApi(request, new AbortController().signal)).rejects.toThrow(),
+      );
+    }),
+);
+
+it.effect(
+  "stamps ordinary streams and each resumed session with its own authenticated identity",
+  () =>
+    Effect.gen(function* () {
+      const ui: MobileUiProviders = {
+        providers: new Map(),
+        descriptors: [
+          { id: "t3.client/theme", version: "1.0.0" },
+          { id: "t3.client/navigation", version: "1.0.0" },
+        ],
+        capabilities: MOBILE_UI_CAPABILITIES,
+        resetConnection: vi.fn(),
+        dispose: vi.fn(),
+        notifyAppearanceChanged: vi.fn(),
+        notifyInstallationsChanged: vi.fn(),
+      };
+      const f = yield* fixture(async () => Response.json({}), ui);
+      const first = yield* socketFixture("first");
+      yield* SubscriptionRef.set(f.session, Option.some(first.socket));
+      yield* Deferred.await(first.opened);
+      const request = {
+        id: "t3.ui/theme",
+        versionRange: "^1",
+        name: "subscribeState",
+        input: {},
+        context: {
+          resource: { namespace: "t3.thread", id: "t", environmentId: "e" },
+          client: "mobile",
+        },
+        clientConnectionId: "borrowed",
+      };
+      const iterator = f.transport.subscribeResumableApi!(request, new AbortController().signal)[
+        Symbol.asyncIterator
+      ]();
+      const initial = iterator.next();
+      expect(yield* Queue.take(first.apiOpened)).toEqual({
+        installationId: "t3.pack",
+        expectedContentHash: "a".repeat(64),
+        request: { ...request, clientConnectionId: "first" },
+      });
+      const frame = { streamId: "s", sequence: 1, type: "snapshot", value: null } as const;
+      yield* Queue.offer(first.apiFrames, frame);
+      expect(yield* Effect.promise(() => initial)).toEqual({ done: false, value: frame });
+      const suspension = iterator.next();
+      yield* SubscriptionRef.set(f.session, Option.none());
+      expect(yield* Effect.promise(() => suspension)).toEqual({ done: false, value: null });
+      yield* Deferred.await(first.closed);
+      const replacement = yield* socketFixture("replacement");
+      yield* SubscriptionRef.set(f.session, Option.some(replacement.socket));
+      yield* Deferred.await(replacement.opened);
+      const resumed = iterator.next();
+      expect(yield* Queue.take(replacement.apiOpened)).toEqual({
+        installationId: "t3.pack",
+        expectedContentHash: "a".repeat(64),
+        request: { ...request, clientConnectionId: "replacement" },
+      });
+      yield* Queue.offer(replacement.apiFrames, frame);
+      expect(yield* Effect.promise(() => resumed)).toEqual({ done: false, value: frame });
+      yield* Effect.promise(async () => {
+        await iterator.return?.();
+      });
+      const ordinaryStream = f.transport.subscribeApi(request, new AbortController().signal);
+      const ordinary = ordinaryStream[Symbol.asyncIterator]();
+      const next = ordinary.next();
+      expect(yield* Queue.take(replacement.apiOpened)).toMatchObject({
+        request: { clientConnectionId: "replacement" },
+      });
+      yield* Queue.offer(replacement.apiFrames, frame);
+      expect(yield* Effect.promise(() => next)).toEqual({ done: false, value: frame });
+      yield* Effect.promise(async () => {
+        await ordinary.return?.();
+      });
+      f.owner.abort();
+      yield* Deferred.await(replacement.closed);
+    }),
+);

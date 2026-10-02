@@ -29,6 +29,8 @@ export const ExtensionInstallation = Schema.Struct({
    * number, and one oversized entry must not fail the whole list.
    */
   requiredGrants: Schema.optional(Schema.Array(Identity)),
+  /** Broker-owned caller epoch; absent on servers predating mobile UI dispatch. */
+  installationGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 export type ExtensionInstallation = typeof ExtensionInstallation.Type;
 export const ExtensionViewContext = Schema.Struct({
