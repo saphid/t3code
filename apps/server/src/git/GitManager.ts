@@ -1007,13 +1007,16 @@ export const make = Effect.gen(function* () {
     localBranch = pullRequest.headBranch,
   ) =>
     configurePullRequestHeadUpstreamBase(cwd, pullRequest, localBranch).pipe(
+      // Spread into the result. Absent when there was no head repository to track, false when
+      // configuring failed: the client warns only then, as the branch keeps whatever it had.
+      Effect.map((configured) => (configured ? { isTrackingPullRequestHead: true } : {})),
       Effect.catch((error) =>
         Effect.logWarning("GitManager.configurePullRequestHeadUpstream failed", {
           cwd,
           localBranch,
           headBranch: pullRequest.headBranch,
           cause: error,
-        }).pipe(Effect.asVoid),
+        }).pipe(Effect.as({ isTrackingPullRequestHead: false })),
       ),
     );
 
@@ -2430,6 +2433,117 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  // Checking a pull request out in the repository itself moves the user's own checkout, so it
+  // refuses instead of discarding tracked edits.
+  const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequestNumber} here, or check it out in its own folder.`,
+      });
+    }
+  });
+
+  // Where the checkout is, to return to: the branch, or the commit when HEAD is detached, and
+  // every branch's upstream as `git config --get-regexp` lists it.
+  const readCheckoutPosition = Effect.fn("readCheckoutPosition")(function* (cwd: string) {
+    const details = yield* gitCore.statusDetails(cwd);
+    const { commitSha } = yield* gitCore.resolveCommit({ cwd, revision: "HEAD" });
+    const tracking = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.readTracking",
+      cwd,
+      args: ["config", "--get-regexp", "^branch\\..*\\.(remote|merge)$"],
+      allowNonZeroExit: true,
+    });
+    return { branch: details.branch, commitSha, tracking: tracking.stdout.split("\n") };
+  });
+
+  // Puts a branch's upstream back as `readCheckoutPosition` saw it: a provider may retarget it
+  // (Bitbucket does) before switching to it.
+  const restoreBranchTracking = Effect.fn("restoreBranchTracking")(function* (
+    cwd: string,
+    branch: string,
+    tracking: readonly string[],
+  ) {
+    for (const key of [`branch.${branch}.remote`, `branch.${branch}.merge`]) {
+      const operation = "GitManager.preparePullRequestThread.restoreTracking";
+      yield* gitCore.execute({
+        operation,
+        cwd,
+        args: ["config", "--unset-all", key],
+        allowNonZeroExit: true,
+      });
+      for (const line of tracking.filter((entry) => entry.startsWith(`${key} `))) {
+        yield* gitCore.execute({
+          operation,
+          cwd,
+          args: ["config", "--add", key, line.slice(key.length + 1)],
+        });
+      }
+    }
+  });
+
+  // Only the provider knows which branch it checks a pull request out on — some name it after the
+  // head branch, some `pulls/<n>` or a fork-specific name — so its commits are checked on the
+  // branch it actually landed on. One carrying commits the pull request lacks is somebody's own
+  // work: the checkout goes back where it started and refuses, and the branch keeps them.
+  const ensureCheckoutKeepsWork = Effect.fn("ensureCheckoutKeepsWork")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+    pullHead: string | null,
+    start: {
+      readonly branch: string | null;
+      readonly commitSha: string;
+      readonly tracking: readonly string[];
+    },
+    checkoutFailed: boolean,
+  ) {
+    const landed = yield* readCheckoutPosition(cwd);
+    const moved = landed.branch !== start.branch || landed.commitSha !== start.commitSha;
+    if (checkoutFailed && !moved) {
+      if (landed.branch !== null) yield* restoreBranchTracking(cwd, landed.branch, start.tracking);
+      return;
+    }
+    const contained =
+      pullHead === null || landed.commitSha === pullHead
+        ? true
+        : (yield* gitCore.execute({
+            operation: "GitManager.preparePullRequestThread.isAncestor",
+            cwd,
+            args: ["merge-base", "--is-ancestor", landed.commitSha, pullHead],
+            allowNonZeroExit: true,
+          })).exitCode === 0;
+    if (!checkoutFailed && contained) return;
+    if (moved) {
+      yield* gitCore.execute({
+        operation: "GitManager.preparePullRequestThread.restoreCheckout",
+        cwd,
+        args:
+          start.branch === null
+            ? ["checkout", "--quiet", "--detach", start.commitSha]
+            : landed.branch === start.branch && landed.commitSha !== start.commitSha
+              ? ["reset", "--keep", start.commitSha]
+              : ["checkout", "--quiet", start.branch, "--"],
+      });
+    }
+    if (landed.branch !== null) yield* restoreBranchTracking(cwd, landed.branch, start.tracking);
+    if (contained) return;
+    return yield* new GitManagerError({
+      operation: "preparePullRequestThread",
+      cwd,
+      detail: `The local branch ${landed.branch ?? landed.commitSha} has commits that are not on pull request #${pullRequestNumber}. Push or move them before checking it out here, or check it out in its own folder.`,
+    });
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2463,25 +2577,54 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
-          cwd: input.cwd,
-          reference: normalizedReference,
-          force: true,
-        });
-        const details = yield* gitCore.statusDetails(input.cwd);
-        yield* configurePullRequestHeadUpstream(
+        const pullRequestWithRemoteInfo = {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        } as const;
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
+        const pullHead = yield* fetchPullRequestHead(input.cwd, pullRequestWithRemoteInfo);
+        const start = yield* readCheckoutPosition(input.cwd);
+        // Never forced: `gh pr checkout --force` hard-resets the branch, discarding edits and
+        // local commits. Unforced, the provider can only fast-forward, so a branch that has
+        // diverged is switched to at most, or fails the checkout part-way, and is caught below.
+        const checkout = yield* (yield* sourceControlProvider(input.cwd))
+          .checkoutChangeRequest({
+            cwd: input.cwd,
+            reference: normalizedReference,
+          })
+          .pipe(Effect.exit);
+        yield* ensureCheckoutKeepsWork(
           input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
+          pullRequest.number,
+          pullHead,
+          start,
+          Exit.isFailure(checkout),
+        );
+        if (Exit.isFailure(checkout)) {
+          return yield* Effect.failCause(checkout.cause);
+        }
+        const details = yield* gitCore.statusDetails(input.cwd);
+        const tracking = yield* configurePullRequestHeadUpstream(
+          input.cwd,
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
+        // A successful provider checkout says nothing about the commit it left: some switch to an
+        // existing branch without moving it, and some name the branch differently from the head
+        // branch. Only the head read back from the host proves the checkout is current, and the
+        // branch is only moved onto it by fast-forward.
+        const refreshed =
+          pullHead === null
+            ? { onTarget: false }
+            : yield* gitCore
+                .refreshCheckedOutBranch({ cwd: input.cwd, targetCommit: pullHead })
+                .pipe(Effect.orElseSucceed(() => ({ onTarget: false })));
         return {
           pullRequest,
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead: refreshed.onTarget,
+          ...tracking,
         };
       }
 
@@ -2489,7 +2632,7 @@ export const make = Effect.gen(function* () {
         worktreePath: string,
       ) {
         const details = yield* gitCore.statusDetails(worktreePath);
-        yield* configurePullRequestHeadUpstream(
+        return yield* configurePullRequestHeadUpstream(
           worktreePath,
           {
             ...pullRequest,
@@ -2519,12 +2662,12 @@ export const make = Effect.gen(function* () {
           // findLocalHeadBranch also accepts a branch that merely shares the head's bare name —
           // a fork PR opened from "main" matches the user's own local main. That checkout is
           // somebody else's work, so it keeps its tracking config and nothing else.
-          yield* ensureExistingWorktreeUpstream(worktreePath);
           return {
             pullRequest,
             branch: localPullRequestBranch,
             worktreePath,
             isOnPullRequestHead: false,
+            ...(yield* ensureExistingWorktreeUpstream(worktreePath)),
           };
         }
 
@@ -2538,29 +2681,36 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
           );
 
-        yield* ensureExistingWorktreeUpstream(worktreePath);
+        const tracking = yield* ensureExistingWorktreeUpstream(worktreePath);
 
-        const refreshed = yield* fetchPullRequestHead(worktreePath, pullRequestWithRemoteInfo).pipe(
-          Effect.flatMap((target) =>
-            target === null
-              ? Effect.succeed({ moved: false, onTarget: false })
-              : gitCore.refreshCheckedOutBranch({
+        // Only the head read back from the pull request's own repository. The branch's upstream
+        // does not name it: configuring it is best-effort, so it can still point at whatever the
+        // checkout was cut from, or at a same-named branch elsewhere.
+        const pullHead = yield* fetchPullRequestHead(worktreePath, pullRequestWithRemoteInfo);
+        const refreshed =
+          pullHead === null
+            ? { moved: false, onTarget: false }
+            : yield* gitCore
+                .refreshCheckedOutBranch({
                   cwd: worktreePath,
-                  targetCommit: target,
+                  targetCommit: pullHead,
                   resetWhenHeadCommit: upstreamCommitBeforeFetch,
-                }),
-          ),
-          Effect.catch((error) =>
-            Effect.logWarning(
-              "GitManager.preparePullRequestThread reused worktree refresh failed",
-              {
-                worktreePath,
-                localBranch: localPullRequestBranch,
-                cause: error,
-              },
-            ).pipe(Effect.as({ moved: false, onTarget: false })),
-          ),
-        );
+                })
+                .pipe(
+                  // Dirty or divergent checkouts are refused without failing; this is a Git or
+                  // I/O failure. Git's detail is left out: it can carry remote URLs and stderr.
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "GitManager.preparePullRequestThread reused worktree refresh failed",
+                      {
+                        worktreePath,
+                        localBranch: localPullRequestBranch,
+                        operation: error.operation,
+                        exitCode: error.exitCode,
+                      },
+                    ).pipe(Effect.as({ moved: false, onTarget: false })),
+                  ),
+                );
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.
@@ -2573,6 +2723,7 @@ export const make = Effect.gen(function* () {
           branch: localPullRequestBranch,
           worktreePath,
           isOnPullRequestHead: refreshed.onTarget,
+          ...tracking,
         };
       });
 
@@ -2666,7 +2817,7 @@ export const make = Effect.gen(function* () {
           ),
         },
       );
-      yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
+      const tracking = yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
       return {
@@ -2674,6 +2825,7 @@ export const make = Effect.gen(function* () {
         branch: worktree.worktree.refName,
         worktreePath: worktree.worktree.path,
         isOnPullRequestHead: true,
+        ...tracking,
       };
     }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
   });
