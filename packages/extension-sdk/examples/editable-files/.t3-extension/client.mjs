@@ -338,6 +338,7 @@ var __t3Client = (() => {
   var ORCHESTRATION_CONTROL = "t3.orchestration/control";
   var ORCHESTRATION_READ = "t3.orchestration/read";
   var ORCHESTRATION_OPERATE = "t3.orchestration/operate";
+  var ORCHESTRATION_APPROVE_REQUESTS = "t3.orchestration/approve-requests";
   var ORCHESTRATION_LAUNCH_WORKFLOW = "t3.orchestration/launch-workflow";
   var WORKFLOW_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
   var ORCHESTRATION_LOGS = "t3.orchestration/logs";
@@ -494,8 +495,6 @@ var __t3Client = (() => {
       sourceProposedPlan: {},
       text: str,
       modelSelection: obj({ instanceId: id, model: str, options: { type: "object", additionalProperties: true } }, ["instanceId", "model"]),
-      runtimeMode: { enum: ["full-access", "approval-required", "auto", "auto-accept-edits"] },
-      interactionMode: { enum: ["default", "plan"] },
       titleSeed: str
     }, ["text"]),
     "turn.interrupt": obj({ ...guard, turnId: id }, []),
@@ -510,12 +509,12 @@ var __t3Client = (() => {
   };
   var orchestrationControlApi = defineApi({
     id: ORCHESTRATION_CONTROL,
-    version: "1.1.0",
+    version: "2.0.0",
     methods: [
       ...ORCHESTRATION_CONTROL_OPS.map((name) => ({
         name,
         effect: "write",
-        requiredGrants: [ORCHESTRATION_OPERATE],
+        requiredGrants: name === "approval.respond" ? [ORCHESTRATION_OPERATE, ORCHESTRATION_APPROVE_REQUESTS] : [ORCHESTRATION_OPERATE],
         inputSchema: operationInputs[name],
         outputSchema: receipt
       })),

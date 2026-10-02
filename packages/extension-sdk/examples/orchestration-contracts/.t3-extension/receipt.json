@@ -4,8 +4,8 @@
   "packageId": "example.orchestration-contracts",
   "version": "1.0.0",
   "hashes": {
-    "t3-extension.json": "15fd5e40c97ef7e657cd20101410cf136ee4ef0411a7941563beac702e4a1786",
-    "client.mjs": "68296c33f462da7ba3b8ad00525d8c4a2957258193b4ad6342ea720a617344c5"
+    "t3-extension.json": "e68ef375b811aa0827272d7e8a501c5b9f230988a2379f7e4ef9c5598dc9f12b",
+    "client.mjs": "2f6b224e2fd755bffc93a28afed328e90e22c030a534cd415e4deabda05e1c24"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "63a609a752cd82d33b85e258ef6504fbaab616eb7c873e802e55b3c983050c71"

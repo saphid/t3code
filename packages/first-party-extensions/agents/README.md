@@ -28,13 +28,18 @@ terminal.
   with a bounded retry. The stream lives as long as the view so the tab badge
   stays current in the background; a hidden panel folds frames without
   re-rendering and only republishes the badge.
-- `t3.orchestration/control@^1.1.0` — under the `t3.orchestration/operate`
-  grant: `turn.start`, `turn.interrupt`, `session.stop`, `approval.respond`,
+- `t3.orchestration/control@^2.0.0` — under the `t3.orchestration/operate`
+  grant: `turn.start`, `turn.interrupt`, `session.stop`,
   `userInput.respond`/`dismiss`, `thread.settle`/`unsettle`, and
   `checkpoint.revert` (behind an inline confirm). Every command carries a
   fresh `commandId` and the stream's `expectedEpoch`; accepted/rejected
   receipts render next to the control. Operations the provider does not
   advertise render as named "unsupported" rows — never fake buttons.
+  `turn.start` always uses the thread's runtime and interaction modes.
+  `approval.respond` also requires the explicit
+  `t3.orchestration/approve-requests` grant, which lets a pack answer agent
+  approval requests. The operate grant alone cannot approve them; grant this
+  permission in Settings only to a pack you trust with approval decisions.
   `workflow.launch` (1.1.0) additionally needs the
   `t3.orchestration/launch-workflow` grant: Launch takes a workflow name,
   shows an inline confirm stating the effect, and renders the launch id with
