@@ -11561,9 +11561,23 @@ var __t3Client = (() => {
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "6px 0 0", color: muted, fontSize: 11 }, children: SCRIPTS_SCOPE_NOTE })
     ] });
   }
+  function isSavedAgentsView(state2) {
+    return typeof state2 === "object" && state2 !== null && "scrollTop" in state2 && "actionsOpen" in state2 && typeof state2.scrollTop === "number" && Number.isFinite(state2.scrollTop) && state2.scrollTop >= 0 && typeof state2.actionsOpen === "boolean" && Object.keys(state2).every((key) => key === "scrollTop" || key === "actionsOpen");
+  }
   function AgentsView(props) {
     const { host, session } = props;
     const clientCapabilities = agentsClientCapabilities(session.context.client);
+    const restored = isSavedAgentsView(session.restoreState) ? session.restoreState : null;
+    const saved = (0, import_react.useRef)({
+      scrollTop: typeof restored?.scrollTop === "number" ? restored.scrollTop : 0,
+      actionsOpen: restored?.actionsOpen === true
+    });
+    const [actionsOpen, setActionsOpen] = (0, import_react.useState)(() => restored?.actionsOpen === true);
+    const scroller = (0, import_react.useRef)(null);
+    const didRestoreScroll = (0, import_react.useRef)(false);
+    const saveView = () => {
+      if (session.context.client === "mobile") session.save?.({ ...saved.current });
+    };
     const visible = useVisible(session);
     const themeVars = useThemeVars(host, session, visible);
     const { feed, problem } = useAgentsFeed(host, session, visible);
@@ -11620,6 +11634,11 @@ var __t3Client = (() => {
     );
     const state2 = feed.state;
     const model = state2 ? deriveAgentsPanelModel(state2.agents) : null;
+    (0, import_react.useEffect)(() => {
+      if (!state2 || didRestoreScroll.current || !scroller.current) return;
+      didRestoreScroll.current = true;
+      scroller.current.scrollTop = saved.current.scrollTop;
+    }, [state2]);
     const planSource = planSourceThreadId(state2, session.context.resource.threadId);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "section",
@@ -11673,160 +11692,184 @@ var __t3Client = (() => {
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "t3-agents-scroll", style: { flex: 1, minHeight: 0, overflow: "auto" }, children: [
-            problem && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "div",
-              {
-                role: "status",
-                "aria-label": "Agent stream status",
-                style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
-                children: [
-                  "Agent stream unavailable \u2014 ",
-                  problem
-                ]
-              }
-            ),
-            capabilitiesRead.status === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "div",
-              {
-                role: "status",
-                "aria-label": "Orchestration capability status",
-                style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
-                children: [
-                  "Orchestration status unavailable \u2014 ",
-                  capabilitiesRead.error
-                ]
-              }
-            ),
-            !problem && !state2 && capabilitiesRead.status !== "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "div",
-              {
-                role: "status",
-                "aria-label": "Agent stream status",
-                style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
-                children: "Waiting for the agent stream snapshot\u2026"
-              }
-            ),
-            state2 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-              session.context.client === "mobile" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { children: "Session actions" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  SessionControls,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "div",
+            {
+              ref: scroller,
+              onScroll: (event) => {
+                saved.current.scrollTop = event.currentTarget.scrollTop;
+                saveView();
+              },
+              className: "t3-agents-scroll",
+              style: { flex: 1, minHeight: 0, overflow: "auto" },
+              children: [
+                problem && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "div",
                   {
-                    feed,
-                    capabilities,
-                    run,
-                    outcomeText,
-                    onRefreshCapabilities: refreshCapabilities
+                    role: "status",
+                    "aria-label": "Agent stream status",
+                    style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
+                    children: [
+                      "Agent stream unavailable \u2014 ",
+                      problem
+                    ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  WorkflowLaunchSection,
+                capabilitiesRead.status === "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "div",
                   {
-                    capabilities,
-                    run,
-                    outcomeText
-                  }
-                )
-              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  SessionControls,
-                  {
-                    feed,
-                    capabilities,
-                    run,
-                    outcomeText,
-                    onRefreshCapabilities: refreshCapabilities
+                    role: "status",
+                    "aria-label": "Orchestration capability status",
+                    style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
+                    children: [
+                      "Orchestration status unavailable \u2014 ",
+                      capabilitiesRead.error
+                    ]
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  WorkflowLaunchSection,
+                !problem && !state2 && capabilitiesRead.status !== "unavailable" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "div",
                   {
-                    capabilities,
-                    run,
-                    outcomeText
+                    role: "status",
+                    "aria-label": "Agent stream status",
+                    style: { padding: "8px 10px", color: muted, fontSize: 12, borderBottom: border },
+                    children: "Waiting for the agent stream snapshot\u2026"
                   }
-                )
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                PendingSection,
-                {
-                  feed,
-                  capabilities,
-                  run,
-                  outcomeText
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                "section",
-                {
-                  "aria-label": "Agent roster",
-                  style: { padding: "6px 10px", borderBottom: border },
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: sectionTitle, children: "Roster" }),
-                    model && !model.hasAgents && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 4px", color: muted, fontSize: 12 }, children: "No agents on this thread yet." }),
-                    model && model.hasAgents && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: [
-                      model.workflows.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        WorkflowGroupView,
-                        {
-                          group,
-                          scriptSupport: operationSupport(capabilities, "readWorkflowScript"),
-                          onToggleScript: toggleWorkflowScript,
-                          onCloseScript: closeWorkflowScript,
-                          sessionControl,
-                          readLog,
-                          script: scripts[JSON.stringify([group.workflow.id, group.workflow.runHandles?.scriptPath])] ?? null
-                        },
-                        group.workflow.id
-                      )),
-                      model.directAgents.map((agent) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                        AgentRow,
-                        {
-                          agent,
-                          sessionControl,
-                          readLog
-                        },
-                        agent.id
-                      ))
-                    ] })
-                  ]
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                CheckpointsSection,
-                {
-                  feed,
-                  capabilities,
-                  host,
-                  session,
-                  run,
-                  outcomeText
-                }
-              )
-            ] }),
-            !clientCapabilities.projectScripts.supported ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12 }, children: clientCapabilities.projectScripts.reason }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ProjectScripts, { host, session }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SessionImportSection, { host, session }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Deferred capabilities", style: { padding: "6px 10px" }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: sectionTitle, children: "Not available yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "ul",
-                {
-                  style: {
-                    listStyle: "none",
-                    margin: 0,
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8
-                  },
-                  children: DEFERRED_SECTIONS.map((section) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { fontSize: 12 }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: section.title }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 11 }, children: section.blocker })
-                  ] }, section.title))
-                }
-              )
-            ] })
-          ] }),
+                ),
+                state2 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                  session.context.client === "mobile" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "details",
+                    {
+                      open: actionsOpen,
+                      onToggle: (event) => {
+                        const open = event.currentTarget.open;
+                        saved.current.actionsOpen = open;
+                        setActionsOpen(open);
+                        saveView();
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { children: "Session actions" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          SessionControls,
+                          {
+                            feed,
+                            capabilities,
+                            run,
+                            outcomeText,
+                            onRefreshCapabilities: refreshCapabilities
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          WorkflowLaunchSection,
+                          {
+                            capabilities,
+                            run,
+                            outcomeText
+                          }
+                        )
+                      ]
+                    }
+                  ) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      SessionControls,
+                      {
+                        feed,
+                        capabilities,
+                        run,
+                        outcomeText,
+                        onRefreshCapabilities: refreshCapabilities
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                      WorkflowLaunchSection,
+                      {
+                        capabilities,
+                        run,
+                        outcomeText
+                      }
+                    )
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    PendingSection,
+                    {
+                      feed,
+                      capabilities,
+                      run,
+                      outcomeText
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "section",
+                    {
+                      "aria-label": "Agent roster",
+                      style: { padding: "6px 10px", borderBottom: border },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: sectionTitle, children: "Roster" }),
+                        model && !model.hasAgents && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { style: { margin: "0 0 4px", color: muted, fontSize: 12 }, children: "No agents on this thread yet." }),
+                        model && model.hasAgents && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("ul", { style: { listStyle: "none", margin: 0, padding: 0 }, children: [
+                          model.workflows.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            WorkflowGroupView,
+                            {
+                              group,
+                              scriptSupport: operationSupport(capabilities, "readWorkflowScript"),
+                              onToggleScript: toggleWorkflowScript,
+                              onCloseScript: closeWorkflowScript,
+                              sessionControl,
+                              readLog,
+                              script: scripts[JSON.stringify([group.workflow.id, group.workflow.runHandles?.scriptPath])] ?? null
+                            },
+                            group.workflow.id
+                          )),
+                          model.directAgents.map((agent) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                            AgentRow,
+                            {
+                              agent,
+                              sessionControl,
+                              readLog
+                            },
+                            agent.id
+                          ))
+                        ] })
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    CheckpointsSection,
+                    {
+                      feed,
+                      capabilities,
+                      host,
+                      session,
+                      run,
+                      outcomeText
+                    }
+                  )
+                ] }),
+                !clientCapabilities.projectScripts.supported ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { role: "note", style: { padding: "6px 10px", color: muted, fontSize: 12 }, children: clientCapabilities.projectScripts.reason }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ProjectScripts, { host, session }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SessionImportSection, { host, session }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { "aria-label": "Deferred capabilities", style: { padding: "6px 10px" }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: sectionTitle, children: "Not available yet" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "ul",
+                    {
+                      style: {
+                        listStyle: "none",
+                        margin: 0,
+                        padding: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8
+                      },
+                      children: DEFERRED_SECTIONS.map((section) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { style: { fontSize: 12 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: section.title }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { style: { color: muted, fontSize: 11 }, children: section.blocker })
+                      ] }, section.title))
+                    }
+                  )
+                ] })
+              ]
+            }
+          ),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "footer",
             {
@@ -11849,7 +11892,7 @@ var __t3Client = (() => {
   }
   var extension_default = defineExtension({
     id: manifestId,
-    version: "0.2.2",
+    version: "0.2.3",
     requires: [
       requireApi(workspaceFilesApi),
       requireApi(terminalControlApi),
@@ -11868,9 +11911,9 @@ var __t3Client = (() => {
         placements: ["side-panel"],
         clients: ["web", "desktop", "mobile"],
         capabilities: [],
-        stateVersion: 1,
-        // The panel keeps no persisted state — same null-only rule as native.
-        validateRestore: (state2) => state2 === null,
+        stateVersion: 2,
+        // Mobile back/reopen retains navigation state, never a feed or pending action.
+        validateRestore: (state2) => state2 === null || isSavedAgentsView(state2),
         createView(host, session) {
           return { renderer: () => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AgentsView, { host, session }) };
         }

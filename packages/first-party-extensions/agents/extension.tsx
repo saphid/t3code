@@ -1862,9 +1862,33 @@ function ProjectScripts({ host, session }: { host: ClientHost; session: ViewSess
   );
 }
 
+function isSavedAgentsView(state: unknown): state is { scrollTop: number; actionsOpen: boolean } {
+  return (
+    typeof state === "object" &&
+    state !== null &&
+    "scrollTop" in state &&
+    "actionsOpen" in state &&
+    typeof state.scrollTop === "number" &&
+    Number.isFinite(state.scrollTop) &&
+    state.scrollTop >= 0 &&
+    typeof state.actionsOpen === "boolean" &&
+    Object.keys(state).every((key) => key === "scrollTop" || key === "actionsOpen")
+  );
+}
 function AgentsView(props: { host: ClientHost; session: ViewSession }) {
   const { host, session } = props;
   const clientCapabilities = agentsClientCapabilities(session.context.client);
+  const restored = isSavedAgentsView(session.restoreState) ? session.restoreState : null;
+  const saved = useRef({
+    scrollTop: typeof restored?.scrollTop === "number" ? restored.scrollTop : 0,
+    actionsOpen: restored?.actionsOpen === true,
+  });
+  const [actionsOpen, setActionsOpen] = useState(() => restored?.actionsOpen === true);
+  const scroller = useRef<HTMLDivElement>(null);
+  const didRestoreScroll = useRef(false);
+  const saveView = () => {
+    if (session.context.client === "mobile") session.save?.({ ...saved.current });
+  };
   const visible = useVisible(session);
   const themeVars = useThemeVars(host, session, visible);
   const { feed, problem } = useAgentsFeed(host, session, visible);
@@ -1925,6 +1949,11 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
   const state = feed.state;
   const model = state ? deriveAgentsPanelModel(state.agents) : null;
+  useEffect(() => {
+    if (!state || didRestoreScroll.current || !scroller.current) return;
+    didRestoreScroll.current = true;
+    scroller.current.scrollTop = saved.current.scrollTop;
+  }, [state]);
   const planSource = planSourceThreadId(state, session.context.resource.threadId);
 
   return (
@@ -1971,7 +2000,15 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
         )}
       </header>
 
-      <div className="t3-agents-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      <div
+        ref={scroller}
+        onScroll={(event) => {
+          saved.current.scrollTop = event.currentTarget.scrollTop;
+          saveView();
+        }}
+        className="t3-agents-scroll"
+        style={{ flex: 1, minHeight: 0, overflow: "auto" }}
+      >
         {problem && (
           <div
             role="status"
@@ -2003,7 +2040,15 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
         {state && (
           <>
             {session.context.client === "mobile" ? (
-              <details>
+              <details
+                open={actionsOpen}
+                onToggle={(event) => {
+                  const open = event.currentTarget.open;
+                  saved.current.actionsOpen = open;
+                  setActionsOpen(open);
+                  saveView();
+                }}
+              >
                 <summary>Session actions</summary>
                 <SessionControls
                   feed={feed}
@@ -2140,7 +2185,7 @@ function AgentsView(props: { host: ClientHost; session: ViewSession }) {
 
 export default defineExtension({
   id: manifestId,
-  version: "0.2.2",
+  version: "0.2.3",
   requires: [
     requireApi(workspaceFilesApi),
     requireApi(terminalControlApi),
@@ -2159,9 +2204,9 @@ export default defineExtension({
       placements: ["side-panel"],
       clients: ["web", "desktop", "mobile"],
       capabilities: [],
-      stateVersion: 1,
-      // The panel keeps no persisted state — same null-only rule as native.
-      validateRestore: (state) => state === null,
+      stateVersion: 2,
+      // Mobile back/reopen retains navigation state, never a feed or pending action.
+      validateRestore: (state) => state === null || isSavedAgentsView(state),
       createView(host, session) {
         return { renderer: () => <AgentsView host={host} session={session} /> };
       },

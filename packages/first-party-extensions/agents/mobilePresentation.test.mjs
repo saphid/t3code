@@ -83,6 +83,7 @@ async function renderPanel({
   capabilityFailure = false,
   client = "mobile",
   navigationSupported = true,
+  restoreState = null,
 } = {}) {
   let scriptReads = 0;
   const calls = [];
@@ -160,7 +161,13 @@ async function renderPanel({
       await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
     },
   };
+  const saved = [];
   const session = {
+    restoreState,
+    save: (value) => {
+      saved.push(value);
+      return true;
+    },
     context: {
       client,
       workspaceRevision: "revision",
@@ -183,6 +190,7 @@ async function renderPanel({
       .find((button) => textOf(button).toLowerCase().includes("script"));
   return {
     root,
+    saved,
     toggle,
     reads: () => scriptReads,
     calls,
@@ -340,3 +348,19 @@ NodeTest.test(
     }
   },
 );
+
+NodeTest.it("retains mobile disclosure and scroll state through SDK restore", async () => {
+  const panel = await renderPanel({ restoreState: { scrollTop: 128, actionsOpen: true } });
+  try {
+    const details = panel.root.root.findByType("details");
+    NodeAssert.equal(details.props.open, true);
+    await act(async () => details.props.onToggle({ currentTarget: { open: false } }));
+    const scroll = panel.root.root
+      .findAllByType("div")
+      .find((node) => node.props.className === "t3-agents-scroll");
+    await act(async () => scroll.props.onScroll({ currentTarget: { scrollTop: 250 } }));
+    NodeAssert.deepEqual(panel.saved.at(-1), { scrollTop: 250, actionsOpen: false });
+  } finally {
+    await panel.close();
+  }
+});

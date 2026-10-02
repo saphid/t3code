@@ -1,4 +1,8 @@
-import type { ThemeColors, ThemeColorRole } from "@t3tools/shared/themePalettes";
+import {
+  THEME_COLOR_ROLES,
+  type ThemeColors,
+  type ThemeColorRole,
+} from "@t3tools/shared/themePalettes";
 import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemeColors,
@@ -67,4 +71,31 @@ export function mobileUiThemeTokens(
   for (const [role, variable] of Object.entries(nativeRoles))
     tokens[role as keyof typeof nativeRoles] = variables[variable];
   return tokens;
+}
+
+export const MOBILE_UI_THEME_CSS_VARS = Object.fromEntries(
+  THEME_COLOR_ROLES.map((role) => [
+    role,
+    role === "terminalSelection"
+      ? "--app-theme-terminal-selection-background"
+      : `--app-theme-${role.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`,
+  ]),
+);
+/** Initial/live page paint uses the same native tokens as the client's theme provider. */
+export function mobileExtensionCssVars(
+  themeId: MobileThemeId,
+  appearance: MobileThemeAppearance,
+  variables: MobileThemeVariables,
+) {
+  const tokens = mobileUiThemeTokens(themeId, appearance, variables);
+  const css = Object.fromEntries(
+    THEME_COLOR_ROLES.map((role) => [MOBILE_UI_THEME_CSS_VARS[role]!, tokens[role]]),
+  );
+  Object.assign(css, {
+    "--background": tokens.canvas,
+    "--foreground": tokens.text,
+    "--muted-foreground": tokens.mutedForeground,
+    "--border": tokens.border,
+  });
+  return css;
 }

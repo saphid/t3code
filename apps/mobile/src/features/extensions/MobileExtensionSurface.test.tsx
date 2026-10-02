@@ -41,7 +41,7 @@ vi.mock("react-native-webview", async () => {
   };
 });
 vi.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 62, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock("../../../.generated/mobile-extension/page", () => ({ default: "fixture page" }));
 vi.mock("./mobileExtensionTransport", () => ({
@@ -135,7 +135,7 @@ afterEach(async () => {
   native.linkTo.mockClear();
   vi.restoreAllMocks();
 });
-async function mount() {
+async function mount(headerConsumesTopInset = false) {
   let item = installation();
   const list = vi.fn(async () => [item]);
   native.transport = {
@@ -156,6 +156,7 @@ async function mount() {
   await act(async () => {
     renderer = create(
       <MobileExtensionSurface
+        headerConsumesTopInset={headerConsumesTopInset}
         environmentId="e"
         installationId="t3.pack"
         surfaceId="t3.pack/view"
@@ -337,4 +338,56 @@ it("mounts native UI providers with the catalogue epoch and disposes them with t
   await expect(ui.providers.get("t3.client/navigation")!.invoke(request)).rejects.toMatchObject({
     code: "client-provider-unavailable",
   });
+});
+
+it("restores saved SDK view state after back/close and reopening without another bundle fetch", async () => {
+  const f = await mount();
+  const first = f.webview();
+  const data = { scrollTop: 128, actionsOpen: true };
+  const bootstrap = first.props.source.html;
+  const match = bootstrap.match(/"generation":"([^"]+)"/);
+  await act(async () => {
+    first.props.onMessage({
+      nativeEvent: {
+        data: JSON.stringify({ generation: match![1], kind: "state", payload: data }),
+      },
+    });
+    renderer!.unmount();
+  });
+  await act(async () => {
+    renderer = create(
+      <MobileExtensionSurface
+        environmentId="e"
+        installationId="t3.pack"
+        surfaceId="t3.pack/view"
+        context={context}
+        environmentLabel="fixture"
+        cssVars={{}}
+      />,
+    );
+  });
+  expect(f.webview().props.source.html).toContain(
+    '"restoreState":{"scrollTop":128,"actionsOpen":true}',
+  );
+  // A changed workspace must never restore another thread/worktree's view state.
+  await act(async () => {
+    renderer!.update(
+      <MobileExtensionSurface
+        environmentId="e"
+        installationId="t3.pack"
+        surfaceId="t3.pack/view"
+        context={{ ...context, workspaceRevision: "new-worktree" }}
+        environmentLabel="fixture"
+        cssVars={{}}
+      />,
+    );
+  });
+  expect(f.webview().props.source.html).toContain('"restoreState":null');
+});
+
+it("uses the native header's consumed top inset while keeping bottom safe-area ownership", async () => {
+  const f = await mount(true);
+  expect(f.webview().props.source.html).toContain(
+    '"insets":{"top":0,"right":0,"bottom":0,"left":0}',
+  );
 });

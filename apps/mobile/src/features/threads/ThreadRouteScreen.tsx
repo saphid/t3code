@@ -1,3 +1,4 @@
+import { useMobileAgentsEntry } from "../extensions/useMobileAgentsEntry";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -106,7 +107,23 @@ function ThreadHeader(
   const navigation = useNavigation();
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal } = props.gitControls;
-  const native = useThreadHeaderOptions(props);
+  const agents = useMobileAgentsEntry(String(props.gitControls.environmentId));
+  const openAgents = useCallback(
+    () =>
+      navigation.navigate("ThreadAgents", {
+        environmentId: String(props.gitControls.environmentId),
+        threadId: String(props.gitControls.threadId),
+      }),
+    [navigation, props.gitControls.environmentId, props.gitControls.threadId],
+  );
+  const native = useThreadHeaderOptions({
+    ...props,
+    gitControls: {
+      ...props.gitControls,
+      showAgents: agents.entry.visible,
+      onOpenAgents: openAgents,
+    },
+  });
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
     if (props.onReturnToThread) {
@@ -132,6 +149,12 @@ function ThreadHeader(
         onPress: () => onOpenTerminal(null),
       });
     }
+    if (agents.entry.visible)
+      actions.push({
+        accessibilityLabel: "Open Agents",
+        icon: "person.crop.circle",
+        onPress: openAgents,
+      });
     actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -139,6 +162,8 @@ function ThreadHeader(
     });
     return actions;
   }, [
+    agents.entry.visible,
+    openAgents,
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
     props.onOpenFilesInspector,
@@ -157,7 +182,7 @@ function ThreadHeader(
         subtitle={props.subtitle}
         sidebar={native.sidebar}
         options={native.options}
-        optionsVersion={props.gitControls.projectScripts}
+        optionsVersion={[props.gitControls.projectScripts, agents.entry.visible]}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton

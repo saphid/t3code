@@ -1,6 +1,7 @@
 import type { EnvironmentId, ExtensionInstallation } from "@t3tools/contracts";
+import { MOBILE_UI_THEME_CSS_VARS } from "./mobileUiThemeTokens";
 import type * as Schema from "effect/Schema";
-import { THEME_COLOR_ROLES, type ThemeColors } from "@t3tools/shared/themePalettes";
+import type { ThemeColors } from "@t3tools/shared/themePalettes";
 import {
   MOBILE_THEME_IDS,
   type MobileThemeId,
@@ -134,15 +135,6 @@ export const MOBILE_UI_CAPABILITIES: Readonly<
   "t3.ui/editor": unsupported(["openPath"]),
   "t3.ui/external": unsupported(["open", "openLink"]),
 };
-
-const cssVars = Object.fromEntries(
-  THEME_COLOR_ROLES.map((role) => [
-    role,
-    role === "terminalSelection"
-      ? "--app-theme-terminal-selection-background"
-      : `--app-theme-${role.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`,
-  ]),
-);
 
 function preferencePatch(
   input: Record<string, Json>,
@@ -301,7 +293,10 @@ export function createMobileUiProviders(deps: MobileUiProviderDeps) {
         const mode = input.appearance ?? appearance().appearance;
         if (mode !== "light" && mode !== "dark")
           throw new MobileUiProviderError("provider-rejected", "Invalid appearance");
-        return { tokens: { ...appearance().tokensByAppearance[mode] }, cssVars };
+        return {
+          tokens: { ...appearance().tokensByAppearance[mode] },
+          cssVars: MOBILE_UI_THEME_CSS_VARS,
+        };
       }
       if (call.method !== "applyPreference") return unavailable(call.method);
       if (string(input, "writer") !== call.caller.installationId)

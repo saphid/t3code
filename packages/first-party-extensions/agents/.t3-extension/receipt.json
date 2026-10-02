@@ -2,10 +2,10 @@
   "kind": "package-check",
   "installed": false,
   "packageId": "t3.agents",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "hashes": {
-    "t3-extension.json": "ce3b65ffbc5efdf18c983d2dc3711fd4411b9d1c1318498bc47f081417072219",
-    "client.mjs": "00d5e90f9179870972a69635ba6689c512fa0d6f70ab2978fe325fe7a6df366a"
+    "t3-extension.json": "876e4302e4b3f9547cda995517acd6aa7d2458ebdedaddfdb5cba7792fe5b3c5",
+    "client.mjs": "c094e951c1db55cab348c09087aec57b370d57808e63f30943f1b0f5f508adb3"
   },
   "generator": "t3-extension",
   "sourceEntrySha256": "fb20f105ee5f533a9f4e318318e5684b06a72b91698d80a7e6451c11a824d5cb"

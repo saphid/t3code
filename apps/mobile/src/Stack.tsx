@@ -1,3 +1,5 @@
+import { MOBILE_AGENTS_LINKING_PATH } from "./features/extensions/mobileAgentsEntry";
+import { ThreadAgentsRouteScreen } from "./features/extensions/ThreadAgentsRouteScreen";
 import {
   createPathConfigForStaticNavigation,
   getPathFromState,
@@ -612,6 +614,11 @@ const RootStackConfig = createNativeStackNavigator({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
       options: GLASS_HEADER_OPTIONS,
+    }),
+    ThreadAgents: createNativeStackScreen({
+      screen: ThreadAgentsRouteScreen,
+      linking: MOBILE_AGENTS_LINKING_PATH,
+      options: SOLID_HEADER_OPTIONS,
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,

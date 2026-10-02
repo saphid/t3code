@@ -5,13 +5,14 @@ import { useMobileUiProviders } from "./useMobileUiProviders";
 import { AppState, Keyboard, Pressable, Text, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import pageSource from "../../../.generated/mobile-extension/page";
 import { createNativeBridge } from "./mobileExtensionBridge";
 import {
   createMobileExtensionHost,
   mobileExtensionCache,
   type MobileHostSnapshot,
+  type MobileExtensionTransport,
 } from "./mobileExtensionHost";
 import { mobileExtensionTransport } from "./mobileExtensionTransport";
 import { buildMobileHostHtml } from "./mobileHostProtocol";
@@ -27,6 +28,8 @@ type SurfaceProps = {
   context: ViewContext;
   environmentLabel: string;
   cssVars: Record<string, string>;
+  catalogue?: Pick<MobileExtensionTransport, "list" | "watch">;
+  headerConsumesTopInset?: boolean;
   onMounted?: () => void;
 };
 export function MobileExtensionSurface(props: SurfaceProps) {
@@ -85,7 +88,7 @@ function SurfaceSession(props: SurfaceProps) {
         if (controller.signal.aborted) return;
         owned = createMobileExtensionHost({
           ...binding,
-          transport,
+          transport: props.catalogue ? { ...transport, ...props.catalogue } : transport,
           cache: mobileExtensionCache,
           onChange: () => {
             if (!controller.signal.aborted && owned) setSnapshot(owned.snapshot());
@@ -104,7 +107,7 @@ function SurfaceSession(props: SurfaceProps) {
       subscription.remove();
       owned?.dispose();
     };
-  }, [binding, ui]);
+  }, [binding, ui, props.catalogue]);
   if (snapshot.phase === "ready" && host && snapshot.code)
     return <MountedSurface key={snapshot.generation} host={host} snapshot={snapshot} {...props} />;
   const label =
@@ -138,15 +141,31 @@ function MountedSurface(props: {
   context: ViewContext;
   environmentLabel: string;
   cssVars: Record<string, string>;
+  headerConsumesTopInset?: boolean;
   onMounted?: () => void;
 }) {
   const webview = React.useRef<WebView>(null);
   const bridge = React.useRef<ReturnType<typeof createNativeBridge> | null>(null);
-  const insets = useSafeAreaInsets();
+  const safeAreaInsets = useSafeAreaInsets();
+  const insets = React.useMemo(
+    () => ({ ...safeAreaInsets, top: props.headerConsumesTopInset ? 0 : safeAreaInsets.top }),
+    [safeAreaInsets, props.headerConsumesTopInset],
+  );
   const [keyboardInset, setKeyboardInset] = React.useState(0);
+  const stateKey = React.useMemo(
+    () =>
+      [
+        props.context.resource.environmentId,
+        props.snapshot.installation!.id,
+        props.snapshot.installation!.contentHash,
+        `view:${JSON.stringify([props.surfaceId, props.context])}`,
+      ] as const,
+    [props.context, props.snapshot.installation, props.surfaceId],
+  );
   const [bootstrap] = React.useState<MobilePageBootstrap>(() => ({
     generation: props.snapshot.generation,
     code: props.snapshot.code!,
+    restoreState: JSON.parse(String(mobileExtensionCache.get(stateKey) ?? "null")) as Json,
     surfaceId: props.surfaceId,
     context: props.context,
     environmentLabel: props.environmentLabel,
@@ -201,8 +220,15 @@ function MountedSurface(props: {
     const message = event.nativeEvent.data;
     if (bridge.current?.receive(message) || message.length > 4096) return;
     try {
-      const value = JSON.parse(message) as { generation: string; kind: string };
+      const value = JSON.parse(message) as { generation: string; kind: string; payload?: Json };
       if (value.generation !== bootstrap.generation) return;
+      if (value.kind === "state" && value.payload !== undefined) {
+        mobileExtensionCache.set(
+          stateKey,
+          JSON.stringify(value.payload),
+          new TextEncoder().encode(message).byteLength,
+        );
+      }
       if (value.kind === "ready") presentation();
       if (value.kind === "mounted") props.onMounted?.();
       if (value.kind === "failure") props.host.fail();

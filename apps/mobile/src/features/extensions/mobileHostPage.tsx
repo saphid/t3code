@@ -13,6 +13,7 @@ import { readMobileAsset } from "./mobileExtensionAssets";
 import { createPageBridge } from "./mobileExtensionBridge";
 
 export interface MobilePageBootstrap {
+  restoreState?: Json;
   generation: string;
   code: string;
   context: ViewContext;
@@ -120,13 +121,27 @@ async function mount() {
       context: bootstrap.context,
       placement: "side-panel",
       stateVersion: surface.stateVersion,
-      restoreState: null,
+      restoreState: bootstrap.restoreState ?? null,
       fallback: "Extension unavailable",
     });
     if (disposed) {
       host.close(viewId);
       return;
     }
+    let lastState = JSON.stringify(bootstrap.restoreState ?? null);
+    host.subscribe((snapshot, id) => {
+      if (disposed || id !== viewId || !snapshot) return;
+      const next = JSON.stringify(snapshot.record.restoreState);
+      if (next === lastState || next.length > 3072) return;
+      lastState = next;
+      nativePost(
+        JSON.stringify({
+          generation: bootstrap.generation,
+          kind: "state",
+          payload: snapshot.record.restoreState,
+        }),
+      );
+    });
     root = createRoot(document.getElementById("root")!);
     root.render(<ExtensionSurface host={host} viewId={viewId} />);
     if (!visible) host.hide(viewId);

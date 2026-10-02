@@ -1,4 +1,4 @@
-import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import { HStack, Image, Link, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
   activityBackgroundTint,
@@ -38,6 +38,7 @@ export interface AgentActivityRowProps {
   readonly status: string;
   readonly updatedAt: string;
   readonly deepLink: string;
+  readonly agentsDeepLink?: string;
 }
 
 export interface AgentActivityProps {
@@ -152,6 +153,11 @@ export function AgentActivity(
   // Any registered scheme variant routes back to this app; taps are delivered
   // to the widget's containing app, so the prod scheme is safe for all builds.
   const deepLinkRow = attentionRow ?? row0;
+  const agentsLink = deepLinkRow?.agentsDeepLink;
+  const agentsURL =
+    agentsLink?.startsWith("/threads/") && agentsLink.endsWith("/agents")
+      ? `t3code://${agentsLink.slice(1)}`
+      : null;
   const deepLink =
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
@@ -250,6 +256,11 @@ export function AgentActivity(
           ...(deepLink ? [widgetURL(deepLink)] : []),
         ]}
       >
+        {agentsURL ? (
+          <Link destination={agentsURL}>
+            <Text modifiers={[font({ size: 13, weight: "semibold" })]}>Open Agents</Text>
+          </Link>
+        ) : null}
         {/* Logo pinned to the leading edge; the status texts centered across the
             full width (ZStack so the logo doesn't skew the centering). No footer —
             overflow beyond the visible rows is inferable from the count. */}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { THEME_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 import { getMobileThemeRuntimeVariables } from "../../lib/mobileThemeVariables";
-import { mobileUiThemeTokens } from "./mobileUiThemeTokens";
+import { mobileUiThemeTokens, mobileExtensionCssVars } from "./mobileUiThemeTokens";
 
 describe("mobile pack theme tokens", () => {
   it("uses native platform colors and the full shared role set", () => {
@@ -28,4 +28,16 @@ describe("mobile pack theme tokens", () => {
     expect(first.messageAction).toBe("#abcdef");
     expect(second.canvas).toBe("#654321");
   });
+});
+
+it("paints the SDK host fallback and contract variables from live native appearance", () => {
+  const variables = getMobileThemeRuntimeVariables("t3-code", "light", "ios");
+  const css = mobileExtensionCssVars("t3-code", "light", {
+    ...variables,
+    "--color-screen": "#123456",
+    "--color-foreground": "#abcdef",
+  });
+  expect(css["--background"]).toBe("#123456");
+  expect(css["--foreground"]).toBe("#abcdef");
+  expect(css["--app-theme-canvas"]).toBe("#123456");
 });

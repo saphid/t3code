@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("@expo/ui/swift-ui", () => ({
   HStack: "HStack",
   Image: "Image",
+  Link: "Link",
   Spacer: "Spacer",
   Text: "Text",
   VStack: "VStack",
@@ -281,4 +282,27 @@ describe("AgentActivity widget layout", () => {
     }
     expect(banner).not.toContain("Thread 6");
   });
+});
+
+it("adds the eligible Agents route alongside the existing thread widget link", () => {
+  const layout = AgentActivity(
+    { ...props, activities: [makeRow({ agentsDeepLink: "/threads/env-1/thread-1/agents" })] },
+    environment,
+  );
+  const links = (node: unknown): unknown[] => {
+    if (!node || typeof node !== "object") return [];
+    const element = node as {
+      type?: unknown;
+      props?: { destination?: string; children?: unknown };
+    };
+    const children = element.props?.children;
+    return [
+      ...(element.type === "Link" ? [element.props?.destination] : []),
+      ...(Array.isArray(children) ? children.flatMap(links) : links(children)),
+    ];
+  };
+  expect(links(layout.banner)).toEqual(["t3code://threads/env-1/thread-1/agents"]);
+  expect(links(AgentActivity({ ...props, activities: [makeRow({})] }, environment).banner)).toEqual(
+    [],
+  );
 });
