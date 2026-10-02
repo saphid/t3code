@@ -4,6 +4,7 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -157,5 +158,20 @@ describe("a mark the host has not answered for yet", () => {
 
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isStale("a.ts")).toBe(false);
+  });
+});
+
+describe("a failed batch that the host partly applied", () => {
+  it("refreshes the host and accepts the applied marks", async () => {
+    setFilesViewed.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("partial batch"))),
+    );
+    view().setViewed("a.ts", true);
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(view().isViewed("a.ts")).toBe(false);
+    expect(host.refresh).toHaveBeenCalledExactlyOnceWith();
+    await reads("viewed");
+    expect(view().isViewed("a.ts")).toBe(true);
+    expect(view().viewedCount).toBe(1);
   });
 });
