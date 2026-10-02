@@ -101,12 +101,12 @@ function fixture() {
 }
 
 describe("socket-owned mobile UI dispatch", () => {
-  it("waits for its own registration, routes authorized navigation and preserves named authority errors", async () => {
+  it("records its own registration, routes authorized navigation and preserves named authority errors", async () => {
     const f = fixture();
     try {
-      const id = f.session.connectionId(new AbortController().signal);
+      expect(f.session.currentConnectionId).toBeUndefined();
       await f.session.receive(f.registered);
-      expect(await id).toBe("owned");
+      expect(f.session.currentConnectionId).toBe("owned");
       await f.invoke("openThread");
       expect(f.navigate).toHaveBeenCalledWith(
         { environmentId: "e", threadId: "target" },
@@ -165,13 +165,13 @@ describe("socket-owned mobile UI dispatch", () => {
     const count = f.emit.mock.calls.length;
     f.ui.notifyAppearanceChanged();
     expect(f.emit).toHaveBeenCalledTimes(count);
-    await expect(f.session.connectionId(new AbortController().signal)).resolves.toBeUndefined();
+    expect(f.session.currentConnectionId).toBeUndefined();
     const replacement = createMobileClientProviderSession(f.ui, {
       respond: f.respond,
       emit: f.emit,
     });
     await replacement.receive({ ...f.registered, connectionId: "replacement" });
-    expect(await replacement.connectionId(new AbortController().signal)).toBe("replacement");
+    expect(replacement.currentConnectionId).toBe("replacement");
     await replacement.receive({
       type: "subscriptionOpen",
       subscriptionId: "next",
@@ -203,12 +203,12 @@ describe("socket-owned mobile UI dispatch", () => {
       f.ui.dispose();
     }
   });
-  it("releases registration waiters without a hint when the connection is disposed", async () => {
+  it("ignores late registration when the connection is disposed", async () => {
     const f = fixture();
     try {
-      const waiting = f.session.connectionId(new AbortController().signal);
       f.session.dispose();
-      await expect(waiting).resolves.toBeUndefined();
+      await f.session.receive(f.registered);
+      expect(f.session.currentConnectionId).toBeUndefined();
     } finally {
       f.session.dispose();
       f.ui.dispose();

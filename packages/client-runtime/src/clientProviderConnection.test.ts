@@ -68,7 +68,7 @@ function fixture(provider?: ClientLocalProvider) {
 
 describe("registration receipts and outbound hints", () => {
   it("sends unstamped immediately without a registration attempt", async () => {
-    const hint = createClientProviderConnectionHint(() => ({ connecting: false }));
+    const hint = createClientProviderConnectionHint(() => ({ waitFor: undefined }));
     await expect(hint.connectionId(signal())).resolves.toBeUndefined();
     expect(
       stampClientProviderRequest(
@@ -78,23 +78,26 @@ describe("registration receipts and outbound hints", () => {
     ).toEqual({ input: { value: 1 } });
   });
 
-  it("waits for its own registration and replaces the page hint without modifying the request", async () => {
-    const state = { connecting: true, connectionId: undefined as string | undefined };
-    const hint = createClientProviderConnectionHint(() => state);
-    const request = { clientConnectionId: "foreign", method: "write" };
-    const stamped = hint.stamp(request, signal());
-    state.connectionId = "own-socket";
-    hint.changed();
-    await expect(stamped).resolves.toEqual({ method: "write", clientConnectionId: "own-socket" });
-    expect(request.clientConnectionId).toBe("foreign");
-  });
+  it.each(["registration", "reconnect"] as const)(
+    "waits for %s and replaces the page hint without modifying the request",
+    async (waitFor) => {
+      const state = { waitFor, connectionId: undefined as string | undefined };
+      const hint = createClientProviderConnectionHint(() => state);
+      const request = { clientConnectionId: "foreign", method: "write" };
+      const stamped = hint.stamp(request, signal());
+      state.connectionId = "own-socket";
+      hint.changed();
+      await expect(stamped).resolves.toEqual({ method: "write", clientConnectionId: "own-socket" });
+      expect(request.clientConnectionId).toBe("foreign");
+    },
+  );
 
   it("ignores an unrelated session's receipt", async () => {
     const ids = new Map<object, string>();
     const own = {};
     const foreign = {};
     const hint = createClientProviderConnectionHint<object>((key) => ({
-      connecting: true,
+      waitFor: "registration",
       connectionId: key ? ids.get(key) : undefined,
     }));
     const waiting = hint.connectionId(signal(), 10_000, own);
@@ -106,10 +109,10 @@ describe("registration receipts and outbound hints", () => {
   });
 
   it("releases held calls after connect ends and leaves later calls unstamped", async () => {
-    let connecting = true;
-    const hint = createClientProviderConnectionHint(() => ({ connecting }));
+    let waitFor: "registration" | undefined = "registration";
+    const hint = createClientProviderConnectionHint(() => ({ waitFor }));
     const waiting = hint.connectionId(signal());
-    connecting = false;
+    waitFor = undefined;
     hint.changed();
     await expect(waiting).resolves.toBeUndefined();
     await expect(hint.connectionId(signal())).resolves.toBeUndefined();
@@ -118,7 +121,7 @@ describe("registration receipts and outbound hints", () => {
   it("sends unstamped after one bound without replaying a call", async () => {
     vi.useFakeTimers();
     try {
-      const hint = createClientProviderConnectionHint(() => ({ connecting: true }));
+      const hint = createClientProviderConnectionHint(() => ({ waitFor: "registration" }));
       const waiting = hint.stamp({ clientConnectionId: "foreign", method: "read" }, signal());
       await vi.advanceTimersByTimeAsync(10_000);
       await expect(waiting).resolves.toEqual({ method: "read" });
@@ -131,7 +134,7 @@ describe("registration receipts and outbound hints", () => {
   it.each([false, true])(
     "rejects abort rather than sending a call (already aborted: %s)",
     async (already) => {
-      const hint = createClientProviderConnectionHint(() => ({ connecting: true }));
+      const hint = createClientProviderConnectionHint(() => ({ waitFor: "registration" }));
       const controller = new AbortController();
       if (already) controller.abort();
       const waiting = hint.connectionId(controller.signal);
@@ -289,20 +292,21 @@ describe("one session's invoke and stream envelopes", () => {
     f.session.dispose();
   });
 
-  it("releases registration waiters, aborts calls and closes all watchers even when one throws", async () => {
+  it("clears identity and closes all watchers even when one throws", async () => {
     const close = vi.fn(() => {
       throw new Error("watcher cleanup");
     });
     const f = fixture({ invoke: () => null, openStream: () => close });
-    const waiting = f.session.connectionId(signal());
+    await f.session.receive(registered);
+    expect(f.session.currentConnectionId).toBe("own-socket");
     await f.session.receive({ ...open, subscriptionId: "a" });
     await f.session.receive({ ...open, subscriptionId: "b" });
     f.session.dispose();
     f.session.dispose();
-    await expect(waiting).resolves.toBeUndefined();
+    expect(f.session.currentConnectionId).toBeUndefined();
     expect(close).toHaveBeenCalledTimes(2);
     expect(f.disposed).toHaveBeenCalledOnce();
     await f.session.receive(registered);
-    await expect(f.session.connectionId(signal())).resolves.toBeUndefined();
+    expect(f.session.currentConnectionId).toBeUndefined();
   });
 });

@@ -559,9 +559,9 @@ describe("client connection hint on early calls", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("releases calls when connect fails and stamps calls after reconnect registers", async () => {
-    // A failed connect releases the first call; a later attempt still stamps
-    // calls held until its own registration.
+  it("holds a call made before the transport is up until the reconnect registers", async () => {
+    // A restored panel calls before the environment's first session exists:
+    // that connect fails, and the call must wait for the next one.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const queue = new Mailbox();
@@ -571,15 +571,17 @@ describe("client connection hint on early calls", () => {
       const hints: (string | undefined)[] = [];
       const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
         hints.push(hint);
+        if (hint === undefined) throw targetRequired();
         return { theme: "dark" };
       });
+      void result.catch(() => {});
       await vi.advanceTimersByTimeAsync(0);
-      expect(hints).toEqual([undefined]);
-      await expect(result).resolves.toEqual({ theme: "dark" });
+      expect(hints).toEqual([]);
       await vi.advanceTimersByTimeAsync(1000);
-      const later = withClientConnectionId(ENV, new AbortController().signal, async (hint) => hint);
+      expect(hints).toEqual([]);
       queue.offer(registered);
-      await expect(later).resolves.toBe("conn-early");
+      await expect(result).resolves.toEqual({ theme: "dark" });
+      expect(hints).toEqual(["conn-early"]);
     } finally {
       vi.useRealTimers();
     }
@@ -787,17 +789,24 @@ describe("shared dispatcher regressions at the web boundary", () => {
     },
   );
 
-  it("releases a held non-UI call when an unregistered stream ends", async () => {
+  it.each(["bound", "stop"])("holds calls across EOF until %s", async (release) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const queue = new Mailbox();
     try {
-      start({ stream: queue.stream });
+      const connection = start({ stream: queue.stream });
       const send = vi.fn(async (hint: string | undefined) => hint);
       const held = withClientConnectionId(ENV, new AbortController().signal, send);
       queue.shutdown();
       await vi.advanceTimersByTimeAsync(0);
-      expect(send).toHaveBeenCalledOnce();
+      expect(send).not.toHaveBeenCalled();
+      if (release === "stop") connection.stop();
+      else {
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(send).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      }
       await expect(held).resolves.toBeUndefined();
+      expect(send).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }

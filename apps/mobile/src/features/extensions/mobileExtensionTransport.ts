@@ -60,7 +60,11 @@ export async function mobileExtensionTransport(
   const connectionHint = createClientProviderConnectionHint<RpcSession>((socket) => ({
     connectionId:
       !socket || current?.socket === socket ? current?.dispatcher.currentConnectionId : undefined,
-    connecting: !released && !connectionStreamEnded && !(socket && endedSockets.has(socket)),
+    // An ended mobile socket is final; only its registration can satisfy the wait.
+    waitFor:
+      !released && !connectionStreamEnded && !(socket && endedSockets.has(socket))
+        ? "registration"
+        : undefined,
   }));
   const wakeConnections = connectionHint.changed;
   const abort = () => {

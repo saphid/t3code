@@ -51,16 +51,19 @@ const connectionIds = new Map<string, string>();
 /** The loop instance that minted the current connection id — a stale teardown must not clear a replacement's identity. */
 const connectionOwners = new Map<string, object>();
 
-/** Loops whose connect is in flight: a registration (or its failure) is imminent. */
+/** Live loops holding calls until registration, including across reconnects. */
 const connectingSeams = new Map<string, Set<object>>();
-/** Wakes calls held until the in-flight connect settles. */
+/** Wakes calls held until registration, stop or an unsupported-server result. */
 const connectionHints = new Map<string, ReturnType<typeof createClientProviderConnectionHint>>();
 function connectionHint(environmentId: string) {
   let hint = connectionHints.get(environmentId);
   if (!hint) {
     hint = createClientProviderConnectionHint(() => ({
       connectionId: connectionIds.get(environmentId),
-      connecting: connectingSeams.has(environmentId) && !unsupportedSeams.has(environmentId),
+      waitFor:
+        connectingSeams.has(environmentId) && !unsupportedSeams.has(environmentId)
+          ? "reconnect"
+          : undefined,
     }));
     if (connectingSeams.has(environmentId) || connectionIds.has(environmentId))
       connectionHints.set(environmentId, hint);
@@ -87,7 +90,7 @@ function wakeWaiters(environmentId: string) {
     connectionHints.delete(environmentId);
 }
 
-/** The connect registered or ended: release held calls either way. */
+/** The loop registered or stopped: release held calls. */
 function settleConnecting(environmentId: string, owner: object) {
   const owners = connectingSeams.get(environmentId);
   if (!owners?.delete(owner)) return;
@@ -155,9 +158,9 @@ export function startClientProviderConnection(
       connectionOwners.delete(deps.environmentId);
       noteClientProviderConnection(deps.environmentId, false);
     }
-    // An ended connect stream releases ordinary calls until the next attempt.
-    settleConnecting(deps.environmentId, owner);
-    wakeWaiters(deps.environmentId);
+    // A live web loop holds calls across transport drops until re-registration.
+    if (lifecycle.signal.aborted) settleConnecting(deps.environmentId, owner);
+    else markConnecting(deps.environmentId, owner);
   };
   const flush = () => {
     if (!connectionIds.has(deps.environmentId) || lifecycle.signal.aborted) return;
@@ -256,11 +259,7 @@ async function runConnectionLoop(
           // A clean EOF ends this iteration only — teardown runs, then the
           // loop waits for the transport's next connected phase and reopens.
           if (next.done) break;
-          try {
-            void session.receive(next.value).catch(() => {});
-          } catch {
-            // A malformed frame or throwing provider hook must not kill the seam.
-          }
+          void session.receive(next.value).catch(() => {});
         }
       } finally {
         signal.removeEventListener("abort", resolveAborted);

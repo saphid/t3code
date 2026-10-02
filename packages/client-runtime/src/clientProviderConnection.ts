@@ -51,18 +51,21 @@ export function stampClientProviderRequest<
   return { ...rest, ...(connectionId === undefined ? {} : { clientConnectionId: connectionId }) };
 }
 
-/** A local registration receipt wakes calls; a missing/ended seam sends them unstamped. */
+/**
+ * Adapters choose the wait lifetime: web waits across reconnects; mobile waits
+ * for one socket registration. Clearing waitFor releases calls unstamped.
+ */
 export function createClientProviderConnectionHint<Key = void>(
   read: (key: Key | undefined) => {
     readonly connectionId?: string | undefined;
-    readonly connecting: boolean;
+    readonly waitFor: "registration" | "reconnect" | undefined;
   },
 ) {
   const waiters = new Set<() => void>();
   const connectionId = async (signal: AbortSignal, timeoutMs = 10_000, key?: Key) => {
     checkAbort(signal);
     const state = read(key);
-    if (state.connectionId !== undefined || !state.connecting) return state.connectionId;
+    if (state.connectionId !== undefined || state.waitFor === undefined) return state.connectionId;
     await new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);
@@ -72,7 +75,7 @@ export function createClientProviderConnectionHint<Key = void>(
       };
       const changed = () => {
         const state = read(key);
-        if (state.connectionId !== undefined || !state.connecting) done();
+        if (state.connectionId !== undefined || state.waitFor === undefined) done();
       };
       const timer = setTimeout(done, timeoutMs);
       waiters.add(changed);
@@ -138,10 +141,6 @@ export function createClientProviderSession(deps: {
   let accepted = new Set<string>();
   const pending = new Map<string, AbortController>();
   const subscriptions = new Map<string, { closed: boolean; close?: () => void }>();
-  const hint = createClientProviderConnectionHint(() => ({
-    connectionId: identity,
-    connecting: !disposed,
-  }));
   const provider = (id: string, stream = false) => {
     const local = deps.providers.get(id);
     if (!local || (deps.requireAccepted && (!identity || !accepted.has(id))))
@@ -163,14 +162,12 @@ export function createClientProviderSession(deps: {
     get currentConnectionId() {
       return identity;
     },
-    connectionId: hint.connectionId,
     async receive(frame: ClientProviderServerFrame) {
       if (disposed) return;
       switch (frame.type) {
         case "registered":
           identity = frame.connectionId;
           accepted = new Set(frame.accepted.map(({ id }) => id));
-          hint.changed();
           deps.registered?.(identity);
           return;
         case "invoke": {
@@ -229,7 +226,6 @@ export function createClientProviderSession(deps: {
       if (disposed) return;
       disposed = true;
       identity = undefined;
-      hint.changed();
       for (const controller of pending.values()) controller.abort();
       pending.clear();
       for (const id of subscriptions.keys()) closeSubscription(id);
