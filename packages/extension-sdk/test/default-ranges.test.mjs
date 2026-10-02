@@ -23,7 +23,6 @@ const RAISED_DEFAULT_FLOORS = {
   composerContextApi: "^1.2.0",
   messagesEnrichmentApi: "^1.1.0",
   messagesEnrichmentApiV1_1: "^1.1.0",
-  orchestrationControlApi: "^1.1.0",
   prsReadApiV1_1: "^1.1.0",
   resourcesLeaseApi: "^1.1.0",
   terminalSessionsApi: "^1.1.0",

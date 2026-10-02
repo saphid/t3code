@@ -47,7 +47,7 @@
     },
     {
       "id": "t3.orchestration/control",
-      "versionRange": "^1.1.0"
+      "versionRange": "^2.0.0"
     },
     {
       "id": "t3.messages/enrichment",

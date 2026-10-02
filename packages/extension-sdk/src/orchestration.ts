@@ -7,6 +7,8 @@ export const ORCHESTRATION_STATUS = "t3.orchestration/status";
 export const ORCHESTRATION_CONTROL = "t3.orchestration/control";
 export const ORCHESTRATION_READ = "t3.orchestration/read";
 export const ORCHESTRATION_OPERATE = "t3.orchestration/operate";
+/** Allows answering agent approval requests; ordinary turn control never implies this authority. */
+export const ORCHESTRATION_APPROVE_REQUESTS = "t3.orchestration/approve-requests";
 /**
  * Launching a workflow starts a provider turn on the user's behalf, so it is a
  * separate grant ANDed with operate — a pack that can start turns does not
@@ -205,8 +207,6 @@ export type TurnStartInput = OrchestrationGuard & {
     readonly model: string;
     readonly options?: JsonObject;
   };
-  readonly runtimeMode?: "full-access" | "approval-required" | "auto" | "auto-accept-edits";
-  readonly interactionMode?: "default" | "plan";
   readonly titleSeed?: string;
 };
 export type OrchestrationControlMethods = {
@@ -447,8 +447,6 @@ const operationInputs: Record<keyof OrchestrationControlMethods, JsonObject> = {
         { instanceId: id, model: str, options: { type: "object", additionalProperties: true } },
         ["instanceId", "model"],
       ),
-      runtimeMode: { enum: ["full-access", "approval-required", "auto", "auto-accept-edits"] },
-      interactionMode: { enum: ["default", "plan"] },
       titleSeed: str,
     },
     ["text"],
@@ -469,14 +467,18 @@ const operationInputs: Record<keyof OrchestrationControlMethods, JsonObject> = {
     ["workflowName"],
   ),
 };
+/** 2.0.0 removes turn mode overrides and separates approval authority from ordinary control. */
 export const orchestrationControlApi = defineApi<OrchestrationControlMethods>({
   id: ORCHESTRATION_CONTROL,
-  version: "1.1.0",
+  version: "2.0.0",
   methods: [
     ...ORCHESTRATION_CONTROL_OPS.map((name) => ({
       name,
       effect: "write" as const,
-      requiredGrants: [ORCHESTRATION_OPERATE],
+      requiredGrants:
+        name === "approval.respond"
+          ? [ORCHESTRATION_OPERATE, ORCHESTRATION_APPROVE_REQUESTS]
+          : [ORCHESTRATION_OPERATE],
       inputSchema: operationInputs[name],
       outputSchema: receipt,
     })),

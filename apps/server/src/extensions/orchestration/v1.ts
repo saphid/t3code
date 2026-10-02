@@ -346,14 +346,16 @@ export function createOrchestrationApiProviders(deps: Dependencies): readonly Ho
             }
             const base = { ...args, type: nativeTypes[method], commandId, threadId };
             if (method === "turn.start") {
+              if (Object.hasOwn(args, "runtimeMode") || Object.hasOwn(args, "interactionMode"))
+                throw new Error("turn mode overrides are not allowed");
               const { text, ...rest } = args;
               return decode({
                 ...rest,
                 type: nativeTypes[method],
                 commandId,
                 threadId,
-                runtimeMode: args.runtimeMode ?? state.thread.runtimeMode,
-                interactionMode: args.interactionMode ?? state.thread.interactionMode,
+                runtimeMode: state.thread.runtimeMode,
+                interactionMode: state.thread.interactionMode,
                 message: { messageId: commandId, role: "user", text, attachments: [] },
                 createdAt,
               });
