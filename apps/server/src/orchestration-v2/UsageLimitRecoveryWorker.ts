@@ -170,15 +170,30 @@ const make = Effect.gen(function* () {
   });
   const limitCleared = Effect.fn("UsageLimitRecovery.limitCleared")(
     function* (instanceId: ProviderInstanceId, redeemedAt: DateTime.Utc) {
+      const preferences = yield* settings.getSettings;
+      const now = yield* DateTime.now;
       const candidates = yield* projections.getLimitRecoveryCandidates({
-        now: yield* DateTime.now,
-        autoResume: false,
-        snooze: false,
+        now,
+        autoResume: preferences.autoResumeLimitedThreads,
+        snooze: preferences.snoozeLimitedThreads,
         limitedOn: instanceId,
       });
       for (const thread of candidates) {
         const command = limitClearedCommand(thread, DateTime.toEpochMillis(redeemedAt));
-        if (command !== null) yield* dispatch(thread, command);
+        if (command === null) continue;
+        // A redeem can beat the sweep to a fresh failure; apply the defaults
+        // the sweep would have chosen first, with the same arming command.
+        const arm =
+          matchingRecovery(thread) === null
+            ? limitRecoveryCommand(
+                thread,
+                preferences.autoResumeLimitedThreads,
+                DateTime.toEpochMillis(now),
+                preferences.snoozeLimitedThreads,
+              )
+            : null;
+        if (arm !== null) yield* dispatch(thread, arm);
+        yield* dispatch(thread, command);
       }
     },
     (effect, instanceId) =>

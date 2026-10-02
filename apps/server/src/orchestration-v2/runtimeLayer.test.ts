@@ -4260,6 +4260,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "snooze",
     "unarmed",
     "choice-race",
+    "global-default",
     "other-instance",
     "failed-after-redeem",
   ] as const)("a redeemed reset credit lifts the usage limit of a %s thread early", (scenario) =>
@@ -4346,7 +4347,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
           },
         ],
       });
-      if (scenario !== "unarmed") {
+      if (scenario !== "unarmed" && scenario !== "choice-race" && scenario !== "global-default") {
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make(`reset-credit:arm:${scenario}`),
@@ -4391,7 +4392,10 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
                 Layer.mergeAll(
                   projectionStoreLayer,
                   Scheduler.layer,
-                  ServerSettings.layerTest(),
+                  // The redeem beats the sweep to arming this thread's default.
+                  ServerSettings.layerTest(
+                    scenario === "global-default" ? { autoResumeLimitedThreads: true } : {},
+                  ),
                   Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
                 ),
               ),
@@ -4425,7 +4429,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       assert.equal(thread.limitRecovery?.clearedAt, DateTime.formatIso(clearedAt));
       assert.equal(
         thread.limitRecovery?.autoResume,
-        scenario === "resume" || scenario === "choice-race",
+        scenario === "resume" || scenario === "choice-race" || scenario === "global-default",
       );
       assert.isNull(thread.snoozedUntil);
       const lateSnooze = yield* orchestrator

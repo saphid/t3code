@@ -24,6 +24,7 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -347,13 +348,14 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             Effect.flatMap((outcome) =>
               Effect.gen(function* () {
                 const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-                const refreshed = yield* snapshot.refresh;
-                const after = refreshed.usageLimits?.checkedAt;
+                // A refresh that fails, even as a defect, must not hide a spent credit.
+                const refreshed = yield* Effect.exit(snapshot.refresh);
+                const limits = Exit.isSuccess(refreshed) ? refreshed.value.usageLimits : undefined;
                 if (
                   outcome === "reset" &&
-                  (after === undefined ||
-                    after === before ||
-                    refreshed.usageLimits?.unavailable?.reason === "probeFailed")
+                  (limits?.checkedAt === undefined ||
+                    limits.checkedAt === before ||
+                    limits.unavailable?.reason === "probeFailed")
                 ) {
                   return {
                     outcome,
