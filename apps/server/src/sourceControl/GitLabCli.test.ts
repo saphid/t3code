@@ -106,6 +106,110 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  for (const fixture of [
+    {
+      lookup: "mr",
+      host: "gitlab.example:8443",
+      profile: "gitlab.example",
+      configuredUser: "",
+      numberReference: false,
+    },
+    {
+      lookup: "mr",
+      host: "gitlab.example",
+      profile: "gitlab.example",
+      apiHost: "api.gitlab.example:8443",
+      configuredUser: "",
+      numberReference: true,
+    },
+    {
+      lookup: "mr",
+      host: "gitlab.example",
+      profile: "gitlab.example",
+      configuredUser: "alex",
+      numberReference: false,
+    },
+    {
+      lookup: "repository",
+      host: "api.gitlab.example:8443",
+      profile: "ssh.gitlab.example",
+      apiHost: "api.gitlab.example:8443",
+      configuredUser: "",
+      numberReference: false,
+    },
+    {
+      lookup: "repository",
+      host: "gitlab.example",
+      profile: "gitlab.example",
+      configuredUser: "alex",
+      numberReference: false,
+    },
+  ] as const) {
+    it.effect(
+      `inaccessible ${fixture.lookup} gives a host-specific login hint (host: ${fixture.host}, user: ${fixture.configuredUser}, number: ${fixture.numberReference})`,
+      () =>
+        Effect.gen(function* () {
+          const cause = new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "not found",
+            failureKind: "not-found",
+          });
+          mockedRun.mockImplementation((command) => {
+            if (command.args[0] !== "config") return Effect.fail(cause);
+            if (command.args[2] === "user") {
+              expect(command.env?.USER).toBe("");
+              return Effect.succeed(processOutput(fixture.configuredUser));
+            }
+            return Effect.succeed(
+              processOutput("apiHost" in fixture ? fixture.apiHost : fixture.host),
+            );
+          });
+          const glab = yield* GitLabCli.GitLabCli;
+          const context = {
+            provider: {
+              kind: "gitlab" as const,
+              name: "GitLab",
+              baseUrl: `https://${fixture.profile}`,
+            },
+            remoteName: "origin",
+            remoteUrl: `git@${fixture.profile}:acme/repo.git`,
+          };
+          const error = yield* (
+            fixture.lookup === "mr"
+              ? glab
+                  .getMergeRequest({
+                    cwd: "/repo",
+                    reference: fixture.numberReference
+                      ? "!42"
+                      : `https://${fixture.host}/acme/repo/-/merge_requests/42`,
+                    context,
+                  })
+                  .pipe(Effect.asVoid)
+              : glab
+                  .getRepositoryCloneUrls({
+                    cwd: "/repo",
+                    repository: "acme/repo",
+                    host: fixture.host,
+                    context,
+                  })
+                  .pipe(Effect.asVoid)
+          ).pipe(Effect.flip);
+          expect(error.cause).toBe(cause);
+          expect(error.detail).toContain("not found or");
+          if (fixture.lookup === "mr") expect(error.detail).toContain("Merge request !42");
+          if (fixture.configuredUser) expect(error.detail).not.toContain("glab auth login");
+          else {
+            expect(error.detail).toContain(`glab auth login --hostname ${fixture.profile}`);
+            const apiHost = "apiHost" in fixture ? fixture.apiHost : fixture.host;
+            expect(error.detail).toContain(`--api-host ${apiHost}`);
+          }
+        }),
+    );
+  }
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(
@@ -409,7 +513,7 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.equal(error.message.includes("Merge request 4888 was not found"), true);
+      assert.equal(error.message.includes("Merge request !4888 was not found"), true);
       assert.strictEqual(error._tag, "GitLabMergeRequestNotFoundError");
       assert.strictEqual(error.command, "glab");
       assert.strictEqual(error.cwd, "/repo");
@@ -438,7 +542,7 @@ layer("GitLabCli.layer", (it) => {
         });
       }).pipe(Effect.flip);
 
-      assert.strictEqual(error._tag, "GitLabCliCommandError");
+      assert.strictEqual(error._tag, "GitLabRepositoryLookupError");
       assert.strictEqual(error.cause, cause);
     }),
   );

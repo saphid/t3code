@@ -9,6 +9,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -79,10 +81,19 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
   {
     ...gitLabCliExecutionErrorContext,
     reference: Schema.String,
+    host: Schema.optional(Schema.String),
+    loginHint: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
-    return `Merge request ${this.reference} was not found. Check the MR number or URL and try again.`;
+    const url = URL.canParse(this.reference) ? new URL(this.reference) : undefined;
+    const number =
+      url?.pathname.match(/\/-\/merge_requests\/(\d+)\/?$/u)?.[1] ??
+      this.reference.match(/^!?(\d+)$/u)?.[1];
+    const missing = `Merge request ${number ? `!${number}` : this.reference} was not found or is inaccessible on ${this.host ?? url?.host ?? "GitLab"}.`;
+    return this.loginHint
+      ? `${this.loginHint.trim()} ${missing}`
+      : `${missing} Check the MR number or URL and try again.`;
   }
 
   override get message(): string {
@@ -297,6 +308,7 @@ export class GitLabCli extends Context.Service<
     readonly getMergeRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
     }) => Effect.Effect<GitLabMergeRequestSummary, GitLabCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
@@ -477,6 +489,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const missingLoginHint = Effect.fn("GitLabCli.missingLoginHint")(function* (
+    cwd: string,
+    host: string,
+    requestedApiHost: string,
+  ) {
+    if (host.length === 0) return "";
+    // glab consults USER before stored login metadata; suppress that OS-user override.
+    const user = yield* execute(
+      { cwd, args: ["config", "get", "user", "--host", host], maxOutputBytes: 8_000 },
+      { USER: "" },
+    ).pipe(
+      Effect.map((output) => output.stdout.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (user.length > 0) return "";
+    const apiHost =
+      requestedApiHost === host
+        ? yield* execute({
+            cwd,
+            args: ["config", "get", "api_host", "--host", host],
+            maxOutputBytes: 8_000,
+          }).pipe(
+            Effect.map((output) => output.stdout.trim() || host),
+            Effect.orElseSucceed(() => host),
+          )
+        : requestedApiHost;
+    return ` If private, run \`glab auth login --hostname ${host}${apiHost === host ? "" : ` --api-host ${apiHost}`}\` and retry.`;
+  });
+
   return GitLabCli.of({
     execute,
     listMergeRequests: (input) =>
@@ -522,6 +563,30 @@ export const make = Effect.gen(function* () {
         reference: input.reference,
         args: ["mr", "view", input.reference, "--output", "json"],
       }).pipe(
+        Effect.catchTag("GitLabMergeRequestNotFoundError", (error) =>
+          Effect.gen(function* () {
+            const baseUrl = input.context?.provider.baseUrl;
+            const url = URL.canParse(input.reference)
+              ? new URL(input.reference)
+              : baseUrl && URL.canParse(baseUrl)
+                ? new URL(baseUrl)
+                : undefined;
+            const loginHint = yield* missingLoginHint(
+              input.cwd,
+              url?.hostname ?? "",
+              url?.host ?? "",
+            );
+            return yield* new GitLabMergeRequestNotFoundError({
+              operation: error.operation,
+              command: error.command,
+              cwd: error.cwd,
+              reference: error.reference,
+              ...(url ? { host: url.host } : {}),
+              cause: error.cause,
+              loginHint,
+            });
+          }),
+        ),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           Effect.sync(() => decodeGitLabMergeRequestJson(raw)).pipe(
@@ -578,6 +643,22 @@ export const make = Effect.gen(function* () {
           },
           host.length > 0 ? { GITLAB_HOST: host } : undefined,
         ).pipe(
+          Effect.catchTag("GitLabCliCommandError", (error) =>
+            Effect.gen(function* () {
+              const cause = error.cause;
+              if (!isVcsProcessExitError(cause) || cause.failureKind !== "not-found") {
+                return yield* error;
+              }
+              const loginHint = yield* missingLoginHint(input.cwd, host, requestedHost);
+              return yield* new GitLabRepositoryLookupError({
+                operation: "getRepositoryCloneUrls",
+                command: "glab",
+                cwd: input.cwd,
+                detail: "Repository not found or inaccessible on GitLab." + loginHint,
+                cause,
+              });
+            }),
+          ),
           Effect.map((result) => result.stdout.trim()),
           Effect.flatMap((raw) =>
             decodeGitLabRepositoryCloneUrls(raw).pipe(
