@@ -492,13 +492,13 @@ export const ChatHeader = memo(function ChatHeader({
         data-chat-header-actions
         className={cn(
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
-          // Reserve the fixed panel controls (which grow with the Extensions
-          // menu and dock toggle) plus their 4px gap and 1px edge inset. The
-          // page header adds 8px more right padding at sm. The fallbacks are
-          // two panel toggles, for before the cluster first measures.
+          // Reserve the measured panel controls (which grow with the Extensions
+          // menu and dock toggle), the actions' 8px gap (12px at @3xl), and the
+          // 1px edge inset. The page header adds 8px right padding at sm. The
+          // fallbacks are two panel toggles, before the cluster first measures.
           rightPanelOpen
             ? "pr-0"
-            : "[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,4.25rem)+5px)] sm:[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,3.75rem)-3px)] pr-(--chat-header-actions-end)",
+            : "[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,4.25rem)+9px)] sm:[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,3.75rem)+1px)] @3xl/header-actions:[--chat-header-actions-end:calc(var(--workspace-titlebar-panel-controls-width,3.75rem)+5px)] pr-(--chat-header-actions-end)",
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
