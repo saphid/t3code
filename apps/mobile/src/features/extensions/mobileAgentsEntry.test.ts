@@ -130,6 +130,26 @@ describe("installed mobile Agents entry", () => {
     expect(selectMobileAgentsEntry([installed()], context, false).status).toBe("offline");
     expect(selectMobileAgentsEntry(null, context, true).status).toBe("loading");
   });
+  it.each([
+    "Remote environment endpoint https://fixture.example/api/extensions/list returned undeclared status 503.",
+    "Remote environment endpoint https://fixture.example/api/extensions/list returned undeclared status 401.",
+    "The environment request failed.",
+  ])("does not mount a stale catalogue or call request failures offline: %s", (message) => {
+    expect(
+      selectMobileAgentsEntry([installed()], context, true, { catalogueError: new Error(message) }),
+    ).toMatchObject({ status: "unavailable", visible: true });
+  });
+  it("keeps a connected cold link loading until thread selection settles", () => {
+    expect(selectMobileAgentsEntry([installed()], null, true, { threadPending: true }).status).toBe(
+      "loading",
+    );
+    expect(
+      selectMobileAgentsEntry([installed()], null, true, { threadPending: false }).status,
+    ).toBe("thread-unavailable");
+    expect(
+      selectMobileAgentsEntry([installed()], null, false, { threadPending: true }).status,
+    ).toBe("offline");
+  });
   it("routes encoded deep links through the production stack and offers widgets only when eligible", () => {
     expect(mobileAgentsPath("remote", "thread / one")).toBe(
       "/threads/remote/thread%20%2F%20one/agents",

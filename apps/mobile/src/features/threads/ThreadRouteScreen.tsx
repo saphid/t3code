@@ -152,7 +152,7 @@ function ThreadHeader(
     if (agents.entry.visible)
       actions.push({
         accessibilityLabel: "Open Agents",
-        icon: "person.crop.circle",
+        icon: "person.2",
         onPress: openAgents,
       });
     actions.push({

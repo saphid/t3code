@@ -32,12 +32,17 @@ export type MobileAgentsStatus =
   | "disabled"
   | "revoked"
   | "incompatible"
+  | "unavailable"
   | "offline"
   | "thread-unavailable";
 export function selectMobileAgentsEntry(
   installations: readonly MobileInstallation[] | null,
   context: ViewContext | null,
   connected: boolean,
+  {
+    threadPending = false,
+    catalogueError = null,
+  }: { threadPending?: boolean; catalogueError?: unknown } = {},
 ): {
   status: MobileAgentsStatus;
   visible: boolean;
@@ -50,7 +55,19 @@ export function selectMobileAgentsEntry(
     installation,
   });
   if (!connected) return result("offline");
-  if (!context) return result("thread-unavailable");
+  if (!context) return result(threadPending ? "loading" : "thread-unavailable");
+  if (catalogueError !== null) {
+    const message =
+      typeof catalogueError === "string"
+        ? catalogueError
+        : catalogueError instanceof Error
+          ? catalogueError.message
+          : "";
+    const missingApi =
+      /Unknown request tag: subscribeExtensionCatalogue\b/.test(message) ||
+      /\/api\/extensions\/list returned undeclared status (404|405|501)\./.test(message);
+    return result(missingApi ? "incompatible" : "unavailable");
+  }
   if (!installations) return result("loading");
   if (!installation) return result("missing");
   if (!installation.enabled) return result("disabled");
@@ -112,6 +129,10 @@ export const mobileAgentsNotice: Record<
     title: "Agents update required",
     detail:
       "Update this environment and its Agents pack to a version that supports mobile, then refresh.",
+  },
+  unavailable: {
+    title: "Agents unavailable",
+    detail: "Could not load the installed Agents pack. Refresh to try again.",
   },
   offline: { title: "Environment offline", detail: "Reconnect the environment to open Agents." },
   "thread-unavailable": {
