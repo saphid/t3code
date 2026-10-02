@@ -1,3 +1,7 @@
+import {
+  beginPullRequestCheckoutToast,
+  pullRequestCheckoutErrorDetail,
+} from "./pullRequestHandoffToast";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -1201,10 +1205,7 @@ export function PullRequestDetailPanel({
     // The menu closes on the press and takes its "Preparing..." label with it, so this is the
     // only thing answering for the checkout. It carries no timeout of its own: a loading toast
     // never expires, and an explicit one would survive the update and pin the result on screen.
-    const toastId = toastManager.add({
-      type: "loading",
-      title: "Preparing the pull request checkout...",
-    });
+    const toast = beginPullRequestCheckoutToast();
     // Wherever the reader chose to act: the thread, the checkout it is pointed at and the composer
     // the task lands in are all one server's, and picking another one moves all three.
     const projectRef = scopeProjectRef(
@@ -1223,11 +1224,7 @@ export function PullRequestDetailPanel({
       // Without a thread there is nowhere for the checkout to belong: its setup script would not
       // run and its task would have no composer to land in. Better to stop before touching the
       // working tree than to prepare a worktree nobody asked for.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
+      toast.settle({ kind: "thread-failed" });
       return;
     }
     const prepared = await prepareThread.run({
@@ -1237,15 +1234,8 @@ export function PullRequestDetailPanel({
     });
     if (prepared._tag === "Failure") {
       setHandoff(null);
-      // The server says what to do about it — that the branch is already checked out in the main
-      // repository, say — and that sentence is the only way out of the failure.
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
-      });
+      const failure = squashAtomCommandFailure(prepared);
+      toast.settle({ kind: "checkout-failed", detail: pullRequestCheckoutErrorDetail(failure) });
       return;
     }
     // The same thread again, now that there is somewhere to point it at. A local checkout has
@@ -1263,52 +1253,20 @@ export function PullRequestDetailPanel({
       // The checkout is on disk; only the thread failed to move onto it. Writing the task now
       // would send the agent at whatever the thread was already open on — which is the one
       // outcome worth stopping for, since it reads as success and is not.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
+      toast.settle({ kind: "thread-move-failed", branch: prepared.value.branch });
       return;
     }
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
-    // success, because everything else about the handoff did happen.
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
-            }
-          : staleCheckoutToast,
-      );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
-          }
-        : staleCheckoutToast,
-    );
+    if (task !== null) await openThreadWithTask(projectRef, task, opened);
+    toast.settle({
+      kind: "ready",
+      mode,
+      withTask: task !== null,
+      isOnPullRequestHead: prepared.value.isOnPullRequestHead,
+      isTrackingPullRequestHead: prepared.value.isTrackingPullRequestHead,
+    });
   };
 
   const askAboutPullRequest = () => {

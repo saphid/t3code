@@ -1,29 +1,35 @@
 import {
   EnvironmentId,
+  SourceControlProviderError,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
   type PullRequestDetailView,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
-  newThread: vi.fn(),
-  prepareThread: vi.fn(),
-  refresh: vi.fn(),
-  Wrapper: ({ children }: { children?: ReactNode }) => children,
-  Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
-    <>
-      {render}
-      {children}
-    </>
-  ),
-}));
+const { newThread, prepareThread, refresh, addToast, updateToast, Wrapper, Trigger } = vi.hoisted(
+  () => ({
+    newThread: vi.fn(),
+    addToast: vi.fn(),
+    updateToast: vi.fn(),
+    prepareThread: vi.fn(),
+    refresh: vi.fn(),
+    Wrapper: ({ children }: { children?: ReactNode }) => children,
+    Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
+      <>
+        {render}
+        {children}
+      </>
+    ),
+  }),
+);
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
@@ -66,7 +72,7 @@ vi.mock("~/state/usePullRequestStack", () => ({
     refresh,
   }),
 }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), update: vi.fn() } }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: addToast, update: updateToast } }));
 vi.mock("../ui/tooltip", () => ({
   TooltipProvider: Wrapper,
   Tooltip: Wrapper,
@@ -211,9 +217,11 @@ beforeEach(() => {
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
+  addToast.mockReset().mockReturnValue("checkout-toast");
+  updateToast.mockReset();
   prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
-    value: { branch: "feature", worktreePath: "/workspace/pr" },
+    value: { branch: "feature", worktreePath: "/workspace/pr", isOnPullRequestHead: true },
   });
 });
 afterEach(() => {
@@ -334,5 +342,134 @@ describe.each([
     } else {
       expect(newThread).toHaveBeenCalled();
     }
+  });
+});
+
+describe("checkout notifications", () => {
+  async function renderCheckout() {
+    await act(async () => {
+      renderer = create(
+        <PullRequestDetailPanel
+          environmentId={threadRef.environmentId}
+          reference={detail}
+          context="page"
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />,
+      );
+    });
+  }
+
+  it.each([
+    "Commit or stash your changes.",
+    "If private, run `glab auth login --hostname ssh.gitlab.example --api-host api.gitlab.example:8443` and retry. " +
+      "Repository not found or inaccessible on GitLab. ".repeat(4),
+  ])("shows the returned checkout diagnostic: %s", async (diagnostic) => {
+    prepareThread.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new SourceControlProviderError({
+          provider: "gitlab",
+          cwd: "/repo",
+          operation: "getRepositoryCloneUrls",
+          detail: diagnostic,
+        }),
+      ),
+    });
+    await renderCheckout();
+    await click("In this repository");
+    expect(updateToast).toHaveBeenLastCalledWith(
+      "checkout-toast",
+      expect.objectContaining({ type: "error", description: diagnostic }),
+    );
+    const notification = updateToast.mock.lastCall?.[1];
+    if (diagnostic.length >= 180) expect(notification.data.expandableContent).toBe(diagnostic);
+    else expect(notification.data?.expandableContent).toBeUndefined();
+    // Failure releases the handoff so the user can retry, and replaces the loading toast.
+    await click("In this repository");
+    expect(updateToast).toHaveBeenLastCalledWith(
+      "checkout-toast",
+      expect.objectContaining({ type: "success" }),
+    );
+  });
+
+  it.each([
+    {
+      isOnPullRequestHead: false,
+      isTrackingPullRequestHead: undefined,
+      title: "Checked out, but the latest commits are unconfirmed",
+    },
+    {
+      isOnPullRequestHead: true,
+      isTrackingPullRequestHead: false,
+      title: "Checked out, but its upstream is unconfirmed",
+    },
+  ])("warns when $title", async (result) => {
+    prepareThread.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { branch: "feature", worktreePath: null, ...result },
+    });
+    await renderCheckout();
+    await click("In this repository");
+    expect(updateToast).toHaveBeenLastCalledWith(
+      "checkout-toast",
+      expect.objectContaining({ type: "warning", title: result.title }),
+    );
+    const description = updateToast.mock.lastCall?.[1].description;
+    expect(description).not.toContain("the code there is older");
+  });
+
+  it.each([undefined, true])(
+    "keeps confirmed checkout success with tracking %s",
+    async (tracking) => {
+      prepareThread.mockResolvedValueOnce({
+        _tag: "Success",
+        value: {
+          branch: "feature",
+          worktreePath: null,
+          isOnPullRequestHead: true,
+          isTrackingPullRequestHead: tracking,
+        },
+      });
+      await renderCheckout();
+      await click("In this repository");
+      expect(updateToast).toHaveBeenLastCalledWith(
+        "checkout-toast",
+        expect.objectContaining({ type: "success", title: "Checked out here" }),
+      );
+    },
+  );
+
+  it("settles the notification when opening the thread fails", async () => {
+    newThread.mockResolvedValueOnce(null);
+    await renderCheckout();
+    await click("In this repository");
+    expect(updateToast).toHaveBeenLastCalledWith(
+      "checkout-toast",
+      expect.objectContaining({ type: "error", title: "Could not open a thread for the checkout" }),
+    );
+    expect(prepareThread).not.toHaveBeenCalled();
+  });
+
+  it("reports a checkout that the thread could not move to", async () => {
+    newThread
+      .mockResolvedValueOnce({ draftId: newDraftId, threadId: ThreadId.make("new-thread") })
+      .mockResolvedValueOnce(null);
+    await renderCheckout();
+    await click("In this repository");
+    expect(updateToast).toHaveBeenLastCalledWith(
+      "checkout-toast",
+      expect.objectContaining({
+        type: "error",
+        title: "Checked out, but the thread stayed where it was",
+      }),
+    );
   });
 });
