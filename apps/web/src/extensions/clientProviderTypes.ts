@@ -1,46 +1,17 @@
-import type { ClientProviderCaller, ClientProviderEmitEvent } from "@t3tools/contracts";
+import type { ClientProviderCaller } from "@t3tools/contracts";
 import type { Json, ViewContext } from "@t3tools/extension-sdk/contracts";
 import type { InstalledPackage } from "./installedController";
 
-/**
- * One `invoke` frame delivered to a local `t3.client/*` provider. The seam
- * already verified socket ownership; `caller`/`context` are broker-forwarded
- * identities the provider re-checks against locally known grants.
- */
-export interface ClientProviderInvokeCall {
-  readonly method: string;
-  readonly input: Json;
-  readonly context: ViewContext;
-  readonly caller: ClientProviderCaller;
-  readonly signal: AbortSignal;
-}
-
-/**
- * One `subscriptionOpen` frame. `emit` is pre-bound to the frame's
- * `subscriptionId`; providers never mint correlation ids themselves.
- */
-export interface ClientProviderStreamCall {
-  readonly name: string;
-  readonly input: Json;
-  readonly context: ViewContext;
-  readonly caller: ClientProviderCaller;
-  readonly emit: (event: ClientProviderEmitEvent) => void;
-}
-
-/** A host-owned `t3.client/*` provider implementation. */
-export interface ClientLocalProvider {
-  invoke(call: ClientProviderInvokeCall): Json | Promise<Json>;
-  openStream?(call: ClientProviderStreamCall): (() => void) | Promise<() => void>;
-}
-
-/** Error shape mirrored back through `respond` as `{ok:false}`. */
-export class ClientProviderOpError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
+import { ClientProviderOpError } from "@t3tools/client-runtime/client-provider-connection";
+export { ClientProviderOpError } from "@t3tools/client-runtime/client-provider-connection";
+import type {
+  ClientProviderInvokeCall as SharedInvokeCall,
+  ClientProviderStreamCall as SharedStreamCall,
+  ClientLocalProvider as SharedLocalProvider,
+} from "@t3tools/client-runtime/client-provider-connection";
+export type ClientProviderInvokeCall = SharedInvokeCall<ViewContext>;
+export type ClientProviderStreamCall = SharedStreamCall<ViewContext>;
+export type ClientLocalProvider = SharedLocalProvider<ViewContext>;
 
 export function readInputObject(input: Json): Record<string, Json> {
   if (input === null || typeof input !== "object" || Array.isArray(input))

@@ -216,7 +216,7 @@ describe("startClientProviderConnection", () => {
     });
     expect(byId.get("req-crash")).toMatchObject({
       ok: false,
-      error: { code: "provider-rejected", message: "boom" },
+      error: { code: "provider-rejected", message: "Provider failed" },
     });
   });
 
@@ -299,7 +299,11 @@ describe("startClientProviderConnection", () => {
     await vi.waitFor(() => {
       expect(mocks.emit).toHaveBeenCalledWith(ENV, {
         correlationId: "sub-2",
-        event: { type: "closed", value: null },
+        event: {
+          type: "closed",
+          value: null,
+          error: { code: "client-provider-unavailable", message: "Provider stream is unavailable" },
+        },
       });
     });
   });
@@ -555,9 +559,9 @@ describe("client connection hint on early calls", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("holds a call made before the transport is up until the reconnect registers", async () => {
-    // A restored panel calls before the environment's first session exists:
-    // that connect fails, and the call must wait for the next one.
+  it("releases calls when connect fails and stamps calls after reconnect registers", async () => {
+    // A failed connect releases the first call; a later attempt still stamps
+    // calls held until its own registration.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const queue = new Mailbox();
@@ -567,14 +571,15 @@ describe("client connection hint on early calls", () => {
       const hints: (string | undefined)[] = [];
       const result = withClientConnectionId(ENV, new AbortController().signal, async (hint) => {
         hints.push(hint);
-        if (hint === undefined) throw targetRequired();
         return { theme: "dark" };
       });
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(hints).toEqual([]);
-      queue.offer(registered);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hints).toEqual([undefined]);
       await expect(result).resolves.toEqual({ theme: "dark" });
-      expect(hints).toEqual(["conn-early"]);
+      await vi.advanceTimersByTimeAsync(1000);
+      const later = withClientConnectionId(ENV, new AbortController().signal, async (hint) => hint);
+      queue.offer(registered);
+      await expect(later).resolves.toBe("conn-early");
     } finally {
       vi.useRealTimers();
     }
@@ -677,5 +682,124 @@ describe("client connection hint on early calls", () => {
     });
     expect(hints).toEqual(["conn-early"]);
     await frames.return();
+  });
+});
+
+describe("shared dispatcher regressions at the web boundary", () => {
+  it.each(["missing", "sync", "async", "named"])(
+    "names failed subscription opens: %s",
+    async (failure) => {
+      const queue = new Mailbox();
+      start({
+        stream: queue.stream,
+        providers:
+          failure === "missing"
+            ? new Map()
+            : new Map([
+                [
+                  "t3.client/theme",
+                  {
+                    invoke: () => null,
+                    openStream: () => {
+                      if (failure === "async")
+                        return Promise.reject(new Error("native bridge details"));
+                      if (failure === "named")
+                        throw new ClientProviderOpError("client-target-denied", "Missing grant");
+                      throw new Error("native bridge details");
+                    },
+                  },
+                ],
+              ]),
+      });
+      queue.offer({
+        type: "subscriptionOpen",
+        subscriptionId: "failed",
+        apiId: "t3.client/theme",
+        name: "watchState",
+        input: {},
+        caller,
+        context: {
+          ...frameContext,
+          resource: {
+            ...frameContext.resource,
+            environmentId: EnvironmentId.make(ENV),
+            projectId: undefined,
+            threadId: undefined,
+          },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(mocks.emit).toHaveBeenCalledWith(ENV, {
+          correlationId: "failed",
+          event: {
+            type: "closed",
+            value: null,
+            error:
+              failure === "named"
+                ? { code: "client-target-denied", message: "Missing grant" }
+                : {
+                    code: "client-provider-unavailable",
+                    message: "Provider stream is unavailable",
+                  },
+          },
+        }),
+      );
+      queue.shutdown();
+    },
+  );
+
+  it.each(["resolve", "reject"])(
+    "suppresses a late invoke %s after replacement",
+    async (outcome) => {
+      const queue = new Mailbox();
+      let finish!: () => void;
+      let began!: () => void;
+      const started = new Promise<void>((resolve) => (began = resolve));
+      const pending = new Promise<null>(
+        (resolve, reject) =>
+          (finish = () =>
+            outcome === "resolve" ? resolve(null) : reject(new Error("bridge details"))),
+      );
+      const connection = start({
+        stream: queue.stream,
+        providers: new Map([
+          [
+            "t3.client/theme",
+            {
+              invoke: () => {
+                began();
+                return pending;
+              },
+            },
+          ],
+        ]),
+      });
+      queue.offer(invokeFrame("stale"));
+      await started;
+      connection.stop();
+      start({ stream: Stream.never });
+      finish();
+      // Drain the provider completion without relying on a timeout for a negative assertion.
+      await pending.catch(() => {});
+      await Promise.resolve();
+      expect(mocks.respond).not.toHaveBeenCalled();
+      queue.shutdown();
+    },
+  );
+
+  it("releases a held non-UI call when an unregistered stream ends", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const queue = new Mailbox();
+    try {
+      start({ stream: queue.stream });
+      const send = vi.fn(async (hint: string | undefined) => hint);
+      const held = withClientConnectionId(ENV, new AbortController().signal, send);
+      queue.shutdown();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledOnce();
+      await expect(held).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

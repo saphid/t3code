@@ -107,3 +107,11 @@ describe("resumableApiFrames", () => {
     expect(opened).toEqual([payload]);
   });
 });
+
+it("strips page-supplied hints from each server-only resumed stream", async () => {
+  const untrusted = { ...payload, request: { ...payload.request, clientConnectionId: "foreign" } };
+  for await (const _frame of resumableApiFrames(ENV, untrusted, new AbortController().signal)) {
+    /* drain the fixture */
+  }
+  expect(mocks.payloads).toEqual([payload]);
+});

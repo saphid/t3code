@@ -599,3 +599,38 @@ it.effect(
       yield* Deferred.await(replacement.closed);
     }),
 );
+
+it.effect(
+  "strips page hints from server-only resumable streams when no UI provider is mounted",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(async () => Response.json({}));
+      const socket = yield* socketFixture("unused");
+      yield* SubscriptionRef.set(f.session, Option.some(socket.socket));
+      const request = {
+        id: "t3.orchestration/status",
+        versionRange: "^1",
+        name: "subscribe",
+        input: {},
+        context: unstampedRequest.context,
+        clientConnectionId: "page-supplied",
+      };
+      const iterator = f.transport.subscribeResumableApi!(request, new AbortController().signal)[
+        Symbol.asyncIterator
+      ]();
+      const first = iterator.next();
+      const { clientConnectionId: _untrusted, ...trusted } = request;
+      expect(yield* Queue.take(socket.apiOpened)).toEqual({
+        installationId: "t3.pack",
+        expectedContentHash: "a".repeat(64),
+        request: trusted,
+      });
+      const frame = { streamId: "s", sequence: 1, type: "snapshot", value: null } as const;
+      yield* Queue.offer(socket.apiFrames, frame);
+      expect(yield* Effect.promise(() => first)).toEqual({ done: false, value: frame });
+      yield* Effect.promise(async () => {
+        await iterator.return?.();
+      });
+      f.owner.abort();
+    }),
+);

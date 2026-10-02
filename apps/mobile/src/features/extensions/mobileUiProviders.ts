@@ -1,10 +1,4 @@
-import type {
-  ClientProviderCaller,
-  ClientProviderEmitEvent,
-  EnvironmentId,
-  ExtensionInstallation,
-  ExtensionViewContext,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ExtensionInstallation } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import { THEME_COLOR_ROLES, type ThemeColors } from "@t3tools/shared/themePalettes";
 import {
@@ -21,22 +15,20 @@ import { checkMobileUiAbort, withMobileUiSignal } from "./mobileUiAbort";
 
 type Json = typeof Schema.Json.Type;
 
-/** Structurally the existing client-provider seam; native code never imports the web host. */
-export interface MobileUiProviderCall {
-  readonly method: string;
-  readonly input: Json;
-  readonly caller: ClientProviderCaller;
-  readonly context: ExtensionViewContext;
-  readonly signal: AbortSignal;
-}
-export interface MobileUiProviderStreamCall {
-  readonly name: string;
-  readonly input: Json;
-  readonly caller: ClientProviderCaller;
-  readonly context: ExtensionViewContext;
-  readonly emit: (event: ClientProviderEmitEvent) => void;
-}
-export interface MobileUiLocalProvider {
+import { ClientProviderOpError as MobileUiProviderError } from "@t3tools/client-runtime/client-provider-connection";
+export { ClientProviderOpError as MobileUiProviderError } from "@t3tools/client-runtime/client-provider-connection";
+export type {
+  ClientProviderInvokeCall as MobileUiProviderCall,
+  ClientProviderStreamCall as MobileUiProviderStreamCall,
+} from "@t3tools/client-runtime/client-provider-connection";
+import type {
+  ClientLocalProvider as SharedLocalProvider,
+  ClientProviderInvokeCall as MobileUiProviderCall,
+  ClientProviderStreamCall as MobileUiProviderStreamCall,
+} from "@t3tools/client-runtime/client-provider-connection";
+
+/** Native providers retain their synchronous watcher and async invoke boundary. */
+export interface MobileUiLocalProvider extends SharedLocalProvider {
   invoke(call: MobileUiProviderCall): Promise<Json>;
   openStream?(call: MobileUiProviderStreamCall): () => void;
 }
@@ -71,15 +63,6 @@ export interface MobileUiProviderDeps {
   ) => void | Promise<void>;
   /** The broker resolves URLs from the invoking thread's agent roster; the page supplies no URL. */
   readonly openSession: (url: string, signal: AbortSignal) => Promise<boolean>;
-}
-
-export class MobileUiProviderError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 function denied(message: string): never {

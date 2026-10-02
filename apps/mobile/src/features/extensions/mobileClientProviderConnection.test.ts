@@ -281,3 +281,47 @@ describe("socket-owned mobile UI dispatch", () => {
     f.ui.dispose();
   });
 });
+
+it.each(["invoke", "stream"])(
+  "forwards a fixed message for an ordinary %s exception",
+  async (kind) => {
+    const f = fixture();
+    try {
+      await f.session.receive(f.registered);
+      f.ui.providers.set("t3.client/navigation", {
+        invoke: async () => {
+          throw new Error("native bridge private details");
+        },
+        openStream: () => {
+          throw new Error("native bridge private details");
+        },
+      });
+      if (kind === "invoke") {
+        await f.invoke("openThread");
+        expect(f.respond).toHaveBeenLastCalledWith({
+          requestId: "r",
+          ok: false,
+          error: { code: "provider-rejected", message: "Provider failed" },
+        });
+      } else {
+        await f.session.receive({
+          type: "subscriptionOpen",
+          subscriptionId: "fixed",
+          apiId: "t3.client/navigation",
+          name: "watch",
+          input: {},
+          caller: f.caller,
+          context: f.context,
+        });
+        expect(f.emit).toHaveBeenLastCalledWith("fixed", {
+          type: "closed",
+          value: null,
+          error: { code: "client-provider-unavailable", message: "Provider stream is unavailable" },
+        });
+      }
+    } finally {
+      f.session.dispose();
+      f.ui.dispose();
+    }
+  },
+);

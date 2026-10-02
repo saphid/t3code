@@ -1,3 +1,7 @@
+import {
+  createClientProviderConnectionHint,
+  stampClientProviderRequest,
+} from "@t3tools/client-runtime/client-provider-connection";
 import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import {
   environmentExtensionsHttp,
@@ -53,10 +57,12 @@ export async function mobileExtensionTransport(
   let current:
     | { socket: RpcSession; dispatcher: ReturnType<typeof createMobileClientProviderSession> }
     | undefined;
-  const connectionWaiters = new Set<() => void>();
-  const wakeConnections = () => {
-    for (const wake of connectionWaiters) wake();
-  };
+  const connectionHint = createClientProviderConnectionHint<RpcSession>((socket) => ({
+    connectionId:
+      !socket || current?.socket === socket ? current?.dispatcher.currentConnectionId : undefined,
+    connecting: !released && !connectionStreamEnded && !(socket && endedSockets.has(socket)),
+  }));
+  const wakeConnections = connectionHint.changed;
   const abort = () => {
     signal.removeEventListener("abort", abort);
     current?.dispatcher.dispose();
@@ -101,24 +107,12 @@ export async function mobileExtensionTransport(
         callSignal,
       );
       if (Option.isNone(active) || endedSockets.has(active.value)) return undefined;
+      socket = active.value;
     }
-    const deadline = Date.now() + 10_000;
-    if (!current || (socket && current.socket !== socket))
-      await new Promise<void>((resolve) => {
-        const done = () => {
-          clearTimeout(timer);
-          connectionWaiters.delete(done);
-          callSignal.removeEventListener("abort", done);
-          resolve();
-        };
-        const timer = setTimeout(done, 10_000);
-        connectionWaiters.add(done);
-        callSignal.addEventListener("abort", done, { once: true });
-      });
-    checkMobileUiAbort(signal);
-    checkMobileUiAbort(callSignal);
-    if (!current || (socket && current.socket !== socket)) return undefined;
-    return current.dispatcher.connectionId(callSignal, Math.max(0, deadline - Date.now()));
+    socket ??= current?.socket;
+    return withMobileUiSignal([signal, callSignal], (lifetime) =>
+      connectionHint.connectionId(lifetime, 10_000, socket),
+    );
   };
   if (ui) {
     const connections = registry.followStream(
@@ -138,23 +132,29 @@ export async function mobileExtensionTransport(
                     Effect.gen(function* () {
                       const dispatcher = yield* Effect.acquireRelease(
                         Effect.sync(() => {
-                          const dispatcher = createMobileClientProviderSession(ui, {
-                            respond: (payload) => {
-                              void Effect.runPromise(
-                                socket.client[WS_METHODS.extensionsClientProvidersRespond](payload),
-                                { signal },
-                              ).catch(() => {});
+                          const dispatcher = createMobileClientProviderSession(
+                            ui,
+                            {
+                              respond: (payload) => {
+                                void Effect.runPromise(
+                                  socket.client[WS_METHODS.extensionsClientProvidersRespond](
+                                    payload,
+                                  ),
+                                  { signal },
+                                ).catch(() => {});
+                              },
+                              emit: (correlationId, event) => {
+                                void Effect.runPromise(
+                                  socket.client[WS_METHODS.extensionsClientProvidersEmit]({
+                                    correlationId,
+                                    event,
+                                  }),
+                                  { signal },
+                                ).catch(() => {});
+                              },
                             },
-                            emit: (correlationId, event) => {
-                              void Effect.runPromise(
-                                socket.client[WS_METHODS.extensionsClientProvidersEmit]({
-                                  correlationId,
-                                  event,
-                                }),
-                                { signal },
-                              ).catch(() => {});
-                            },
-                          });
+                            wakeConnections,
+                          );
                           current = { socket, dispatcher };
                           wakeConnections();
                           return dispatcher;
@@ -202,9 +202,7 @@ export async function mobileExtensionTransport(
     callSignal: AbortSignal,
     socket?: RpcSession,
   ) => {
-    const { clientConnectionId: _untrusted, ...rest } = request;
-    const id = await connectionId(callSignal, socket);
-    return { ...rest, ...(id === undefined ? {} : { clientConnectionId: id }) };
+    return stampClientProviderRequest(request, await connectionId(callSignal, socket));
   };
   const connected = Effect.gen(function* () {
     const supervisor = yield* EnvironmentSupervisor;
@@ -299,7 +297,9 @@ export async function mobileExtensionTransport(
                 Stream.takeWhile(Option.isSome),
                 Stream.map((frame) => frame.value),
               )
-          : environmentResumableExtensionApiStream(environmentId, () => subscribePayload(request)),
+          : environmentResumableExtensionApiStream(environmentId, () =>
+              subscribePayload(stampClientProviderRequest(request, undefined)),
+            ),
         callSignal,
       )) {
         if (Option.isNone(value)) yield null;
