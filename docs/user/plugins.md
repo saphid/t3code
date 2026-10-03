@@ -27,7 +27,7 @@ shows the bytes are what the registry published, not who published them.
 
 Installing never runs package scripts and never installs dependencies, so a plugin package must
 bundle everything it needs. Nothing runs until you review and approve the downloaded files, exactly
-as for a directory. **Discard** removes a download you have not approved.
+as for a directory. Discarding a download you have not approved removes it.
 
 To update an npm plugin, open its details and download a version or tag under **Updates**. The
 download sits next to the installed version, which keeps running. Review the new files and their
@@ -57,10 +57,10 @@ code a plugin loads from outside its directory is not covered.
 
 ## Enabling, disabling, and removing
 
-Use a plugin's switch to enable or disable it; its menu has the other actions. Disabling stops it at
-once and keeps your approval and its settings. **Remove** stops it and forgets it, including its settings and saved
-data; the directory itself is never deleted. Both are always available, even when the directory is
-gone.
+Use **Enable**, **Disable**, or **Remove** in the plugin's controls. Disabling stops the plugin at
+once and keeps your approval and its settings. Removing stops it and forgets it, including its
+settings and saved data. A directory you added yourself is kept; for a plugin installed from npm,
+the server's copy is deleted. You can disable or remove a plugin even when its directory is gone.
 
 Managing plugins needs administrative access to the environment. A device paired with a standard
 link can see the plugins and their settings but not change them; pair it with an administrative link
@@ -93,9 +93,10 @@ The review lists the capabilities a plugin declares. Each one lets the plugin do
 - **views**: adds panels. On the web and desktop app, open one from a thread's right panel, where
   each view is listed after the built-in panels. Plugin views are not available in the mobile app
   yet. A view runs isolated from T3 Code and can only talk to its own plugin.
-- **transforms**: adds short context to each message you send before the agent receives it. The
-  thread shows what each plugin added; your message itself is never changed. At most four plugins
-  add context to one message.
+- **transforms**: adds short context when you start a new turn, including a queued one, before the
+  agent receives it. Messages that steer a running turn and slash commands get no added context.
+  The thread shows what each plugin added; your message itself is never changed. At most four
+  plugins add context to one turn.
 
 A plugin's labels, notifications, and open views go away when it is disabled, removed, or changed.
 
