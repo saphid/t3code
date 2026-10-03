@@ -62,7 +62,7 @@ import { PluginEventDelivery } from "./PluginEventDelivery.ts";
 import { PLUGIN_EVENTS_HANDLER } from "./pluginIpcFraming.ts";
 
 export interface PluginEventFeedOptions {
-  /** Most events in one page; at most `PLUGIN_EVENT_PAGE_MAX_EVENTS`. */
+  /** Most events in one page; at most what `PluginEventPage` accepts. */
   readonly pageSize: number;
   /** Most log sequences one read scans, so a far-behind cursor never scans the whole log at once. */
   readonly scanWindow: number;

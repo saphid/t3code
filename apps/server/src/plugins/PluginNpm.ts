@@ -83,7 +83,7 @@ import {
   type NpmTarballLimits,
 } from "./npmTarball.ts";
 
-export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 
 /** `PluginCatalogError.reason` values this module adds. */
 export type PluginNpmFailure =
@@ -201,7 +201,7 @@ const toPackage = (entry: Installed): PluginNpmPackage => ({
 });
 
 /** Registry base URL without a trailing slash; credentials, queries, and fragments are refused. */
-export const normalizeRegistry = (input: string) => {
+const normalizeRegistry = (input: string) => {
   const url = URL.parse(input);
   if (
     url === null ||

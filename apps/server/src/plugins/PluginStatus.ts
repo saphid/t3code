@@ -39,7 +39,7 @@ import { makeTokenBucket } from "./pluginTokenBucket.ts";
  * store's 8 per thread), and `burst` sets at once, then one per `refillMillis`.
  * Clears are not limited: each one removes something a limited set added.
  */
-export const PLUGIN_STATUS_LIMITS = { maxItems: 16, burst: 10, refillMillis: 500 } as const;
+const PLUGIN_STATUS_LIMITS = { maxItems: 16, burst: 10, refillMillis: 500 } as const;
 
 type HostCall = Parameters<PluginHostMethod>[0];
 

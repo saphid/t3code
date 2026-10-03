@@ -97,7 +97,7 @@ export interface PluginSupervisorOptions {
   readonly stableUptime: Duration.Input;
 }
 
-export const defaultPluginSupervisorOptions: PluginSupervisorOptions = {
+const defaultPluginSupervisorOptions: PluginSupervisorOptions = {
   heapLimitMb: 256,
   maxMessageBytes: DEFAULT_PLUGIN_IPC_MAX_BYTES,
   activationTimeout: Duration.seconds(10),

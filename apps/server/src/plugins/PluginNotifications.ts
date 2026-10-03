@@ -51,7 +51,7 @@ import { makeTokenBucket } from "./pluginTokenBucket.ts";
  * `burst` notifications at once, then one per `refillMillis`. `threadIdMaxLength`
  * bounds the one identifier a plugin chooses.
  */
-export const PLUGIN_NOTIFICATION_LIMITS = {
+const PLUGIN_NOTIFICATION_LIMITS = {
   retained: PLUGIN_NOTIFICATION_MAX_RETAINED,
   retentionMillis: 2 * 60_000,
   burst: 5,
