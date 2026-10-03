@@ -3,11 +3,14 @@ import { memo, useMemo } from "react";
 
 import { useThreadContributionStatus } from "../../state/contributionStatus";
 import { Badge } from "../ui/badge";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   type ContributionStatusChip,
   contributionStatusChips,
 } from "./ThreadContributionStatus.logic";
+
+/** Chips shown inline; the rest are counted in a "+N" badge and listed in the popover. */
+const VISIBLE_CHIPS = 2;
 
 const TONE_VARIANT = {
   neutral: "outline",
@@ -17,27 +20,76 @@ const TONE_VARIANT = {
   error: "error",
 } as const satisfies Record<ContributionStatusTone, string>;
 
-function ContributionStatusBadge({ chip }: { readonly chip: ContributionStatusChip }) {
-  const detail = chip.tooltip ?? chip.text;
+const TONE_TEXT = {
+  neutral: "",
+  info: "text-info-foreground",
+  success: "text-success-foreground",
+  warning: "text-warning-foreground",
+  error: "text-destructive-foreground",
+} as const satisfies Record<ContributionStatusTone, string>;
+
+/**
+ * One trigger for every status: the first chips inline, then a "+N" count.
+ * Click, tap, Enter or hover opens a list with each status's full text,
+ * tooltip and origin, so a truncated or hidden status is always reachable.
+ */
+export function ContributionStatusChips(props: {
+  readonly chips: ReadonlyArray<ContributionStatusChip>;
+}) {
+  const { chips } = props;
+  const visible = chips.slice(0, VISIBLE_CHIPS);
+  const hiddenCount = chips.length - visible.length;
+  const origins = [...new Set(chips.map((chip) => chip.origin))];
   return (
-    <Tooltip>
-      <TooltipTrigger
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={150}
         render={
-          <Badge
-            variant={TONE_VARIANT[chip.tone]}
-            size="sm"
-            className="min-w-0 max-w-48"
-            render={<button type="button" aria-label={`${detail}. ${chip.origin}`} />}
+          <button
+            type="button"
+            aria-label={`Provider status: ${chips.map((chip) => chip.text).join(", ")}`}
+            data-thread-contribution-status
+            className="relative flex min-w-0 max-w-[45%] shrink cursor-pointer items-center gap-1 rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11"
           />
         }
       >
-        <span className="truncate">{chip.text}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">
-        <span className="block">{detail}</span>
-        <span className="block text-muted-foreground">{chip.origin}</span>
-      </TooltipPopup>
-    </Tooltip>
+        {visible.map((chip) => (
+          <Badge
+            key={chip.id}
+            variant={TONE_VARIANT[chip.tone]}
+            size="sm"
+            className="min-w-0 max-w-48 shrink"
+          >
+            <span className="truncate">{chip.text}</span>
+          </Badge>
+        ))}
+        {hiddenCount > 0 ? (
+          <Badge variant="outline" size="sm">
+            +{hiddenCount}
+          </Badge>
+        ) : null}
+      </PopoverTrigger>
+      <PopoverPopup side="bottom" align="start" width="sm" padding="compact">
+        <ul className="flex flex-col gap-2 text-xs">
+          {chips.map((chip) => (
+            <li key={chip.id} className="flex flex-col gap-0.5">
+              <span className={`wrap-break-word font-medium ${TONE_TEXT[chip.tone]}`}>
+                {chip.text}
+              </span>
+              {chip.tooltip ? (
+                <span className="wrap-break-word text-muted-foreground">{chip.tooltip}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        {origins.map((origin) => (
+          <p key={origin} className="mt-2 text-muted-foreground text-xs">
+            {origin}
+          </p>
+        ))}
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -52,16 +104,5 @@ export const ThreadContributionStatus = memo(function ThreadContributionStatus(p
   const entries = useThreadContributionStatus(props.environmentId, props.threadId);
   const chips = useMemo(() => contributionStatusChips(entries), [entries]);
   if (chips.length === 0) return null;
-  return (
-    <div
-      role="group"
-      aria-label="Provider status"
-      data-thread-contribution-status
-      className="flex min-w-0 max-w-[45%] shrink items-center gap-1 overflow-hidden"
-    >
-      {chips.map((chip) => (
-        <ContributionStatusBadge key={chip.id} chip={chip} />
-      ))}
-    </div>
-  );
+  return <ContributionStatusChips chips={chips} />;
 });
