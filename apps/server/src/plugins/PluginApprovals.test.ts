@@ -130,13 +130,61 @@ const createThread = Effect.gen(function* () {
 
 let ordinal = 0;
 
-/** Commits a pending approval as an adapter does: its node, its card, then the request. */
+/** The approval card of the request `raise(name)` commits. */
+const approvalCard = (
+  name: string,
+  prompt: string | undefined,
+  kind: ProviderRequestKind,
+  now: DateTime.Utc,
+) => ({
+  id: EventId.make(`item:${name}:${prompt?.length ?? "none"}`),
+  type: "turn-item.updated" as const,
+  threadId,
+  occurredAt: now,
+  payload: {
+    id: TurnItemId.make(`item:${name}`),
+    threadId,
+    runId: null,
+    nodeId: NodeId.make(`node:${name}`),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: ++ordinal,
+    status: "waiting" as const,
+    title: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+    type: "approval_request" as const,
+    requestId: RuntimeRequestId.make(`request:${name}`),
+    requestKind: kind,
+    ...(prompt === undefined ? {} : { prompt }),
+  },
+});
+
+/** Commits the card of a request raised without one, as Codex, Claude, ACP and OpenCode 2 do. */
+const commitCard = Effect.fn("commitCard")(function* (
+  name: string,
+  prompt: string | undefined,
+  kind: ProviderRequestKind = "command",
+) {
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  yield* sink.write({ events: [approvalCard(name, prompt, kind, now)] });
+});
+
+/**
+ * Commits a pending approval as an adapter does: its node, its card, then the
+ * request. Without the card, only the node and the request.
+ */
 const raise = Effect.fn("raise")(function* (
   name: string,
   prompt: string,
   kind: ProviderRequestKind = "command",
   /** The command the approval is for, as a parent tool item the provider reported first. */
   command?: string,
+  withCard = true,
 ) {
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
@@ -213,32 +261,7 @@ const raise = Effect.fn("raise")(function* (
           runtimeRequestId: requestId,
         },
       },
-      {
-        id: EventId.make(`item:${name}`),
-        type: "turn-item.updated",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: TurnItemId.make(`item:${name}`),
-          threadId,
-          runId: null,
-          nodeId,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: ++ordinal,
-          status: "waiting",
-          title: null,
-          startedAt: now,
-          completedAt: null,
-          updatedAt: now,
-          type: "approval_request",
-          requestId,
-          requestKind: kind,
-          prompt,
-        },
-      },
+      ...(withCard ? [approvalCard(name, prompt, kind, now)] : []),
       {
         id: EventId.make(`request:${name}`),
         type: "runtime-request.updated",
@@ -732,6 +755,100 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           yield* until(is("Recorded", "test.policy"));
           expect(seen.map((receipt) => receipt.requestId)).toEqual([after, after]);
           expect(yield* outcome(before)).toMatchObject({ status: "pending" });
+        }),
+      ),
+    );
+  });
+
+  describe("card order", () => {
+    // Each marker request is offered only after the requests committed before it were seen.
+    const policy = (inputs: Array<Schema.Json>) =>
+      stubCatalog([
+        {
+          id: "test.policy",
+          decide: (input) => {
+            inputs.push(input);
+            return answer({ decision: "approve" });
+          },
+        },
+      ]);
+
+    it.effect("asks plugins once the card lands after the request, with its prompt", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const inputs: Array<Schema.Json> = [];
+          const { seen, until } = yield* startApprovals(policy(inputs));
+          const late = yield* raise("card-late", "", "command", "git status", false);
+          const marker = yield* raise("card-late-marker", "marker");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: marker });
+          expect(seen.filter((receipt) => receipt.requestId === late)).toEqual([]);
+
+          yield* commitCard("card-late", "Check the repository status");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: late });
+          expect(inputs[1]).toMatchObject({
+            requestId: late,
+            prompt: "Check the repository status",
+            subject: "git status",
+          });
+          expect(yield* outcome(late)).toMatchObject({
+            status: "resolved",
+            decision: "accept",
+            resolvedBy: { pluginId: "test.policy" },
+          });
+        }),
+      ),
+    );
+
+    it.effect("asks no plugin when the card that lands after the request is too long", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const inputs: Array<Schema.Json> = [];
+          const { seen, until } = yield* startApprovals(policy(inputs));
+          const late = yield* raise("card-long", "", "command", "git status", false);
+          const marker = yield* raise("card-long-marker", "marker");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: marker });
+
+          yield* commitCard("card-long", "x".repeat(PLUGIN_APPROVAL_LIMITS.maxPromptLength + 1));
+          expect(yield* until(settled(late))).toMatchObject({
+            _tag: "Skipped",
+            cause: "incomplete",
+          });
+          expect(seen.filter((receipt) => receipt.requestId === late)).toHaveLength(1);
+          expect(inputs).toHaveLength(1);
+          expect(yield* outcome(late)).toMatchObject({ status: "pending", item: "waiting" });
+        }),
+      ),
+    );
+
+    it.effect("leaves a request whose card never arrives, or has no prompt, to the user", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const inputs: Array<Schema.Json> = [];
+          const { seen, until } = yield* startApprovals(policy(inputs));
+          const cardless = yield* raise("cardless", "", "command", "git status", false);
+          const promptless = yield* raise("promptless", "", "command", "git status", false);
+          yield* commitCard("promptless", undefined);
+          const marker = yield* raise("cardless-marker", "marker");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: marker });
+
+          yield* userAnswers(cardless, "decline");
+          yield* userAnswers(promptless, "accept");
+          const after = yield* raise("cardless-after", "after");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: after });
+          expect(seen.map((receipt) => receipt.requestId)).toEqual([marker, marker, after, after]);
+          expect(yield* outcome(cardless)).toMatchObject({
+            status: "resolved",
+            decision: "decline",
+            resolvedBy: undefined,
+          });
+          expect(yield* outcome(promptless)).toMatchObject({
+            status: "resolved",
+            decision: "accept",
+            resolvedBy: undefined,
+          });
         }),
       ),
     );

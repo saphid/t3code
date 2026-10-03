@@ -3,9 +3,12 @@
  * `approvals` capability, and records the first answer through the
  * orchestrator.
  *
- * It watches committed `runtime-request.updated` events. For a pending, live
- * approval of a kind some plugin declares, it calls each such plugin's
- * `t3.approval.decide` handler at once, each with its own deadline. An approve
+ * It watches committed runtime requests and approval cards. Once a pending,
+ * live approval of a kind some plugin declares and its card, with the prompt,
+ * are both committed, it calls each such plugin's `t3.approval.decide` handler
+ * at once, each with its own deadline. Providers commit the two in either
+ * order; a request whose card never arrives, or has no prompt, is left to the
+ * user. An approve
  * or deny becomes a `runtime-request.plugin-respond` command, which the
  * orchestrator accepts only while the request is still pending, so the first
  * answer recorded wins, whether it came from the user or a plugin. Abstaining,
@@ -36,6 +39,7 @@ import {
   type NodeId,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2TurnItem,
   type PluginCatalogError,
   type PluginInstallation,
   type PluginInstallationId,
@@ -59,7 +63,10 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { EventSinkV2, type EventSinkV2Error } from "../orchestration-v2/EventSink.ts";
 import { LiveStreamBufferError } from "../orchestration-v2/LiveStreamBudget.ts";
 import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreV2,
+  type ProjectionRuntimeResponseContext,
+} from "../orchestration-v2/ProjectionStore.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
 import type { PluginInvokeError } from "./PluginSupervisor.ts";
@@ -279,29 +286,29 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
     }
   });
 
-  /** Asks every plugin that answers this kind, all at once. Nothing to ask starts no process. */
+  /** Asks every participant at once about a request whose card shows `prompt`. */
   const offer = Effect.fn("PluginApprovals.offer")(
-    function* (threadId: ThreadId, requestId: RuntimeRequestId, kind: PluginApprovalKind) {
-      const participants = (yield* catalog.list).installations.filter((installation) =>
-        answers(installation, kind),
-      );
-      if (participants.length === 0) return;
-      const context = yield* projections.getRuntimeResponseContext(threadId, requestId);
-      if (context.request?.status !== "pending") return;
+    function* (
+      threadId: ThreadId,
+      requestId: RuntimeRequestId,
+      kind: PluginApprovalKind,
+      prompt: string,
+      context: ProjectionRuntimeResponseContext,
+      participants: ReadonlyArray<PluginInstallation>,
+    ) {
       const thread = yield* projections.getThreadShell(threadId);
       if (thread === null) return;
-      const prompt = context.item?.type === "approval_request" ? context.item.prompt : undefined;
       const subject = yield* subjectOf(threadId, context.node?.parentNodeId ?? null);
       // An approve covers the whole request, so a plugin never decides on part of it.
       if (
-        (prompt?.length ?? 0) > PLUGIN_APPROVAL_LIMITS.maxPromptLength ||
+        prompt.length > PLUGIN_APPROVAL_LIMITS.maxPromptLength ||
         (subject?.length ?? 0) > PLUGIN_APPROVAL_LIMITS.maxPromptLength
       )
         return yield* publish({ _tag: "Skipped", requestId, cause: "incomplete" });
       const input = yield* encodeRequest({
         requestId,
         kind,
-        ...(prompt === undefined ? {} : { prompt }),
+        prompt,
         ...(subject === undefined ? {} : { subject }),
         context: {
           environmentId,
@@ -327,20 +334,87 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
   // Requests being offered, keyed by thread and request. Each entry owns its fiber's
   // cancellation and leaves only when the offer ends or is withdrawn.
   const active = new Map<string, { fiber?: Fiber.Fiber<void> }>();
-  // Requests already offered or skipped; insertion order makes the oldest the first to forget.
+  // Pending requests, by kind, whose approval card is not committed yet; the card starts
+  // their offer. Insertion order makes the oldest the first to forget, here and below.
+  const awaitingCard = new Map<string, PluginApprovalKind>();
+  // Requests already offered or skipped.
   const finished = new Set<string>();
   const finish = (key: string) => {
+    awaitingCard.delete(key);
     finished.delete(key);
     finished.add(key);
     if (finished.size > MAX_REMEMBERED_REQUESTS)
       finished.delete(finished.values().next().value as string);
   };
-  const consider = (request: OrchestrationV2RuntimeRequest, threadId: ThreadId) =>
+
+  /**
+   * Starts the offer of a pending request once its approval card, with the
+   * prompt, is committed too. The watch handles one event at a time and this
+   * reads both after its event committed, so whichever of the two commits
+   * second starts the offer. Nothing to ask starts no process.
+   */
+  const consider = Effect.fn("PluginApprovals.consider")(
+    function* (
+      threadId: ThreadId,
+      requestId: RuntimeRequestId,
+      kind: PluginApprovalKind,
+      key: string,
+    ) {
+      const participants = (yield* catalog.list).installations.filter((installation) =>
+        answers(installation, kind),
+      );
+      if (participants.length === 0) return;
+      const context = yield* projections.getRuntimeResponseContext(threadId, requestId);
+      const { request, item } = context;
+      if (request?.status !== "pending" || request.responseCapability.type !== "live") return;
+      if (item?.type !== "approval_request" || item.prompt === undefined) {
+        awaitingCard.delete(key);
+        awaitingCard.set(key, kind);
+        if (awaitingCard.size > MAX_REMEMBERED_REQUESTS)
+          awaitingCard.delete(awaitingCard.keys().next().value as string);
+        return;
+      }
+      if (active.size >= maxActiveOffers) {
+        finish(key);
+        return yield* publish({ _tag: "Skipped", requestId, cause: "overloaded" });
+      }
+      awaitingCard.delete(key);
+      const entry: { fiber?: Fiber.Fiber<void> } = {};
+      active.set(key, entry);
+      entry.fiber = yield* offer(
+        threadId,
+        requestId,
+        kind,
+        item.prompt,
+        context,
+        participants,
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (active.get(key) !== entry) return;
+            active.delete(key);
+            finish(key);
+          }),
+        ),
+        Effect.forkIn(scope),
+      );
+    },
+    Effect.catch((error) =>
+      Effect.logWarning("Could not offer an approval to plugins; it waits for the user", {
+        error,
+      }),
+    ),
+  );
+
+  const keyOf = (threadId: ThreadId, requestId: RuntimeRequestId) =>
+    `${threadId}\u0000${requestId}`;
+  const onRequest = (request: OrchestrationV2RuntimeRequest, threadId: ThreadId) =>
     Effect.suspend(() => {
-      const key = `${threadId}\u0000${request.id}`;
+      const key = keyOf(threadId, request.id);
       const answerable = request.status === "pending" && request.responseCapability.type === "live";
       const current = active.get(key);
       if (!answerable) {
+        awaitingCard.delete(key);
         if (current === undefined) return Effect.void;
         active.delete(key);
         finish(key);
@@ -351,40 +425,39 @@ export const make = Effect.fn("PluginApprovals.make")(function* (
       }
       if (current !== undefined || finished.has(key) || !isPluginApprovalKind(request.kind))
         return Effect.void;
-      if (active.size >= maxActiveOffers) {
-        finish(key);
-        return publish({ _tag: "Skipped", requestId: request.id, cause: "overloaded" });
-      }
-      const entry: { fiber?: Fiber.Fiber<void> } = {};
-      active.set(key, entry);
-      return offer(threadId, request.id, request.kind).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (active.get(key) !== entry) return;
-            active.delete(key);
-            finish(key);
-          }),
-        ),
-        Effect.forkIn(scope),
-        Effect.map((fiber) => {
-          entry.fiber = fiber;
-        }),
-      );
+      return consider(threadId, request.id, request.kind, key);
     });
+  const onCard = (item: OrchestrationV2TurnItem, threadId: ThreadId) => {
+    if (item.type !== "approval_request") return Effect.void;
+    const key = keyOf(threadId, item.requestId);
+    const kind = awaitingCard.get(key);
+    return kind === undefined ? Effect.void : consider(threadId, item.requestId, kind, key);
+  };
 
-  // A resubscription resumes after the last event seen, so no request is skipped.
-  let lastSequence = yield* eventSink.latestSequence();
+  // Each resubscription resumes after the last event seen of its type, so none is skipped.
+  const head = yield* eventSink.latestSequence();
+  const cursors = { "runtime-request.updated": head, "turn-item.updated": head };
   const watch = Effect.suspend(() =>
-    eventSink
-      .stream({ eventType: "runtime-request.updated", afterSequence: lastSequence, bounded: true })
-      .pipe(
-        Stream.runForEach((stored: OrchestrationV2StoredEvent) => {
-          lastSequence = stored.sequence;
-          return stored.event.type === "runtime-request.updated"
-            ? consider(stored.event.payload, stored.event.threadId)
-            : Effect.void;
-        }),
+    Stream.mergeAll(
+      (["runtime-request.updated", "turn-item.updated"] as const).map((eventType) =>
+        eventSink.stream({ eventType, afterSequence: cursors[eventType], bounded: true }),
       ),
+      { concurrency: "unbounded" },
+    ).pipe(
+      Stream.runForEach((stored: OrchestrationV2StoredEvent) => {
+        const { event } = stored;
+        switch (event.type) {
+          case "runtime-request.updated":
+            cursors[event.type] = stored.sequence;
+            return onRequest(event.payload, event.threadId);
+          case "turn-item.updated":
+            cursors[event.type] = stored.sequence;
+            return onCard(event.payload, event.threadId);
+          default:
+            return Effect.void;
+        }
+      }),
+    ),
   );
   const fellBehind = (error: EventSinkV2Error) =>
     error._tag === "EventSinkStreamError" && isLiveStreamBufferError(error.cause);

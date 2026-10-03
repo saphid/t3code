@@ -30,8 +30,9 @@
  * disabling the plugin all leave the request pending for the user. A plugin
  * never approves anything by failing, and never decides on part of a request:
  * when its prompt or subject is longer than `maxPromptLength`, no plugin is
- * asked. Approvals only exist when a provider asks for them: a thread in
- * full-access mode asks for none.
+ * asked, nor about a request whose approval card has no prompt. Approvals
+ * only exist when a provider asks for them: a thread in full-access mode asks
+ * for none.
  *
  * @module PluginApprovals
  */
@@ -84,20 +85,18 @@ export type PluginApprovalDeclaration = typeof PluginApprovalDeclaration.Type;
 /**
  * What the handler receives. `prompt` is what the provider asked, as the
  * approval card shows it: a command, a path, a tool's description, or the
- * provider's reason. `subject` is the tool call the approval is for, as the
- * thread shows it, when the provider reported one first: the command line, the
- * changed paths (one per line), or the tool name and its JSON input. Both are
- * user and agent content and may contain anything the agent wrote. Both are
- * sent whole, never cut. Without a `subject` the plugin has only the prompt,
- * which may be a description rather than the operation; a policy that needs the
- * operation should abstain then.
+ * provider's reason; it is always present. `subject` is the tool call the
+ * approval is for, as the thread shows it, when the provider reported one
+ * first: the command line, the changed paths (one per line), or the tool name
+ * and its JSON input. Both are user and agent content and may contain
+ * anything the agent wrote. Both are sent whole, never cut. Without a
+ * `subject` the plugin has only the prompt, which may be a description rather
+ * than the operation; a policy that needs the operation should abstain then.
  */
 export const PluginApprovalRequest = Schema.Struct({
   requestId: RuntimeRequestId,
   kind: PluginApprovalKind,
-  prompt: Schema.optionalKey(
-    Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
-  ),
+  prompt: Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
   subject: Schema.optionalKey(
     Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
   ),
