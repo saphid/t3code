@@ -26,6 +26,7 @@ import {
 } from "./baseSchemas.ts";
 import { PluginHostState } from "./plugin.ts";
 import { PluginToolDeclaration } from "./pluginTools.ts";
+import { PluginEventDeliveryState } from "./pluginEvents.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -91,6 +92,12 @@ export const PluginInstallation = Schema.Struct({
    * absence on an enabled installation as unknown, never as idle or stopped.
    */
   hostState: ForwardCompatibleOptional(PluginHostState),
+  /**
+   * Event delivery while enabled, for a plugin that declares `events`. Absent
+   * otherwise, from a server without it, and when this client does not know
+   * the state a newer server sent: treat absence as unknown, never as healthy.
+   */
+  eventDelivery: ForwardCompatibleOptional(PluginEventDeliveryState),
   addedAt: IsoDateTime,
 });
 export type PluginInstallation = typeof PluginInstallation.Type;

@@ -1,5 +1,6 @@
 import {
   PLUGIN_API_VERSION,
+  PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_TOOLS_CAPABILITY,
   PluginManifest,
@@ -14,6 +15,7 @@ import { preparePluginTools } from "./pluginToolDeclarations.ts";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
 export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
 ]);
 
