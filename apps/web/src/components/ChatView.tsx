@@ -237,6 +237,7 @@ import {
 } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
 import {
+  pluginViewSurfaceId,
   pullRequestSurface,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -265,9 +266,10 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { pullRequestPanelContext } from "./pullRequest/pullRequestDetail.logic";
-import { RightPanelTabs } from "./RightPanelTabs";
+import { RightPanelTabs, type PluginViewLauncher } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { useDeviceState } from "~/state/device";
+import { sidePanelPluginViews, usePluginViews } from "~/state/pluginViews";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
 import { WizardPopup } from "./ui/wizard";
@@ -4441,6 +4443,20 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, pullRequestsSurfaceAvailable]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
+  );
+  const pluginViews = sidePanelPluginViews(
+    usePluginViews(activeThreadRef?.environmentId ?? null).views,
+  );
+  const pluginViewLaunchers = useMemo(
+    (): PluginViewLauncher[] =>
+      activeThreadRef === null
+        ? []
+        : pluginViews.map((view) => ({
+            surfaceId: pluginViewSurfaceId(view),
+            title: view.title,
+            onOpen: () => useRightPanelStore.getState().openPluginView(activeThreadRef, view),
+          })),
+    [activeThreadRef, pluginViews],
   );
   const [deviceSetupThread, setDeviceSetupThread] = useState<ScopedThreadRef | null>(null);
   const addDeviceSurface = useCallback(() => {
@@ -9729,6 +9745,12 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" ? (
       <RegisteredSidePanel id="pull-requests" />
+    ) : renderedRightPanelSurface?.kind === "plugin-view" ? (
+      <RegisteredSidePanel
+        id="plugin-view"
+        key={renderedRightPanelSurface.id}
+        surface={renderedRightPanelSurface}
+      />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <RegisteredSidePanel
         id="device"
@@ -10584,6 +10606,7 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
           panels={sidePanelLaunchers}
+          pluginViews={pluginViewLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
         >
           {rightPanelContent}
@@ -10626,6 +10649,7 @@ export default function ChatView(props: ChatViewProps) {
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
             panels={sidePanelLaunchers}
+            pluginViews={pluginViewLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
           >
             {rightPanelContent}

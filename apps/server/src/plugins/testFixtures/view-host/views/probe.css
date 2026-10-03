@@ -1,0 +1,17 @@
+:root {
+  color-scheme: light dark;
+  font:
+    13px/1.4 system-ui,
+    sans-serif;
+}
+body {
+  margin: 12px;
+}
+button {
+  margin: 0 6px 6px 0;
+}
+output {
+  display: block;
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
