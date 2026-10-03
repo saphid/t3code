@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { type PluginNotificationFrame, ThreadId } from "@t3tools/contracts";
+import {
+  PLUGIN_NOTIFICATION_FRAME_MAX_BYTES,
+  PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES,
+  PluginNotification,
+  PluginNotificationFrame,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -43,6 +49,9 @@ const follow = Effect.fn("follow")(function* (
 
 const titles = (frame: PluginNotificationFrame) =>
   frame.notifications.map((notification) => notification.title);
+
+const encodeNotification = Schema.encodeSync(Schema.fromJsonString(PluginNotification));
+const encodeFrame = Schema.encodeSync(Schema.fromJsonString(PluginNotificationFrame));
 
 it.layer(NodeServices.layer)("PluginNotifications", (it) => {
   describe("retained set", () => {
@@ -155,6 +164,56 @@ it.layer(NodeServices.layer)("PluginNotifications", (it) => {
         );
         // Another plugin is unaffected.
         yield* show(registrationFor("acme.quiet"), yield* Scope.make(), { title: "fine" });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("keeps every notification, so every frame, within its byte bound", () =>
+      Effect.gen(function* () {
+        const { notifications, show } = yield* start();
+        const live = yield* follow(notifications);
+        yield* live.next;
+        const lifetime = yield* Scope.make();
+        const plugin = registrationFor("acme.huge");
+
+        // Identifiers are refused past their bound, before the call takes a sequence or a frame.
+        const longThread = yield* show(plugin, lifetime, {
+          title: "x",
+          threadId: "t".repeat(1_000_000),
+        }).pipe(Effect.flip);
+        assert.include(longThread.message, "threadId is a string of at most 128 characters");
+        // A field without its own bound still cannot make a notification larger than the budget.
+        const unbounded = yield* show(
+          { ...plugin, manifest: { ...plugin.manifest, name: "n".repeat(5_000) } },
+          lifetime,
+          { title: "x" },
+        ).pipe(Effect.flip);
+        assert.strictEqual(
+          unbounded.message,
+          "The notification is too large: at most 4096 bytes encoded.",
+        );
+
+        // The largest notifications allowed: every text field at its bound in three-byte characters.
+        let last: PluginNotificationFrame | undefined;
+        for (let index = 1; index <= 20; index++) {
+          yield* show(registrationFor(`acme.huge-${index}`), yield* Scope.make(), {
+            title: "界".repeat(100_000),
+            body: "界".repeat(100_000),
+            tone: "warning",
+            threadId: "界".repeat(128),
+          });
+          last = yield* live.next;
+        }
+        // Neither refusal took a sequence.
+        assert.deepStrictEqual(
+          last?.notifications.map((notification) => notification.sequence),
+          Array.from({ length: 20 }, (_, index) => index + 1),
+        );
+        for (const notification of last!.notifications)
+          assert.isAtMost(
+            Buffer.byteLength(encodeNotification(notification)),
+            PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES,
+          );
+        assert.isAtMost(Buffer.byteLength(encodeFrame(last!)), PLUGIN_NOTIFICATION_FRAME_MAX_BYTES);
       }).pipe(Effect.scoped),
     );
 
