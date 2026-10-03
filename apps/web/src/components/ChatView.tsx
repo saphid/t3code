@@ -157,7 +157,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import { RegisteredSidePanel } from "~/panels/bundledPanels";
-import { PanelHostContext, type PanelHost } from "~/panels/panelHost";
+import { PanelHostContext, useScopedAnnotationSender, type PanelHost } from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -10142,9 +10142,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [cancelWorktreeSetup, draftId, setupTarget.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
-  const sendPanelAnnotation = useCallback<PanelHost["sendAnnotation"]>((annotation, image) => {
-    void onSendRef.current(undefined, "auto", "foreground", { annotation, image });
-  }, []);
+  const sendPanelAnnotation = useScopedAnnotationSender(activeThreadKey, onSend);
   const renderedRightPanelSurfaceId = renderedRightPanelSurface?.id ?? null;
   const panelHost = useMemo<PanelHost | null>(
     () =>
