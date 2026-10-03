@@ -20,8 +20,8 @@ A plugin is a directory with a [`t3-plugin.json`](../../packages/contracts/src/p
 
 ## Reserved names
 
-- Plugin handler names starting with `t3.` belong to the host's own protocols (`t3.events`, `t3.transform.enrich`). The child runtime refuses an author registration under `t3.` except `t3.tool.<name>`. The prefixes `action:` and `view:` belong to the actions and views capabilities.
-- Plugin-to-host calls use method prefixes owned by one capability each: `settings.`, `storage.`, `status.`, `notifications.`. A new host-called handler or host method takes a new reserved prefix, served through `PluginSupervisor.serveHostMethod`, never a new IPC message.
+- Plugin handler names starting with `t3.` belong to the host. The [child runtime](../../apps/server/src/plugins/pluginHostChild.ts) refuses an author registration under `t3.` except the `t3.tool.` prefix and the exact names `t3.transform.enrich` and `t3.approval.decide`, which the `transforms` and `approvals` capabilities ask plugins to register. Every other `t3.` name is refused; `t3.events` is registered by `onEvent`, not by authors. The prefixes `action:` and `view:` belong to the actions and views capabilities.
+- Calls cross IPC in two directions. Host-to-plugin handlers (the names above) run through [`PluginCatalog.invoke`](../../apps/server/src/plugins/PluginCatalog.ts), which calls the supervisor's `invoke`. Plugin-to-host `HostCall` methods use prefixes owned by one capability each (`settings.`, `storage.`, `status.`, `notifications.`) and are answered by handlers registered with [`PluginSupervisor.serveHostMethod`](../../apps/server/src/plugins/PluginSupervisor.ts). A new host-called handler takes an exact reserved `t3.` name allowed in the child's guard; a new host method takes a new reserved prefix. Neither needs a new IPC message.
 
 ## Revocation
 
