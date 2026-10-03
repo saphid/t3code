@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ThreadId, type PluginToolError } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PLUGIN_TOOL_LIMITS,
+  ThreadId,
+  type PluginToolError,
+  type PluginToolsListResult,
+} from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -13,6 +19,7 @@ import * as Stream from "effect/Stream";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
+import { jsonBytes } from "./pluginToolDeclarations.ts";
 import * as PluginTools from "./PluginTools.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
@@ -64,11 +71,10 @@ const copyFixture = Effect.gen(function* () {
   return directory;
 });
 
-/** A scoped plugin whose describe handler answers `description`. */
-const describingPlugin = Effect.fn("describingPlugin")(function* (
+/** A scoped tool plugin that declares `tools` and answers every call with "pong". */
+const declaringPlugin = Effect.fn("declaringPlugin")(function* (
   id: string,
-  description: unknown,
-  capabilities: ReadonlyArray<string> = ["tools"],
+  tools: ReadonlyArray<Record<string, unknown>>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -81,8 +87,7 @@ const describingPlugin = Effect.fn("describingPlugin")(function* (
     path.join(directory, "main.mjs"),
     [
       `export function activate(context) {`,
-      `  context.proposed.handle("t3.tools.describe", () => (${toJson(description)}));`,
-      `  context.proposed.handle("t3.tool.ping", () => "pong");`,
+      ...tools.map((tool) => `  context.proposed.handle("t3.tool.${tool.name}", () => "pong");`),
       `}`,
       ``,
     ].join("\n"),
@@ -95,17 +100,18 @@ const describingPlugin = Effect.fn("describingPlugin")(function* (
       version: "1.0.0",
       apiVersion: 1,
       entry: "main.mjs",
-      capabilities,
+      capabilities: ["tools"],
       proposedApi: true,
+      tools,
     }),
   );
   return directory;
 });
 
-const ping = (description: string) => ({
-  name: "ping",
+const tool = (name: string, description: string) => ({
+  name,
   description,
-  inputSchema: { type: "object", properties: {} },
+  inputSchema: { type: "object", additionalProperties: false },
   sideEffect: "read",
 });
 
@@ -116,10 +122,10 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 it.layer(NodeServices.layer)("PluginTools", (it) => {
   describe("granted plugins", () => {
-    it.effect("lists host-derived schemas and calls tools with the session's context", () =>
+    it.effect("lists declared tools without starting the plugin and calls them in context", () =>
       withDatabase(
         Effect.gen(function* () {
-          const { tools, install } = yield* start(yield* Scope.Scope);
+          const { catalog, tools, install } = yield* start(yield* Scope.Scope);
           const installation = yield* install(yield* copyFixture);
           const grants = yield* tools.grants;
           expect(grants).toEqual([{ installationId: installation.installationId, generation: 1 }]);
@@ -136,23 +142,32 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
             plugin: { id: "test.tools", name: "Tools fixture" },
             title: "Count words",
             description: "Count the words in a text.",
-            // Derived from the declared schema, so its rendering is Effect's, not the plugin's.
+            // Exactly what the manifest declares.
             inputSchema: {
               type: "object",
               properties: { text: { type: "string", maxLength: 10000 } },
               required: ["text"],
+              additionalProperties: false,
             },
             sideEffect: "read",
             openWorld: false,
           });
           expect(listed.tools[2]).toMatchObject({ sideEffect: "write", openWorld: true });
-          expect(listed).toMatchObject({ unavailable: [], omitted: [], notInThisSession: [] });
+          expect(listed).not.toHaveProperty("nextCursor");
+          expect(listed.notInThisSession).toEqual([]);
+          const hostState = Effect.map(
+            catalog.list,
+            (snapshot) => snapshot.installations[0]?.hostState,
+          );
+          // Listing reads the consented manifest; only a call starts the plugin.
+          expect(yield* hostState).toEqual({ _tag: "idle" });
 
           const call = (tool: string, input: unknown) =>
             tools.call(grants, { tool, input, context });
           expect(yield* call("test.tools/word_count", { text: "one two  three" })).toEqual({
             words: 3,
           });
+          expect((yield* hostState)?._tag).toBe("running");
           // The context comes from the session, never from the input.
           expect(yield* call("test.tools/echo_context", {})).toEqual({ input: {}, context });
 
@@ -161,6 +176,7 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
               ["test.tools/word_count", { text: 5 }],
               ["test.tools/word_count", {}],
               ["test.tools/word_count", { text: "x".repeat(10_001) }],
+              ["test.tools/word_count", { text: "closed", extra: 1 }],
               ["test.tools/echo_context", { context: { threadId: "other" } }],
               ["test.tools/nope", {}],
               ["word_count", {}],
@@ -169,6 +185,7 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
             ([tool, input]) => call(tool, input).pipe(Effect.flip, Effect.map(reasonOf)),
           );
           expect(failures).toEqual([
+            "invalid-input",
             "invalid-input",
             "invalid-input",
             "invalid-input",
@@ -201,12 +218,7 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
           const revoked = yield* Fiber.join(waiting);
           expect(revoked.reason).toBe("unavailable");
 
-          expect(yield* tools.list(grants)).toEqual({
-            tools: [],
-            unavailable: [],
-            omitted: [],
-            notInThisSession: [],
-          });
+          expect(yield* tools.list(grants)).toEqual({ tools: [], notInThisSession: [] });
           const disabled = yield* tools
             .call(grants, { tool: "test.tools/word_count", input: { text: "a" }, context })
             .pipe(Effect.flip);
@@ -235,89 +247,84 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
     );
   });
 
-  describe("descriptions", () => {
-    it.effect("reports plugins the host cannot describe and starts no plugin without tools", () =>
+  describe("declarations", () => {
+    it.effect("refuses a manifest whose tools the host cannot enforce when it is added", () =>
       withDatabase(
         Effect.gen(function* () {
-          const { catalog, tools, install } = yield* start(yield* Scope.Scope);
-          yield* install(yield* copyFixture);
-          yield* install(
-            yield* describingPlugin("test.pattern", {
-              tools: [
-                {
-                  ...ping("Uses a pattern."),
-                  inputSchema: {
-                    type: "object",
-                    properties: { id: { type: "string", pattern: "^(a+)+$" } },
-                  },
+          const { catalog } = yield* start(yield* Scope.Scope);
+          const refused = (id: string, tools: ReadonlyArray<Record<string, unknown>>) =>
+            declaringPlugin(id, tools).pipe(
+              Effect.flatMap((directory) => catalog.add({ directory })),
+              Effect.flip,
+              Effect.map((error) => error.message),
+            );
+          expect(
+            yield* refused("test.pattern", [
+              {
+                ...tool("ping", "Uses a pattern."),
+                inputSchema: {
+                  type: "object",
+                  properties: { id: { type: "string", pattern: "^(a+)+$" } },
                 },
-              ],
-            }),
-          );
-          yield* install(
-            yield* describingPlugin("test.duplicate", { tools: [ping("One."), ping("Two.")] }),
-          );
-          yield* install(
-            yield* describingPlugin("test.scalar", {
-              tools: [{ ...ping("Takes a string."), inputSchema: { type: "string" } }],
-            }),
-          );
-          const quiet = yield* install(
-            yield* describingPlugin("test.quiet", { tools: [ping("Never asked.")] }, []),
-          );
-
-          const grants = yield* tools.grants;
-          expect(grants).toHaveLength(4);
-          const listed = yield* tools.list(grants);
-          expect(listed.tools.map((tool) => tool.plugin.id)).toEqual(
-            Array.from({ length: 4 }, () => "test.tools"),
-          );
-          const reasons = Object.fromEntries(
-            listed.unavailable.map(({ plugin, reason }) => [plugin.id, reason]),
-          );
-          expect(Object.keys(reasons).toSorted()).toEqual([
-            "test.duplicate",
-            "test.pattern",
-            "test.scalar",
-          ]);
-          expect(reasons["test.pattern"]).toContain("Patterns may block validation");
-          expect(reasons["test.duplicate"]).toBe("It declares ping twice.");
-          expect(reasons["test.scalar"]).toContain("must describe an object");
-
-          const rows = (yield* catalog.list).installations;
-          const quietRow = rows.find((row) => row.installationId === quiet.installationId);
-          expect(quietRow?.hostState).toEqual({ _tag: "idle" });
+              },
+            ]),
+          ).toContain("#/properties/id/pattern: this keyword is not supported.");
+          expect(
+            yield* refused("test.duplicate", [tool("ping", "One."), tool("ping", "Two.")]),
+          ).toContain("it declares the tool ping twice.");
+          expect(
+            yield* refused("test.scalar", [
+              { ...tool("ping", "Takes a string."), inputSchema: { type: "string" } },
+            ]),
+          ).toContain('the root must be "object"');
         }),
       ),
     );
 
-    it.effect("keeps the full list small and lists a large plugin on its own", () =>
+    it.effect("pages whole plugins by id within the byte limit and starts none of them", () =>
       withDatabase(
         Effect.gen(function* () {
-          const { tools, install } = yield* start(yield* Scope.Scope);
+          const { catalog, tools, install } = yield* start(yield* Scope.Scope);
+          // About 21 KB each to list, so a 64 KiB page holds two of them at most.
           const large = (id: string) =>
-            describingPlugin(id, {
-              tools: Array.from({ length: 20 }, (_, index) => ({
-                ...ping("d".repeat(1_900)),
-                name: `tool_${index}`,
-              })),
-            });
-          yield* install(yield* large("test.large-a"));
-          yield* install(yield* large("test.large-b"));
+            declaringPlugin(
+              id,
+              Array.from({ length: 10 }, (_, index) => tool(`tool_${index}`, "é".repeat(1_000))),
+            );
+          for (const id of ["test.large-c", "test.large-a", "test.large-b"])
+            yield* install(yield* large(id));
           const grants = yield* tools.grants;
+          // Enabled after the snapshot: listed by name only, under notInThisSession.
+          yield* install(yield* declaringPlugin("test.late", [tool("ping", "Late.")]));
 
-          // Either fits alone; together they pass the list budget, so one is left out whole.
-          const all = yield* tools.list(grants);
-          const listedIds = new Set(all.tools.map((tool) => tool.plugin.id));
-          expect(listedIds.size).toBe(1);
-          expect(all.tools).toHaveLength(20);
-          expect(all.omitted).toHaveLength(1);
-          const omitted = all.omitted[0]!;
-          expect(omitted.tools).toBe(20);
-          expect(listedIds.has(omitted.plugin.id)).toBe(false);
-          const one = yield* tools.list(grants, { plugin: omitted.plugin.id });
-          expect(one.tools).toHaveLength(20);
-          expect(one.omitted).toEqual([]);
+          const pages: Array<PluginToolsListResult> = [];
+          let cursor: string | undefined;
+          do {
+            const page: PluginToolsListResult = yield* tools.list(
+              grants,
+              cursor === undefined ? {} : { cursor },
+            );
+            pages.push(page);
+            cursor = page.nextCursor;
+          } while (cursor !== undefined);
+
+          for (const page of pages)
+            expect(jsonBytes(page)).toBeLessThanOrEqual(PLUGIN_TOOL_LIMITS.maxListBytes);
+          expect(pages.length).toBeGreaterThan(1);
+          const order = pages.flatMap((page) => [
+            ...new Set(page.tools.map((listing) => listing.plugin.id)),
+            ...page.notInThisSession.map((plugin) => `late:${plugin.id}`),
+          ]);
+          expect(order).toEqual(["test.large-a", "test.large-b", "test.large-c", "late:test.late"]);
+          expect(pages.flatMap((page) => page.tools)).toHaveLength(30);
+
+          const one = yield* tools.list(grants, { plugin: "test.large-b" });
+          expect(one.tools).toHaveLength(10);
+          expect(one).not.toHaveProperty("nextCursor");
+          expect(jsonBytes(one)).toBeLessThanOrEqual(PLUGIN_TOOL_LIMITS.maxListBytes);
+
+          const states = (yield* catalog.list).installations.map((row) => row.hostState?._tag);
+          expect(states).toEqual(["idle", "idle", "idle", "idle"]);
         }),
       ),
     );

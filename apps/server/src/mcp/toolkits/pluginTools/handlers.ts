@@ -11,10 +11,10 @@ const make = Effect.gen(function* () {
     plugin_tools_list: (input) =>
       McpInvocationContext.McpInvocationContext.pipe(
         Effect.flatMap((scope) =>
-          tools.list(
-            scope.pluginToolGrants ?? [],
-            input.plugin === undefined ? undefined : { plugin: input.plugin },
-          ),
+          tools.list(scope.pluginToolGrants ?? [], {
+            ...(input.plugin === undefined ? {} : { plugin: input.plugin }),
+            ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          }),
         ),
       ),
     plugin_tool_call: (input) =>

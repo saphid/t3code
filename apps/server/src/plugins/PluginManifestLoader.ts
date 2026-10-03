@@ -10,6 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { preparePluginTools } from "./pluginToolDeclarations.ts";
+
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
 export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
   PLUGIN_TOOLS_CAPABILITY,
@@ -36,6 +38,17 @@ export interface PluginRegistration {
   /** Real path of the entry module, inside `directory`. */
   readonly entryPath: string;
 }
+
+/** Declared tools need the capability and the proposed `handle` API, and must compile. */
+const checkTools = (manifest: PluginManifest): string | undefined => {
+  const tools = manifest.tools ?? [];
+  if (tools.length === 0) return undefined;
+  if (!manifest.capabilities.includes(PLUGIN_TOOLS_CAPABILITY))
+    return "it declares tools without the tools capability.";
+  if (!manifest.proposedApi) return "it declares tools, which need proposedApi: true.";
+  const prepared = preparePluginTools(manifest, tools);
+  return "problem" in prepared ? prepared.problem : undefined;
+};
 
 /**
  * Reads and validates `t3-plugin.json` in `directory`. The entry must resolve,
@@ -74,6 +87,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   );
   if (unsupported.length > 0)
     return yield* fail(`this server does not support ${unsupported.join(", ")}.`);
+  const toolProblem = checkTools(manifest);
+  if (toolProblem !== undefined) return yield* fail(toolProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))

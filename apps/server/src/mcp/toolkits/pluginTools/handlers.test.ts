@@ -45,7 +45,7 @@ it.effect(
       list: (granted, options) =>
         Effect.sync(() => {
           seen.push({ granted, options });
-          return { tools: [], unavailable: [], omitted: [], notInThisSession: [] };
+          return { tools: [], notInThisSession: [] };
         }),
       call: (granted, request) =>
         Effect.suspend(() => {
@@ -77,7 +77,7 @@ it.effect(
             Effect.provideService(McpSchema.McpServerClient, client),
           );
 
-      const listed = yield* callTool("plugin_tools_list", { plugin: "acme.search" });
+      const listed = yield* callTool("plugin_tools_list", { plugin: "acme.search", cursor: "a" });
       expect(listed.isError).toBe(false);
       // A context the agent passes is only input; the plugin gets the credential's.
       const called = yield* callTool("plugin_tool_call", {
@@ -90,7 +90,7 @@ it.effect(
       expect(failed.content).toEqual([{ type: "text", text: "No such tool." }]);
 
       expect(seen).toEqual([
-        { granted: grants, options: { plugin: "acme.search" } },
+        { granted: grants, options: { plugin: "acme.search", cursor: "a" } },
         {
           granted: grants,
           request: {

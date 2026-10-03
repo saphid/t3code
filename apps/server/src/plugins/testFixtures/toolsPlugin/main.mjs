@@ -1,44 +1,8 @@
-// A tool plugin for PluginTools.test.ts and the lane's live proof.
+// A tool plugin for PluginTools.test.ts and the lane's live proof. Its tools are declared in
+// t3-plugin.json; activate only registers their handlers.
 export function activate(context) {
   const { handle } = context.proposed;
-  handle("t3.tools.describe", () => ({
-    tools: [
-      {
-        name: "word_count",
-        title: "Count words",
-        description: "Count the words in a text.",
-        inputSchema: {
-          type: "object",
-          properties: { text: { type: "string", maxLength: 10000 } },
-          required: ["text"],
-        },
-        sideEffect: "read",
-      },
-      {
-        name: "echo_context",
-        description: "Return the input and the session context the host passed.",
-        inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        sideEffect: "read",
-      },
-      {
-        name: "wait_for_cancel",
-        description: "Wait until the call is cancelled.",
-        inputSchema: { type: "object", properties: {} },
-        sideEffect: "write",
-        openWorld: true,
-      },
-      {
-        name: "big_result",
-        description: "Return a string of the given length.",
-        inputSchema: {
-          type: "object",
-          properties: { length: { type: "integer", minimum: 0 } },
-          required: ["length"],
-        },
-        sideEffect: "read",
-      },
-    ],
-  }));
+  context.log.info("activated");
   handle("t3.tool.word_count", ({ input }) => ({
     words: input.text.split(/\s+/).filter(Boolean).length,
   }));

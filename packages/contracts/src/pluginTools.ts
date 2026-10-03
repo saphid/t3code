@@ -1,52 +1,97 @@
 /**
  * PluginTools - Tools a trusted local plugin offers to agents.
  *
- * A plugin that declares the `tools` capability (and `proposedApi: true`)
- * registers two kinds of handlers with `context.proposed.handle`:
+ * A plugin declares its tools in `t3-plugin.json`, next to the `tools`
+ * capability and `proposedApi: true`, so they are covered by the digest the
+ * user consented to and listing them never starts the plugin:
+ *
+ * ```json
+ * "capabilities": ["tools"],
+ * "proposedApi": true,
+ * "tools": [{
+ *   "name": "word_count",
+ *   "description": "Count the words in a text.",
+ *   "inputSchema": {
+ *     "type": "object",
+ *     "properties": { "text": { "type": "string" } },
+ *     "required": ["text"],
+ *     "additionalProperties": false
+ *   },
+ *   "sideEffect": "read"
+ * }]
+ * ```
+ *
+ * Each tool runs the handler the plugin registers as `t3.tool.<name>`:
  *
  * ```js
- * handle("t3.tools.describe", () => ({
- *   tools: [{
- *     name: "word_count",
- *     description: "Count the words in a text.",
- *     inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
- *     sideEffect: "read",
- *   }],
+ * context.proposed.handle("t3.tool.word_count", ({ input }) => ({
+ *   words: input.text.split(/\s+/).length,
  * }));
- * handle("t3.tool.word_count", ({ input }) => ({ words: input.text.split(/\s+/).length }));
  * ```
  *
  * Agents never see one MCP tool per plugin tool. Every provider session gets
- * the same two fixed tools: `plugin_tools_list` returns the descriptors below,
+ * the same two fixed tools: `plugin_tools_list` shows the declarations below,
  * qualified by plugin id, and `plugin_tool_call` calls one by that name. The
- * host validates every call against the declared input schema before the
- * plugin sees it. `sideEffect` and `openWorld` are metadata for the agent, not
+ * host checks every call against the declared input schema before the plugin
+ * sees it. `sideEffect` and `openWorld` are metadata for the agent, not
  * enforcement: the plugin is trusted local code.
+ *
+ * Input schemas use a JSON Schema (draft 2020-12) subset, and the host
+ * enforces each keyword it accepts with JSON Schema's own meaning. A manifest
+ * using anything else is refused when the plugin is added, naming the keyword:
+ *
+ * - `type`: one of, or an array of, `object`, `array`, `string`, `number`,
+ *   `integer`, `boolean`, `null`. The root is `"type": "object"`.
+ * - objects: `properties`, `required` (names from `properties`),
+ *   `additionalProperties` as `true` or `false` (omitted means `true`).
+ * - arrays: `items`, `minItems`, `maxItems`.
+ * - strings: `minLength`, `maxLength`, counted in Unicode code points.
+ * - numbers and integers: `minimum`, `maximum`, `exclusiveMinimum`,
+ *   `exclusiveMaximum`.
+ * - `enum` and `const` with string, number, boolean, or null values.
+ * - `anyOf`.
+ * - `$defs` at the root and `"$ref": "#/$defs/<name>"`. A reference cycle
+ *   must pass through `properties` or `items`.
+ * - Annotations, shown but not enforced: `title`, `description`, `default`,
+ *   `examples`, `deprecated`, `readOnly`, `writeOnly`, `format`, `$comment`.
+ *   The host never fills in a `default`.
+ *
+ * Type-specific keywords need their `type`; `$ref` and `anyOf` take only
+ * annotations beside them. A plugin written with Effect Schema can generate the
+ * schema at build time:
+ *
+ * ```ts
+ * const { schema, definitions } = Schema.toJsonSchemaDocument(Input, { onExcessProperty: "error" });
+ * const inputSchema = Object.keys(definitions).length === 0 ? schema : { ...schema, $defs: definitions };
+ * ```
  *
  * @module PluginTools
  */
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { PluginId } from "./plugin.ts";
 
 /** The manifest capability a plugin declares to offer tools. */
 export const PLUGIN_TOOLS_CAPABILITY = "tools";
 
-/** Handler that answers with a `PluginToolsDescription`. */
-export const PLUGIN_TOOLS_DESCRIBE_HANDLER = "t3.tools.describe";
+/** Handler names starting with this run declared tools; the prefix is reserved. */
+export const PLUGIN_TOOL_HANDLER_PREFIX = "t3.tool.";
 
 /** Handler that runs one tool; it receives a `PluginToolCallInput`. */
-export const pluginToolHandlerName = (name: PluginToolName) => `t3.tool.${name}`;
+export const pluginToolHandlerName = (name: PluginToolName) =>
+  `${PLUGIN_TOOL_HANDLER_PREFIX}${name}`;
 
 export const PLUGIN_TOOL_LIMITS = {
   maxToolsPerPlugin: 32,
   /** Serialized `inputSchema` of one tool. */
   maxInputSchemaBytes: 16 * 1024,
-  /** Serialized answer of the describe handler. */
-  maxDescriptionBytes: 64 * 1024,
-  /** Serialized `plugin_tools_list` result; whole plugins past it are listed as omitted. */
+  /** Nesting of schemas inside one `inputSchema`. */
+  maxInputSchemaDepth: 32,
+  /** One plugin's tools as `plugin_tools_list` shows them, so every plugin fits on a page. */
+  maxPluginListingBytes: 48 * 1024,
+  /** A whole serialized `plugin_tools_list` result. */
   maxListBytes: 64 * 1024,
   /** Serialized result of one tool call. */
   maxResultBytes: 64 * 1024,
@@ -68,38 +113,26 @@ export type PluginToolSideEffect = typeof PluginToolSideEffect.Type;
 const PluginToolTitle = Schema.String.check(Schema.isMaxLength(100));
 const PluginToolDescriptionText = TrimmedNonEmptyString.check(Schema.isMaxLength(2000));
 
-/** A JSON Schema (draft 2020-12) object; the root must describe an object. */
+/** A JSON Schema object in the subset above; the root describes an object. */
 const JsonSchemaObject = Schema.Record(Schema.String, Schema.Json);
 
-/** One tool as its plugin declares it. */
-export const PluginToolDescriptor = Schema.Struct({
+/** One entry of the manifest's `tools` array. */
+export const PluginToolDeclaration = Schema.Struct({
   name: PluginToolName,
   title: Schema.optionalKey(PluginToolTitle),
   description: PluginToolDescriptionText,
-  /**
-   * JSON Schema for the tool's input object. `$defs` with local
-   * `#/$defs/<name>` references are supported; `pattern` is not. A plugin
-   * written with Effect Schema can pass `Schema.toJsonSchemaDocument(schema)`.
-   */
   inputSchema: JsonSchemaObject,
   sideEffect: PluginToolSideEffect,
   /** True when the tool reaches outside this machine (network, external services). */
   openWorld: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Deadline of the tool's handler once its plugin runs; default 60. */
   timeoutSeconds: Schema.optionalKey(
     Schema.Int.check(
       Schema.isBetween({ minimum: 1, maximum: PLUGIN_TOOL_LIMITS.maxTimeoutSeconds }),
     ),
   ),
 });
-export type PluginToolDescriptor = typeof PluginToolDescriptor.Type;
-
-/** The describe handler's answer. */
-export const PluginToolsDescription = Schema.Struct({
-  tools: Schema.Array(PluginToolDescriptor).check(
-    Schema.isMaxLength(PLUGIN_TOOL_LIMITS.maxToolsPerPlugin),
-  ),
-});
-export type PluginToolsDescription = typeof PluginToolsDescription.Type;
+export type PluginToolDeclaration = typeof PluginToolDeclaration.Type;
 
 /**
  * What a tool handler receives. `input` already matched the tool's schema.
@@ -112,43 +145,44 @@ export const PluginToolCallInput = Schema.Struct({
 export type PluginToolCallInput = typeof PluginToolCallInput.Type;
 
 /** `<pluginId>/<name>`, the name agents call a tool by. */
-export const qualifyPluginToolName = (pluginId: PluginId, name: PluginToolName) =>
+export const qualifyPluginToolName = (pluginId: string, name: PluginToolName) =>
   `${pluginId}/${name}`;
 
-const decodeQualifiedParts = Schema.decodeUnknownOption(
-  Schema.Struct({ pluginId: PluginId, name: PluginToolName }),
-);
+const decodeToolName = Schema.decodeUnknownOption(PluginToolName);
 
+/** Splits `<pluginId>/<name>` at the first `/`; plugin ids never contain one. */
 export const parseQualifiedPluginToolName = (tool: string) => {
   const slash = tool.indexOf("/");
-  return slash === -1
-    ? decodeQualifiedParts(undefined)
-    : decodeQualifiedParts({ pluginId: tool.slice(0, slash), name: tool.slice(slash + 1) });
+  if (slash <= 0) return Option.none();
+  return decodeToolName(tool.slice(slash + 1)).pipe(
+    Option.map((name) => ({ pluginId: tool.slice(0, slash), name })),
+  );
 };
 
-const PluginToolPlugin = Schema.Struct({ id: PluginId, name: Schema.String });
+const PluginToolPlugin = Schema.Struct({ id: Schema.String, name: Schema.String });
 
 /** One tool as `plugin_tools_list` shows it. */
 export const PluginToolListing = Schema.Struct({
   tool: Schema.String,
   plugin: PluginToolPlugin,
-  title: Schema.optionalKey(PluginToolTitle),
+  title: Schema.optionalKey(Schema.String),
   description: Schema.String,
-  /** Derived by the host from the declared schema; calls are validated against exactly this. */
+  /** Exactly the declared schema; calls are checked against it. */
   inputSchema: JsonSchemaObject,
   sideEffect: PluginToolSideEffect,
   openWorld: Schema.Boolean,
 });
 export type PluginToolListing = typeof PluginToolListing.Type;
 
+/**
+ * One page of tools, ordered by plugin id. A plugin's tools are never split
+ * across pages. Pass `nextCursor` back as `cursor` for the next page.
+ */
 export const PluginToolsListResult = Schema.Struct({
   tools: Schema.Array(PluginToolListing),
-  /** Granted plugins whose tools could not be read right now. */
-  unavailable: Schema.Array(Schema.Struct({ plugin: PluginToolPlugin, reason: Schema.String })),
-  /** Granted plugins left out to keep the result small; list them one at a time. */
-  omitted: Schema.Array(Schema.Struct({ plugin: PluginToolPlugin, tools: Schema.Int })),
   /** Tool plugins enabled after this session started; a new session can use them. */
   notInThisSession: Schema.Array(PluginToolPlugin),
+  nextCursor: Schema.optionalKey(Schema.String),
 });
 export type PluginToolsListResult = typeof PluginToolsListResult.Type;
 

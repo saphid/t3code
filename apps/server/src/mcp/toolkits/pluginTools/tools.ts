@@ -9,11 +9,16 @@ const dependencies = [McpInvocationContext.McpInvocationContext];
 
 const PluginToolsListTool = Tool.make("plugin_tools_list", {
   description:
-    "List the tools offered by the user's trusted local T3 Code plugins that this session may use. Each entry has the tool name to pass to plugin_tool_call, its inputSchema, and its sideEffect (read, write or destructive). Pass plugin to list one plugin's tools, for example when it appears under omitted. Plugins enabled after this session started appear under notInThisSession and need a new session.",
+    "List the tools offered by the user's trusted local T3 Code plugins that this session may use. Each entry has the tool name to pass to plugin_tool_call, its inputSchema, and its sideEffect (read, write or destructive). Listing starts no plugin. Results come in pages ordered by plugin id: when nextCursor is present, pass it as cursor for more. Pass plugin to list one plugin's tools. Plugins enabled after this session started appear under notInThisSession and need a new session.",
   parameters: Schema.Struct({
     plugin: Schema.optionalKey(
       Schema.String.check(Schema.isMaxLength(128)).annotate({
         description: "A plugin id, such as acme.search, to list only that plugin's tools.",
+      }),
+    ),
+    cursor: Schema.optionalKey(
+      Schema.String.check(Schema.isMaxLength(128)).annotate({
+        description: "The nextCursor of the previous page.",
       }),
     ),
   }),
