@@ -20,6 +20,24 @@ trust it, then **Approve and enable**. The plugin starts the first time it is us
 Add a plugin's build directory, not a git checkout. Every file in the directory counts, hidden files
 included, and symbolic links are refused.
 
+## Installing from npm
+
+On servers that support it, **Install from npm** downloads a plugin package instead of adding a
+directory. Enter the package name and an exact version or a tag such as `latest` (ranges are not
+accepted); the registry is optional and defaults to npm's. The server downloads the package, checks
+it against the registry's sha512 checksum, and unpacks it into a directory it manages. The checksum
+shows the bytes are what the registry published, not who published them.
+
+Installing never runs package scripts and never installs dependencies, so a plugin package must
+bundle everything it needs. Nothing runs until you review and approve the downloaded files, exactly
+as for a directory. **Discard** removes a download you have not approved.
+
+To update an npm plugin, open its details and download a version or tag under **Updates**. The
+download sits next to the installed version, which keeps running. Review the new files and their
+capabilities, then **Apply update**: applying approves the new files in their place. If anything
+fails before then, the installed version stays. A server restart discards a download you have not
+applied. Removing an npm plugin deletes the server's copy.
+
 ## When a plugin changes
 
 Your approval covers the exact files you reviewed. If any file in the directory changes, T3 Code
