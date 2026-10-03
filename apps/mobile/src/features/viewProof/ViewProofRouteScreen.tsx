@@ -14,6 +14,11 @@ import { AppText as Text } from "../../components/AppText";
  */
 export function ViewProofRouteScreen() {
   const params = (useRoute().params ?? {}) as { pair?: string; proof?: string };
+  // A second deep link reuses this screen; a new key starts its proof afresh.
+  return <ViewProofWebView key={`${params.pair}|${params.proof}`} params={params} />;
+}
+
+function ViewProofWebView({ params }: { readonly params: { pair?: string; proof?: string } }) {
   const [uri, setUri] = useState(params.pair ?? params.proof ?? "about:blank");
   const webView = useRef<WebView<object>>(null);
   const [status, setStatus] = useState("loading");
