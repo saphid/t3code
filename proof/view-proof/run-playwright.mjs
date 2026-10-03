@@ -100,8 +100,11 @@ const fixtureLogStart = (await readFixtureLog()).length;
 
 // Desktop uses hash history; web uses path history.
 const proofPath = `/view-proof?root=${encodeURIComponent(root)}&nav=${navigationPolicy}`;
+// The dev desktop renderer loads thousands of unbundled modules through its
+// protocol proxy, so its load event can stall; the proof only needs the commit.
 const documentResponse = await page.goto(
   isElectron ? `${appOrigin}/#${proofPath}` : `${appOrigin}${proofPath}`,
+  isElectron ? { waitUntil: "commit" } : {},
 );
 const appDocumentCsp = (await documentResponse?.allHeaders())?.["content-security-policy"] ?? null;
 const appContext = await page.evaluate(() => ({
