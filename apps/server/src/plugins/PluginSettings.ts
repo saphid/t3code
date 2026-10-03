@@ -8,10 +8,18 @@
  * and source changes, and are deleted when the installation is removed.
  *
  * A secret's value lives in the server secret store and is only ever read by
- * the plugin; clients learn whether one is saved and nothing else. Every
- * write and the removal cleanup run one at a time, and a write first checks
- * that the installation still exists, so nothing is saved for an
- * installation after its cleanup.
+ * the plugin; clients learn whether one is saved and nothing else. A row in
+ * `plugin_setting_secrets` exists before its file is written and goes only
+ * after the file is deleted, so a failure or crash at any step leaves a row
+ * that the next clear, removal, or start finishes. Every write and the
+ * removal cleanup run one at a time, and a write first checks that the
+ * installation still exists, so nothing is saved for an installation after
+ * its cleanup.
+ *
+ * Only the fields the installation declares now are kept: each update first
+ * deletes values (and secrets) of keys that are no longer declared, or no
+ * longer of that kind, and snapshots only carry declared fields. So what is
+ * stored and sent stays within the declaration's bounds as manifests change.
  */
 import {
   PLUGIN_SETTINGS_CAPABILITY,
@@ -20,6 +28,7 @@ import {
   pluginSettingValueProblem,
   resolvePluginSettingValue,
   type PluginInstallationId,
+  type PluginSettingField,
   type PluginSettingsUpdateInput,
   type PluginSettingsValues,
 } from "@t3tools/contracts";
@@ -144,34 +153,113 @@ export const make = Effect.fn("PluginSettings.make")(function* (
     );
 
   const savedRows = (installationId: PluginInstallationId) =>
-    sql<{ readonly key: string; readonly value_json: string | null }>`
+    sql<{ readonly key: string; readonly value_json: string }>`
       SELECT key, value_json FROM plugin_settings
       WHERE installation_id = ${installationId}
       ORDER BY key
     `;
 
-  const readValues = (installationId: PluginInstallationId) =>
-    savedRows(installationId).pipe(
-      Effect.map((rows): PluginSettingsValues => {
+  /** Secrets that may have a file; `saved` is 0 while one is written or being deleted. */
+  const secretRows = (installationId: PluginInstallationId) =>
+    sql<{ readonly key: string; readonly saved: number }>`
+      SELECT key, saved FROM plugin_setting_secrets
+      WHERE installation_id = ${installationId}
+      ORDER BY key
+    `;
+
+  const isSecret = (fields: ReadonlyArray<PluginSettingField>, key: string) =>
+    fields.some((field) => field.key === key && field.type === "secret");
+  const isValue = (fields: ReadonlyArray<PluginSettingField>, key: string) =>
+    fields.some((field) => field.key === key && field.type !== "secret");
+
+  /** The saved values of the fields declared now. */
+  const readValues = (
+    installationId: PluginInstallationId,
+    fields: ReadonlyArray<PluginSettingField>,
+  ) =>
+    Effect.all([savedRows(installationId), secretRows(installationId)]).pipe(
+      Effect.map(([rows, secretKeys]): PluginSettingsValues => {
         const values: Array<{ key: string; value: PluginSettingValue }> = [];
-        const secretKeys: Array<string> = [];
         for (const row of rows) {
-          if (row.value_json === null) {
-            secretKeys.push(row.key);
-            continue;
-          }
+          if (!isValue(fields, row.key)) continue;
           const value = decodeSavedValue(row.value_json);
           if (Option.isSome(value)) values.push({ key: row.key, value: value.value });
         }
-        return { installationId, values, secrets: secretKeys };
+        return {
+          installationId,
+          values,
+          secrets: secretKeys
+            .filter((row) => row.saved === 1 && isSecret(fields, row.key))
+            .map((row) => row.key),
+        };
       }),
       Effect.catch(storageFailed(installationId)),
     );
 
   const current = Effect.fnUntraced(function* (installationId: PluginInstallationId) {
-    if ((yield* findInstallation(installationId)) === undefined)
-      return yield* notFound(installationId);
-    return yield* readValues(installationId);
+    const installation = yield* findInstallation(installationId);
+    if (installation === undefined) return yield* notFound(installationId);
+    return yield* readValues(installationId, installation.manifest?.settings ?? []);
+  });
+
+  /** Saves a secret: its row is written first, so a file never exists without one. */
+  const saveSecret = Effect.fnUntraced(function* (
+    installationId: PluginInstallationId,
+    key: string,
+    value: string,
+  ) {
+    // A replaced secret stays saved; its file is swapped in one rename.
+    yield* sql`
+      INSERT INTO plugin_setting_secrets (installation_id, key, saved)
+      VALUES (${installationId}, ${key}, 0)
+      ON CONFLICT (installation_id, key) DO NOTHING
+    `;
+    yield* secrets.set(secretName(installationId, key), textEncoder.encode(value));
+    yield* sql`
+      UPDATE plugin_setting_secrets SET saved = 1
+      WHERE installation_id = ${installationId} AND key = ${key}
+    `;
+  });
+
+  /** Deletes a secret's file, then its row; a failure leaves the row for the next attempt. */
+  const deleteSecret = Effect.fnUntraced(function* (
+    installationId: PluginInstallationId,
+    key: string,
+  ) {
+    yield* sql`
+      UPDATE plugin_setting_secrets SET saved = 0
+      WHERE installation_id = ${installationId} AND key = ${key}
+    `;
+    yield* secrets.remove(secretName(installationId, key));
+    yield* sql`
+      DELETE FROM plugin_setting_secrets
+      WHERE installation_id = ${installationId} AND key = ${key}
+    `;
+  });
+
+  const deleteSecretOrWarn = (installationId: PluginInstallationId, key: string) =>
+    deleteSecret(installationId, key).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not delete a plugin's secret; it is retried later", {
+          installationId,
+          cause,
+        }),
+      ),
+    );
+
+  /** Deletes what is saved for keys the declaration no longer has, or has as another kind. */
+  const retireUndeclared = Effect.fnUntraced(function* (
+    installationId: PluginInstallationId,
+    fields: ReadonlyArray<PluginSettingField>,
+  ) {
+    for (const row of yield* secretRows(installationId))
+      if (!isSecret(fields, row.key)) yield* deleteSecretOrWarn(installationId, row.key);
+    for (const row of yield* savedRows(installationId))
+      if (!isValue(fields, row.key))
+        yield* sql`
+          DELETE FROM plugin_settings
+          WHERE installation_id = ${installationId} AND key = ${row.key}
+        `;
   });
 
   const update = Effect.fn("PluginSettings.update")(function* (input: PluginSettingsUpdateInput) {
@@ -194,22 +282,13 @@ export const make = Effect.fn("PluginSettings.make")(function* (
       plan.push({ key: change.key, secret: field.type === "secret", value: change.value });
     }
     const failed = storageFailed(installationId);
+    yield* retireUndeclared(installationId, fields).pipe(Effect.catch(failed));
     for (const step of plan) {
-      if (step.secret && step.value !== null) {
-        yield* secrets
-          .set(secretName(installationId, step.key), textEncoder.encode(String(step.value)))
-          .pipe(Effect.catch(failed));
-        yield* sql`
-          INSERT INTO plugin_settings (installation_id, key, value_json)
-          VALUES (${installationId}, ${step.key}, NULL)
-          ON CONFLICT (installation_id, key) DO UPDATE SET value_json = NULL
-        `.pipe(Effect.catch(failed));
-      } else if (step.secret) {
-        yield* sql`
-          DELETE FROM plugin_settings WHERE installation_id = ${installationId} AND key = ${step.key}
-        `.pipe(Effect.catch(failed));
-        yield* secrets.remove(secretName(installationId, step.key)).pipe(Effect.catch(failed));
-      } else if (step.value !== null) {
+      if (step.secret && step.value !== null)
+        yield* saveSecret(installationId, step.key, String(step.value)).pipe(Effect.catch(failed));
+      else if (step.secret)
+        yield* deleteSecret(installationId, step.key).pipe(Effect.catch(failed));
+      else if (step.value !== null) {
         const json = encodeSavedValue(step.value);
         yield* sql`
           INSERT INTO plugin_settings (installation_id, key, value_json)
@@ -222,33 +301,14 @@ export const make = Effect.fn("PluginSettings.make")(function* (
         `.pipe(Effect.catch(failed));
       }
     }
-    return yield* readValues(installationId);
+    return yield* readValues(installationId, fields);
   });
 
   /** Deletes everything saved for an installation that no longer exists. */
   const purge = Effect.fnUntraced(function* (installationId: PluginInstallationId) {
-    const rows = yield* savedRows(installationId);
-    yield* sql`
-      DELETE FROM plugin_settings
-      WHERE installation_id = ${installationId} AND value_json IS NOT NULL
-    `;
-    for (const row of rows) {
-      if (row.value_json !== null) continue;
-      // A secret's row goes only with its value, so a failed removal is retried at the next start.
-      const removed = yield* secrets.remove(secretName(installationId, row.key)).pipe(
-        Effect.as(true),
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not delete a removed plugin's secret", {
-            installationId,
-            cause,
-          }).pipe(Effect.as(false)),
-        ),
-      );
-      if (removed)
-        yield* sql`
-          DELETE FROM plugin_settings WHERE installation_id = ${installationId} AND key = ${row.key}
-        `;
-    }
+    for (const row of yield* secretRows(installationId))
+      yield* deleteSecretOrWarn(installationId, row.key);
+    yield* sql`DELETE FROM plugin_settings WHERE installation_id = ${installationId}`;
     yield* sql`DELETE FROM plugin_storage WHERE installation_id = ${installationId}`;
   });
 
@@ -299,20 +359,25 @@ export const make = Effect.fn("PluginSettings.make")(function* (
     const { key } = yield* decodeKeyInput(input).pipe(Effect.mapError(malformed));
     const field = registration.manifest.settings?.find((candidate) => candidate.key === key);
     if (field === undefined) return yield* hostError(`"${key}" is not a declared setting.`);
-    const rows = yield* sql<{ readonly value_json: string | null }>`
-      SELECT value_json FROM plugin_settings
-      WHERE installation_id = ${installationId} AND key = ${key}
-    `.pipe(Effect.catch(hostFailed));
-    const row = rows[0];
     if (field.type === "secret") {
-      if (row === undefined || row.value_json !== null) return { value: null };
+      const rows = yield* sql<{ readonly saved: number }>`
+        SELECT saved FROM plugin_setting_secrets
+        WHERE installation_id = ${installationId} AND key = ${key}
+      `.pipe(Effect.catch(hostFailed));
+      if (rows[0]?.saved !== 1) return { value: null };
       const secret = yield* secrets
         .get(secretName(installationId, key))
         .pipe(Effect.catch(hostFailed));
       return { value: Option.isSome(secret) ? textDecoder.decode(secret.value) : null };
     }
+    const rows = yield* sql<{ readonly value_json: string }>`
+      SELECT value_json FROM plugin_settings
+      WHERE installation_id = ${installationId} AND key = ${key}
+    `.pipe(Effect.catch(hostFailed));
     const saved =
-      row?.value_json == null ? undefined : Option.getOrUndefined(decodeSavedValue(row.value_json));
+      rows[0] === undefined
+        ? undefined
+        : Option.getOrUndefined(decodeSavedValue(rows[0].value_json));
     return { value: resolvePluginSettingValue(field, saved) ?? null };
   });
 
@@ -398,12 +463,15 @@ export const make = Effect.fn("PluginSettings.make")(function* (
   yield* supervisor.serveHostMethod("storage.delete", storageDelete);
   yield* supervisor.serveHostMethod("storage.keys", storageKeys);
 
-  // Delete what earlier runs saved for installations that are gone, then follow removals.
+  // Delete what earlier runs saved for installations that are gone, finish secret writes and
+  // deletions an earlier run did not complete, then follow removals.
   const listed = new Set(
     (yield* catalog.list).installations.map((installation) => installation.installationId),
   );
   const stored = yield* sql<{ readonly installation_id: PluginInstallationId }>`
     SELECT installation_id FROM plugin_settings
+    UNION
+    SELECT installation_id FROM plugin_setting_secrets
     UNION
     SELECT installation_id FROM plugin_storage
   `.pipe(Effect.orDie);
@@ -411,6 +479,15 @@ export const make = Effect.fn("PluginSettings.make")(function* (
     stored
       .map((row) => row.installation_id)
       .filter((installationId) => !listed.has(installationId)),
+  );
+  const unfinished = yield* sql<{
+    readonly installation_id: PluginInstallationId;
+    readonly key: string;
+  }>`SELECT installation_id, key FROM plugin_setting_secrets WHERE saved = 0`.pipe(Effect.orDie);
+  yield* lock.withPermit(
+    Effect.forEach(unfinished, (row) => deleteSecretOrWarn(row.installation_id, row.key), {
+      discard: true,
+    }),
   );
   let known: ReadonlySet<PluginInstallationId> = listed;
   yield* catalog.subscribe.pipe(

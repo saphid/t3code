@@ -4,13 +4,23 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Saved plugin setting values per installation. A secret's row has a NULL value: the value
-  // itself lives in the server secret store, and the row says that one is saved.
+  // Saved plugin setting values per installation, secrets excepted.
   yield* sql`
     CREATE TABLE IF NOT EXISTS plugin_settings (
       installation_id TEXT NOT NULL,
       key TEXT NOT NULL,
-      value_json TEXT,
+      value_json TEXT NOT NULL,
+      PRIMARY KEY (installation_id, key)
+    )
+  `;
+  // Secrets whose value may be in the server secret store. A row is written before its file and
+  // deleted after it, so cleanup can always find the file; `saved` is 1 once the value is complete
+  // and 0 while it is written or deleted.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS plugin_setting_secrets (
+      installation_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      saved INTEGER NOT NULL,
       PRIMARY KEY (installation_id, key)
     )
   `;

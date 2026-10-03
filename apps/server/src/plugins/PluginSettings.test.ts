@@ -15,7 +15,11 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import {
+  SecretStorePersistError,
+  SecretStoreRemoveError,
+  ServerSecretStore,
+} from "../auth/ServerSecretStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
 import { loadPluginDirectory } from "./PluginManifestLoader.ts";
@@ -34,15 +38,27 @@ const parseManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-/** A secret store in memory, so a test can see exactly what was saved and deleted; `beforeSet` holds writes. */
+/**
+ * A secret store in memory, so a test can see exactly what was saved and deleted. `faults`
+ * makes the next writes fail after saving (as an interrupted save would) or deletes fail, and
+ * `beforeSet` holds writes.
+ */
 const makeSecretStore = () => {
   const entries = new Map<string, Uint8Array>();
+  const faults = { set: false, remove: false };
   const hooks: { beforeSet: Effect.Effect<void> } = { beforeSet: Effect.void };
   const service = ServerSecretStore.of({
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(entries.get(name))),
     set: (name, value) =>
       Effect.suspend(() => hooks.beforeSet).pipe(
-        Effect.andThen(Effect.sync(() => void entries.set(name, value))),
+        Effect.andThen(
+          Effect.suspend(() => {
+            entries.set(name, value);
+            return faults.set
+              ? Effect.fail(new SecretStorePersistError({ resource: name, cause: "fault" }))
+              : Effect.void;
+          }),
+        ),
       ),
     create: (name, value) => Effect.sync(() => void entries.set(name, value)),
     getOrCreateRandom: (name, bytes) =>
@@ -51,9 +67,14 @@ const makeSecretStore = () => {
         entries.set(name, value);
         return value;
       }),
-    remove: (name) => Effect.sync(() => void entries.delete(name)),
+    remove: (name) =>
+      Effect.suspend(() =>
+        faults.remove
+          ? Effect.fail(new SecretStoreRemoveError({ resource: name, cause: "fault" }))
+          : Effect.sync(() => void entries.delete(name)),
+      ),
   });
-  return { entries, hooks, service };
+  return { entries, faults, hooks, service };
 };
 
 /** Starts a supervisor, catalogue and settings in `scope`, as one server start would. */
@@ -159,6 +180,16 @@ const awaitLog = (
     ),
   );
 
+/** Closes `scope` and starts the plugin services again on the same database, as a restart would. */
+const restart = Effect.fn("restart")(function* (
+  scope: Scope.Closeable,
+  secretStore: ServerSecretStore["Service"],
+) {
+  yield* Scope.close(scope, Exit.void);
+  const next = yield* Scope.make();
+  return { scope: next, ...(yield* startPlugins(next, secretStore)) };
+});
+
 /** Adds, approves and enables the plugin in `directory`. */
 const install = Effect.fn("install")(function* (
   catalog: PluginCatalog.PluginCatalog["Service"],
@@ -191,10 +222,13 @@ const countRows = Effect.fn("countRows")(function* (installationId: PluginInstal
   const settings = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count FROM plugin_settings WHERE installation_id = ${installationId}
   `;
+  const secrets = yield* sql<{ readonly count: number }>`
+    SELECT COUNT(*) AS count FROM plugin_setting_secrets WHERE installation_id = ${installationId}
+  `;
   const storage = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count FROM plugin_storage WHERE installation_id = ${installationId}
   `;
-  return { settings: settings[0]!.count, storage: storage[0]!.count };
+  return { settings: settings[0]!.count, secrets: secrets[0]!.count, storage: storage[0]!.count };
 });
 
 // Each test gets its own database.
@@ -329,7 +363,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           }
           const tooLong = yield* reject([{ key: "token", value: SECRET.repeat(1000) }]);
           expect(tooLong.message).not.toContain(SECRET);
-          expect(yield* countRows(installationId)).toEqual({ settings: 0, storage: 0 });
+          expect(yield* countRows(installationId)).toEqual({ settings: 0, secrets: 0, storage: 0 });
           expect(secrets.entries.size).toBe(0);
 
           const unknown = yield* settings
@@ -503,7 +537,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           expect(yield* catalog.invoke(installationId, "load", { key: "cursor" })).toEqual({
             value: 42,
           });
-          expect(yield* countRows(installationId)).toEqual({ settings: 3, storage: 1 });
+          expect(yield* countRows(installationId)).toEqual({ settings: 2, secrets: 1, storage: 1 });
           expect(secrets.entries.size).toBe(1);
 
           // The settings stream ends once the cleanup after the removal has run.
@@ -512,13 +546,13 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
             .pipe(Stream.runDrain, Effect.flip, Effect.forkChild({ startImmediately: true }));
           yield* catalog.remove({ installationId });
           expect((yield* Fiber.join(ended)).reason).toBe("not-found");
-          expect(yield* countRows(installationId)).toEqual({ settings: 0, storage: 0 });
+          expect(yield* countRows(installationId)).toEqual({ settings: 0, secrets: 0, storage: 0 });
           expect(secrets.entries.size).toBe(0);
           const late = yield* settings
             .update({ installationId, changes: [{ key: "mode", value: "safe" }] })
             .pipe(Effect.flip);
           expect(late.reason).toBe("not-found");
-          expect(yield* countRows(installationId)).toEqual({ settings: 0, storage: 0 });
+          expect(yield* countRows(installationId)).toEqual({ settings: 0, secrets: 0, storage: 0 });
         }),
       ),
     );
@@ -531,7 +565,11 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           const gone = "gone-installation" as PluginInstallationId;
           yield* sql`
             INSERT INTO plugin_settings (installation_id, key, value_json)
-            VALUES (${gone}, 'mode', '"fast"'), (${gone}, 'token', NULL)
+            VALUES (${gone}, 'mode', '"fast"')
+          `;
+          yield* sql`
+            INSERT INTO plugin_setting_secrets (installation_id, key, saved)
+            VALUES (${gone}, 'token', 1)
           `;
           yield* sql`
             INSERT INTO plugin_storage (installation_id, key, value_json, bytes)
@@ -541,7 +579,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           secrets.entries.set(secretName, new TextEncoder().encode(SECRET));
 
           yield* startPlugins(yield* Scope.Scope, secrets.service);
-          expect(yield* countRows(gone)).toEqual({ settings: 0, storage: 0 });
+          expect(yield* countRows(gone)).toEqual({ settings: 0, secrets: 0, storage: 0 });
           expect(secrets.entries.size).toBe(0);
         }),
       ),
@@ -822,6 +860,153 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
         );
         expect(inFlight).toBe(16);
       }),
+    );
+  });
+
+  describe("secrets", () => {
+    it.effect("keeps a secret's row until its file is deleted, so cleanup always finishes", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const secrets = makeSecretStore();
+          let run = yield* restart(yield* Scope.make(), secrets.service);
+          const installationId = yield* install(run.catalog, yield* preparePlugin());
+          const saveToken = run.settings.update({
+            installationId,
+            changes: [{ key: "token", value: SECRET }],
+          });
+          yield* saveToken;
+
+          // A clear whose file deletion fails reads as cleared, and keeps the row that finds it.
+          secrets.faults.remove = true;
+          const clearing = yield* run.settings
+            .update({ installationId, changes: [{ key: "token", value: null }] })
+            .pipe(Effect.flip);
+          expect(clearing.reason).toBe("storage");
+          expect((yield* awaitValues(run.settings, installationId, () => true)).secrets).toEqual(
+            [],
+          );
+          expect(yield* run.catalog.invoke(installationId, "read", { key: "token" })).toEqual({
+            unset: true,
+          });
+          expect(secrets.entries.size).toBe(1);
+          secrets.faults.remove = false;
+          run = yield* restart(run.scope, secrets.service);
+          expect(secrets.entries.size).toBe(0);
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 0,
+            secrets: 0,
+            storage: 0,
+          });
+
+          // A save interrupted after its file was written is found the same way.
+          secrets.faults.set = true;
+          const saving = yield* run.settings
+            .update({ installationId, changes: [{ key: "token", value: SECRET }] })
+            .pipe(Effect.flip);
+          expect(saving.reason).toBe("storage");
+          expect(secrets.entries.size).toBe(1);
+          expect((yield* awaitValues(run.settings, installationId, () => true)).secrets).toEqual(
+            [],
+          );
+          secrets.faults.set = false;
+          run = yield* restart(run.scope, secrets.service);
+          expect(secrets.entries.size).toBe(0);
+          expect((yield* countRows(installationId)).secrets).toBe(0);
+
+          // A removal whose file deletion fails finishes at the next start.
+          yield* run.settings.update({
+            installationId,
+            changes: [{ key: "token", value: SECRET }],
+          });
+          secrets.faults.remove = true;
+          const ended = yield* run.settings
+            .subscribe(installationId)
+            .pipe(Stream.runDrain, Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* run.catalog.remove({ installationId });
+          expect((yield* Fiber.join(ended)).reason).toBe("not-found");
+          expect(secrets.entries.size).toBe(1);
+          expect((yield* countRows(installationId)).secrets).toBe(1);
+          secrets.faults.remove = false;
+          run = yield* restart(run.scope, secrets.service);
+          expect(secrets.entries.size).toBe(0);
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 0,
+            secrets: 0,
+            storage: 0,
+          });
+          yield* Scope.close(run.scope, Exit.void);
+        }),
+      ),
+    );
+
+    it.effect("keeps only the fields the manifest declares now", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const secrets = makeSecretStore();
+          const { catalog, settings } = yield* startPlugins(yield* Scope.Scope, secrets.service);
+          const directory = yield* preparePlugin();
+          const installationId = yield* install(catalog, directory);
+          const redeclare = (fields: ReadonlyArray<Record<string, unknown>>) =>
+            writeManifest(directory, { settings: fields }).pipe(
+              Effect.andThen(catalog.refresh({ installationId })),
+            );
+          yield* settings.update({
+            installationId,
+            changes: [
+              { key: "token", value: SECRET },
+              { key: "mode", value: "fast" },
+            ],
+          });
+
+          // A secret field that becomes text loses its secret before the text is saved.
+          yield* redeclare([{ type: "text", key: "token", label: "API token" }]);
+          const retyped = yield* settings.update({
+            installationId,
+            changes: [{ key: "token", value: "plain" }],
+          });
+          expect(retyped).toEqual({
+            installationId,
+            values: [{ key: "token", value: "plain" }],
+            secrets: [],
+          });
+          expect(secrets.entries.size).toBe(0);
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 1,
+            secrets: 0,
+            storage: 0,
+          });
+
+          // Manifests that keep renaming 32 fields keep 32 values, and frames stay one size.
+          const sizes = [];
+          for (const generation of [0, 1, 2]) {
+            const keys = Array.from(
+              { length: 32 },
+              (_, index) => `g${generation}k${String(index).padStart(2, "0")}`,
+            );
+            yield* redeclare(keys.map((key) => ({ type: "text", key, label: key })));
+            const saved = yield* settings.update({
+              installationId,
+              changes: keys.map((key) => ({ key, value: "v".repeat(2000) })),
+            });
+            expect(saved.values.map((entry) => entry.key)).toEqual(keys);
+            expect(yield* countRows(installationId)).toEqual({
+              settings: 32,
+              secrets: 0,
+              storage: 0,
+            });
+            sizes.push(toJson(saved).length);
+          }
+          expect(new Set(sizes).size).toBe(1);
+
+          // Values of fields no longer declared are not sent, even before the next save.
+          yield* redeclare([{ type: "boolean", key: "verbose", label: "Verbose" }]);
+          expect(yield* awaitValues(settings, installationId, () => true)).toEqual({
+            installationId,
+            values: [],
+            secrets: [],
+          });
+        }),
+      ),
     );
   });
 });
