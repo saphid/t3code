@@ -11,6 +11,7 @@ import {
   RunId,
   ThreadId,
   type ChatAttachment,
+  type ContributionStatusSnapshot,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -18,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -93,6 +95,8 @@ interface FakePi {
   /** Reject the next `get_state` request. */
   readonly failNextState: () => void;
   readonly deferNextLifecycle: (type: "switch_session" | "new_session") => void;
+  /** Send the held lifecycle request's normal response. */
+  readonly resolveDeferredLifecycle: Effect.Effect<void>;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
   /** Every request received by the fake process. */
@@ -150,6 +154,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let vetoSwitch = false;
   let vetoNewSession = false;
   let deferredLifecycle: string | undefined;
+  let deferredLifecycleRequest: PiRpcRecord | undefined;
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
@@ -224,6 +229,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         }
         if (record["type"] === deferredLifecycle) {
           deferredLifecycle = undefined;
+          deferredLifecycleRequest = record;
           continue;
         }
         const response = respondTo(record);
@@ -295,6 +301,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     deferNextLifecycle: (type) => {
       deferredLifecycle = type;
     },
+    resolveDeferredLifecycle: Effect.suspend(() => {
+      const record = deferredLifecycleRequest;
+      assert.isDefined(record);
+      deferredLifecycleRequest = undefined;
+      const response = respondTo(record!);
+      return response === null ? Effect.void : emit(response);
+    }),
     queueModels: (value) => {
       models = value;
     },
@@ -365,6 +378,68 @@ const openRuntime = Effect.fnUntraced(function* (
       }
     });
   return { runtime, takeEvent };
+});
+
+const statusMap = (snapshot: ContributionStatusSnapshot) =>
+  Object.fromEntries(
+    snapshot.entries.map((entry) => [
+      entry.threadId,
+      entry.items.map((item) => `${item.key}=${item.text}`),
+    ]),
+  );
+
+/** Pi's fire-and-forget `ctx.ui.setStatus`; a missing text clears the key. */
+const emitStatus = (fake: FakePi, statusKey: string, statusText?: string) =>
+  fake.emit({
+    type: "extension_ui_request",
+    id: `status-${statusKey}-${statusText ?? "clear"}`,
+    method: "setStatus",
+    statusKey,
+    ...(statusText === undefined ? {} : { statusText }),
+  });
+
+/** Waits for the store to publish a snapshot matching `predicate`, the receipt for status events. */
+const waitForStatuses = (
+  subscription: { readonly changes: Stream.Stream<ContributionStatusSnapshot> },
+  predicate: (statuses: Record<string, ReadonlyArray<string>>) => boolean,
+) =>
+  subscription.changes.pipe(
+    Stream.map(statusMap),
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+/**
+ * A status store whose "gate" status holds the session event pump until
+ * released. The pump handles records in order, so `pumpHeld` is also the
+ * receipt that every earlier record has been handled.
+ */
+const makeGatedStatusStore = Effect.fnUntraced(function* () {
+  const store = yield* ContributionStatusStore.make();
+  const pumpHeld = yield* Deferred.make<void>();
+  const releasePump = yield* Deferred.make<void>();
+  const gated: ContributionStatusStore.ContributionStatusStoreShape = {
+    ...store,
+    openSource: (source) =>
+      Effect.map(store.openSource(source), (handle) => ({
+        ...handle,
+        set: (input) =>
+          input.key === "gate"
+            ? Deferred.succeed(pumpHeld, undefined).pipe(
+                Effect.andThen(Deferred.await(releasePump)),
+                Effect.andThen(handle.set(input)),
+              )
+            : handle.set(input),
+      })),
+  };
+  return {
+    store,
+    provide: Effect.provideService(ContributionStatusStore.ContributionStatusStore, gated),
+    holdPump: (fake: FakePi) =>
+      emitStatus(fake, "gate", "held").pipe(Effect.andThen(Deferred.await(pumpHeld))),
+    releasePump: Deferred.succeed(releasePump, undefined),
+  };
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -576,6 +651,110 @@ describe("PiAdapterV2", () => {
         yield* Scope.close(sessionScope, Exit.void);
         assert.deepStrictEqual(yield* nextStatuses, {});
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(testLayer, ContributionStatusStore.layer))),
+  );
+
+  it.effect("lands a fork's startup statuses on the target thread before Pi answers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      const forkFile = "/fake/forked.jsonl";
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      fake.deferNextLifecycle("switch_session");
+      const target = ThreadId.make("fork-target");
+      const forked = yield* runtime
+        .forkThread({ sourceProviderThread: source, targetThreadId: target })
+        .pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      // Pi rebinds the extensions, which set their statuses before the switch response.
+      yield* emitStatus(fake, "mode", "forked");
+      yield* waitForStatuses(statuses, (current) => current[target]?.[0] === "mode=forked");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(forked);
+
+      assert.deepStrictEqual(statusMap(yield* store.snapshot), { [target]: ["mode=forked"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(testLayer, ContributionStatusStore.layer))),
+  );
+
+  it.effect("drops statuses the old session queued before a switch the new one never resets", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      // Hold the event pump so the stale update below queues behind it.
+      yield* gate.holdPump(fake);
+      yield* emitStatus(fake, "legacy", "stale");
+      // Responses resolve in stdout order, so once this answer arrives the stale update is queued.
+      yield* runtime.readThreadSnapshot({ providerThread });
+
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* emitStatus(fake, "mode", "new");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(resumed);
+      yield* gate.releasePump;
+
+      // "mode=new" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=new"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=new"] });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a vetoed switch's later statuses off every thread until one registers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      fake.vetoNextSwitch();
+      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      // Pi stays on a session no thread is bound to; its updates go nowhere.
+      yield* emitStatus(fake, "orphan", "dropped");
+      yield* gate.holdPump(fake);
+      yield* gate.releasePump;
+
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "fresh");
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=fresh"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=fresh"] });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("rejects a resume while a turn is active", () =>
