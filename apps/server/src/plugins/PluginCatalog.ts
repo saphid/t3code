@@ -433,7 +433,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const enable = Effect.fn("PluginCatalog.enable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
-    if (installation.registered !== undefined) return yield* result(installation);
+    // Checked even when already enabled: changed bytes stop it and need consent again.
     const inspection = yield* reinspect(installation);
     if (inspection._tag === "failed")
       return yield* catalogError("unavailable", inspection.reason, input.installationId);
@@ -445,6 +445,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
           : "The plugin's files changed since they were approved. Review the current version.",
         input.installationId,
       );
+    // Already enabled with these bytes: keep the registration and its generation.
+    if (installation.registered !== undefined) return yield* result(installation);
     yield* register(installation, inspection.registration);
     return yield* result(installation);
   });

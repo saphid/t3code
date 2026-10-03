@@ -309,6 +309,45 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
       ),
     );
 
+    it.effect("checks the bytes when enabling an installation that is already enabled", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const catalog = yield* startCatalog(yield* Scope.Scope);
+          const plugin = yield* preparePlugin("test.enable-again");
+          const { installation } = yield* catalog.add({ directory: plugin.directory });
+          const installationId = installation.installationId;
+          const approve = (digest: string) =>
+            catalog
+              .consent({ installationId, digest })
+              .pipe(Effect.andThen(catalog.enable({ installationId })));
+          const { installation: enabled } = yield* approve(installation.source!.digest);
+
+          // Unchanged: the same registration, not a new generation.
+          const { installation: same } = yield* catalog.enable({ installationId });
+          expect(same).toMatchObject({ enabled: true, generation: enabled.generation });
+
+          // Changed while registered but idle.
+          yield* plugin.edit("changed while idle");
+          const idle = yield* catalog.enable({ installationId }).pipe(Effect.flip);
+          expect(idle.reason).toBe("consent-required");
+          const [afterIdle] = (yield* catalog.list).installations;
+          expect(pluginInstallationStatus(afterIdle!)).toBe("needs-consent");
+          expect(afterIdle!.enabled).toBe(false);
+
+          // Changed while its process runs: enabling again stops it.
+          yield* approve(afterIdle!.source!.digest);
+          const pid = pidOf(yield* catalog.invoke(installationId, "ping", null));
+          yield* plugin.edit("changed while running");
+          const running = yield* catalog.enable({ installationId }).pipe(Effect.flip);
+          expect(running.reason).toBe("consent-required");
+          expect(isProcessAlive(pid)).toBe(false);
+          const [afterRunning] = (yield* catalog.list).installations;
+          expect(pluginInstallationStatus(afterRunning!)).toBe("needs-consent");
+          expect(afterRunning!.hostState).toBeUndefined();
+        }),
+      ),
+    );
+
     it.effect("runs one directory per plugin id at a time", () =>
       withDatabase(
         Effect.gen(function* () {
