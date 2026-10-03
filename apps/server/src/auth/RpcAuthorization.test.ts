@@ -1,8 +1,10 @@
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthStandardClientScopes,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -32,6 +34,24 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.subscribeBackgroundPolicy)).toBe(
       AuthOrchestrationReadScope,
     );
+  });
+
+  it("lets ordinary clients see plugins but only administrators change what runs", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginsList)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginsSubscribe)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.pluginsAdd,
+      WS_METHODS.pluginsRefresh,
+      WS_METHODS.pluginsConsent,
+      WS_METHODS.pluginsEnable,
+      WS_METHODS.pluginsDisable,
+      WS_METHODS.pluginsRemove,
+      WS_METHODS.pluginsResume,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
+    }
+    // A standard pairing never carries plugin management.
+    expect(AuthStandardClientScopes).not.toContain(AuthAccessWriteScope);
   });
 
   it("allows relay status reads without granting relay installation access", () => {
