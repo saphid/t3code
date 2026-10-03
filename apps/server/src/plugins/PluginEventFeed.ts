@@ -30,6 +30,7 @@ import {
   EventId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -335,9 +336,11 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               worker.state = { _tag: "stopped" };
               return yield* Effect.never;
             }
-            if (error === undefined) return yield* Effect.failCause(exit.cause);
+            if (error === undefined && Cause.hasInterrupts(exit.cause))
+              return yield* Effect.failCause(exit.cause);
+            // A defect counts like a failed page, so a bug never silently ends delivery.
             failures++;
-            const reason = error.message.slice(0, 1000);
+            const reason = (error?.message ?? Cause.pretty(exit.cause)).slice(0, 1000);
             if (failures >= options.maxFailures) {
               worker.state = { _tag: "quarantined", failures, reason };
               yield* Effect.logWarning("Quarantined a plugin's event delivery", {
