@@ -118,6 +118,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginSettings from "./plugins/PluginSettings.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1123,6 +1124,7 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+      const pluginSettings = yield* PluginSettings.PluginSettings;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2048,6 +2050,16 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.pluginsResume]: (input) =>
           observeRpcEffect(WS_METHODS.pluginsResume, pluginCatalog.resume(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsSettingsSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.pluginsSettingsSubscribe,
+            pluginSettings.subscribe(input.installationId),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [WS_METHODS.pluginsSettingsUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsSettingsUpdate, pluginSettings.update(input), {
             "rpc.aggregate": "plugins",
           }),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>

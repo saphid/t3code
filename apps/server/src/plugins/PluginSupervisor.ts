@@ -22,6 +22,11 @@
  * point reaches a caller. The supervisor owns a stopping process until it has
  * exited, even if the caller that disabled it goes away.
  *
+ * A plugin can also call the server: capabilities serve host methods (such
+ * as `settings.get`) with `serveHostMethod`, and the supervisor runs each
+ * call off the child's read loop, at most `MAX_HOST_CALLS` at a time per
+ * child, until the child exits.
+ *
  * Plugins are trusted OS-user code. The process boundary protects the
  * server's availability, not its data.
  */
@@ -200,6 +205,18 @@ export type PluginInvokeError =
   | PluginBusyError
   | PluginPayloadTooLargeError;
 
+/** A host method's refusal; `message` reaches the plugin, so it must not carry secrets. */
+export class PluginHostCallError extends Schema.TaggedError<PluginHostCallError>()(
+  "PluginHostCallError",
+  { message: Schema.String },
+) {}
+
+/** Serves one host method for the plugin whose registration made the call. */
+export type PluginHostMethod = (call: {
+  readonly registration: PluginRegistration;
+  readonly input: Schema.Json;
+}) => Effect.Effect<Schema.Json, PluginHostCallError>;
+
 export type PluginSupervisorEvent =
   | { readonly _tag: "StateChanged"; readonly pluginId: PluginId; readonly state: PluginHostState }
   | {
@@ -244,6 +261,8 @@ interface Child {
   stderrTail: string;
   /** V8 reported reaching the heap limit; its message can scroll out of the tail. */
   outOfMemory: boolean;
+  /** Host calls from this child still being served. */
+  hostCalls: number;
 }
 
 interface Entry {
@@ -258,6 +277,8 @@ interface Entry {
 }
 
 const STDERR_TAIL_BYTES = 4096;
+/** Host calls one child may have in flight; more are refused at once. */
+const MAX_HOST_CALLS = 16;
 // A grandchild that inherited stderr can hold it open after the plugin exits.
 const DRAIN_TIMEOUT = Duration.millis(250);
 
@@ -314,6 +335,11 @@ export class PluginSupervisor extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Answers plugins' `method` calls with `handler` until the scope closes. One handler per method. */
+    readonly serveHostMethod: (
+      method: string,
+      handler: PluginHostMethod,
+    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/plugins/PluginSupervisor") {}
 
@@ -348,6 +374,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
   if (invocation.entrypoint === undefined) childEnvironment.NODE_OPTIONS = heapFlag;
 
   const entries = new Map<PluginId, Entry>();
+  const hostMethods = new Map<string, PluginHostMethod>();
   /** Every child process not yet exited, including ones whose plugin was disabled. */
   const children = new Set<Child>();
   const events = yield* PubSub.sliding<PluginSupervisorEvent>(1024);
@@ -414,6 +441,62 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     );
   });
 
+  /** Runs a host call outside the read loop and answers it while the child lives. */
+  const serveHostCall = (
+    entry: Entry,
+    child: Child,
+    requestId: number,
+    method: string,
+    input: Schema.Json,
+  ) => {
+    const answer = (outcome: Exit.Exit<Schema.Json, PluginHostCallError>) =>
+      Effect.sync(() => {
+        if (!isAlive(child)) return;
+        const unsent = Exit.isSuccess(outcome)
+          ? write(child, { _tag: "HostCallSucceeded", requestId, value: outcome.value })
+          : write(child, {
+              _tag: "HostCallFailed",
+              requestId,
+              message: Exit.findErrorOption(outcome).pipe(
+                Option.match({
+                  onNone: () => "The server could not answer.",
+                  onSome: (error) => error.message.slice(0, 2000),
+                }),
+              ),
+            });
+        if (unsent)
+          write(child, {
+            _tag: "HostCallFailed",
+            requestId,
+            message:
+              unsent._tag === "tooLarge"
+                ? `The answer exceeds ${maxMessageBytes} bytes.`
+                : "The answer is not JSON.",
+          });
+      });
+    const handler = hostMethods.get(method);
+    if (!handler)
+      return answer(
+        Exit.fail(new PluginHostCallError({ message: `This server has no method "${method}".` })),
+      );
+    if (child.hostCalls >= MAX_HOST_CALLS)
+      return answer(
+        Exit.fail(
+          new PluginHostCallError({
+            message: `${MAX_HOST_CALLS} calls to the server are already in flight.`,
+          }),
+        ),
+      );
+    child.hostCalls++;
+    return handler({ registration: entry.registration, input }).pipe(
+      Effect.exit,
+      Effect.flatMap(answer),
+      Effect.ensuring(Effect.sync(() => child.hostCalls--)),
+      Effect.forkIn(fibers, { startImmediately: true }),
+      Effect.asVoid,
+    );
+  };
+
   const handleLine = Effect.fnUntraced(function* (entry: Entry, child: Child, line: string) {
     const decoded = decodePluginChildMessage(line);
     if (Exit.isFailure(decoded)) return kill(child, "sent a malformed IPC message.");
@@ -463,6 +546,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         return;
       case "Deactivated":
         return;
+      case "HostCall":
+        return yield* serveHostCall(entry, child, message.requestId, message.method, message.input);
     }
   });
 
@@ -524,6 +609,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       killReason: undefined,
       stderrTail: "",
       outOfMemory: false,
+      hostCalls: 0,
     };
     // Stream errors follow the child's death; its exit carries the outcome. A
     // child that drops fd 3 but lives on is killed when a call cannot settle.
@@ -645,6 +731,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         apiVersion: manifest.apiVersion,
         entryPath,
         proposedApi: manifest.proposedApi,
+        capabilities: manifest.capabilities,
         maxMessageBytes,
       });
       const activated = yield* Deferred.await(child.ready).pipe(
@@ -841,6 +928,14 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     invoke,
     state: (pluginId) => Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
     subscribe: PubSub.subscribe(events),
+    serveHostMethod: (method, handler) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          if (hostMethods.has(method)) throw new Error(`Host method ${method} is already served.`);
+          hostMethods.set(method, handler);
+        }),
+        () => Effect.sync(() => hostMethods.delete(method)),
+      ),
   });
 });
 

@@ -68,6 +68,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -410,7 +411,10 @@ const DeviceLayerLive = DeviceService.layer.pipe(
 );
 
 // Zero enabled plugins means zero plugin processes; each starts on first use.
-const PluginLayerLive = PluginCatalog.layer().pipe(Layer.provide(PluginSupervisor.layer()));
+const PluginLayerLive = PluginSettings.layer().pipe(
+  Layer.provideMerge(PluginCatalog.layer()),
+  Layer.provide(PluginSupervisor.layer()),
+);
 
 const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 

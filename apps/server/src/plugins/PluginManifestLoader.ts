@@ -1,8 +1,10 @@
 import {
   PLUGIN_API_VERSION,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_SETTINGS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
+  type PluginInstallationId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,7 +12,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
-export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set();
+export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  PLUGIN_SETTINGS_CAPABILITY,
+]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -32,6 +36,8 @@ export interface PluginRegistration {
   readonly directory: string;
   /** Real path of the entry module, inside `directory`. */
   readonly entryPath: string;
+  /** The catalogue installation this registration runs, set when the catalogue enables it. */
+  readonly installationId?: PluginInstallationId;
 }
 
 /**
@@ -71,6 +77,14 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   );
   if (unsupported.length > 0)
     return yield* fail(`this server does not support ${unsupported.join(", ")}.`);
+  const hasSettings = manifest.capabilities.includes(PLUGIN_SETTINGS_CAPABILITY);
+  if (manifest.settings !== undefined && !hasSettings)
+    return yield* fail(
+      `it declares settings without the "${PLUGIN_SETTINGS_CAPABILITY}" capability.`,
+    );
+  // The settings API is still proposed, so it only exists with the opt-in.
+  if (hasSettings && !manifest.proposedApi)
+    return yield* fail(`the "${PLUGIN_SETTINGS_CAPABILITY}" capability needs "proposedApi": true.`);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))

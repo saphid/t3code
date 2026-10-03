@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PluginSettingsDeclaration } from "./pluginSettingFields.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -60,6 +61,8 @@ export const PluginManifest = Schema.Struct({
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Opts into APIs that may change or disappear without an API version bump. */
   proposedApi: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fields users can set for this plugin; needs the `settings` capability. */
+  settings: Schema.optionalKey(PluginSettingsDeclaration),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 

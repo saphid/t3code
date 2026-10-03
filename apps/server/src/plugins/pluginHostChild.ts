@@ -5,7 +5,13 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
-import type { PluginContext, PluginHandler, PluginJson, PluginModule } from "./pluginApi.ts";
+import type {
+  PluginContext,
+  PluginHandler,
+  PluginJson,
+  PluginModule,
+  PluginProposedApi,
+} from "./pluginApi.ts";
 import type { PluginChildMessage, PluginHostMessage, PluginLogLevel } from "./PluginIpc.ts";
 import {
   DEFAULT_PLUGIN_IPC_MAX_BYTES,
@@ -34,6 +40,11 @@ export const runPluginHostChild = (): void => {
   let activated: { module: Partial<PluginModule>; controller: AbortController } | undefined;
   const handlers = new Map<string, PluginHandler>();
   const requests = new Map<number, AbortController>();
+  const hostCalls = new Map<
+    number,
+    { resolve: (value: PluginJson) => void; reject: (error: Error) => void }
+  >();
+  let nextHostCallId = 0;
 
   const write = (line: string) => {
     if (!channel.destroyed && channel.writable) channel.write(`${line}\n`);
@@ -73,10 +84,56 @@ export const runPluginHostChild = (): void => {
     write(line);
   };
 
+  /** Asks the server for something a capability provides; settles with the server's answer. */
+  const hostCall = (method: string, input: PluginJson) =>
+    new Promise<PluginJson>((resolve, reject) => {
+      const requestId = ++nextHostCallId;
+      let line: string;
+      try {
+        line = JSON.stringify({ _tag: "HostCall", requestId, method, input });
+      } catch (error) {
+        reject(new Error(`The value is not JSON: ${errorMessage(error)}`));
+        return;
+      }
+      if (Buffer.byteLength(line) > maxBytes) {
+        reject(new Error(`The request exceeds ${maxBytes} bytes.`));
+        return;
+      }
+      hostCalls.set(requestId, { resolve, reject });
+      write(line);
+    });
+
+  const settingsApi = (): Pick<PluginProposedApi, "settings" | "storage"> => ({
+    settings: {
+      get: async (key) => {
+        const { value } = (await hostCall("settings.get", { key })) as {
+          value: string | number | boolean | null;
+        };
+        return value ?? undefined;
+      },
+    },
+    storage: {
+      get: async (key) => {
+        const result = (await hostCall("storage.get", { key })) as {
+          found: boolean;
+          value: PluginJson;
+        };
+        return result.found ? result.value : undefined;
+      },
+      set: async (key, value) => {
+        await hostCall("storage.set", { key, value });
+      },
+      delete: async (key) => {
+        await hostCall("storage.delete", { key });
+      },
+      keys: async () => ((await hostCall("storage.keys", {})) as { keys: string[] }).keys,
+    },
+  });
+
   const activate = async (message: Extract<PluginHostMessage, { _tag: "Activate" }>) => {
     maxBytes = message.maxMessageBytes;
     const controller = new AbortController();
-    const proposed = message.proposedApi
+    const proposed: PluginProposedApi | undefined = message.proposedApi
       ? {
           handle(name: string, handler: PluginHandler) {
             if (handlers.has(name)) throw new Error(`Handler "${name}" is already registered.`);
@@ -87,6 +144,9 @@ export const runPluginHostChild = (): void => {
               },
             };
           },
+          ...(message.capabilities.includes("settings")
+            ? settingsApi()
+            : { settings: undefined, storage: undefined }),
         }
       : undefined;
     const context: PluginContext = {
@@ -171,6 +231,15 @@ export const runPluginHostChild = (): void => {
       case "Deactivate":
         void deactivate();
         return;
+      case "HostCallSucceeded":
+      case "HostCallFailed": {
+        const pending = hostCalls.get(message.requestId);
+        if (!pending) return;
+        hostCalls.delete(message.requestId);
+        if (message._tag === "HostCallSucceeded") pending.resolve(message.value);
+        else pending.reject(new Error(message.message));
+        return;
+      }
     }
   };
 

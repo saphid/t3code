@@ -247,6 +247,7 @@ export const make = Effect.gen(function* () {
       environmentIcon: true,
       projectCloneTracking: true,
       plugins: true,
+      pluginSettings: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       // V2 restart recovery uses the environment-owned opt-in. The old
       // per-update request flag is not wired into the V2 update RPC path.

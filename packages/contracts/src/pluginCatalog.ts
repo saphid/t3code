@@ -24,6 +24,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { PluginHostState } from "./plugin.ts";
+import { PluginSettingsFieldList } from "./pluginSettingFields.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -47,6 +48,8 @@ export const PluginInstallationManifest = Schema.Struct({
   description: Schema.optionalKey(Schema.String),
   capabilities: Schema.Array(Schema.String),
   proposedApi: Schema.Boolean,
+  /** Declared settings fields (`settings` capability); absent when the plugin has none. */
+  settings: Schema.optionalKey(PluginSettingsFieldList),
 });
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 
