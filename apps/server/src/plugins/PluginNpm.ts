@@ -7,9 +7,9 @@
  * match the registry's sha512 integrity, and the archive is checked whole
  * before a byte is written (see `npmTarball.ts`). Package scripts never run
  * and dependencies are never installed: a package must bundle what it needs,
- * so a package that declares a dependency it does not ship, or an install
- * script, is refused. The catalogue then requires consent to the unpacked
- * digest before the plugin can be enabled.
+ * so a package with an install script, or whose dependencies (or theirs in
+ * turn) do not resolve inside it, is refused. The catalogue then requires
+ * consent to the unpacked digest before the plugin can be enabled.
  *
  * Layout under `<state>/plugins/npm/<key>/`:
  * - `package/` the installed version: the catalogue installation's directory.
@@ -107,6 +107,8 @@ const storageError = (cause: unknown) =>
 
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
+/** Dependency declarations followed through one package's bundled tree. */
+const MAX_DEPENDENCY_EDGES = 20_000;
 
 const NpmVersionMetadata = Schema.Struct({
   name: Schema.String,
@@ -124,10 +126,15 @@ const NpmPackageJson = Schema.Struct({
   dependencies: Schema.optionalKey(DependencyMap),
   optionalDependencies: Schema.optionalKey(DependencyMap),
   peerDependencies: Schema.optionalKey(DependencyMap),
+  peerDependenciesMeta: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Struct({ optional: Schema.optionalKey(Schema.Boolean) })),
+  ),
   bundleDependencies: Schema.optionalKey(BundledDependencies),
   bundledDependencies: Schema.optionalKey(BundledDependencies),
 });
+type NpmPackageJson = typeof NpmPackageJson.Type;
 const decodePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(NpmPackageJson));
+const decodePackageJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(NpmPackageJson));
 
 /** `npm.json`: the installed version and, while an update is applied, the one replacing it. */
 const NpmRecord = Schema.Struct({
@@ -193,6 +200,70 @@ export const normalizeRegistry = (input: string) => {
   return Effect.succeed(url.href.replace(/\/+$/, ""));
 };
 
+/** What a package needs at run time; a peer it marks optional is left out. */
+const runtimeDependencies = (packageJson: NpmPackageJson) => [
+  ...new Set([
+    ...Object.keys(packageJson.dependencies ?? {}),
+    ...Object.keys(packageJson.optionalDependencies ?? {}),
+    ...Object.keys(packageJson.peerDependencies ?? {}).filter(
+      (peer) => packageJson.peerDependenciesMeta?.[peer]?.optional !== true,
+    ),
+  ]),
+];
+
+/** `<parent>node_modules/<name>/package.json`, with the last `node_modules` taken. */
+const BUNDLED_MANIFEST = /^(.*\/)?node_modules\/((?:@[^/]+\/)?[^/@][^/]*)\/package\.json$/;
+
+/**
+ * Follows every runtime dependency from the root through the shipped
+ * `node_modules` the way Node looks them up, but never above the package
+ * root: one found nowhere inside would come from outside what the user
+ * consented to, or not at all. Returns why the package is refused, if it is.
+ */
+const findUnbundled = (files: ReadonlyArray<NpmTarballFile>, root: NpmPackageJson) => {
+  // Parent directory (`""` or ending in `/`) -> package name -> that package's manifest.
+  const shipped = new Map<string, Map<string, NpmTarballFile>>();
+  for (const file of files) {
+    const match = BUNDLED_MANIFEST.exec(file.path);
+    if (match === null) continue;
+    const parent = match[1] ?? "";
+    const names = shipped.get(parent) ?? new Map<string, NpmTarballFile>();
+    names.set(match[2]!, file);
+    shipped.set(parent, names);
+  }
+  const queue: Array<readonly [string, NpmPackageJson]> = [["", root]];
+  const seen = new Set<NpmTarballFile>();
+  let edges = 0;
+  for (let index = 0; index < queue.length; index++) {
+    const [from, packageJson] = queue[index]!;
+    // Where `from` looks, nearest first: itself and each ancestor that is not a `node_modules`.
+    const parents = [""];
+    let prefix = "";
+    for (const segment of from === "" ? [] : from.split("/")) {
+      prefix += `${segment}/`;
+      if (segment !== "node_modules") parents.push(prefix);
+    }
+    parents.reverse();
+    for (const dependency of runtimeDependencies(packageJson)) {
+      if (++edges > MAX_DEPENDENCY_EDGES)
+        return `The package declares more than ${MAX_DEPENDENCY_EDGES} dependencies in its bundled tree.`;
+      const parent = parents.find((candidate) => shipped.get(candidate)?.has(dependency));
+      if (parent === undefined)
+        return `${from === "" ? "The package" : from} depends on ${dependency}, which the package does not ship.`;
+      const manifest = shipped.get(parent)!.get(dependency)!;
+      if (seen.has(manifest)) continue;
+      seen.add(manifest);
+      const decoded =
+        manifest.data.length > MAX_PACKAGE_JSON_BYTES
+          ? Option.none()
+          : decodePackageJsonOption(new TextDecoder().decode(manifest.data));
+      if (Option.isNone(decoded)) return `${manifest.path} is not a readable package.json.`;
+      queue.push([`${parent}node_modules/${dependency}`, decoded.value]);
+    }
+  }
+  return undefined;
+};
+
 /** Refuses a package that would need a script or an install step T3 never runs. */
 const checkPackage = Effect.fnUntraced(function* (
   files: ReadonlyArray<NpmTarballFile>,
@@ -221,21 +292,17 @@ const checkPackage = Effect.fnUntraced(function* (
       `The package needs ${scripts.join(", ")} to run at install, and T3 never runs package scripts.`,
     );
   const bundled = packageJson.bundleDependencies ?? packageJson.bundledDependencies ?? [];
-  const declared = new Set([
-    ...Object.keys(packageJson.dependencies ?? {}),
-    ...Object.keys(packageJson.optionalDependencies ?? {}),
-    ...Object.keys(packageJson.peerDependencies ?? {}),
-  ]);
-  const shipped = new Set(files.map((file) => file.path));
-  const missing = [...declared].filter(
-    (dependency) =>
-      !(bundled === true || (Array.isArray(bundled) && bundled.includes(dependency))) ||
-      !shipped.has(`node_modules/${dependency}/package.json`),
+  const unlisted = runtimeDependencies(packageJson).filter(
+    (dependency) => !(bundled === true || (Array.isArray(bundled) && bundled.includes(dependency))),
   );
-  if (missing.length > 0)
+  const refusal =
+    unlisted.length > 0
+      ? `The package depends on ${unlisted.join(", ")} without bundling it.`
+      : findUnbundled(files, packageJson);
+  if (refusal !== undefined)
     return yield* npmError(
       "npm-dependencies",
-      `The package depends on ${missing.join(", ")} without bundling it. T3 installs no dependencies; bundle the plugin into its package.`,
+      `${refusal} T3 installs no dependencies; bundle the plugin into its package.`,
     );
 });
 

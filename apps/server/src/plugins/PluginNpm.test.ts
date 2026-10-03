@@ -299,6 +299,48 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
                 }),
             },
             {
+              // Bundled, but what the bundled package needs in turn is not shipped.
+              name: "missing-transitive",
+              reason: "npm-dependencies",
+              publish: () =>
+                registry.publish("missing-transitive", "1.0.0", {
+                  tarball: plugin("missing-transitive", "1.0.0", {
+                    packageJson: { dependencies: { tiny: "1.0.0" }, bundleDependencies: ["tiny"] },
+                    extra: [
+                      {
+                        path: "package/node_modules/tiny/package.json",
+                        data: toJson({ name: "tiny", dependencies: { "not-shipped": "1.0.0" } }),
+                      },
+                    ],
+                  }),
+                }),
+            },
+            {
+              // Shipped, but only where Node would not look for it from `tiny`.
+              name: "unreachable-transitive",
+              reason: "npm-dependencies",
+              publish: () =>
+                registry.publish("unreachable-transitive", "1.0.0", {
+                  tarball: plugin("unreachable-transitive", "1.0.0", {
+                    packageJson: {
+                      dependencies: { tiny: "1.0.0", other: "1.0.0" },
+                      bundleDependencies: true,
+                    },
+                    extra: [
+                      {
+                        path: "package/node_modules/tiny/package.json",
+                        data: toJson({ name: "tiny", peerDependencies: { hidden: "1.0.0" } }),
+                      },
+                      { path: "package/node_modules/other/package.json", data: "{}" },
+                      {
+                        path: "package/node_modules/other/node_modules/hidden/package.json",
+                        data: "{}",
+                      },
+                    ],
+                  }),
+                }),
+            },
+            {
               name: "renamed",
               reason: "npm-package-mismatch",
               publish: () =>
@@ -343,12 +385,33 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
           expect((yield* npm.list).packages).toEqual([]);
           expect(yield* fs.exists(scriptMarker)).toBe(false);
 
-          // A dependency shipped inside the package is fine.
+          // Dependencies shipped inside the package are fine, hoisted or nested, and so is a
+          // missing peer its dependent marks optional.
           registry.state.offline = false;
           registry.publish("bundled", "1.0.0", {
             tarball: plugin("bundled", "1.0.0", {
               packageJson: { dependencies: { tiny: "1.0.0" }, bundleDependencies: ["tiny"] },
-              extra: [{ path: "package/node_modules/tiny/package.json", data: "{}" }],
+              extra: [
+                {
+                  path: "package/node_modules/tiny/package.json",
+                  data: toJson({
+                    name: "tiny",
+                    dependencies: { hoisted: "1.0.0", "@scope/nested": "1.0.0" },
+                  }),
+                },
+                {
+                  path: "package/node_modules/hoisted/package.json",
+                  data: toJson({
+                    name: "hoisted",
+                    peerDependencies: { tiny: "1.0.0", absent: "1.0.0" },
+                    peerDependenciesMeta: { absent: { optional: true } },
+                  }),
+                },
+                {
+                  path: "package/node_modules/tiny/node_modules/@scope/nested/package.json",
+                  data: toJson({ name: "@scope/nested", dependencies: { hoisted: "1.0.0" } }),
+                },
+              ],
             }),
           });
           const bundled = yield* npm.add({ name: "bundled", version: "1.0.0" });
