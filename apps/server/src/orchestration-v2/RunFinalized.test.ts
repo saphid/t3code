@@ -577,21 +577,65 @@ it.effect("a refresh that fails once and then succeeds records only run.finalize
   );
 });
 
-it.effect("a run whose capture was cancelled records nothing when it later ends", () =>
+it.effect(
+  "a capture cancelled outside a command records the failure when restart ends the run",
+  () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* seedThread;
+      yield* finishProviderTurn("waiting");
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["checkpoint.capture"],
+        reason: "test",
+      });
+      assert.deepEqual(yield* captureStatus, Option.some("cancelled"));
+      assert.lengthOf(yield* finalizationRecords, 0);
+      yield* restartServer;
+      assert.equal(yield* runStatus, "cancelled");
+      assert.deepEqual(yield* finalizationRecords, [
+        {
+          type: "run.finalization-failed",
+          payload: { runId, operation: "capture-checkpoint" },
+        },
+      ]);
+    }).pipe(Effect.provide(makeLayer(Effect.void))),
+);
+
+it.effect("a command that cancels a capture records the failure in its commit", () =>
   Effect.gen(function* () {
-    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     yield* seedThread;
-    yield* finishProviderTurn("waiting");
-    yield* outbox.cancelUnsettled({
+    yield* finishProviderTurn("interrupted");
+    const now = yield* DateTime.now;
+    const commandId = CommandId.make("command:run-finalized-test:cancel-capture");
+    const { storedEvents, receipt } = yield* eventSink.commitCommand({
+      commandId,
       threadId,
-      effectTypes: ["checkpoint.capture"],
-      reason: "test",
+      commandType: "test.cancel-capture",
+      acceptedAt: now,
+      events: [runEvent("run.updated", makeRun(now, "interrupted", { completedAt: now }), now)],
+      effects: [],
+      cancelUnsettledEffects: { effectTypes: ["checkpoint.capture"], reason: "test" },
     });
+    const failure = [
+      {
+        type: "run.finalization-failed" as const,
+        payload: { runId, operation: "capture-checkpoint" as const },
+      },
+    ];
     assert.deepEqual(yield* captureStatus, Option.some("cancelled"));
+    assert.deepEqual(yield* finalizationRecords, failure);
+    const recorded = storedEvents.at(-1);
+    assert.equal(recorded?.event.type, "run.finalization-failed");
+    assert.equal(recorded?.commandId, commandId);
+    assert.equal(receipt.resultSequence, recorded?.sequence);
+
+    // Nothing runs the cancelled capture, and a restart adds nothing.
+    assert.equal(yield* drainWorker, 0);
     yield* restartServer;
-    assert.equal(yield* runStatus, "cancelled");
-    assert.lengthOf(yield* finalizationRecords, 0);
-  }).pipe(Effect.provide(makeLayer(Effect.void))),
+    assert.deepEqual(yield* finalizationRecords, failure);
+  }).pipe(Effect.provide(makeLayer(Effect.die("a cancelled capture must not run")))),
 );
 
 const captureDefect = Effect.die("simulated unexpected checkpoint defect");

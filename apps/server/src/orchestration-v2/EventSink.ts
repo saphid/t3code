@@ -333,11 +333,12 @@ const baseLayer: Layer.Layer<
         LIMIT 1
       `.pipe(Effect.map((rows) => rows.length > 0));
 
-    // A run records one finalization. A run with a checkpoint capture, in any
-    // state, finalizes only through RunFinalizationService; a run that never
-    // enqueued one finalizes in the commit that writes its terminal status.
-    // Events are checked against stored state so a repeated write cannot
-    // record twice.
+    // A run records one finalization. A run whose checkpoint capture is due,
+    // running or done finalizes through RunFinalizationService. A run that
+    // never enqueued one finalizes in the commit that writes its terminal
+    // status, and one whose capture was abandoned without a record reports
+    // that failure there instead. Events are checked against stored state so
+    // a repeated write cannot record twice.
     const withRunFinalizedEvents = (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
       effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
@@ -348,16 +349,15 @@ const baseLayer: Layer.Layer<
         if (!events.some((event) => event.type === "run.updated" || isFinalizationRecord(event))) {
           return events;
         }
-        // A failed or cancelled capture still counts: its run did not finalize.
-        const hasCapture = (runId: RunId) =>
+        const captureStatus = (runId: RunId) =>
           effects.some(
             (effect) =>
               effect.request.type === "checkpoint.capture" && effect.request.runId === runId,
           )
-            ? Effect.succeed(true)
+            ? Effect.succeed(Option.some<EffectOutbox.OrchestrationEffectStatusV2>("pending"))
             : effectOutbox
                 .get(RunFinalized.checkpointCaptureEffectId(runId))
-                .pipe(Effect.map(Option.isSome));
+                .pipe(Effect.map(Option.map((effect) => effect.status)));
         const statuses = new Map<RunId, string | undefined>();
         const previousStatus = (runId: RunId) =>
           statuses.has(runId)
@@ -397,14 +397,23 @@ const baseLayer: Layer.Layer<
             outcome === null ||
             finalized.has(run.id) ||
             (previous !== undefined && RunFinalized.isSettledRunStatus(previous)) ||
-            (yield* isRunFinalizationRecorded(run.id)) ||
-            (yield* hasCapture(run.id))
+            (yield* isRunFinalizationRecorded(run.id))
           ) {
             continue;
           }
+          const capture = yield* captureStatus(run.id);
+          const abandoned =
+            Option.isSome(capture) && (capture.value === "failed" || capture.value === "cancelled");
+          if (Option.isSome(capture) && !abandoned) continue;
           finalized.add(run.id);
           milestones.push(
-            RunFinalized.makeRunFinalizedEvent({ run, outcome, occurredAt: event.occurredAt }),
+            abandoned
+              ? RunFinalized.makeRunFinalizationFailedEvent({
+                  run,
+                  operation: RunFinalized.abandonedOperation(run),
+                  occurredAt: event.occurredAt,
+                })
+              : RunFinalized.makeRunFinalizedEvent({ run, outcome, occurredAt: event.occurredAt }),
           );
         }
         return [...result, ...milestones];
@@ -630,6 +639,40 @@ const baseLayer: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    // Cancelling a checkpoint capture abandons its run's finalization, so the
+    // cancelling commit records `run.finalization-failed` for that run.
+    const recordAbandonedCaptures = (
+      commandId: CommandId,
+      cancelledEffectIds: ReadonlyArray<string>,
+      occurredAt: DateTime.Utc,
+    ) =>
+      Effect.gen(function* () {
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        for (const effectId of cancelledEffectIds) {
+          const effect = yield* effectOutbox.get(effectId);
+          if (Option.isNone(effect) || effect.value.request.type !== "checkpoint.capture") continue;
+          const { run } = yield* projectionStore.getCheckpointCaptureContext(
+            effect.value.threadId,
+            effect.value.request,
+          );
+          if (run === undefined || run.status === "rolled_back") continue;
+          events.push(
+            RunFinalized.makeRunFinalizationFailedEvent({
+              run,
+              operation: RunFinalized.abandonedOperation(run),
+              occurredAt,
+            }),
+          );
+        }
+        if (events.length === 0) return [];
+        const storedEvents = yield* eventStore.append({
+          commandId,
+          events: yield* normalizeEvents(events),
+        });
+        yield* applyStoredEvents(storedEvents);
+        return storedEvents;
+      });
+
     const failEffectEffect = Effect.fn("orchestrationV2.EventSink.failEffect")(function* (
       input: Parameters<EventSinkV2Shape["failEffect"]>[0],
     ) {
@@ -707,7 +750,18 @@ const baseLayer: Layer.Layer<
                   threadId: input.threadId,
                   ...input.cancelUnsettledEffects,
                 });
-          const storedEvents = appended;
+          const storedEvents = input.cancelUnsettledEffects?.effectTypes.includes(
+            "checkpoint.capture",
+          )
+            ? [
+                ...appended,
+                ...(yield* recordAbandonedCaptures(
+                  input.commandId,
+                  cancelledEffectIds,
+                  input.acceptedAt,
+                )),
+              ]
+            : appended;
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
             threadId: input.threadId,

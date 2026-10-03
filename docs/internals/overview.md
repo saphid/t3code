@@ -84,7 +84,7 @@ Every newly finished run that was not rolled back records exactly one of `run.fi
 RunFinalizationService: `run.finalized` after capture and workspace refresh succeed. When the
 worker gives up on the capture, for any failure other than an interruption, the failure record
 commits in the same transaction that fails the outbox row, so a restart either replays the work or
-honours the recorded disposition. A cancelled capture records neither.
+honours the recorded disposition. Cancelling a capture records the failure in the cancelling commit.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) adds `run.finalized` to the commit
 that ends any run that never enqueued a capture, so new terminal paths need no extra work. Neither is
 `thread.settled`, which is the sidebar's parking state.

@@ -16,9 +16,10 @@ import type * as DateTime from "effect/DateTime";
 export const runFinalizedEventId = (runId: RunId) => EventId.make(`event:run-finalized:${runId}`);
 
 /**
- * The checkpoint capture a finished run enqueues. A run that has one only
- * finalizes through RunFinalizationService, which records `run.finalized` once
- * capture and refresh succeed or `run.finalization-failed` when they give up.
+ * The checkpoint capture a finished run enqueues. RunFinalizationService
+ * records `run.finalized` once capture and refresh succeed, or
+ * `run.finalization-failed` in the same commit that gives up on the capture.
+ * Cancelling the capture records that failure too.
  */
 export const checkpointCaptureEffectId = (runId: RunId) => `effect:checkpoint.capture:${runId}`;
 
@@ -43,6 +44,15 @@ export const runFinalizedOutcome = (
   status === "cancelled"
     ? status
     : null;
+
+/**
+ * The step a run's finalization stopped at when its capture was abandoned
+ * without reporting one: before the checkpoint commit or after it.
+ */
+export const abandonedOperation = (
+  run: OrchestrationV2Run,
+): OrchestrationV2RunFinalizationOperation =>
+  run.checkpointId === null ? "capture-checkpoint" : "refresh-workspace";
 
 const recordEnvelope = (run: OrchestrationV2Run, occurredAt: DateTime.Utc) => ({
   id: runFinalizedEventId(run.id),
