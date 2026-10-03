@@ -312,7 +312,7 @@ function PluginListRow({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${view.title}, ${view.stateLabel}`}
+      accessibilityLabel={`${view.title}, ${view.stateLabel}${view.delivery ? `, ${view.delivery.label}` : ""}`}
       onPress={onPress}
       className={
         first
@@ -331,6 +331,12 @@ function PluginListRow({
           {view.stateLabel}
           {view.detail ? ` · ${view.detail}` : ""}
         </Text>
+        {view.delivery ? (
+          <Text className={`text-sm ${TONE_TEXT[view.delivery.tone]}`} numberOfLines={2}>
+            {view.delivery.label}
+            {view.delivery.detail ? ` · ${view.delivery.detail}` : ""}
+          </Text>
+        ) : null}
         <Text className="font-mono text-xs text-foreground-muted" numberOfLines={1}>
           {installation.directory}
         </Text>
@@ -488,6 +494,18 @@ function PluginDetail({
             <Text selectable className="text-sm text-foreground-muted">
               {view.detail}
             </Text>
+          ) : null}
+          {view.delivery ? (
+            <>
+              <Text className={`text-base ${TONE_TEXT[view.delivery.tone]}`}>
+                {view.delivery.label}
+              </Text>
+              {view.delivery.detail ? (
+                <Text selectable className="text-sm text-foreground-muted">
+                  {view.delivery.detail}
+                </Text>
+              ) : null}
+            </>
           ) : null}
         </View>
         <SettingsSection title="Plugin">

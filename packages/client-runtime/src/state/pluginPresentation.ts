@@ -4,12 +4,20 @@ import {
   type PluginInstallation,
   type PluginInstallationId,
   type PluginInstallationStatus,
+  PLUGIN_EVENTS_CAPABILITY,
   pluginInstallationStatus,
 } from "@t3tools/contracts";
 
 import { latestPluginCatalogRevision, type PluginCatalogView } from "./plugins.ts";
 
 export type PluginStateTone = "neutral" | "success" | "info" | "warning" | "error";
+
+/** Event delivery for an enabled plugin that declares `events`, shown beside its process state. */
+interface PluginEventDeliveryPresentation {
+  readonly label: string;
+  readonly tone: PluginStateTone;
+  readonly detail: string | null;
+}
 
 /** What web and mobile show for one installation, and which controls it offers. */
 interface PluginInstallationPresentation {
@@ -19,15 +27,22 @@ interface PluginInstallationPresentation {
   readonly tone: PluginStateTone;
   /** The problem, failure reason, or what happens next. */
   readonly detail: string | null;
+  /** Null unless the plugin is enabled and declares `events`. */
+  readonly delivery: PluginEventDeliveryPresentation | null;
   readonly canReview: boolean;
   readonly canEnable: boolean;
   readonly canDisable: boolean;
+  /** Process or event delivery waits for `plugins.resume`. */
   readonly canResume: boolean;
 }
 
 function directoryName(directory: string): string {
   const parts = directory.split(/[\\/]/).filter((part) => part.length > 0);
   return parts.at(-1) ?? directory;
+}
+
+function failureCount(failures: number): string {
+  return failures === 1 ? "once" : `${failures} times`;
 }
 
 function enabledState(
@@ -57,7 +72,7 @@ function enabledState(
       return {
         stateLabel: "Restarting",
         tone: "warning",
-        detail: `Failed ${hostState.failures === 1 ? "once" : `${hostState.failures} times`}: ${hostState.reason} It starts again on next use after a short wait.`,
+        detail: `Failed ${failureCount(hostState.failures)}: ${hostState.reason} It starts again on next use after a short wait.`,
         canResume: true,
       };
     case "quarantined":
@@ -77,6 +92,37 @@ function enabledState(
   }
 }
 
+function deliveryState(
+  eventDelivery: PluginInstallation["eventDelivery"],
+): PluginEventDeliveryPresentation & { readonly canResume: boolean } {
+  // Absent means not reported yet, an older server, or a state this client cannot decode; never healthy.
+  if (eventDelivery === undefined)
+    return {
+      label: "Event delivery unknown",
+      tone: "neutral",
+      detail: "The server has not reported how event delivery is going.",
+      canResume: false,
+    };
+  switch (eventDelivery._tag) {
+    case "active":
+      return { label: "Receiving events", tone: "success", detail: null, canResume: false };
+    case "retrying":
+      return {
+        label: "Event delivery retrying",
+        tone: "warning",
+        detail: `Failed ${failureCount(eventDelivery.failures)}: ${eventDelivery.reason} It tries again shortly, or resume it now.`,
+        canResume: true,
+      };
+    case "quarantined":
+      return {
+        label: "Event delivery stopped",
+        tone: "error",
+        detail: `${eventDelivery.failures === 0 ? "An event could not be read." : `Failed ${failureCount(eventDelivery.failures)}.`} ${eventDelivery.reason} Fix the problem, then resume it. No events are skipped.`,
+        canResume: true,
+      };
+  }
+}
+
 export function presentPluginInstallation(
   installation: PluginInstallation,
 ): PluginInstallationPresentation {
@@ -86,6 +132,7 @@ export function presentPluginInstallation(
   const base = {
     status,
     title,
+    delivery: null,
     canReview: status === "needs-consent",
     canEnable: status === "disabled",
     canDisable: installation.enabled,
@@ -118,8 +165,14 @@ export function presentPluginInstallation(
           };
     case "disabled":
       return { ...base, stateLabel: "Disabled", tone: "neutral", detail: null, canResume: false };
-    case "enabled":
-      return { ...base, ...enabledState(installation.hostState) };
+    case "enabled": {
+      const host = enabledState(installation.hostState);
+      if (!installation.manifest?.capabilities.includes(PLUGIN_EVENTS_CAPABILITY))
+        return { ...base, ...host };
+      // Delivery recovers independently of the process: a running plugin can have stopped delivery.
+      const { canResume, ...delivery } = deliveryState(installation.eventDelivery);
+      return { ...base, ...host, delivery, canResume: host.canResume || canResume };
+    }
   }
 }
 

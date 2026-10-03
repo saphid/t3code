@@ -141,6 +141,103 @@ describe("presentPluginInstallation", () => {
   });
 });
 
+describe("presentPluginInstallation event delivery", () => {
+  const EVENTS_MANIFEST = { ...MANIFEST, capabilities: ["events"], proposedApi: true };
+  const eventsPlugin = (overrides: Partial<PluginInstallation> = {}) =>
+    installation({ manifest: EVENTS_MANIFEST, hostState: { _tag: "running" }, ...overrides });
+  const QUARANTINED = {
+    _tag: "quarantined",
+    failures: 5,
+    reason: "notifier is told to fail.",
+  } as const;
+
+  it("shows quarantined delivery and offers resume while the process keeps running", () => {
+    const view = presentPluginInstallation(eventsPlugin({ eventDelivery: QUARANTINED }));
+    expect(view.stateLabel).toBe("Running");
+    expect(view.delivery?.label).toBe("Event delivery stopped");
+    expect(view.delivery?.tone).toBe("error");
+    expect(view.delivery?.detail).toContain("notifier is told to fail.");
+    expect(view.canResume).toBe(true);
+  });
+
+  it("explains an event the server could not read", () => {
+    const view = presentPluginInstallation(
+      eventsPlugin({ eventDelivery: { _tag: "quarantined", failures: 0, reason: "Bad row." } }),
+    );
+    expect(view.delivery?.detail).toContain("An event could not be read.");
+    expect(view.canResume).toBe(true);
+  });
+
+  it("shows retrying delivery with its reason and offers resume while the process keeps running", () => {
+    const view = presentPluginInstallation(
+      eventsPlugin({
+        eventDelivery: {
+          _tag: "retrying",
+          failures: 2,
+          reason: "Handler timed out.",
+          retryAt: "2026-10-04T00:01:00.000Z",
+        },
+      }),
+    );
+    expect(view.stateLabel).toBe("Running");
+    expect(view.delivery?.label).toBe("Event delivery retrying");
+    expect(view.delivery?.detail).toContain("Failed 2 times: Handler timed out.");
+    expect(view.canResume).toBe(true);
+  });
+
+  it("treats absent delivery as unknown, not healthy", () => {
+    const view = presentPluginInstallation(eventsPlugin());
+    expect(view.delivery?.label).toBe("Event delivery unknown");
+    expect(view.delivery?.tone).not.toBe("success");
+    expect(view.canResume).toBe(false);
+  });
+
+  it("offers resume for delivery and process failures independently", () => {
+    const backoff = {
+      _tag: "backoff",
+      failures: 1,
+      reason: "Exited.",
+      retryAt: "2026-10-04T00:01:00.000Z",
+    } as const;
+    const resumable = (
+      hostState: PluginInstallation["hostState"],
+      eventDelivery: PluginInstallation["eventDelivery"],
+    ) => presentPluginInstallation(eventsPlugin({ hostState, eventDelivery })).canResume;
+    expect(resumable({ _tag: "running" }, { _tag: "active" })).toBe(false);
+    expect(resumable(backoff, { _tag: "active" })).toBe(true);
+    expect(resumable({ _tag: "idle" }, QUARANTINED)).toBe(true);
+    expect(resumable(undefined, QUARANTINED)).toBe(true);
+  });
+
+  it("clears after resume and hides delivery once disabled or without the events capability", () => {
+    const quarantined = presentPluginInstallation(eventsPlugin({ eventDelivery: QUARANTINED }));
+    expect(quarantined.canResume).toBe(true);
+
+    // The `plugins.resume` answer already reports active delivery.
+    const resumed = presentPluginInstallation(eventsPlugin({ eventDelivery: { _tag: "active" } }));
+    expect(resumed.delivery?.label).toBe("Receiving events");
+    expect(resumed.canResume).toBe(false);
+
+    // Disable answers with neither process nor delivery state.
+    const disabled = presentPluginInstallation(
+      eventsPlugin({ enabled: false, hostState: undefined, eventDelivery: undefined }),
+    );
+    expect(disabled.status).toBe("disabled");
+    expect(disabled.delivery).toBeNull();
+    expect(disabled.canResume).toBe(false);
+
+    // Re-enabled before the feed reports: unknown again, not the old state.
+    const reenabled = presentPluginInstallation(
+      eventsPlugin({ generation: 2, hostState: { _tag: "idle" } }),
+    );
+    expect(reenabled.delivery?.label).toBe("Event delivery unknown");
+
+    const withoutEvents = presentPluginInstallation(installation({ eventDelivery: QUARANTINED }));
+    expect(withoutEvents.delivery).toBeNull();
+    expect(withoutEvents.canResume).toBe(false);
+  });
+});
+
 describe("describePluginSource", () => {
   it("summarizes the file count and size", () => {
     expect(describePluginSource({ digest: DIGEST, files: 1, bytes: 512 })).toBe("1 file, 512 B");

@@ -481,6 +481,12 @@ function PluginRow({
           <span className="flex flex-wrap items-center gap-2">
             <Badge variant={TONE_BADGE[view.tone]}>{view.stateLabel}</Badge>
             {view.detail ? <span>{view.detail}</span> : null}
+            {view.delivery ? (
+              <>
+                <Badge variant={TONE_BADGE[view.delivery.tone]}>{view.delivery.label}</Badge>
+                {view.delivery.detail ? <span>{view.delivery.detail}</span> : null}
+              </>
+            ) : null}
           </span>
         }
         control={
@@ -855,6 +861,16 @@ export function PluginReviewDialog({
                     {manifest.proposedApi ? (
                       <span className="mt-1 block text-muted-foreground">
                         Uses proposed APIs that may change between T3 Code versions.
+                      </span>
+                    ) : null}
+                  </ReviewField>
+                ) : null}
+                {view.delivery ? (
+                  <ReviewField label="Event delivery">
+                    <Badge variant={TONE_BADGE[view.delivery.tone]}>{view.delivery.label}</Badge>
+                    {view.delivery.detail ? (
+                      <span className="mt-1 block text-muted-foreground">
+                        {view.delivery.detail}
                       </span>
                     ) : null}
                   </ReviewField>
