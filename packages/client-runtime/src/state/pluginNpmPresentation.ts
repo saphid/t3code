@@ -16,7 +16,7 @@ export const supportsPluginNpm = (
   capabilities: Pick<ExecutionEnvironmentCapabilities, "pluginNpm"> | null | undefined,
 ) => capabilities?.pluginNpm === true;
 
-export const PLUGIN_NPM_DEFAULT_REGISTRY = "https://registry.npmjs.org";
+const PLUGIN_NPM_DEFAULT_REGISTRY = "https://registry.npmjs.org";
 
 /** Shown before any npm package is approved: what installing does and does not do. */
 export const PLUGIN_NPM_SCRIPTS_STATEMENT =

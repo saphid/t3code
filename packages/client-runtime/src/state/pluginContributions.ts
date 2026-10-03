@@ -107,7 +107,7 @@ function plural(count: number, one: string, many: string): string {
  * and not waiting on a Resume (quarantined or incompatible). Only eligible
  * installations count towards the limit's `omitted`.
  */
-export function pluginActionsEligible(installation: PluginInstallation): boolean {
+function pluginActionsEligible(installation: PluginInstallation): boolean {
   const state = installation.hostState?._tag;
   return (
     installation.manifest !== null &&

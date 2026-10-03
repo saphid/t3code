@@ -144,7 +144,7 @@ export const pluginSettingDraftChange = (
 };
 
 /** What a field shows before it is edited: its value as text, or a switch's state. */
-export const pluginSettingDraftOf = (row: PluginSettingRow): PluginSettingDraft =>
+const pluginSettingDraftOf = (row: PluginSettingRow): PluginSettingDraft =>
   row.field.type === "boolean"
     ? row.value === true
     : row.value === undefined

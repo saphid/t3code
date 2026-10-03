@@ -30,7 +30,7 @@ export interface PluginNotificationMark {
 
 const notificationKey = (epoch: string, sequence: number) => JSON.stringify([epoch, sequence]);
 
-export function supportsPluginNotifications(config: ServerConfig | null): boolean {
+function supportsPluginNotifications(config: ServerConfig | null): boolean {
   return config?.environment.capabilities.pluginNotifications === true;
 }
 
@@ -83,7 +83,7 @@ export function pluginNotificationDescription(entry: ReceivedPluginNotification)
  * `null` for a session without the capability. A lost connection keeps the
  * last frame until the next session sends the current one.
  */
-export const pluginNotificationsStream = Stream.unwrap(
+const pluginNotificationsStream = Stream.unwrap(
   EnvironmentSupervisor.EnvironmentSupervisor.pipe(
     Effect.map((supervisor) =>
       SubscriptionRef.changes(supervisor.session).pipe(

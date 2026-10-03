@@ -423,7 +423,7 @@ export interface PluginActionTarget {
 }
 
 /** Whether an action started on `target` may still dispatch against what the screen shows now. */
-export function pluginActionStillApplies(
+function pluginActionStillApplies(
   target: PluginActionTarget,
   current: PluginActionSubject | null,
 ): boolean {
