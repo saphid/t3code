@@ -375,7 +375,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   const recovered = yield* Deferred.make<void>();
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-  /** Paths under the root still to delete: removed homes, leftovers, discarded staging. */
+  /**
+   * Paths under the root still to delete: removed homes, leftovers, discarded
+   * staging, and directories a step made and has not published yet.
+   */
   const doomed = new Set<string>();
 
   /** Deletes `target` as one catalogue step; otherwise keeps it queued. Succeeds with whether it is gone. */
@@ -392,6 +395,14 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         ).pipe(Effect.as(false)),
       ),
       Effect.tap((gone) => Effect.sync(() => (gone ? doomed.delete(target) : doomed.add(target)))),
+    );
+
+  /** Makes a directory under `parent`, queued for deletion until the step that made it publishes it. */
+  const makeOwned = (parent: string, prefix: string) =>
+    fs.makeTempDirectory({ directory: parent, prefix }).pipe(
+      Effect.tap((directory) => Effect.sync(() => doomed.add(directory))),
+      Effect.uninterruptible,
+      Effect.catch(storageError),
     );
 
   const writeRecord = (home: string, record: NpmRecord) =>
@@ -506,9 +517,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       Effect.mapError((error) => npmError(error.reason, error.message)),
     );
     yield* checkPackage(files, name, resolved.version);
-    const staging = yield* fs
-      .makeTempDirectory({ directory: home, prefix: ".staging-" })
-      .pipe(Effect.catch(storageError));
+    const staging = yield* makeOwned(home, ".staging-");
     yield* Effect.forEach(
       files,
       (file) => {
@@ -653,9 +662,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         existing.installationId,
       );
     const resolved = yield* resolve(registry, input.name, input.version);
-    const home = yield* fs
-      .makeTempDirectory({ directory: root, prefix: "pkg-" })
-      .pipe(Effect.catch(storageError));
+    const home = yield* makeOwned(root, "pkg-");
     return yield* Effect.gen(function* () {
       const staging = yield* stage(home, input.name, resolved);
       const source: PluginNpmSource = {
@@ -672,6 +679,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           [home],
           fs.rename(staging, directory).pipe(Effect.catch(storageError)),
         );
+        doomed.delete(staging);
         // The catalogue reads the manifest and digests the files; nothing runs.
         const { installation } = yield* catalog.add({ directory });
         const entry: Installed = {
@@ -683,19 +691,21 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           swap: undefined,
         };
         installed.set(entry.installationId, entry);
+        doomed.delete(home);
         return { installation, package: toPackage(entry) };
       }).pipe(Effect.uninterruptible);
       // Nothing in the catalogue points here; deleted now, or by a later collection.
-    }).pipe(
-      Effect.onError(() => Effect.sync(() => doomed.add(home)).pipe(Effect.andThen(collect))),
-    );
+    }).pipe(Effect.onError(() => collect));
   });
 
   const discardStaged = (entry: Installed) =>
     Effect.suspend(() => {
       const staged = entry.staged;
+      if (staged === undefined) return Effect.void;
+      // Queued as it is dropped, so a step interrupted while waiting to delete it keeps it queued.
       entry.staged = undefined;
-      return staged === undefined ? Effect.void : release(staged.directory);
+      doomed.add(staged.directory);
+      return release(staged.directory);
     });
 
   const stageUpdate = Effect.fn("PluginNpm.stageUpdate")(function* (
@@ -730,6 +740,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     }).pipe(Effect.onError(() => release(staging)));
     yield* discardStaged(entry);
     entry.staged = { update, directory: staging };
+    doomed.delete(staging);
     return { package: toPackage(entry) };
   });
 

@@ -810,6 +810,92 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
       ),
     );
 
+    it.effect("keeps deleting staged files whose discard was interrupted waiting its turn", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const registry = makeRegistry();
+          const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-discard-" });
+          const catalog = yield* startCatalog(scope);
+          // Completed with the paths of the next deletion npm asks the catalogue for.
+          let requested: Deferred.Deferred<ReadonlyArray<string>> | undefined;
+          const npm = yield* startNpm(
+            scope,
+            {
+              ...catalog,
+              changeFiles: (paths, effect) =>
+                Effect.suspend(() =>
+                  requested === undefined ? Effect.void : Deferred.succeed(requested, paths),
+                ).pipe(Effect.andThen(catalog.changeFiles(paths, effect))),
+            },
+            registry,
+            path.join(base, "npm"),
+          );
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("cut", version, { tarball: filesTarball("cut", version) });
+          const added = yield* npm.add({ name: "cut", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const home = path.dirname(added.installation.directory);
+          const staging = () =>
+            entries(home).pipe(
+              Effect.map((names) =>
+                names
+                  .filter((name) => name.startsWith(".staging-"))
+                  .map((name) => path.join(home, name)),
+              ),
+            );
+          /** Runs `step` until it asks to delete files, while another catalogue step holds the lock, then interrupts it. */
+          const interruptWaiting = Effect.fn("interruptWaiting")(function* <A, E>(
+            step: Effect.Effect<A, E>,
+          ) {
+            const holding = yield* Deferred.make<void>();
+            const hold = yield* Deferred.make<void>();
+            const holder = yield* catalog
+              .changeFiles(
+                [path.join(base, "elsewhere")],
+                Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(hold))),
+              )
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Deferred.await(holding);
+            requested = yield* Deferred.make<ReadonlyArray<string>>();
+            const fiber = yield* step.pipe(Effect.forkChild({ startImmediately: true }));
+            const paths = yield* Deferred.await(requested);
+            requested = undefined;
+            yield* Fiber.interrupt(fiber);
+            yield* Deferred.succeed(hold, undefined);
+            yield* Fiber.join(holder);
+            return paths;
+          });
+
+          // Discard: the staged files are dropped from the package before the deletion runs.
+          yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const [first] = yield* staging();
+          expect(yield* interruptWaiting(npm.discardUpdate({ installationId }))).toEqual([first]);
+          expect((yield* npm.list).packages[0]!.stagedUpdate).toBeNull();
+          // Still queued, but an installation added from the directory keeps it.
+          const direct = (yield* catalog.add({ directory: first! })).installation;
+          yield* npm.discardUpdate({ installationId });
+          expect(yield* staging()).toEqual([first]);
+          yield* catalog.remove({ installationId: direct.installationId });
+          yield* npm.discardUpdate({ installationId });
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+
+          // Staging again: interrupted while dropping the earlier stage, neither directory is forgotten.
+          yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const [earlier] = yield* staging();
+          expect(
+            yield* interruptWaiting(npm.stageUpdate({ installationId, version: "1.1.0" })),
+          ).toEqual([earlier]);
+          expect(yield* staging()).toHaveLength(2);
+          yield* npm.discardUpdate({ installationId });
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect((yield* npm.list).packages[0]!.stagedUpdate).toBeNull();
+        }),
+      ),
+    );
+
     it.effect("puts the old version back when the update fails after the swap", () =>
       withDatabase(
         Effect.gen(function* () {
