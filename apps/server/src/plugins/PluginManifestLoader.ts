@@ -4,6 +4,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_TRANSFORMS_CAPABILITY,
   PLUGIN_VIEWS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
@@ -22,6 +23,7 @@ export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = 
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_TRANSFORMS_CAPABILITY,
   PLUGIN_VIEWS_CAPABILITY,
 ]);
 
@@ -77,6 +79,15 @@ const checkActions = (manifest: PluginManifest): string | undefined => {
   return undefined;
 };
 
+/** Declared transforms need the capability and the proposed `handle` API. */
+const checkTransforms = (manifest: PluginManifest): string | undefined => {
+  if (manifest.transforms === undefined) return undefined;
+  if (!manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY))
+    return "it declares transforms without the transforms capability.";
+  if (!manifest.proposedApi) return "it declares transforms, which need proposedApi: true.";
+  return undefined;
+};
+
 /**
  * Reads and validates `t3-plugin.json` in `directory`. The entry must resolve,
  * after symlinks, to a file inside the directory, and the manifest must target
@@ -126,6 +137,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
     return yield* fail(`the "${PLUGIN_SETTINGS_CAPABILITY}" capability needs "proposedApi": true.`);
   const actionProblem = checkActions(manifest);
   if (actionProblem !== undefined) return yield* fail(actionProblem);
+  const transformProblem = checkTransforms(manifest);
+  if (transformProblem !== undefined) return yield* fail(transformProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))

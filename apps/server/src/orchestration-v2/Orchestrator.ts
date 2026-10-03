@@ -13,6 +13,7 @@ import {
 import {
   type ChatAttachment,
   CommandId,
+  isPluginContextTurnItem,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -75,6 +76,7 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
+import { notAddedPluginContextItem } from "./RunContextEnrichment.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -8061,6 +8063,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               completedAt: now,
               updatedAt: now,
             },
+          });
+        }
+        // Plugins still answering never reach this run; close their items with it.
+        for (const contextItem of projection.turnItems
+          .filter(isPluginContextTurnItem)
+          .filter((candidate) => candidate.runId === run.id && candidate.status === "running")) {
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: notAddedPluginContextItem(contextItem, {
+              status: "interrupted",
+              reason: "The run was interrupted before the plugin answered.",
+              now,
+            }),
           });
         }
         yield* emitEvent({

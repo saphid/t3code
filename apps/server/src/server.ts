@@ -74,6 +74,7 @@ import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
+import * as PluginContextEnrichment from "./plugins/PluginContextEnrichment.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
@@ -423,6 +424,7 @@ const PluginLayerLive = Layer.mergeAll(
   PluginViews.layer,
   PluginSettings.layer(),
   PluginNpm.layer,
+  PluginContextEnrichment.layer,
 ).pipe(
   Layer.provideMerge(PluginCatalog.layer()),
   Layer.provide(PluginSupervisor.layer()),

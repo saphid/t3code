@@ -29,6 +29,7 @@ import { PluginToolDeclaration } from "./pluginTools.ts";
 import { PluginEventDeliveryState } from "./pluginEvents.ts";
 import { PluginSettingsFieldList } from "./pluginSettingFields.ts";
 import { PluginActionDeclaration } from "./pluginActions.ts";
+import { PluginTransformsDeclaration } from "./pluginTransforms.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -58,6 +59,8 @@ export const PluginInstallationManifest = Schema.Struct({
   settings: Schema.optionalKey(PluginSettingsFieldList),
   /** The declared actions, when there are any. Unknown shapes from a newer server are dropped. */
   actions: Schema.optionalKey(ForwardCompatibleArray(PluginActionDeclaration)),
+  /** The declared run transforms, when there are any. A newer server's unknown shape is dropped. */
+  transforms: ForwardCompatibleOptional(PluginTransformsDeclaration),
 });
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 
