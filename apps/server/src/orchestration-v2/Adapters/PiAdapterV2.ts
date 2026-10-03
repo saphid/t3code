@@ -20,8 +20,17 @@
  * Dialog methods become v2 runtime requests (`confirm` → approval_request,
  * `select`/`input`/`editor` → user_input_request); answers travel back as
  * `extension_ui_response`. `notify` becomes a completed activity item.
- * Terminal-only decoration such as status, widget, title, and editor-text
- * updates has no matching T3 surface and is ignored.
+ * `setStatus` feeds the thread's contribution status, an advisory channel
+ * owned by this Pi process for the T3 provider session's lifetime. Before a
+ * T3-initiated switch, new session, or fork, a queued marker clears the
+ * statuses read so far and sends later ones to the target thread; a failed
+ * registration or rollback sends them nowhere until a thread registers. Pi's
+ * RPC stdout marks no native-session boundary, so old-session writes after
+ * the marker (such as session_shutdown handlers) look like the new session's
+ * and may persist, and extension-initiated switches or reloads are not
+ * tracked. Closing this session clears its statuses.
+ * Other terminal decoration (widget, title, editor text) has no matching T3
+ * surface and is ignored.
  */
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -61,6 +70,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ContributionStatusStore from "../../contributions/ContributionStatusStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -227,6 +237,7 @@ export interface PiAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly statusStore: ContributionStatusStore.ContributionStatusStoreShape;
 }
 
 /** Concatenate the `text` fields of a Pi content-block array. */
@@ -468,6 +479,27 @@ export function makePiAdapterV2(
       // serialize the two paths to stop `turn.terminal` from overtaking the
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
+      // Extensions set statuses from session_start, before the first thread
+      // registration, so the source starts on the thread this session opened for.
+      const statusSource = yield* options.statusStore.openSource({
+        kind: "provider-session",
+        providerSessionId: input.providerSessionId,
+        providerInstanceId: options.instanceId,
+        driver: PI_PROVIDER,
+      });
+      yield* statusSource.bindThread(input.threadId);
+      // Targets of `t3.status_generation` markers still queued, oldest first.
+      const statusGenerationTargets: Array<OrchestrationV2ProviderThread["appThreadId"]> = [];
+      /**
+       * Starts a new status generation on `threadId` in event order: statuses
+       * read before the marker are cleared, later ones land on `threadId`, or
+       * nowhere when it is null.
+       */
+      const queueStatusGeneration = (threadId: OrchestrationV2ProviderThread["appThreadId"]) =>
+        Effect.sync(() => statusGenerationTargets.push(threadId)).pipe(
+          Effect.andThen(Queue.offer(connection.events, { type: "t3.status_generation" })),
+          Effect.asVoid,
+        );
       let threadState: PiThreadState | null = null;
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
@@ -581,22 +613,35 @@ export function makePiAdapterV2(
         return null;
       };
 
-      const lifecycleRequest = (record: PiRpcRecord) =>
-        request(record, PI_SESSION_TIMEOUT_MS).pipe(
-          // A local timeout does not cancel Pi's lifecycle hook. Retire the
-          // process before fallback can race its eventual switch/new-session.
-          Effect.tapError((error) =>
-            Effect.logWarning("Pi session lifecycle request failed", {
-              providerSessionId: input.providerSessionId,
-              operation: record["type"],
-              errorTag: error._tag,
-            }),
+      /**
+       * Switches Pi to another native session whose statuses belong to
+       * `statusThreadId`. Pi rebinds every extension for the new session, and
+       * their startup statuses can arrive before the response, so the status
+       * generation starts before the request is written.
+       */
+      const lifecycleRequest = (
+        record: PiRpcRecord,
+        statusThreadId: OrchestrationV2ProviderThread["appThreadId"],
+      ) =>
+        queueStatusGeneration(statusThreadId).pipe(
+          Effect.andThen(
+            request(record, PI_SESSION_TIMEOUT_MS).pipe(
+              // A local timeout does not cancel Pi's lifecycle hook. Retire the
+              // process before fallback can race its eventual switch/new-session.
+              Effect.tapError((error) =>
+                Effect.logWarning("Pi session lifecycle request failed", {
+                  providerSessionId: input.providerSessionId,
+                  operation: record["type"],
+                  errorTag: error._tag,
+                }),
+              ),
+              Effect.catchTags({
+                PiRpcTimeoutError: (error) =>
+                  connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
+              }),
+              Effect.onInterrupt(() => connection.terminate),
+            ),
           ),
-          Effect.catchTags({
-            PiRpcTimeoutError: (error) =>
-              connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
-          }),
-          Effect.onInterrupt(() => connection.terminate),
         );
 
       const tokenUsageFromStats = (
@@ -1190,6 +1235,14 @@ export function makePiAdapterV2(
               },
             },
           });
+          return;
+        }
+        if (method === "setStatus") {
+          // Pi serializes a cleared status as a missing `statusText`.
+          const key = recordString(event, "statusKey");
+          if (key === undefined) return;
+          const text = recordString(event, "statusText");
+          yield* text === undefined ? statusSource.clear(key) : statusSource.set({ key, text });
           return;
         }
         if (
@@ -1867,6 +1920,13 @@ export function makePiAdapterV2(
             }
             return;
           }
+          case "t3.status_generation": {
+            // Statuses queued before this marker came from the session Pi is
+            // leaving. Its shutdown writes can still follow; see the header.
+            yield* statusSource.clearAll;
+            yield* statusSource.bindThread(statusGenerationTargets.shift() ?? null);
+            return;
+          }
           case "t3.flush_extension_errors": {
             // Startup extension failures are informational and do not block
             // Pi, so attach them to the next real turn instead of creating a
@@ -1985,7 +2045,7 @@ export function makePiAdapterV2(
 
       // ── session runtime ───────────────────────────────────
 
-      const registerThread = Effect.fnUntraced(function* (
+      const registerThreadUnguarded = Effect.fnUntraced(function* (
         threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
       ) {
@@ -1995,8 +2055,9 @@ export function makePiAdapterV2(
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
+        const switchesSession = resumeId != null || needsNewSession;
         registrationAttempted = true;
-        if (resumeId != null || needsNewSession) {
+        if (switchesSession) {
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
@@ -2011,6 +2072,7 @@ export function makePiAdapterV2(
             resumeId != null
               ? { type: "switch_session", sessionPath: resumeId }
               : { type: "new_session" },
+            existing === undefined ? threadInput.threadId : existing.appThreadId,
           );
           if (recordField(result, "cancelled") === true) {
             return yield* protocolError("A Pi extension cancelled the session switch");
@@ -2084,6 +2146,8 @@ export function makePiAdapterV2(
                 updatedAt: createdAt,
               };
         threadState = { providerThread, activeTurn: null };
+        // A session switch moved the statuses in event order already.
+        if (!switchesSession) yield* statusSource.bindThread(providerThread.appThreadId);
         // Baseline the session-tree leaf so the first turn's user entry can
         // be located with a `since` cursor instead of a full entry scan.
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
@@ -2102,6 +2166,16 @@ export function makePiAdapterV2(
           });
         return providerThread;
       });
+
+      // A failed registration leaves no thread bound, so no thread shows this
+      // session's statuses until a later registration succeeds.
+      const registerThread = (
+        threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+        publish = true,
+      ) =>
+        registerThreadUnguarded(threadInput, publish).pipe(
+          Effect.onError(() => (threadState === null ? queueStatusGeneration(null) : Effect.void)),
+        );
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
@@ -2663,22 +2737,27 @@ export function makePiAdapterV2(
             if (forkEntryId === undefined) {
               return yield* protocolError("Pi rollback target has no captured session-tree entry");
             }
-            const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
+            const forkData = yield* lifecycleRequest(
+              { type: "fork", entryId: forkEntryId },
+              state.providerThread.appThreadId,
+            );
             if (recordField(forkData, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session fork");
             }
             // Pi fork replaces the session file, including for rollback. Persist
             // its new identity before any later request can fail or restart.
+            // Without it the thread is unusable, so, like a failed registration,
+            // no thread shows this session's statuses until one registers.
+            const invalidateThread = Effect.suspend(() => {
+              threadState = null;
+              return queueStatusGeneration(null);
+            });
             const forkState = yield* request({ type: "get_state" }).pipe(
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  threadState = null;
-                }),
-              ),
+              Effect.tapError(() => invalidateThread),
             );
             const forkSessionFile = recordString(forkState, "sessionFile");
             if (forkSessionFile === undefined) {
-              threadState = null;
+              yield* invalidateThread;
               return yield* protocolError("Pi fork did not return a persisted session file");
             }
             lastNativeThreadId = forkSessionFile;
@@ -2960,6 +3039,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig.ServerConfig;
+      const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
       return makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -2968,6 +3048,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
         fileSystem,
         idAllocator,
         serverConfig,
+        statusStore,
       });
     },
     (effect, input) =>
@@ -2994,6 +3075,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig.ServerConfig;
+      const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
       return makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_PI_SETTINGS,
@@ -3002,6 +3084,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
         fileSystem,
         idAllocator,
         serverConfig,
+        statusStore,
       });
     }),
   );
