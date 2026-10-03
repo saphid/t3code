@@ -18,12 +18,14 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ForwardCompatibleArray,
   ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { PluginHostState } from "./plugin.ts";
+import { PluginActionDeclaration } from "./pluginActions.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -47,6 +49,8 @@ export const PluginInstallationManifest = Schema.Struct({
   description: Schema.optionalKey(Schema.String),
   capabilities: Schema.Array(Schema.String),
   proposedApi: Schema.Boolean,
+  /** The declared actions, when there are any. Unknown shapes from a newer server are dropped. */
+  actions: Schema.optionalKey(ForwardCompatibleArray(PluginActionDeclaration)),
 });
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 

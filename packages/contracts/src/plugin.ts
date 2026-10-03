@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PLUGIN_ACTIONS_MAX_PER_PLUGIN, PluginActionDeclaration } from "./pluginActions.ts";
 
 /**
  * The one plugin API version this server implements. A manifest names the
@@ -60,6 +61,10 @@ export const PluginManifest = Schema.Struct({
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Opts into APIs that may change or disappear without an API version bump. */
   proposedApi: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Commands for clients to offer; needs the `actions` capability (see PluginActions). */
+  actions: Schema.optionalKey(
+    Schema.Array(PluginActionDeclaration).check(Schema.isMaxLength(PLUGIN_ACTIONS_MAX_PER_PLUGIN)),
+  ),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
