@@ -46,7 +46,8 @@ import {
 import { makeTokenBucket } from "./pluginTokenBucket.ts";
 
 /**
- * Retention covers a short disconnect, not history. Per plugin process,
+ * Retention covers a short disconnect, not history; it is elapsed time, so a
+ * wall clock change neither shortens nor extends it. Per plugin process,
  * `burst` notifications at once, then one per `refillMillis`. `threadIdMaxLength`
  * bounds the one identifier a plugin chooses.
  */
@@ -72,12 +73,15 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 /** UTF-8 bytes of a notification's JSON, as a frame carries it. */
 const encodedBytes = (notification: PluginNotification) =>
   Buffer.byteLength(encodeJson(notification));
+/** Elapsed time, which a wall clock change does not move. */
+const elapsedMillis = Effect.map(Clock.monotonicTimeNanos, (nanos) => Number(nanos / 1_000_000n));
 
 const hostError = (message: string) => new PluginHostCallError({ message });
 const STOPPED = hostError("The plugin was stopped.");
 
 interface Retained {
   readonly notification: PluginNotification;
+  /** In `elapsedMillis`, not wall time. */
   readonly expiresAt: number;
   readonly lifetime: Scope.Scope;
 }
@@ -104,7 +108,7 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
   const changes = yield* PubSub.sliding<PluginNotificationFrame>(1);
   // Orders issue, removal and each subscriber's first frame against one another.
   const lock = yield* Semaphore.make(1);
-  // Wakes the expiry loop when the set stops being empty.
+  // Wakes the expiry loop after each send, so it always sleeps until the true next expiry.
   const retaining = yield* Queue.sliding<void>(1);
   const generations = new WeakMap<Scope.Scope, Generation>();
   let sequence = 0;
@@ -132,8 +136,12 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
       Effect.gen(function* () {
         const oldest = retained[0];
         if (oldest === undefined) return yield* Queue.take(retaining);
-        const now = yield* Clock.currentTimeMillis;
-        if (oldest.expiresAt > now) return yield* Effect.sleep(oldest.expiresAt - now);
+        const now = yield* elapsedMillis;
+        if (oldest.expiresAt > now)
+          return yield* Effect.raceFirst(
+            Effect.sleep(oldest.expiresAt - now),
+            Queue.take(retaining),
+          );
         yield* remove((entry) => entry.expiresAt > now);
       }),
     ),
@@ -206,12 +214,12 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
           // Checked under the lock, so a withdrawal never misses a notification it races.
           if (generation.closed) return yield* STOPPED;
           yield* admitted;
-          const now = yield* Clock.currentTimeMillis;
+          const now = yield* elapsedMillis;
           sequence += 1;
           retained = [
             ...retained,
             {
-              notification: record(sequence, now),
+              notification: record(sequence, yield* Clock.currentTimeMillis),
               expiresAt: now + PLUGIN_NOTIFICATION_LIMITS.retentionMillis,
               lifetime,
             },

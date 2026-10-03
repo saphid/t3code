@@ -117,6 +117,37 @@ it.layer(NodeServices.layer)("PluginNotifications", (it) => {
         assert.deepStrictEqual(titles(yield* live.next), []);
       }).pipe(Effect.scoped),
     );
+
+    it.effect(
+      "expires each one two minutes of elapsed time after it was sent, whatever the wall clock does",
+      () =>
+        Effect.gen(function* () {
+          const { notifications, showOnce } = yield* start();
+          const live = yield* follow(notifications);
+          yield* live.next;
+          yield* TestClock.setTime(10 * 60_000);
+          yield* showOnce("older");
+          yield* live.next;
+          yield* TestClock.adjust("30 seconds");
+
+          // The server's wall clock steps back ten minutes; createdAt follows it, expiry does not.
+          yield* TestClock.setTime(0);
+          yield* showOnce("newer");
+          const sent = yield* live.next;
+          assert.deepStrictEqual(
+            sent.notifications.map(({ title, createdAt }) => [title, createdAt]),
+            [
+              ["older", "1970-01-01T00:10:00.000Z"],
+              ["newer", "1970-01-01T00:00:00.000Z"],
+            ],
+          );
+
+          yield* TestClock.adjust("90 seconds");
+          assert.deepStrictEqual(titles(yield* live.next), ["newer"]);
+          yield* TestClock.adjust("30 seconds");
+          assert.deepStrictEqual(titles(yield* live.next), []);
+        }).pipe(Effect.scoped),
+    );
   });
 
   describe("process lifetime", () => {
