@@ -31,11 +31,13 @@ export type PluginViewTarget =
   | { readonly _tag: "mount"; readonly view: PluginView; readonly key: string };
 
 /**
- * Where a plugin-view surface stands in the latest snapshot. The mount key
+ * Where a plugin-view surface stands in the current session's snapshot. The
+ * caller passes only a snapshot that session produced. The mount key
  * changes with the session and the generation, so a reconnect, re-enable or
  * restart ends the old mount before the new one starts.
  */
 export function resolvePluginViewTarget(input: {
+  /** The snapshot from `session`, or null before it has sent one. */
   readonly views: PluginViewsView | null;
   readonly surface: { readonly installationId: string; readonly viewId: string };
   /** Identifies the environment's current session; null while it has none. */

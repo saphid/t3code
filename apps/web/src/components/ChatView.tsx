@@ -4444,7 +4444,9 @@ export default function ChatView(props: ChatViewProps) {
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
-  const pluginViews = sidePanelPluginViews(usePluginViews(activeThreadRef?.environmentId ?? null));
+  const pluginViews = sidePanelPluginViews(
+    usePluginViews(activeThreadRef?.environmentId ?? null).views,
+  );
   const pluginViewLaunchers = useMemo(
     (): PluginViewLauncher[] =>
       activeThreadRef === null

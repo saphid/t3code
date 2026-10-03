@@ -26,7 +26,6 @@ import { connectionAtomRuntime } from "~/connection/runtime";
 import type { PluginViewSurface } from "~/rightPanelStore";
 import { pluginViewEnvironment, usePluginViews } from "~/state/pluginViews";
 import { useEnvironmentQuery } from "~/state/query";
-import { environmentSession } from "~/state/session";
 
 import { usePanelHost } from "../panelHost";
 import {
@@ -71,16 +70,15 @@ const END_DESCRIPTIONS: Record<MountEnd, string> = {
 };
 
 /**
- * A plugin view from the thread's environment, mounted while that
- * environment's latest snapshot offers it. Disable, remove, a byte change, a
+ * A plugin view from the thread's environment, mounted while the snapshot
+ * from that environment's current session offers it. Disable, remove, a byte change, a
  * re-enable, or a new session tears the frame down at once; the tab stays so
  * the view can come back, and says why it is empty meanwhile.
  */
 export default function PluginViewSidePanel(props: { readonly surface: PluginViewSurface }) {
   const { threadRef } = usePanelHost();
   const environmentId = threadRef.environmentId;
-  const views = usePluginViews(environmentId);
-  const session = useAtomValue(environmentSession.initialConfigValueAtom(environmentId));
+  const { session, views } = usePluginViews(environmentId);
   const target = resolvePluginViewTarget({
     views,
     surface: props.surface,
