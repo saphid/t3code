@@ -25,6 +25,10 @@ import * as PluginStatus from "./PluginStatus.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 import { recordingSupervisor, registrationFor } from "./testFixtures/hostCalls.ts";
 
+const ManifestJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeManifestJson = Schema.decodeUnknownEffect(ManifestJson);
+const encodeManifestJson = Schema.encodeEffect(ManifestJson);
+
 const FIXTURE_DIR = `${import.meta.dirname}/testFixtures/notifyPlugin`;
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
@@ -202,13 +206,17 @@ it.layer(NodeServices.layer)("PluginStatus", (it) => {
         const path = yield* Path.Path;
         const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-notify-" });
         yield* fs.copyFile(path.join(FIXTURE_DIR, "main.mjs"), path.join(directory, "main.mjs"));
-        const manifest = JSON.parse(
+        const manifest = yield* decodeManifestJson(
           yield* fs.readFileString(path.join(FIXTURE_DIR, "t3-plugin.json")),
-        ) as Record<string, unknown>;
+        );
         for (const capability of ["status", "notifications"]) {
           yield* fs.writeFileString(
             path.join(directory, "t3-plugin.json"),
-            JSON.stringify({ ...manifest, capabilities: [capability], proposedApi: false }),
+            yield* encodeManifestJson({
+              ...manifest,
+              capabilities: [capability],
+              proposedApi: false,
+            }),
           );
           const error = yield* loadPluginDirectory(directory).pipe(Effect.flip);
           assert.include(error.reason, `"${capability}" capability needs "proposedApi": true`);
