@@ -1993,6 +1993,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       }
 
       const cases = [
+        { status: "idle", shellStatus: "idle", activity: null, done: false },
         { status: "pending", shellStatus: "starting", activity: "starting", done: false },
         { status: "running", shellStatus: "running", activity: "running", done: false },
         { status: "waiting", shellStatus: "waiting", activity: "waiting", done: false },
@@ -2040,6 +2041,14 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
             activity === null ? null : DateTime.toEpochMillis(now),
           );
         }
+        // Settlement reads the same fields through its own query.
+        const [candidate] = yield* projectionStore.getSettlementCandidates(threadId);
+        assert.equal(candidate?.status, shellStatus);
+        assert.equal(candidate?.activityRunStatus, activity);
+        assert.equal(
+          timestamp(candidate?.latestRunCompletedAt),
+          done ? DateTime.toEpochMillis(later) : null,
+        );
       }
     }),
   );

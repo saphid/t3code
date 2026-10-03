@@ -929,6 +929,9 @@ type SettlementThreadRow = Pick<
   | "latest_run_requested_at"
   | "latest_run_started_at"
   | "latest_run_completed_at"
+  | "runless_root_status"
+  | "runless_root_started_at"
+  | "runless_root_completed_at"
   | "latest_user_message_at"
 >;
 
@@ -1481,7 +1484,11 @@ function runlessRootTurnShellFields(node: {
   readonly completedAt: DateTime.Utc | null;
 }): RunlessRootTurnShellFields {
   const status: OrchestrationV2ShellThreadStatus =
-    node.status === "pending" ? "starting" : shellStatusFromStoredRunStatus(node.status);
+    node.status === "pending"
+      ? "starting"
+      : node.status === "idle"
+        ? "idle"
+        : shellStatusFromStoredRunStatus(node.status);
   const activityRunStatus =
     status === "starting" || status === "running" || status === "waiting" ? status : null;
   return {
@@ -5142,6 +5149,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
               (
+                SELECT node.status
+                FROM orchestration_v2_projection_nodes node
+                WHERE node.thread_id = t.thread_id
+                  AND node.run_id IS NULL
+                  AND node.kind = 'root_turn'
+                ORDER BY node.started_at DESC, node.node_id DESC
+                LIMIT 1
+              ) AS runless_root_status,
+              (
+                SELECT node.started_at
+                FROM orchestration_v2_projection_nodes node
+                WHERE node.thread_id = t.thread_id
+                  AND node.run_id IS NULL
+                  AND node.kind = 'root_turn'
+                ORDER BY node.started_at DESC, node.node_id DESC
+                LIMIT 1
+              ) AS runless_root_started_at,
+              (
+                SELECT node.completed_at
+                FROM orchestration_v2_projection_nodes node
+                WHERE node.thread_id = t.thread_id
+                  AND node.run_id IS NULL
+                  AND node.kind = 'root_turn'
+                ORDER BY node.started_at DESC, node.node_id DESC
+                LIMIT 1
+              ) AS runless_root_completed_at,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
@@ -5181,9 +5215,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadPayload(row.payload_json);
-                const status = shellStatusFromStoredRunStatus(row.latest_run_status);
                 const latestRunId =
                   row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
+                const runless =
+                  latestRunId === null && row.runless_root_status != null
+                    ? runlessRootTurnShellFields({
+                        status: row.runless_root_status,
+                        startedAt:
+                          row.runless_root_started_at === null
+                            ? null
+                            : DateTime.makeUnsafe(row.runless_root_started_at),
+                        completedAt:
+                          row.runless_root_completed_at === null
+                            ? null
+                            : DateTime.makeUnsafe(row.runless_root_completed_at),
+                      })
+                    : null;
+                const status =
+                  runless?.status ?? shellStatusFromStoredRunStatus(row.latest_run_status);
                 return {
                   ...thread,
                   pinnedAt: thread.pinnedAt ?? null,
@@ -5198,19 +5247,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ? null
                       : DateTime.makeUnsafe(row.latest_run_requested_at),
                   latestRunStartedAt:
-                    row.latest_run_started_at === null
+                    runless?.startedAt ??
+                    (row.latest_run_started_at === null
                       ? null
-                      : DateTime.makeUnsafe(row.latest_run_started_at),
+                      : DateTime.makeUnsafe(row.latest_run_started_at)),
                   latestRunCompletedAt:
-                    row.latest_run_completed_at === null
+                    runless?.completedAt ??
+                    (row.latest_run_completed_at === null
                       ? null
-                      : DateTime.makeUnsafe(row.latest_run_completed_at),
+                      : DateTime.makeUnsafe(row.latest_run_completed_at)),
                   latestUserMessageAt:
                     row.latest_user_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_message_at),
-                  activityRunStatus: null,
-                  activityRunStartedAt: null,
+                  activityRunStatus: runless?.activityRunStatus ?? null,
+                  activityRunStartedAt: runless?.activityRunStartedAt ?? null,
                   pendingRuntimeRequest: null,
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
