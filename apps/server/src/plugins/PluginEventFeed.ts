@@ -10,10 +10,11 @@
  * consecutive failures, the worker is quarantined with the cursor unchanged
  * until `resume`, a re-enable, or a server restart. Delivery is at-least-once.
  *
- * The cursor starts at the end of the log the first time an installation is
- * enabled, so a new plugin sees only later events. It belongs to the
- * installation: disable and re-enable, consent to changed bytes, and restarts
- * continue from it; remove forgets it. Workers never subscribe to raw events:
+ * The cursor starts at the end of the log when an installation is first
+ * enabled (the catalogue records it with the enable, through
+ * `PluginEventDelivery`), so a new plugin sees exactly the later events. It
+ * belongs to the installation: disable and re-enable, consent to changed
+ * bytes, and restarts continue from it; remove forgets it. Workers never subscribe to raw events:
  * a commit of a projected event type only wakes them, and they read the store.
  */
 import {
@@ -50,6 +51,7 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
+import { PluginEventDelivery } from "./PluginEventDelivery.ts";
 import { PLUGIN_EVENTS_HANDLER } from "./pluginIpcFraming.ts";
 
 export interface PluginEventFeedOptions {
@@ -196,6 +198,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   const catalog = yield* PluginCatalog;
   const eventSink = yield* EventSinkV2;
   const projections = yield* ProjectionStoreV2;
+  const delivery = yield* PluginEventDelivery;
   const environmentId: EnvironmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
   const scope = yield* Effect.scope;
 
@@ -209,18 +212,14 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
     PubSub.publish(receipts, receipt).pipe(Effect.asVoid);
 
   const loadCursor = Effect.fnUntraced(function* (installationId: PluginInstallationId) {
-    // The first start begins at the end of the log; later starts keep the stored cursor.
-    const head = yield* eventSink.latestSequence();
-    yield* sql`
-      INSERT INTO plugin_event_cursors (installation_id, acknowledged_sequence, updated_at)
-      VALUES (${installationId}, ${head}, ${DateTime.formatIso(yield* DateTime.now)})
-      ON CONFLICT (installation_id) DO NOTHING
-    `;
+    // The catalogue started the cursor when the plugin was enabled; this covers a registration
+    // that skipped it.
+    yield* delivery.begin(installationId, [PLUGIN_EVENTS_CAPABILITY]);
     const rows = yield* sql<{ readonly acknowledged_sequence: number }>`
       SELECT acknowledged_sequence FROM plugin_event_cursors
       WHERE installation_id = ${installationId}
     `;
-    return rows[0]?.acknowledged_sequence ?? head;
+    return rows[0]?.acknowledged_sequence ?? (yield* eventSink.latestSequence());
   });
 
   const saveCursor = Effect.fnUntraced(function* (

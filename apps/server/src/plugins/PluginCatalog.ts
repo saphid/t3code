@@ -47,6 +47,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { PluginEventDelivery } from "./PluginEventDelivery.ts";
 import { loadPluginDirectory, type PluginRegistration } from "./PluginManifestLoader.ts";
 import {
   defaultPluginSourceLimits,
@@ -169,6 +170,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const scope = yield* Effect.scope;
+  const eventDelivery = yield* Effect.serviceOption(PluginEventDelivery);
 
   const installations = new Map<PluginInstallationId, Installation>();
   // Management is rare and each step may wait for a process to exit; one at a time keeps the
@@ -195,6 +197,20 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       Effect.asVoid,
       Effect.catch(storageError),
     );
+
+  /** Saves `record` as enabled, with the event cursor its capabilities need, or neither. */
+  const saveEnabled = (record: PluginInstallationRecord, capabilities: ReadonlyArray<string>) =>
+    Option.match(eventDelivery, {
+      onNone: () => save(record),
+      onSome: (delivery) =>
+        sql
+          .withTransaction(
+            delivery
+              .begin(record.installationId, capabilities)
+              .pipe(Effect.catch(storageError), Effect.andThen(save(record))),
+          )
+          .pipe(Effect.catchTag("SqlError", storageError)),
+    });
 
   /** Saves `record` and then shows it, or neither. */
   const commit = (installation: Installation, record: PluginInstallationRecord) =>
@@ -327,7 +343,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       enabled: true,
       generation: installation.record.generation + 1,
     };
-    yield* save(record).pipe(Effect.tapError(() => supervisor.disable(pluginId)));
+    yield* saveEnabled(record, registration.manifest.capabilities).pipe(
+      Effect.tapError(() => supervisor.disable(pluginId)),
+    );
     // Together, so an invoke never sees the new registration with the old generation.
     installation.record = record;
     installation.registered = { pluginId, generation: record.generation };

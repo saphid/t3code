@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +21,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -29,6 +31,7 @@ import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
+import * as PluginEventDelivery from "./PluginEventDelivery.ts";
 import * as PluginEventFeed from "./PluginEventFeed.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 
@@ -44,11 +47,16 @@ const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 type Receipts = PubSub.Subscription<PluginEventFeed.PluginEventFeedReceipt>;
 
-/** Starts a supervisor, catalogue and event feed in `scope`, as one server start would. */
+/**
+ * Starts a supervisor, catalogue and event feed in `scope`, as one server start
+ * would. With `observed`, the feed sees no catalogue snapshot until it completes.
+ */
 const startServer = Effect.fn("startServer")(function* (
   scope: Scope.Scope,
   options: Partial<PluginEventFeed.PluginEventFeedOptions> = {},
+  observed?: Deferred.Deferred<void>,
 ) {
+  const delivery = yield* PluginEventDelivery.make;
   const supervisor = yield* PluginSupervisor.make({
     heapLimitMb: 64,
     activationTimeout: "10 seconds",
@@ -59,10 +67,19 @@ const startServer = Effect.fn("startServer")(function* (
   );
   const catalog = yield* PluginCatalog.make().pipe(
     Effect.provideService(PluginSupervisor.PluginSupervisor, supervisor),
+    Effect.provideService(PluginEventDelivery.PluginEventDelivery, delivery),
     Effect.provideService(Scope.Scope, scope),
   );
+  const feedCatalog =
+    observed === undefined
+      ? catalog
+      : PluginCatalog.PluginCatalog.of({
+          ...catalog,
+          subscribe: Stream.unwrap(Deferred.await(observed).pipe(Effect.as(catalog.subscribe))),
+        });
   const feed = yield* PluginEventFeed.make(options).pipe(
-    Effect.provideService(PluginCatalog.PluginCatalog, catalog),
+    Effect.provideService(PluginCatalog.PluginCatalog, feedCatalog),
+    Effect.provideService(PluginEventDelivery.PluginEventDelivery, delivery),
     Effect.provideService(
       ServerEnvironment,
       ServerEnvironment.of({
@@ -297,6 +314,58 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           ]);
         }),
       ),
+    );
+  });
+
+  describe("starting point", () => {
+    it.effect(
+      "delivers events committed after enable even when the feed sees the enable late",
+      () =>
+        withStores(
+          Effect.gen(function* () {
+            yield* seedThread;
+            const plugin = yield* preparePlugin("test.late-observer");
+            const observed = yield* Deferred.make<void>();
+            const server = yield* startServer(yield* Scope.Scope, {}, observed);
+            const installationId = yield* install(server.catalog, plugin.directory);
+            const enabledAt = yield* storedCursor(installationId);
+            const sequence = yield* finalizeRun("right-after-enable");
+            expect(enabledAt).toBeLessThan(sequence);
+
+            yield* Deferred.succeed(observed, undefined);
+            expect(yield* next(server.receipts, "Started", installationId)).toMatchObject({
+              cursor: enabledAt,
+            });
+            expect(yield* next(server.receipts, "Acknowledged", installationId)).toMatchObject({
+              delivered: 1,
+              throughSequence: sequence,
+            });
+            expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([sequence]);
+          }),
+        ),
+    );
+
+    it.effect(
+      "keeps the enable's starting point when the server stops before the feed saw it",
+      () =>
+        withStores(
+          Effect.gen(function* () {
+            yield* seedThread;
+            const plugin = yield* preparePlugin("test.early-restart");
+            const first = yield* Scope.make();
+            const server = yield* startServer(first, {}, yield* Deferred.make<void>());
+            const installationId = yield* install(server.catalog, plugin.directory);
+            const sequence = yield* finalizeRun("before-restart");
+            yield* Scope.close(first, Exit.void);
+
+            const restarted = yield* startServer(yield* Scope.Scope);
+            expect(yield* next(restarted.receipts, "Acknowledged", installationId)).toMatchObject({
+              delivered: 1,
+              throughSequence: sequence,
+            });
+            expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([sequence]);
+          }),
+        ),
     );
   });
 
