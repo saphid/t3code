@@ -116,6 +116,11 @@ export const RPC_REQUIRED_SCOPES = {
   // turn; it cannot change what code runs.
   [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pluginsNpmList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsNpmAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmStageUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmApplyUpdate]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsNpmDiscardUpdate]: AuthAccessWriteScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

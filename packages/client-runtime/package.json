@@ -207,6 +207,10 @@
       "types": "./src/state/pluginPresentation.ts",
       "default": "./src/state/pluginPresentation.ts"
     },
+    "./state/pluginNpm": {
+      "types": "./src/state/pluginNpm.ts",
+      "default": "./src/state/pluginNpm.ts"
+    },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"

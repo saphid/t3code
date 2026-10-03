@@ -42,6 +42,7 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pluginsSettingsSubscribe)).toBe(
       AuthOrchestrationReadScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginsNpmList)).toBe(AuthOrchestrationReadScope);
     for (const method of [
       WS_METHODS.pluginsAdd,
       WS_METHODS.pluginsRefresh,
@@ -51,6 +52,10 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.pluginsRemove,
       WS_METHODS.pluginsResume,
       WS_METHODS.pluginsSettingsUpdate,
+      WS_METHODS.pluginsNpmAdd,
+      WS_METHODS.pluginsNpmStageUpdate,
+      WS_METHODS.pluginsNpmApplyUpdate,
+      WS_METHODS.pluginsNpmDiscardUpdate,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
     }

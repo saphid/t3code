@@ -71,6 +71,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
 import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
+import * as PluginNpm from "./plugins/PluginNpm.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
@@ -421,6 +422,7 @@ const PluginLayerLive = Layer.mergeAll(
   PluginTools.layer,
   PluginViews.layer,
   PluginSettings.layer(),
+  PluginNpm.layer,
 ).pipe(
   Layer.provideMerge(PluginCatalog.layer()),
   Layer.provide(PluginSupervisor.layer()),
