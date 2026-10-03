@@ -52,7 +52,7 @@ export interface PluginStorageLimits {
   readonly maxTotalBytes: number;
 }
 
-export const defaultPluginStorageLimits: PluginStorageLimits = {
+const defaultPluginStorageLimits: PluginStorageLimits = {
   maxKeyLength: 128,
   maxValueBytes: 64 * 1024,
   maxKeys: 256,

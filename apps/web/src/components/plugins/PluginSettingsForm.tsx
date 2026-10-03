@@ -5,7 +5,13 @@ import {
   pluginSettingDraftChange,
   pluginSettingRows,
 } from "@t3tools/client-runtime/state/pluginSettings";
-import type { EnvironmentId, PluginInstallation, PluginSettingChange } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  PLUGIN_SETTING_SECRET_MAX_LENGTH,
+  PLUGIN_SETTING_TEXT_MAX_LENGTH,
+  type PluginInstallation,
+  type PluginSettingChange,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useState } from "react";
@@ -19,7 +25,11 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 
 const draftOf = (row: PluginSettingRow): PluginSettingDraft =>
-  row.field.type === "boolean" ? row.value === true : row.value === undefined ? "" : String(row.value);
+  row.field.type === "boolean"
+    ? row.value === true
+    : row.value === undefined
+      ? ""
+      : String(row.value);
 
 /** The saved change a draft makes, or why it cannot be saved; undefined when it matches what is shown. */
 const draftOutcome = (row: PluginSettingRow, draft: PluginSettingDraft | undefined) => {
@@ -59,7 +69,9 @@ export function PluginSettingsForm({
 
   const rows = pluginSettingRows(fields, view.values);
   const outcomes = rows.map((row) => draftOutcome(row, drafts[row.field.key]));
-  const changes = outcomes.flatMap((outcome) => (outcome?._tag === "change" ? [outcome.change] : []));
+  const changes = outcomes.flatMap((outcome) =>
+    outcome?._tag === "change" ? [outcome.change] : [],
+  );
   const invalid = outcomes.some((outcome) => outcome?._tag === "invalid");
   const setDraft = (key: string, draft: PluginSettingDraft) =>
     setDrafts((current) => ({ ...current, [key]: draft }));
@@ -137,13 +149,14 @@ export function PluginSettingsForm({
                   {...(field.type === "secret"
                     ? {
                         type: "password",
+                        maxLength: PLUGIN_SETTING_SECRET_MAX_LENGTH,
                         placeholder: row.saved
                           ? "Saved. Enter a new value to replace it."
                           : "Not set",
                       }
                     : field.type === "number"
                       ? { inputMode: "decimal" as const }
-                      : {})}
+                      : { maxLength: PLUGIN_SETTING_TEXT_MAX_LENGTH })}
                   value={String(draft)}
                   onChange={(event) => setDraft(field.key, event.target.value)}
                 />

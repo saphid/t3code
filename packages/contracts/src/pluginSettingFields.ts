@@ -21,7 +21,7 @@ import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts"
 export const PLUGIN_SETTINGS_CAPABILITY = "settings";
 
 export const PLUGIN_SETTINGS_MAX_FIELDS = 32;
-export const PLUGIN_SETTING_MAX_OPTIONS = 32;
+const PLUGIN_SETTING_MAX_OPTIONS = 32;
 export const PLUGIN_SETTING_TEXT_MAX_LENGTH = 2000;
 export const PLUGIN_SETTING_SECRET_MAX_LENGTH = 8192;
 

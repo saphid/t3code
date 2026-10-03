@@ -3,13 +3,13 @@ import {
   type PluginSettingRow,
   pluginSettingDraftChange,
   pluginSettingRows,
-  supportsPluginSettings,
 } from "@t3tools/client-runtime/state/pluginSettings";
-import type {
-  EnvironmentId,
-  ExecutionEnvironmentCapabilities,
-  PluginInstallation,
-  PluginSettingChange,
+import {
+  type EnvironmentId,
+  PLUGIN_SETTING_SECRET_MAX_LENGTH,
+  PLUGIN_SETTING_TEXT_MAX_LENGTH,
+  type PluginInstallation,
+  type PluginSettingChange,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -17,7 +17,7 @@ import { useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../components/AppText";
-import { pluginEnvironment, pluginSettingsEnvironment } from "../../state/plugins";
+import { pluginSettingsEnvironment } from "../../state/plugins";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsChoiceRow } from "../settings/components/SettingsChoiceRow";
@@ -111,6 +111,11 @@ export function PluginSettingsForm({
                       : undefined
                   }
                   secureTextEntry={field.type === "secret"}
+                  maxLength={
+                    field.type === "secret"
+                      ? PLUGIN_SETTING_SECRET_MAX_LENGTH
+                      : PLUGIN_SETTING_TEXT_MAX_LENGTH
+                  }
                   keyboardType={field.type === "number" ? "decimal-pad" : "default"}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -149,35 +154,4 @@ export function PluginSettingsForm({
       })}
     </SettingsSection>
   );
-}
-
-/**
- * One form per installed plugin that declares settings. Renders nothing on a
- * server without plugin settings or when no installed plugin declares any.
- */
-export function PluginSettingsSections({
-  environmentId,
-  capabilities,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly capabilities: ExecutionEnvironmentCapabilities | undefined;
-}) {
-  if (!supportsPluginSettings(capabilities)) return null;
-  return <InstalledPluginSettings environmentId={environmentId} />;
-}
-
-function InstalledPluginSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const catalog = Option.getOrNull(
-    AsyncResult.value(useAtomValue(pluginEnvironment.catalog({ environmentId, input: {} }))),
-  );
-  if (catalog?._tag !== "available") return null;
-  return catalog.installations
-    .filter((installation) => (installation.manifest?.settings?.length ?? 0) > 0)
-    .map((installation) => (
-      <PluginSettingsForm
-        key={installation.installationId}
-        environmentId={environmentId}
-        installation={installation}
-      />
-    ));
 }

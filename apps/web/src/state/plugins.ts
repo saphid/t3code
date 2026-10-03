@@ -4,4 +4,5 @@ import { createPluginSettingsEnvironmentAtoms } from "@t3tools/client-runtime/st
 import { connectionAtomRuntime } from "../connection/runtime";
 
 export const pluginEnvironment = createPluginEnvironmentAtoms(connectionAtomRuntime);
-export const pluginSettingsEnvironment = createPluginSettingsEnvironmentAtoms(connectionAtomRuntime);
+export const pluginSettingsEnvironment =
+  createPluginSettingsEnvironmentAtoms(connectionAtomRuntime);
