@@ -5,7 +5,7 @@ import type { EnvironmentId, PluginNotificationFrame } from "@t3tools/contracts"
 import { connectionAtomRuntime } from "../connection/runtime";
 import { serverEnvironment } from "./server";
 
-export const pluginNotificationEnvironment = createPluginNotificationEnvironmentAtoms(
+const pluginNotificationEnvironment = createPluginNotificationEnvironmentAtoms(
   connectionAtomRuntime,
   { configValueAtom: serverEnvironment.configValueAtom },
 );

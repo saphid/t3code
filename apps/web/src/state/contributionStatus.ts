@@ -5,7 +5,7 @@ import type { ContributionStatusEntry, EnvironmentId, ThreadId } from "@t3tools/
 import { connectionAtomRuntime } from "../connection/runtime";
 import { serverEnvironment } from "./server";
 
-export const contributionStatusEnvironment = createContributionStatusEnvironmentAtoms(
+const contributionStatusEnvironment = createContributionStatusEnvironmentAtoms(
   connectionAtomRuntime,
   { configValueAtom: serverEnvironment.configValueAtom },
 );

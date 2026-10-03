@@ -33,9 +33,7 @@ const TONE_TEXT = {
  * Click, tap, Enter or hover opens a list with each status's full text,
  * tooltip and origin, so a truncated or hidden status is always reachable.
  */
-export function ContributionStatusChips(props: {
-  readonly chips: ReadonlyArray<ContributionStatusChip>;
-}) {
+function ContributionStatusChips(props: { readonly chips: ReadonlyArray<ContributionStatusChip> }) {
   const { chips } = props;
   const visible = chips.slice(0, VISIBLE_CHIPS);
   const hiddenCount = chips.length - visible.length;
