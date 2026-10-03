@@ -4,6 +4,9 @@ import {
   CONTRIBUTION_STATUS_KEY_MAX_LENGTH,
   CONTRIBUTION_STATUS_MAX_ITEMS,
   CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+  CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
   CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD,
   CONTRIBUTION_STATUS_MAX_THREADS,
   CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
@@ -145,6 +148,20 @@ interface SourceSlot {
 const slotKey = (source: ContributionStatusSource) =>
   source.kind === "plugin" ? contributionStatusSourceKey(source) : source.kind;
 
+/** Capacity pools: plugins count only against their own, so they never crowd out provider statuses. */
+const poolLimits = (source: ContributionStatusSource) =>
+  source.kind === "plugin"
+    ? {
+        sources: CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD,
+        threads: CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS,
+      }
+    : {
+        sources: CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD,
+        threads: CONTRIBUTION_STATUS_MAX_THREADS,
+        items: CONTRIBUTION_STATUS_MAX_ITEMS,
+      };
+
 const sameItem = (left: ContributionStatusItem | undefined, right: ContributionStatusItem) =>
   left !== undefined &&
   left.text === right.text &&
@@ -167,28 +184,33 @@ export const make = Effect.fn("contributions.status.make")(function* () {
    * Binding a thread only records ownership; capacity is taken by the first
    * visible item and returned by the last clear, so silent producers never
    * crowd out ones that show something, and a rejected producer's later set
-   * is admitted once capacity frees up.
+   * is admitted once capacity frees up. Each pool's caps count only its own
+   * sources.
    */
   const admitsNewItem = (threadId: ThreadId, slot: SourceSlot) => {
     if (slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE) return false;
+    const limits = poolLimits(slot.source);
+    const samePool = (other: SourceSlot) =>
+      (other.source.kind === "plugin") === (slot.source.kind === "plugin");
     let items = 0;
     let visibleThreads = 0;
     for (const slots of threads.values()) {
       let visible = false;
       for (const other of slots.values()) {
+        if (!samePool(other)) continue;
         items += other.items.size;
         visible ||= other.items.size > 0;
       }
       if (visible) visibleThreads += 1;
     }
-    if (items >= CONTRIBUTION_STATUS_MAX_ITEMS) return false;
+    if (items >= limits.items) return false;
     if (slot.items.size > 0) return true;
     let visibleSources = 0;
     for (const other of threads.get(threadId)?.values() ?? []) {
-      if (other.items.size > 0) visibleSources += 1;
+      if (samePool(other) && other.items.size > 0) visibleSources += 1;
     }
-    if (visibleSources >= CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD) return false;
-    return visibleSources > 0 || visibleThreads < CONTRIBUTION_STATUS_MAX_THREADS;
+    if (visibleSources >= limits.sources) return false;
+    return visibleSources > 0 || visibleThreads < limits.threads;
   };
 
   const currentSnapshot = (): ContributionStatusSnapshot => ({

@@ -21,6 +21,15 @@ export const CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE = 8;
 export const CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD = 4;
 export const CONTRIBUTION_STATUS_MAX_THREADS = 64;
 export const CONTRIBUTION_STATUS_MAX_ITEMS = 128;
+/**
+ * Plugin sources have their own pool beside the limits above, so they never
+ * take capacity a provider session would have had: at most 3 plugin sources
+ * on a thread (with its provider session, still 4 sources), on at most 32
+ * threads, with at most 64 items in all.
+ */
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_SOURCES_PER_THREAD = 3;
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_THREADS = 32;
+export const CONTRIBUTION_STATUS_MAX_PLUGIN_ITEMS = 64;
 
 const CONTRIBUTION_STATUS_TONES = ["neutral", "info", "success", "warning", "error"] as const;
 const ContributionStatusToneLiteral = Schema.Literals(CONTRIBUTION_STATUS_TONES);
