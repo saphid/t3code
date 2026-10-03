@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as ViewProofRouteImport } from './routes/view-proof'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
@@ -38,6 +39,11 @@ import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$e
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ViewProofRoute = ViewProofRouteImport.update({
+  id: '/view-proof',
+  path: '/view-proof',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsageRoute = UsageRouteImport.update({
@@ -168,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/view-proof': typeof ViewProofRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -193,6 +200,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/view-proof': typeof ViewProofRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -221,6 +229,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/view-proof': typeof ViewProofRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -250,6 +259,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/view-proof'
     | '/welcome'
     | '/pull-requests'
     | '/projects/$projectKey'
@@ -275,6 +285,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/view-proof'
     | '/welcome'
     | '/pull-requests'
     | '/projects/$projectKey'
@@ -302,6 +313,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/view-proof'
     | '/welcome'
     | '/_chat/pull-requests'
     | '/projects/$projectKey'
@@ -330,6 +342,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
+  ViewProofRoute: typeof ViewProofRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
@@ -341,6 +354,13 @@ declare module '@tanstack/react-router' {
       path: '/welcome'
       fullPath: '/welcome'
       preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/view-proof': {
+      id: '/view-proof'
+      path: '/view-proof'
+      fullPath: '/view-proof'
+      preLoaderRoute: typeof ViewProofRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/usage': {
@@ -574,6 +594,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
+  ViewProofRoute: ViewProofRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
