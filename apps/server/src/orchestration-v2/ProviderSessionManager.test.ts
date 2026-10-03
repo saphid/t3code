@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  PluginInstallationId,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -33,6 +34,7 @@ import { HttpServer } from "effect/unstable/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as PluginTools from "../plugins/PluginTools.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -412,6 +414,7 @@ function makeTestLayer(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly pluginToolsLayer?: Layer.Layer<PluginTools.PluginTools>;
 }) {
   const configuredEventSinkLayer =
     input.flakyReleaseWrites !== undefined
@@ -463,6 +466,7 @@ function makeTestLayer(input: {
           TestStoresLayer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.pluginToolsLayer === undefined ? [] : [input.pluginToolsLayer]),
         ),
       ),
     ),
@@ -1163,6 +1167,49 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 snapshots the enabled tool plugins into the credential", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const enabled = yield* Ref.make([
+      { installationId: PluginInstallationId.make("installation-1"), generation: 1 },
+    ]);
+    const pluginToolsLayer = Layer.mock(PluginTools.PluginTools)({ grants: Ref.get(enabled) });
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-plugin-tools");
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const openAndResolve = Effect.gen(function* () {
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const config = (yield* Ref.get(mcpConfigs)).at(-1);
+        const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const resolved = yield* registry.resolve(token);
+        yield* manager.close(providerSessionId);
+        return resolved?.pluginToolGrants;
+      });
+
+      assert.deepEqual(yield* openAndResolve, yield* Ref.get(enabled));
+      // A plugin enabled later reaches the next session, not the one already prepared.
+      yield* Ref.set(enabled, []);
+      assert.deepEqual(yield* openAndResolve, []);
+    }).pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1_000, mcpConfigs, pluginToolsLayer })),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", () =>
