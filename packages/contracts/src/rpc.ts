@@ -315,6 +315,24 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginAddInput,
+  PluginCatalogError,
+  PluginCatalogSnapshot,
+  PluginConsentInput,
+  PluginInstallationInput,
+  PluginInstallationResult,
+  PluginRefreshInput,
+  PluginRemoveResult,
+} from "./pluginCatalog.ts";
+import {
+  PluginViewBundle,
+  PluginViewBundleInput,
+  PluginViewCallInput,
+  PluginViewCallResult,
+  PluginViewError,
+  PluginViewsSnapshot,
+} from "./pluginViews.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -473,6 +491,22 @@ export const WS_METHODS = {
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
   scheduledTasksDelete: "scheduledTasks.delete",
   scheduledTasksRunNow: "scheduledTasks.runNow",
+
+  // Trusted local plugins (gated on the `plugins` environment capability)
+  pluginsList: "plugins.list",
+  pluginsSubscribe: "plugins.subscribe",
+  pluginsAdd: "plugins.add",
+  pluginsRefresh: "plugins.refresh",
+  pluginsConsent: "plugins.consent",
+  pluginsEnable: "plugins.enable",
+  pluginsDisable: "plugins.disable",
+  pluginsRemove: "plugins.remove",
+  pluginsResume: "plugins.resume",
+
+  // Isolated plugin views (gated on the `pluginViews` environment capability)
+  pluginViewsSubscribe: "pluginViews.subscribe",
+  pluginViewsReadBundle: "pluginViews.readBundle",
+  pluginViewsCall: "pluginViews.call",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1661,6 +1695,92 @@ const WsScheduledTasksRunNowRpc = Rpc.make(WS_METHODS.scheduledTasksRunNow, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
+const pluginRpcError = Schema.Union([PluginCatalogError, EnvironmentAuthorizationError]);
+
+const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+/** One snapshot on subscribe, then a fresh one after every catalogue or plugin state change. */
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+  stream: true,
+});
+
+/** Reads the manifest and digests the directory; runs nothing. */
+const WsPluginsAddRpc = Rpc.make(WS_METHODS.pluginsAdd, {
+  payload: PluginAddInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Inspects the bytes again; an enabled installation whose bytes changed is stopped. */
+const WsPluginsRefreshRpc = Rpc.make(WS_METHODS.pluginsRefresh, {
+  payload: PluginRefreshInput,
+  success: PluginCatalogSnapshot,
+  error: pluginRpcError,
+});
+
+const WsPluginsConsentRpc = Rpc.make(WS_METHODS.pluginsConsent, {
+  payload: PluginConsentInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsEnableRpc = Rpc.make(WS_METHODS.pluginsEnable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const WsPluginsDisableRpc = Rpc.make(WS_METHODS.pluginsDisable, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+/** Disables and forgets the installation; the directory is left untouched. */
+const WsPluginsRemoveRpc = Rpc.make(WS_METHODS.pluginsRemove, {
+  payload: PluginInstallationInput,
+  success: PluginRemoveResult,
+  error: pluginRpcError,
+});
+
+/** Clears backoff, quarantine, or incompatibility; the next use starts a fresh process. */
+const WsPluginsResumeRpc = Rpc.make(WS_METHODS.pluginsResume, {
+  payload: PluginInstallationInput,
+  success: PluginInstallationResult,
+  error: pluginRpcError,
+});
+
+const pluginViewRpcError = Schema.Union([PluginViewError, EnvironmentAuthorizationError]);
+
+/** The views enabled plugins offer now, then a fresh snapshot after every change. */
+const WsPluginViewsSubscribeRpc = Rpc.make(WS_METHODS.pluginViewsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginViewsSnapshot,
+  error: pluginViewRpcError,
+  stream: true,
+});
+
+/** The consented bytes of one view of the given installation generation. */
+const WsPluginViewsReadBundleRpc = Rpc.make(WS_METHODS.pluginViewsReadBundle, {
+  payload: PluginViewBundleInput,
+  success: PluginViewBundle,
+  error: pluginViewRpcError,
+});
+
+/** A mounted view's call into its own plugin's `view:<viewId>:<handler>` handler. */
+const WsPluginViewsCallRpc = Rpc.make(WS_METHODS.pluginViewsCall, {
+  payload: PluginViewCallInput,
+  success: PluginViewCallResult,
+  error: pluginViewRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -1736,6 +1856,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksSetEnabledRpc,
   WsScheduledTasksDeleteRpc,
   WsScheduledTasksRunNowRpc,
+  WsPluginsListRpc,
+  WsPluginsSubscribeRpc,
+  WsPluginsAddRpc,
+  WsPluginsRefreshRpc,
+  WsPluginsConsentRpc,
+  WsPluginsEnableRpc,
+  WsPluginsDisableRpc,
+  WsPluginsRemoveRpc,
+  WsPluginsResumeRpc,
+  WsPluginViewsSubscribeRpc,
+  WsPluginViewsReadBundleRpc,
+  WsPluginViewsCallRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

@@ -195,6 +195,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the trusted local plugin catalogue (`plugins.*`). Absent on
+      older servers, so clients must not call or subscribe to those methods. */
+  plugins: Schema.optionalKey(Schema.Boolean),
+  /** Server serves isolated plugin views (`pluginViews.*`). Absent on older
+      servers, so clients must not call or subscribe to those methods. */
+  pluginViews: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

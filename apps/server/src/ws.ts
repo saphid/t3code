@@ -117,6 +117,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginViews from "./plugins/PluginViews.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1121,6 +1123,8 @@ const makeWsRpcLayer = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+      const pluginViews = yield* PluginViews.PluginViews;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2011,6 +2015,54 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scheduledTasksDelete, scheduledTasks.delete(input), {
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
+          }),
+        [WS_METHODS.pluginsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.pluginsList, pluginCatalog.list, {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsSubscribe]: (_input) =>
+          observeRpcStream(WS_METHODS.pluginsSubscribe, pluginCatalog.subscribe, {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsAdd]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsAdd, pluginCatalog.add(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsRefresh]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsRefresh, pluginCatalog.refresh(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsConsent]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsConsent, pluginCatalog.consent(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsEnable]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsEnable, pluginCatalog.enable(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsDisable]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsDisable, pluginCatalog.disable(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsRemove, pluginCatalog.remove(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsResume]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsResume, pluginCatalog.resume(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginViewsSubscribe]: (_input) =>
+          observeRpcStream(WS_METHODS.pluginViewsSubscribe, pluginViews.subscribe, {
+            "rpc.aggregate": "pluginViews",
+          }),
+        [WS_METHODS.pluginViewsReadBundle]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginViewsReadBundle, pluginViews.readBundle(input), {
+            "rpc.aggregate": "pluginViews",
+          }),
+        [WS_METHODS.pluginViewsCall]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginViewsCall, pluginViews.call(input), {
+            "rpc.aggregate": "pluginViews",
           }),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {

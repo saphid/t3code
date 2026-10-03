@@ -1,6 +1,7 @@
 import {
   type DeviceListInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -90,6 +91,21 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
+  // Plugins run as the server's OS user, so changing what runs takes the administrative scope
+  // that also manages pairing and sessions; standard pairing never grants it.
+  [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRefresh]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsConsent]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsEnable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsDisable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRemove]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsResume]: AuthAccessWriteScope,
+  // A view call runs the plugin's own `view:` handlers, like an action a client takes.
+  [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

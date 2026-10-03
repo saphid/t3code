@@ -127,7 +127,10 @@ function makeExecutorLayer(input: {
     ),
     Layer.succeed(
       RunFinalizationService.RunFinalizationService,
-      RunFinalizationService.RunFinalizationService.of({ finalize: () => Effect.void }),
+      RunFinalizationService.RunFinalizationService.of({
+        finalize: () => Effect.void,
+        abandon: () => Effect.succeed(true),
+      }),
     ),
     Layer.succeed(
       CheckpointRollbackService.CheckpointRollbackServiceV2,

@@ -51,6 +51,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { checkpointCaptureEffectId } from "./RunFinalized.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -671,7 +672,7 @@ export const layer: Layer.Layer<
             input.terminal.status === "cancelled"
               ? [
                   {
-                    id: `effect:checkpoint.capture:${input.run.id}`,
+                    id: checkpointCaptureEffectId(input.run.id),
                     commandId: checkpointCaptureCommandId,
                     threadId: input.run.threadId,
                     request: {
