@@ -1,5 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ResolvedKeybindingsConfig, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { memo, useMemo } from "react";
@@ -9,7 +10,10 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import type { TerminalContextSelection } from "~/lib/terminalContext";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { useProject, useThreadShell } from "~/state/entities";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useKnownTerminalSessions } from "~/state/terminalSessions";
+
+import { usePanelHost } from "../panelHost";
 
 export interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -19,13 +23,10 @@ export interface TerminalLaunchContext {
 
 export type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "worktreePath">;
 
-interface PersistentThreadTerminalPanelProps {
-  visible: boolean;
-  threadRef: ScopedThreadRef;
+interface TerminalSidePanelProps {
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
-  keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
@@ -38,13 +39,11 @@ interface PersistentThreadTerminalPanelProps {
   closeShortcutLabel?: string | undefined;
 }
 
-export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
-  visible,
-  threadRef,
+// Memoized so ChatView re-renders skip the terminal unless its inputs change.
+export default memo(function TerminalSidePanel({
   surface,
   launchContext,
   focusRequestId,
-  keybindings,
   onAddTerminalContext,
   onSplitTerminal,
   onSplitTerminalVertical,
@@ -55,7 +54,9 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   splitVerticalShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
-}: PersistentThreadTerminalPanelProps) {
+}: TerminalSidePanelProps) {
+  const { threadRef, visible } = usePanelHost();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverThread = useThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread

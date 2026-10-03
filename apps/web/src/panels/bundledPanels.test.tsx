@@ -3,9 +3,18 @@ import { act, Suspense } from "react";
 import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const loaded = vi.hoisted(() => ({ diff: 0, preview: 0, previewRenders: [] as unknown[] }));
+const loaded = vi.hoisted(() => ({
+  diff: 0,
+  preview: 0,
+  terminal: 0,
+  previewRenders: [] as unknown[],
+}));
 vi.mock("./diff/DiffSidePanel", () => {
   loaded.diff += 1;
+  return { default: () => null };
+});
+vi.mock("./terminal/TerminalSidePanel", () => {
+  loaded.terminal += 1;
   return { default: () => null };
 });
 vi.mock("./preview/PreviewSidePanel", () => {
@@ -17,6 +26,8 @@ vi.mock("./preview/PreviewSidePanel", () => {
     },
   };
 });
+
+import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { RegisteredSidePanel } from "./bundledPanels";
 import { PanelHostContext, usePanelHost, type PanelHost } from "./panelHost";
@@ -36,7 +47,7 @@ const host: PanelHost = {
 
 describe("bundled side panels", () => {
   it("loads only the selected panel body and lends it the host", async () => {
-    expect(loaded).toMatchObject({ diff: 0, preview: 0 });
+    expect(loaded).toMatchObject({ diff: 0, preview: 0, terminal: 0 });
     await act(async () => {
       create(
         <PanelHostContext value={host}>
@@ -46,18 +57,39 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
-    expect(loaded).toMatchObject({ diff: 0, preview: 1 });
+    expect(loaded).toMatchObject({ diff: 0, preview: 1, terminal: 0 });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
 });
 
 // Never called. The project typecheck compiles these pairings, and each
 // expect-error directive fails it if a wrong pairing starts to compile.
-export function typeFixtures(widenedId: "diff" | "preview") {
+export function typeFixtures(
+  widenedId: "diff" | "preview",
+  terminalSurface: Extract<RightPanelSurface, { kind: "terminal" }>,
+) {
+  const terminalProps = {
+    surface: terminalSurface,
+    launchContext: null,
+    focusRequestId: 0,
+    onAddTerminalContext: () => undefined,
+    onSplitTerminal: () => undefined,
+    onSplitTerminalVertical: () => undefined,
+    onNewTerminal: () => undefined,
+    onActiveTerminalChange: () => undefined,
+    onCloseTerminal: () => undefined,
+  };
   return (
     <>
       <RegisteredSidePanel id="diff" />
       <RegisteredSidePanel id="preview" tabId="tab-1" configuredUrls={["http://localhost:3000"]} />
+      <RegisteredSidePanel id="terminal" {...terminalProps} newShortcutLabel="⌘T" />
+      {/* @ts-expect-error Terminal requires its surface and callbacks. */}
+      <RegisteredSidePanel id="terminal" surface={terminalSurface} />
+      {/* @ts-expect-error The host owns visibility; the terminal does not take it as a prop. */}
+      <RegisteredSidePanel id="terminal" {...terminalProps} visible />
+      {/* @ts-expect-error Terminal props on Preview. */}
+      <RegisteredSidePanel id="preview" surface={terminalSurface} />
       {/* @ts-expect-error Preview props on Diff. */}
       <RegisteredSidePanel id="diff" tabId="tab-1" />
       {/* @ts-expect-error The host owns the thread; panels do not take it as a prop. */}
@@ -65,7 +97,7 @@ export function typeFixtures(widenedId: "diff" | "preview") {
       {/* @ts-expect-error Wrong input shape. */}
       <RegisteredSidePanel id="preview" configuredUrls="http://localhost:3000" />
       {/* @ts-expect-error Unknown id. */}
-      <RegisteredSidePanel id="terminal" />
+      <RegisteredSidePanel id="not-a-panel" />
       {/* @ts-expect-error A widened id cannot borrow one panel's props. */}
       <RegisteredSidePanel id={widenedId} tabId="tab-1" />
     </>

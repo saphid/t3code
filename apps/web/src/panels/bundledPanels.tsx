@@ -1,4 +1,4 @@
-import { FileDiff, Globe2 } from "lucide-react";
+import { FileDiff, Globe2, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -28,6 +28,16 @@ const bundledPanels = createPanelRegistry([
     unavailableHint: "Only available in the desktop app.",
     unavailableReason: "Browser previews are only available in the T3 Code desktop app.",
     load: () => import("./preview/PreviewSidePanel"),
+  },
+  {
+    id: "terminal",
+    title: "Terminal",
+    icon: TerminalSquare,
+    placement: "side-panel",
+    launcherKey: "T",
+    unavailableHint: "Available when a project is open.",
+    unavailableReason: "Terminal surfaces are only available from a project thread.",
+    load: () => import("./terminal/TerminalSidePanel"),
   },
 ]);
 
