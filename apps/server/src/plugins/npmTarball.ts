@@ -7,7 +7,9 @@
  * paths, `..` or `.` segments, backslashes, and two entries that would be the
  * same file on a case-insensitive disk are refused, never skipped or
  * rewritten. Like npm, the first path segment (`package/`) is dropped. The
- * whole archive is checked before the caller writes any of it.
+ * whole archive is checked before the caller writes any of it. Parsing runs
+ * on the server's event loop, so every header, path, and entry is bounded and
+ * the work stays linear in the inflated size.
  */
 import * as NodeZlib from "node:zlib";
 
@@ -20,12 +22,20 @@ export interface NpmTarballLimits {
   /** Same bounds the catalogue applies to the unpacked directory. */
   readonly maxFiles: number;
   readonly maxBytes: number;
+  /** Every tar header counts: files, directories, and extended headers. */
+  readonly maxEntries: number;
+  /** UTF-8 bytes of one entry's path, and its number of segments. */
+  readonly maxPathBytes: number;
+  readonly maxPathDepth: number;
 }
 
 export const defaultNpmTarballLimits: NpmTarballLimits = {
   maxTarballBytes: 32 * 1024 * 1024,
   maxFiles: 10_000,
   maxBytes: 64 * 1024 * 1024,
+  maxEntries: 40_000,
+  maxPathBytes: 1024,
+  maxPathDepth: 64,
 };
 
 export interface NpmTarballFile {
@@ -43,6 +53,8 @@ export class NpmTarballError extends Schema.TaggedError<NpmTarballError>()("NpmT
 const isNpmTarballError = Schema.is(NpmTarballError);
 
 const BLOCK = 512;
+/** A pax or GNU long-name header carries a path and some attributes, never more. */
+const MAX_EXTENDED_HEADER_BYTES = 64 * 1024;
 
 const unsafe = (message: string) => new NpmTarballError({ reason: "npm-archive-unsafe", message });
 const tooLarge = (message: string) => new NpmTarballError({ reason: "npm-too-large", message });
@@ -97,10 +109,14 @@ const readPax = (data: Uint8Array) => {
 };
 
 /** The path below the package root, or `undefined` for the root itself. */
-const packagePath = (raw: string) => {
+const packagePath = (raw: string, limits: NpmTarballLimits) => {
+  if (Buffer.byteLength(raw) > limits.maxPathBytes)
+    throw unsafe(`The tarball has an entry path longer than ${limits.maxPathBytes} bytes.`);
   if (raw.includes("\\") || raw.startsWith("/") || /^[A-Za-z]:/.test(raw))
     throw unsafe(`The tarball entry ${JSON.stringify(raw)} is not a relative path.`);
   const segments = raw.replace(/\/$/, "").split("/");
+  if (segments.length > limits.maxPathDepth)
+    throw unsafe(`The tarball has an entry nested deeper than ${limits.maxPathDepth} directories.`);
   for (const segment of segments)
     if (segment === "" || segment === "." || segment === "..")
       throw unsafe(`The tarball entry ${JSON.stringify(raw)} leaves or names its own directory.`);
@@ -114,14 +130,16 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
   // Case and Unicode form both fold, so one entry cannot overwrite another on macOS or Windows.
   const key = (path: string) => path.normalize("NFC").toLowerCase();
   const addDirectory = (path: string) => {
-    const segments = path.split("/");
-    for (let depth = 1; depth <= segments.length; depth++) {
-      const ancestor = key(segments.slice(0, depth).join("/"));
+    // Deepest first: a directory already seen had its own ancestors added with it.
+    for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+      const ancestor = key(path.slice(0, end));
+      if (directoryPaths.has(ancestor)) return;
       if (filePaths.has(ancestor))
         throw unsafe(`The tarball uses ${path} as both a file and a directory.`);
       directoryPaths.add(ancestor);
     }
   };
+  let entries = 0;
   let totalBytes = 0;
   let pax = new Map<string, string>();
   let longName: string | undefined;
@@ -130,6 +148,8 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     const header = tar.subarray(offset, offset + BLOCK);
     if (header.every((byte) => byte === 0)) return files;
     if (!checksumMatches(header)) throw unsafe("The tarball is corrupt (a header checksum fails).");
+    if (++entries > limits.maxEntries)
+      throw tooLarge(`The package has more than ${limits.maxEntries} archive entries.`);
     const type = String.fromCharCode(header[156]!);
     const declared = readOctal(header, 124, 12);
     const size = pax.has("size") ? Number(pax.get("size")) : declared;
@@ -141,6 +161,8 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     const data = tar.subarray(dataStart, dataEnd);
     offset = dataStart + Math.ceil(size / BLOCK) * BLOCK;
 
+    if ((type === "x" || type === "g" || type === "L") && size > MAX_EXTENDED_HEADER_BYTES)
+      throw unsafe("The tarball has an extended header that is too large.");
     if (type === "x") {
       pax = readPax(data);
       continue;
@@ -160,7 +182,7 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     if (type === "1" || type === "2" || type === "K")
       throw unsafe(`The tarball entry ${JSON.stringify(raw)} is a link.`);
     if (type === "5") {
-      const path = packagePath(raw);
+      const path = packagePath(raw, limits);
       if (path !== undefined) {
         if (filePaths.has(key(path)))
           throw unsafe(`The tarball uses ${path} as both a file and a directory.`);
@@ -170,7 +192,7 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     }
     if (type !== "0" && type !== "\0" && type !== "7")
       throw unsafe(`The tarball entry ${JSON.stringify(raw)} is not a regular file.`);
-    const path = packagePath(raw);
+    const path = packagePath(raw, limits);
     if (path === undefined)
       throw unsafe(`The tarball entry ${JSON.stringify(raw)} is outside the package directory.`);
     const fileKey = key(path);

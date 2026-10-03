@@ -4,7 +4,7 @@ import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { readNpmTarball, type NpmTarballLimits } from "./npmTarball.ts";
+import { defaultNpmTarballLimits, readNpmTarball, type NpmTarballLimits } from "./npmTarball.ts";
 import { makeTar, makeTarball, type TarEntry } from "./npmTarball.testkit.ts";
 
 const read = (entries: ReadonlyArray<TarEntry>, limits?: NpmTarballLimits) =>
@@ -118,7 +118,12 @@ describe("readNpmTarball", () => {
 
   it.effect("stops at the file, size, and unpacked-size limits", () =>
     Effect.gen(function* () {
-      const limits = { maxTarballBytes: 1024 * 1024, maxFiles: 2, maxBytes: 1000 };
+      const limits = {
+        ...defaultNpmTarballLimits,
+        maxTarballBytes: 1024 * 1024,
+        maxFiles: 2,
+        maxBytes: 1000,
+      };
       const tooMany = yield* refusal(
         [manifest, { path: "package/a.js" }, { path: "package/b.js" }],
         limits,
@@ -134,6 +139,53 @@ describe("readNpmTarball", () => {
       expect(bomb.length).toBeLessThan(128 * 1024);
       const inflated = yield* readNpmTarball(bomb, limits).pipe(Effect.flip);
       expect(inflated.reason).toBe("npm-too-large");
+    }),
+  );
+
+  it.effect("bounds paths and headers before it builds anything from them", () =>
+    Effect.gen(function* () {
+      const limits = { ...defaultNpmTarballLimits, maxPathDepth: 8, maxPathBytes: 200 };
+      // Long names travel in pax headers; both bounds apply to them before any directory is made.
+      const deep = yield* refusal(
+        [manifest, { path: `package/${"d/".repeat(8)}x.js`, data: "x" }],
+        limits,
+      );
+      expect(deep.reason).toBe("npm-archive-unsafe");
+      expect(deep.message).toMatch(/nested deeper than 8/);
+      const long = yield* refusal(
+        [manifest, { path: `package/${"n".repeat(200)}.js`, data: "x" }],
+        limits,
+      );
+      expect(long.message).toMatch(/longer than 200 bytes/);
+      const longDirectory = yield* refusal(
+        [manifest, { path: `package/${"d/".repeat(8)}`, type: "5" }],
+        limits,
+      );
+      expect(longDirectory.message).toMatch(/nested deeper than 8/);
+      // A tiny gzip with a path thousands of segments deep is refused under the defaults too.
+      const bomb = makeTarball([manifest, { path: `package/${"a/".repeat(5000)}x`, data: "x" }]);
+      expect(bomb.length).toBeLessThan(1024);
+      const refused = yield* readNpmTarball(bomb).pipe(Effect.flip);
+      expect(refused.reason).toBe("npm-archive-unsafe");
+      const header = yield* refusal([
+        { ...manifest, pax: [new TextEncoder().encode(`comment=${"x".repeat(70 * 1024)}`)] },
+      ]);
+      expect(header.message).toMatch(/extended header that is too large/);
+    }),
+  );
+
+  it.effect("counts directory and extended header entries against the entry limit", () =>
+    Effect.gen(function* () {
+      const limits = { ...defaultNpmTarballLimits, maxEntries: 10 };
+      const directories = Array.from({ length: 10 }, (_, index) => ({
+        path: `package/d${index}/`,
+        type: "5",
+      }));
+      const tooMany = yield* refusal([manifest, ...directories], limits);
+      expect(tooMany.reason).toBe("npm-too-large");
+      expect(tooMany.message).toMatch(/more than 10 archive entries/);
+      const files = yield* read([manifest, ...directories.slice(1)], limits);
+      expect(files.map((file) => file.path)).toEqual(["package.json"]);
     }),
   );
 });
