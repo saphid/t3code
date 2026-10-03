@@ -42,6 +42,7 @@ import * as Schema from "effect/Schema";
 
 import type * as EventSink from "./EventSink.ts";
 import type * as IdAllocator from "./IdAllocator.ts";
+import { isThreadHistoryUserTurn } from "./threadHistoryPaging.ts";
 
 /** One plugin that adds context to runs, as the catalogue held it when enrichment began. */
 export interface RunContextSource {
@@ -75,19 +76,18 @@ export class RunContextEnricherV2 extends Context.Service<
 type DynamicToolItem = Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>;
 
 /**
- * Whether plugins add context to a run's message. Only a turn the user wrote is
- * enriched, and not a command typed with `/`. Wakes the agent, server or app
- * prompts (notifications, delegated completions, restart continuations) are
- * never enriched, so the history page's human-turn limit also bounds how much
- * plugin context a snapshot or older page carries.
+ * Whether plugins add context to a run whose current message has the timeline
+ * row `item`. Exactly the turns the history pager counts
+ * (`isThreadHistoryUserTurn`), less commands typed with `/`. Steering that
+ * restarts a run, notifications and other wakes are never enriched, so the
+ * pager's user-turn limit also bounds how many enriched runs a snapshot or an
+ * older page carries.
  */
-export const enrichesRunMessage = (message: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<unknown>;
-  readonly createdBy: string;
-}) =>
-  message.createdBy === "user" &&
-  !(message.attachments.length === 0 && message.text.trimStart().startsWith("/"));
+export const enrichesRunTurn = (item: OrchestrationV2TurnItem | undefined) =>
+  item !== undefined &&
+  isThreadHistoryUserTurn(item) &&
+  item.type === "user_message" &&
+  !(item.attachments.length === 0 && item.text.trimStart().startsWith("/"));
 
 const decodeAdded = Schema.decodeUnknownOption(
   Schema.Struct({ context: Schema.Array(PluginContextItemSchema) }),

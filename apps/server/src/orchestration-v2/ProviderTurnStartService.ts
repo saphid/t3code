@@ -530,8 +530,11 @@ export const layer: Layer.Layer<
       });
       // Saved before the session opens, so a retried or replayed start reuses
       // the plugins' answers instead of calling them again.
+      const messageItem = projection.turnItems.find(
+        (item) => item.type === "user_message" && item.messageId === message.id,
+      );
       const pluginContext =
-        Option.isNone(contextEnricher) || !RunContextEnrichment.enrichesRunMessage(message)
+        Option.isNone(contextEnricher) || !RunContextEnrichment.enrichesRunTurn(messageItem)
           ? { _tag: "ready" as const, entries: [] }
           : yield* RunContextEnrichment.prepareRunContext({
               enricher: contextEnricher.value,

@@ -13,8 +13,10 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -34,6 +36,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { ProviderAdapterEventStreamError } from "./ProviderAdapter.ts";
+import { notificationTurnItem } from "./Notification.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunContextEnrichment from "./RunContextEnrichment.ts";
@@ -185,6 +188,10 @@ function makeLocalCommandHarness(input: {
     "createdBy" | "creationSource"
   >;
   readonly restartContinuationOfRunId?: RunId;
+  /** How the run's current message entered its timeline; a turn the user started by default. */
+  readonly messageIntent?: "turn_start" | "queued_turn" | "steer" | "promoted_queued_to_steer";
+  /** The run's rows ahead of its current message, such as the wake a steer restarted. */
+  readonly earlierTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -352,7 +359,36 @@ function makeLocalCommandHarness(input: {
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
-    turnItems: [],
+    // Enrichment reads the run's message row, written as the orchestrator does.
+    turnItems:
+      input.contextEnricher === undefined
+        ? []
+        : [
+            ...(input.earlierTurnItems ?? []),
+            {
+              id: TurnItemId.make("item-native-account-command"),
+              threadId,
+              runId,
+              nodeId: rootNodeId,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: (input.earlierTurnItems ?? []).length + 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "user_message",
+              messageId,
+              inputIntent: input.messageIntent ?? "turn_start",
+              text: message.text,
+              attachments: message.attachments,
+              createdBy: message.createdBy,
+              creationSource: message.creationSource,
+            },
+          ],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -1027,3 +1063,79 @@ effectIt.effect("does not enrich a restart continuation that resumes its turn na
     expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
   }),
 );
+
+effectIt.effect("adds plugin context to a queued turn the user wrote", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageIntent: "queued_turn",
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(1);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+for (const messageIntent of ["steer", "promoted_queued_to_steer"] as const) {
+  effectIt.effect(`does not enrich a wake that user steering (${messageIntent}) restarts`, () =>
+    Effect.gen(function* () {
+      const { enricher, calls } = codenameEnricher();
+      const runId = RunId.make("run-native-account-command");
+      const wakeMessageId = MessageId.make("message-wake");
+      const wokeAt = DateTime.makeUnsafe("2026-09-04T11:59:00Z");
+      const wake = notificationTurnItem(
+        {
+          id: TurnItemId.make("item-wake"),
+          threadId: ThreadId.make("thread-native-account-command"),
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: wokeAt,
+          completedAt: wokeAt,
+          updatedAt: wokeAt,
+          type: "user_message",
+          messageId: wakeMessageId,
+          inputIntent: "turn_start",
+          text: "Task finished.",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        {
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "completed",
+            summary: "Task finished",
+          },
+        },
+        [],
+      );
+      // The restart keeps the wake's run and makes the user's steer its message.
+      const harness = makeLocalCommandHarness({
+        text: "What is the codename?",
+        opensSession: true,
+        contextEnricher: enricher,
+        messageIntent,
+        earlierTurnItems: [wake],
+      });
+
+      yield* harness.start;
+
+      // Steering consumes no history-page turn, so it never adds plugin context.
+      expect(calls()).toBe(0);
+      expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+      expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe("What is the codename?");
+    }),
+  );
+}

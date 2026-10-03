@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   isPluginContextTurnItem,
+  MessageId,
   NodeId,
+  OrchestrationV2Actor,
   type OrchestrationV2TurnItem,
+  OrchestrationV2UserMessageInputIntent,
   PLUGIN_ENRICH_LIMITS,
   ProjectId,
   ProviderInstanceId,
@@ -10,7 +13,9 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -18,13 +23,16 @@ import * as Fiber from "effect/Fiber";
 import type * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import { notificationTurnItem } from "./Notification.ts";
 import {
+  enrichesRunTurn,
   prepareRunContext,
   type RunContextEnricherV2Shape,
   type RunContextOutcome,
   type RunContextSource,
   withPluginContext,
 } from "./RunContextEnrichment.ts";
+import { isThreadHistoryUserTurn } from "./threadHistoryPaging.ts";
 
 const threadId = ThreadId.make("thread-run-context");
 const runId = RunId.make("run-run-context");
@@ -377,4 +385,66 @@ describe("prepareRunContext", () => {
       expect(empty.writes).toEqual([]);
     }).pipe(Effect.provide(IdAllocator.layer)),
   );
+});
+
+describe("enrichesRunTurn", () => {
+  it("admits exactly the turns the history pager counts, less commands typed with /", () => {
+    const at = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
+    const messages = OrchestrationV2UserMessageInputIntent.literals.flatMap((inputIntent) =>
+      OrchestrationV2Actor.literals.flatMap((createdBy) =>
+        ["What is the codename?", "/compact", "  /review"].map(
+          (text, index): OrchestrationV2TurnItem => ({
+            id: TurnItemId.make(`item-${inputIntent}-${createdBy}-${index}`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "user_message",
+            messageId: MessageId.make(`message-${inputIntent}-${createdBy}-${index}`),
+            inputIntent,
+            text,
+            attachments: [],
+            createdBy,
+            creationSource: createdBy === "user" ? "web" : "server",
+          }),
+        ),
+      ),
+    );
+    const wake = notificationTurnItem(
+      messages[0]!,
+      {
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "completed",
+          summary: "Task finished",
+        },
+      },
+      [],
+    );
+
+    // One predicate decides both, so enriched runs can never outnumber counted turns.
+    for (const item of [...messages, wake]) {
+      const command = item.type === "user_message" && item.text.trimStart().startsWith("/");
+      expect(enrichesRunTurn(item)).toBe(isThreadHistoryUserTurn(item) && !command);
+    }
+    expect(
+      messages
+        .filter(enrichesRunTurn)
+        .map((item) => item.type === "user_message" && [item.inputIntent, item.createdBy]),
+    ).toEqual([
+      ["turn_start", "user"],
+      ["queued_turn", "user"],
+    ]);
+    expect(enrichesRunTurn(wake)).toBe(false);
+    expect(enrichesRunTurn(undefined)).toBe(false);
+  });
 });

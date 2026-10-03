@@ -25,7 +25,7 @@ import {
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./ThreadStream.ts";
 import { notificationTurnItem } from "./Notification.ts";
-import { enrichesRunMessage } from "./RunContextEnrichment.ts";
+import { enrichesRunTurn } from "./RunContextEnrichment.ts";
 import {
   isThreadHistoryUserTurn,
   OLDER_THREAD_USER_TURN_LIMIT,
@@ -283,7 +283,8 @@ describe("decideThreadResume", () => {
 });
 
 describe("plugin context and the history budget", () => {
-  type RunMessage = Parameters<typeof enrichesRunMessage>[0] & {
+  type RunMessage = {
+    readonly text: string;
     readonly createdBy: "user" | "agent";
     readonly creationSource: "web" | "server";
   };
@@ -364,14 +365,13 @@ describe("plugin context and the history budget", () => {
     run: number,
     origin: "user" | "notification",
     char: string,
-    enriches: (message: RunMessage) => boolean = enrichesRunMessage,
+    enriches: (item: OrchestrationV2TurnItem) => boolean = enrichesRunTurn,
   ): OrchestrationV2TurnItem[] => {
     const message: RunMessage =
       origin === "user"
-        ? { text: `Prompt ${run}`, attachments: [], createdBy: "user", creationSource: "web" }
+        ? { text: `Prompt ${run}`, createdBy: "user", creationSource: "web" }
         : {
             text: `Task ${run} finished.`,
-            attachments: [],
             createdBy: "agent",
             creationSource: "server",
           };
@@ -390,7 +390,7 @@ describe("plugin context and the history budget", () => {
             },
             [],
           );
-    if (!enriches(message)) return [row];
+    if (!enriches(row)) return [row];
     const reason = { reason: char.repeat(300) };
     return [
       row,
@@ -438,7 +438,7 @@ describe("plugin context and the history budget", () => {
   });
 
   it("adds no context to prompted wakes, so one human turn and sixty wakes stay in budget", () => {
-    const history = (enriches?: (message: RunMessage) => boolean) =>
+    const history = (enriches?: (item: OrchestrationV2TurnItem) => boolean) =>
       projectionOf([
         ...runRows(0, "user", "字", enriches),
         ...Array.from({ length: 60 }, (_, wake) =>
