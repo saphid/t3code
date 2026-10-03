@@ -20,6 +20,10 @@ const views = [
   view("probe-stale", "probe-stale.js"),
   view("probe-self-navigate", "probe-self-navigate.js"),
   view("probe-navigate-api", "probe-navigate-api.js"),
+  // Self-navigation to benign targets on the fixture server (fixture-server.mjs).
+  ...["blank", "data", "page", "redirect", "refresh", "early"].map((kind) =>
+    view(`nav-${kind}`, `nav-${kind}.js`),
+  ),
   // Declares the digest of other bytes: the host must refuse to run it.
   { id: "tampered", file: "tampered.js", sha256: digest("benign.js") },
   view("unsafe", "unsafe.js"),

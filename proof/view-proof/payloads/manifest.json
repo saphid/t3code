@@ -33,7 +33,7 @@
     {
       "id": "port-attacker",
       "file": "probe-port-attacker.js",
-      "sha256": "62Da722E24tMKDoUdli18w9JJaNo4BJwr5cjrR5V5WE="
+      "sha256": "6tn7KPlGmzmolxuBXrBBX5M2bZ6zI4dCE4NFbtr0R1A="
     },
     {
       "id": "probe-stale",
@@ -49,6 +49,36 @@
       "id": "probe-navigate-api",
       "file": "probe-navigate-api.js",
       "sha256": "TGdmdbmswjzVJZkBxnQvji2KPoOuyvBNesSnjvkuq4w="
+    },
+    {
+      "id": "nav-blank",
+      "file": "nav-blank.js",
+      "sha256": "N+fFnM4beOng4KLT/fcrj+V46+QDCyt465XGnxsA5rw="
+    },
+    {
+      "id": "nav-data",
+      "file": "nav-data.js",
+      "sha256": "COWak3/jjZfpcAztMWNp7JXvtqz+1A4jZt0KWFM+1pI="
+    },
+    {
+      "id": "nav-page",
+      "file": "nav-page.js",
+      "sha256": "XPonUlo04JP/0MqrwAWhs2zAEl8+m5t2lSVb0RnMxMw="
+    },
+    {
+      "id": "nav-redirect",
+      "file": "nav-redirect.js",
+      "sha256": "L6NxHKjJdIW8LbGDKIEyyKjrwfjl0y7PY8g3hXADlrQ="
+    },
+    {
+      "id": "nav-refresh",
+      "file": "nav-refresh.js",
+      "sha256": "xlTYUFrpPiwb+6flrPbWQG9xP7vLZQv57u/FRV5Lack="
+    },
+    {
+      "id": "nav-early",
+      "file": "nav-early.js",
+      "sha256": "fP6kPmeFNBWXzeSqqg9MaARuIV2NvQq3j2dRbg1vUSE="
     },
     {
       "id": "tampered",
