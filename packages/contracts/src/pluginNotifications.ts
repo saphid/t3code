@@ -51,42 +51,18 @@ export const PluginNotification = Schema.Struct({
 export type PluginNotification = typeof PluginNotification.Type;
 
 /**
- * Where a client is in one server process's notifications. A new epoch means
- * the server restarted and its sequences started again.
- */
-export const PluginNotificationCursor = Schema.Struct({
-  epoch: Epoch,
-  sequence: NonNegativeInt,
-});
-export type PluginNotificationCursor = typeof PluginNotificationCursor.Type;
-
-/**
- * Without `after` the stream starts live: a client that has seen nothing yet
- * (a fresh page or app launch) is not shown older notifications. With the
- * cursor of the last frame it received, the first frame replays the retained
- * notifications it missed, so a reconnect neither drops nor repeats them.
- */
-export const PluginNotificationsSubscribeInput = Schema.Struct({
-  after: Schema.optionalKey(PluginNotificationCursor),
-});
-export type PluginNotificationsSubscribeInput = typeof PluginNotificationsSubscribeInput.Type;
-
-/**
- * One frame of `plugins.notifications.subscribe`. The first frame of every
- * subscription carries the replay (often empty); later frames carry one new
- * notification, or withdraw ones whose plugin stopped. `epoch` and `sequence`
- * form the cursor to resubscribe with.
+ * One frame of `plugins.notifications.subscribe`: every notification the
+ * server retains right now, so the latest frame alone is the whole state. The
+ * first frame of a subscription is the current set; a new frame follows each
+ * change (a notification sent, one evicted or expired, or a stopped plugin's
+ * withdrawn). A client toasts a notification once when it first appears above
+ * the newest one it has already seen, and closes a toast whose notification
+ * is no longer in the set.
  */
 export const PluginNotificationFrame = Schema.Struct({
+  /** Changes when the server restarts; sequences start again in a new epoch. */
   epoch: Epoch,
-  /** The newest sequence the server had issued when it sent this frame. */
-  sequence: NonNegativeInt,
   /** Oldest first; at most PLUGIN_NOTIFICATION_MAX_RETAINED. */
   notifications: ForwardCompatibleArray(PluginNotification),
-  /**
-   * Sequences of this epoch's notifications whose plugin was disabled, removed
-   * or stopped. Clients close them if they are still shown.
-   */
-  withdrawn: Schema.Array(NonNegativeInt),
 });
 export type PluginNotificationFrame = typeof PluginNotificationFrame.Type;

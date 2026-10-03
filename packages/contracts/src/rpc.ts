@@ -11,10 +11,7 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ContributionStatusSnapshot } from "./contributionStatus.ts";
-import {
-  PluginNotificationFrame,
-  PluginNotificationsSubscribeInput,
-} from "./pluginNotifications.ts";
+import { PluginNotificationFrame } from "./pluginNotifications.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -1842,7 +1839,7 @@ const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributi
 
 /** Streams plugin notifications; see PluginNotificationFrame. Gated by the `pluginNotifications` capability. */
 const WsPluginsNotificationsSubscribeRpc = Rpc.make(WS_METHODS.pluginsNotificationsSubscribe, {
-  payload: PluginNotificationsSubscribeInput,
+  payload: Schema.Struct({}),
   success: PluginNotificationFrame,
   error: EnvironmentAuthorizationError,
   stream: true,
