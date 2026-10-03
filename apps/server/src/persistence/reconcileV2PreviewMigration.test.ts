@@ -39,6 +39,7 @@ describe("V2 preview upgrade", () => {
         [56, "RemoveRedundantProjectionIndexes"],
         [57, "PluginInstallations"],
         [58, "PluginEventCursors"],
+        [59, "PluginSettings"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -120,6 +121,7 @@ describe("V2 preview upgrade", () => {
         [56, "RemoveRedundantProjectionIndexes"],
         [57, "PluginInstallations"],
         [58, "PluginEventCursors"],
+        [59, "PluginSettings"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

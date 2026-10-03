@@ -201,6 +201,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server serves isolated plugin views (`pluginViews.*`). Absent on older
       servers, so clients must not call or subscribe to those methods. */
   pluginViews: Schema.optionalKey(Schema.Boolean),
+  /** Server stores plugin setting values and secrets (`plugins.settings.*`). Absent on
+      older servers, so clients must not call or subscribe to those methods. */
+  pluginSettings: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

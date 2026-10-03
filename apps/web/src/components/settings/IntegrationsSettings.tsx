@@ -43,6 +43,7 @@ import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { PluginSettingsSection } from "~/components/plugins/PluginSettingsSection";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -621,6 +622,18 @@ function DeviceIntegrationSettings() {
         agentAccessEnabled={settings.enableAgentDeviceAccess}
       />
     </SettingsSection>
+  );
+}
+
+/** Settings of the selected environment's plugins; hidden until a plugin declares some. */
+function SelectedEnvironmentPluginSettings() {
+  const { environment: selected } = useSettingsScope();
+  if (selected?.connection.phase !== "connected" || selected.serverConfig === null) return null;
+  return (
+    <PluginSettingsSection
+      environmentId={selected.environmentId}
+      capabilities={selected.serverConfig.environment.capabilities}
+    />
   );
 }
 
@@ -1456,6 +1469,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <SelectedEnvironmentPluginSettings />
     </SettingsPageContainer>
   );
 }

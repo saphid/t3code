@@ -57,6 +57,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof WS_METHODS.pluginsSubscribe
   | typeof WS_METHODS.pluginViewsSubscribe
+  | typeof WS_METHODS.pluginsSettingsSubscribe
   | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents

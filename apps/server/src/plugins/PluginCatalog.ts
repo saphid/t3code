@@ -100,6 +100,7 @@ const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
   capabilities: manifest.capabilities,
   proposedApi: manifest.proposedApi,
   ...(manifest.tools === undefined || manifest.tools.length === 0 ? {} : { tools: manifest.tools }),
+  ...(manifest.settings === undefined ? {} : { settings: manifest.settings }),
 });
 
 const catalogError = (
@@ -332,7 +333,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         installation.record.installationId,
       );
     yield* supervisor
-      .enable(registration)
+      .enable({ ...registration, installationId: installation.record.installationId })
       .pipe(
         Effect.mapError(() =>
           catalogError(
