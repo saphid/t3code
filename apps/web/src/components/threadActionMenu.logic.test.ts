@@ -35,6 +35,23 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("lists plugin actions as their own section before Copy", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      pluginActions: [
+        { id: "plugin-action:a", label: "Open dashboard" },
+        { id: "plugin-action:b", label: "Deploy" },
+      ],
+    });
+    const first = items.findIndex((item) => item.id === "plugin-action:a");
+    expect(items.slice(first, first + 3).map((item) => [item.id, item.separatorBefore])).toEqual([
+      ["plugin-action:a", true],
+      ["plugin-action:b", undefined],
+      ["copy", true],
+    ]);
+    expect(ids(baseState)).not.toContain("plugin-action:a");
+  });
+
   it("hides lifecycle items when the environment lacks the capabilities", () => {
     expect(
       ids({
