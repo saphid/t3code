@@ -673,7 +673,6 @@ const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPrevie
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
-const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -5128,13 +5127,6 @@ export default function ChatView(props: ChatViewProps) {
     );
     if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
   }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
-  const openFileSurface = useCallback(
-    (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
-    },
-    [activeProject, activeThreadRef],
-  );
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const persistedLinkedThreadPullRequest = isServerThread
@@ -10381,47 +10373,36 @@ export default function ChatView(props: ChatViewProps) {
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
         (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
-      <Suspense fallback={null}>
-        <FilePreviewPanel
-          key={`${activeThread.environmentId}:${
-            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? `attachment:${renderedRightPanelSurface.attachment.id}`
-              : activeWorkspaceRoot
-          }`}
-          environmentId={activeThread.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
-          projectName={activeProject?.title ?? ""}
-          threadRef={activeThreadRef}
-          composerDraftTarget={composerDraftTarget}
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          relativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.relativePath
-              : null
-          }
-          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-            ? { attachment: renderedRightPanelSurface.attachment }
-            : {})}
-          revealLine={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.revealLine ?? null)
-              : null
-          }
-          revealRequestId={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.revealRequestId
-              : 0
-          }
-          onOpenFile={openFileSurface}
-          onPendingChange={handleFilePendingChange}
-          selectedFilePending={
-            renderedRightPanelSurface.kind === "file" &&
-            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
-          }
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        key={`${activeThread.environmentId}:${
+          renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+            ? `attachment:${renderedRightPanelSurface.attachment.id}`
+            : activeWorkspaceRoot
+        }`}
+        id="files"
+        cwd={activeWorkspaceRoot ?? ""}
+        projectName={activeProject?.title ?? ""}
+        availableEditors={availableEditors}
+        relativePath={
+          renderedRightPanelSurface.kind === "file" ? renderedRightPanelSurface.relativePath : null
+        }
+        {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+          ? { attachment: renderedRightPanelSurface.attachment }
+          : {})}
+        revealLine={
+          renderedRightPanelSurface.kind === "file"
+            ? (renderedRightPanelSurface.revealLine ?? null)
+            : null
+        }
+        revealRequestId={
+          renderedRightPanelSurface.kind === "file" ? renderedRightPanelSurface.revealRequestId : 0
+        }
+        onPendingChange={handleFilePendingChange}
+        selectedFilePending={
+          renderedRightPanelSurface.kind === "file" &&
+          pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
+        }
+      />
     ) : null
   ) : null;
   const rightPanelContent = (
@@ -10430,6 +10411,7 @@ export default function ChatView(props: ChatViewProps) {
   const sidePanelLaunchers = {
     preview: { available: true, onOpen: createBrowserSurface },
     diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurface },
+    files: { available: activeProject !== null, onOpen: addFilesSurface },
   };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
@@ -11230,12 +11212,10 @@ export default function ChatView(props: ChatViewProps) {
           panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
-          onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
           terminalAvailable={activeProject !== null}
-          filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
@@ -11282,12 +11262,10 @@ export default function ChatView(props: ChatViewProps) {
             panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
-            onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
             terminalAvailable={activeProject !== null}
-            filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}

@@ -18,7 +18,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Files,
   Plus,
   TerminalSquare,
   Volume2,
@@ -114,12 +113,10 @@ interface RightPanelTabsProps {
   panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
   onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
-  onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   terminalAvailable: boolean;
-  filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
@@ -178,12 +175,10 @@ type SurfaceActionInputs = Pick<
   RightPanelTabsProps,
   | "panels"
   | "onAddTerminal"
-  | "onAddFiles"
   | "onAddPullRequest"
   | "onAddPullRequests"
   | "onAddDevice"
   | "terminalAvailable"
-  | "filesAvailable"
   | "pullRequestAvailable"
   | "pullRequestsAvailable"
   | "deviceAvailable"
@@ -222,16 +217,7 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
       unavailableReason: "Terminal surfaces are only available from a project thread.",
       onClick: props.onAddTerminal,
     },
-    {
-      id: "files",
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      unavailableHint: "Available when a project is open.",
-      unavailableReason: "Files are only available when a project is open.",
-      onClick: props.onAddFiles,
-    },
+    registered("files"),
     registered("diff"),
     {
       id: "pull-request",
@@ -592,7 +578,7 @@ function surfaceTitle(
     case "diff":
       return getSidePanelMetadata("diff").title;
     case "files":
-      return "Files";
+      return getSidePanelMetadata("files").title;
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -670,8 +656,10 @@ function SurfaceIcon({
       const Icon = getSidePanelMetadata("diff").icon;
       return <Icon className="size-3 shrink-0" />;
     }
-    case "files":
-      return <Files className="size-3 shrink-0" />;
+    case "files": {
+      const Icon = getSidePanelMetadata("files").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "file":
       return (
         <PierreEntryIcon

@@ -1,4 +1,4 @@
-import { FileDiff, Globe2 } from "lucide-react";
+import { FileDiff, Files, Globe2 } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -28,6 +28,16 @@ const bundledPanels = createPanelRegistry([
     unavailableHint: "Only available in the desktop app.",
     unavailableReason: "Browser previews are only available in the T3 Code desktop app.",
     load: () => import("./preview/PreviewSidePanel"),
+  },
+  {
+    id: "files",
+    title: "Files",
+    icon: Files,
+    placement: "side-panel",
+    launcherKey: "F",
+    unavailableHint: "Available when a project is open.",
+    unavailableReason: "Files are only available when a project is open.",
+    load: () => import("./files/FilesSidePanel"),
   },
 ]);
 

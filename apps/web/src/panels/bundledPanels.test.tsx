@@ -3,9 +3,18 @@ import { act, Suspense } from "react";
 import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const loaded = vi.hoisted(() => ({ diff: 0, preview: 0, previewRenders: [] as unknown[] }));
+const loaded = vi.hoisted(() => ({
+  diff: 0,
+  preview: 0,
+  files: 0,
+  previewRenders: [] as unknown[],
+}));
 vi.mock("./diff/DiffSidePanel", () => {
   loaded.diff += 1;
+  return { default: () => null };
+});
+vi.mock("./files/FilesSidePanel", () => {
+  loaded.files += 1;
   return { default: () => null };
 });
 vi.mock("./preview/PreviewSidePanel", () => {
@@ -36,7 +45,7 @@ const host: PanelHost = {
 
 describe("bundled side panels", () => {
   it("loads only the selected panel body and lends it the host", async () => {
-    expect(loaded).toMatchObject({ diff: 0, preview: 0 });
+    expect(loaded).toMatchObject({ diff: 0, preview: 0, files: 0 });
     await act(async () => {
       create(
         <PanelHostContext value={host}>
@@ -46,10 +55,21 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
-    expect(loaded).toMatchObject({ diff: 0, preview: 1 });
+    expect(loaded).toMatchObject({ diff: 0, preview: 1, files: 0 });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
 });
+
+const filesProps = {
+  cwd: "/repo",
+  projectName: "repo",
+  relativePath: null,
+  availableEditors: [],
+  revealLine: null,
+  revealRequestId: 0,
+  onPendingChange: () => undefined,
+  selectedFilePending: false,
+};
 
 // Never called. The project typecheck compiles these pairings, and each
 // expect-error directive fails it if a wrong pairing starts to compile.
@@ -58,6 +78,13 @@ export function typeFixtures(widenedId: "diff" | "preview") {
     <>
       <RegisteredSidePanel id="diff" />
       <RegisteredSidePanel id="preview" tabId="tab-1" configuredUrls={["http://localhost:3000"]} />
+      <RegisteredSidePanel id="files" {...filesProps} />
+      {/* @ts-expect-error Files props on Preview. */}
+      <RegisteredSidePanel id="preview" cwd="/repo" />
+      {/* @ts-expect-error Files needs its surface inputs. */}
+      <RegisteredSidePanel id="files" cwd="/repo" />
+      {/* @ts-expect-error The host owns the composer draft target. */}
+      <RegisteredSidePanel id="files" {...filesProps} composerDraftTarget={threadRef} />
       {/* @ts-expect-error Preview props on Diff. */}
       <RegisteredSidePanel id="diff" tabId="tab-1" />
       {/* @ts-expect-error The host owns the thread; panels do not take it as a prop. */}
