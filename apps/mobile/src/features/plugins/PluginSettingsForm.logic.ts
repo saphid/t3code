@@ -52,3 +52,26 @@ export const pluginSettingSavesAfterSave = (
   saves: ReadonlyMap<string, number>,
   key: string,
 ): ReadonlyMap<string, number> => new Map(saves).set(key, (saves.get(key) ?? 0) + 1);
+
+/**
+ * Decides at dispatch time whether a field change may be sent. A native
+ * edit-ending event can reach a handler created while the form was editable
+ * after it turned read-only, so every save goes through `save`, which reads
+ * this instead of a captured value. The form calls `set` on every commit and
+ * `set(false)` when it unmounts. A dispatched save closes the gate until the
+ * next commit, which sees it pending.
+ */
+export const createPluginSettingSaveGate = () => {
+  let canSave = false;
+  return {
+    set: (next: boolean) => {
+      canSave = next;
+    },
+    save: (change: PluginSettingChange, dispatch: (change: PluginSettingChange) => void) => {
+      if (!canSave) return false;
+      canSave = false;
+      dispatch(change);
+      return true;
+    },
+  };
+};

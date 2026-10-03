@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../components/AppText";
@@ -20,6 +20,7 @@ import { SettingsChoiceRow } from "../settings/components/SettingsChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import {
+  createPluginSettingSaveGate,
   endPluginSettingEdit,
   pluginSettingInputKey,
   pluginSettingProblemsAfterEdit,
@@ -53,19 +54,25 @@ export function PluginSettingsForm({
   const [pending, setPending] = useState<string | null>(null);
   const [problems, setProblems] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [saves, setSaves] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [gate] = useState(createPluginSettingSaveGate);
+  const disabled = readOnly || pending !== null;
+  useLayoutEffect(() => {
+    gate.set(!disabled);
+    return () => gate.set(false);
+  });
   const view = Option.getOrNull(AsyncResult.value(result));
   if (fields.length === 0 || view === null || view._tag === "unsupported") return null;
 
-  const disabled = readOnly || pending !== null;
-  const save = (change: PluginSettingChange) => {
-    setPending(change.key);
-    void update({ environmentId, input: { installationId, changes: [change] } })
-      .then((outcome) => {
-        if (AsyncResult.isSuccess(outcome))
-          setSaves((current) => pluginSettingSavesAfterSave(current, change.key));
-      })
-      .finally(() => setPending(null));
-  };
+  const save = (change: PluginSettingChange) =>
+    gate.save(change, () => {
+      setPending(change.key);
+      void update({ environmentId, input: { installationId, changes: [change] } })
+        .then((outcome) => {
+          if (AsyncResult.isSuccess(outcome))
+            setSaves((current) => pluginSettingSavesAfterSave(current, change.key));
+        })
+        .finally(() => setPending(null));
+    });
 
   return (
     <SettingsSection title={installation.manifest?.name ?? "Plugin"}>

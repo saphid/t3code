@@ -1,8 +1,13 @@
 import { pluginSettingRows } from "@t3tools/client-runtime/state/pluginSettings";
-import { PluginInstallationId, type PluginSettingField } from "@t3tools/contracts";
+import {
+  PluginInstallationId,
+  type PluginSettingChange,
+  type PluginSettingField,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createPluginSettingSaveGate,
   endPluginSettingEdit,
   pluginSettingInputKey,
   pluginSettingProblemsAfterEdit,
@@ -111,5 +116,58 @@ describe("keys named like object properties", () => {
     expect(pluginSettingInputKey(constructorRow, twice.get("constructor") ?? 0)).toBe(
       "false:undefined:0",
     );
+  });
+});
+
+describe("the save gate", () => {
+  const endpoint: PluginSettingField = { type: "text", key: "endpoint", label: "Endpoint" };
+
+  it("sends nothing from an edit that ends after the form turned read-only, and saves again once granted", () => {
+    const gate = createPluginSettingSaveGate();
+    const sent: Array<PluginSettingChange> = [];
+    const dispatch = (change: PluginSettingChange) => sent.push(change);
+    const endpointRow = row(endpoint);
+    // Handlers made while the form was editable, as a native input holds them.
+    const endEditing = (text: string) => {
+      const outcome = endPluginSettingEdit(endpointRow, text);
+      if (outcome._tag === "save") gate.save(outcome.change, dispatch);
+    };
+    const reset = () => gate.save({ key: "endpoint", value: null }, dispatch);
+    const choose = () => gate.save({ key: "mode", value: "fast" }, dispatch);
+    const toggle = () => gate.save({ key: "enabled", value: true }, dispatch);
+
+    gate.set(true);
+    gate.set(false); // Session revalidation made the form read-only.
+    endEditing("new");
+    expect(reset()).toBe(false);
+    expect(choose()).toBe(false);
+    expect(toggle()).toBe(false);
+    expect(sent).toEqual([]);
+
+    gate.set(true); // Access granted again.
+    endEditing("new");
+    expect(sent).toEqual([{ key: "endpoint", value: "new" }]);
+  });
+
+  it("sends one save until the form commits that it settled", () => {
+    const gate = createPluginSettingSaveGate();
+    const sent: Array<PluginSettingChange> = [];
+    const dispatch = (change: PluginSettingChange) => sent.push(change);
+    gate.set(true);
+    expect(gate.save({ key: "endpoint", value: "a" }, dispatch)).toBe(true);
+    expect(gate.save({ key: "endpoint", value: "b" }, dispatch)).toBe(false);
+    gate.set(true);
+    expect(gate.save({ key: "endpoint", value: "c" }, dispatch)).toBe(true);
+    expect(sent.map((change) => change.value)).toEqual(["a", "c"]);
+  });
+
+  it("sends nothing before the first commit or after unmount", () => {
+    const gate = createPluginSettingSaveGate();
+    const sent: Array<PluginSettingChange> = [];
+    expect(gate.save({ key: "endpoint", value: "a" }, (change) => sent.push(change))).toBe(false);
+    gate.set(true);
+    gate.set(false);
+    expect(gate.save({ key: "endpoint", value: "a" }, (change) => sent.push(change))).toBe(false);
+    expect(sent).toEqual([]);
   });
 });
