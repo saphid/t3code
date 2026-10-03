@@ -3,6 +3,7 @@ import {
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_TRANSFORMS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import { preparePluginTools } from "./pluginToolDeclarations.ts";
 export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_TRANSFORMS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -50,6 +52,15 @@ const checkTools = (manifest: PluginManifest): string | undefined => {
   if (!manifest.proposedApi) return "it declares tools, which need proposedApi: true.";
   const prepared = preparePluginTools(manifest, tools);
   return "problem" in prepared ? prepared.problem : undefined;
+};
+
+/** Declared transforms need the capability and the proposed `handle` API. */
+const checkTransforms = (manifest: PluginManifest): string | undefined => {
+  if (manifest.transforms === undefined) return undefined;
+  if (!manifest.capabilities.includes(PLUGIN_TRANSFORMS_CAPABILITY))
+    return "it declares transforms without the transforms capability.";
+  if (!manifest.proposedApi) return "it declares transforms, which need proposedApi: true.";
+  return undefined;
 };
 
 /**
@@ -91,6 +102,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
     return yield* fail(`this server does not support ${unsupported.join(", ")}.`);
   const toolProblem = checkTools(manifest);
   if (toolProblem !== undefined) return yield* fail(toolProblem);
+  const transformProblem = checkTransforms(manifest);
+  if (transformProblem !== undefined) return yield* fail(transformProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
