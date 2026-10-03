@@ -242,3 +242,36 @@ it.effect("keeps each entry's source so a takeover with the same text re-keys th
     }),
   ),
 );
+
+it.effect("shows a plugin's new name even when nothing else about its status changed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { environments, atoms, registry } = yield* makeHarness();
+      const [a] = environments;
+      const status = atoms.threadStatus(a.environmentId, THREAD);
+      const unmount = registry.mount(status);
+      const plugin = (name: string) => ({
+        threadId: THREAD,
+        source: { kind: "plugin" as const, pluginId: "acme.notifier", name },
+        items: [{ key: "turn", text: "completed" }],
+      });
+      const waitForName = (name: string) =>
+        AtomRegistry.toStream(registry, status).pipe(
+          Stream.filter((entries) => {
+            const source = entries[0]?.source;
+            return source?.kind === "plugin" && source.name === name;
+          }),
+          Stream.runHead,
+        );
+
+      yield* a.push({ entries: [plugin("Old name")] });
+      yield* waitForName("Old name");
+      // Renamed and enabled again while this client was away (or the clear in between was
+      // coalesced): the reconnect's first frame differs from the last one only in the name.
+      const pushAfterReconnect = yield* a.reconnect;
+      yield* pushAfterReconnect({ entries: [plugin("New name")] });
+      yield* waitForName("New name");
+      unmount();
+    }),
+  ),
+);
