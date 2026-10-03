@@ -30,6 +30,7 @@ import { PluginEventDeliveryState } from "./pluginEvents.ts";
 import { PluginSettingsFieldList } from "./pluginSettingFields.ts";
 import { PluginActionDeclaration } from "./pluginActions.ts";
 import { PluginTransformsDeclaration } from "./pluginTransforms.ts";
+import { PluginApprovalDeclaration } from "./pluginApprovals.ts";
 
 export const PluginInstallationId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).pipe(
   Schema.brand("PluginInstallationId"),
@@ -61,6 +62,8 @@ export const PluginInstallationManifest = Schema.Struct({
   actions: Schema.optionalKey(ForwardCompatibleArray(PluginActionDeclaration)),
   /** The declared run transforms, when there are any. A newer server's unknown shape is dropped. */
   transforms: ForwardCompatibleOptional(PluginTransformsDeclaration),
+  /** The declared approval kinds, when there are any. A newer server's unknown shape reads as absent. */
+  approvals: ForwardCompatibleOptional(PluginApprovalDeclaration),
 });
 export type PluginInstallationManifest = typeof PluginInstallationManifest.Type;
 

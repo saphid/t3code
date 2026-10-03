@@ -3,7 +3,11 @@ import type {
   ThreadPendingUserInput,
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import {
+  approvalRequestDetail,
+  approvalResolutionLabel,
+  turnItemIsWorkspacePreparation,
+} from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
@@ -539,6 +543,8 @@ function itemSummary(
   if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
+  const resolution = approvalResolutionLabel(item);
+  if (resolution !== undefined) return resolution;
   const title =
     (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
     item.title?.trim();
@@ -613,7 +619,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "web_search":
       return item.patterns?.join(", ") ?? null;
     case "approval_request":
-      return item.prompt ?? null;
+      return approvalRequestDetail(item) ?? null;
     case "user_input_request":
       return item.questions.map((question) => question.question).join(" · ") || null;
     case "checkpoint":
@@ -703,13 +709,15 @@ function toWorkLogEntry(
       };
     case "checkpoint":
       return { ...common, changedFiles: item.files.map((file) => file.path), toolData: item };
-    case "approval_request":
+    case "approval_request": {
+      const detail = approvalRequestDetail(item);
       return {
         ...common,
-        ...(item.prompt ? { detail: item.prompt } : {}),
+        ...(detail ? { detail } : {}),
         requestKind: item.requestKind,
         toolData: item,
       };
+    }
     case "dynamic_tool":
       return {
         ...common,

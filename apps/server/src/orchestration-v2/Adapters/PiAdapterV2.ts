@@ -1350,14 +1350,16 @@ export function makePiAdapterV2(
           node,
           turnItem,
         });
+        // The card comes before the request, so an answer recorded as soon as the
+        // request is pending finds the card to resolve.
+        yield* emit({ type: "node.updated", driver: PI_PROVIDER, node });
+        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem });
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
           threadId,
           runtimeRequest,
         });
-        yield* emit({ type: "node.updated", driver: PI_PROVIDER, node });
-        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem });
       });
 
       const emitExtensionError = Effect.fnUntraced(function* (event: PiRpcRecord) {
@@ -2607,33 +2609,9 @@ export function makePiAdapterV2(
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
             }
-            const resolvedAt = yield* DateTime.now;
-            pending.runtimeRequest = {
-              ...pending.runtimeRequest,
-              status: "resolved",
-              resolvedAt,
-            };
-            yield* emit({
-              type: "runtime_request.updated",
-              driver: PI_PROVIDER,
-              threadId: pending.node.threadId,
-              runtimeRequest: pending.runtimeRequest,
-            });
-            yield* emit({
-              type: "node.updated",
-              driver: PI_PROVIDER,
-              node: { ...pending.node, status: "completed", completedAt: resolvedAt },
-            });
-            yield* emit({
-              type: "turn_item.updated",
-              driver: PI_PROVIDER,
-              turnItem: {
-                ...pending.turnItem,
-                status: "completed",
-                completedAt: resolvedAt,
-                updatedAt: resolvedAt,
-              },
-            });
+            // The orchestrator recorded the answer, its decision and who gave
+            // it before asking for this response; re-emitting the cached card
+            // would overwrite that record.
           }).pipe(
             sessionEventPermit.withPermits(1),
             Effect.mapError(

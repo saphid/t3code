@@ -1,5 +1,6 @@
 import {
   PLUGIN_API_VERSION,
+  PLUGIN_APPROVALS_CAPABILITY,
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_NOTIFICATIONS_CAPABILITY,
@@ -29,6 +30,7 @@ export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = 
   PLUGIN_VIEWS_CAPABILITY,
   PLUGIN_STATUS_CAPABILITY,
   PLUGIN_NOTIFICATIONS_CAPABILITY,
+  PLUGIN_APPROVALS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -92,6 +94,18 @@ const checkTransforms = (manifest: PluginManifest): string | undefined => {
   return undefined;
 };
 
+/** The approvals capability and the `approvals` object come together, with the proposed API. */
+const checkApprovals = (manifest: PluginManifest): string | undefined => {
+  const declared = manifest.capabilities.includes(PLUGIN_APPROVALS_CAPABILITY);
+  if (manifest.approvals === undefined)
+    return declared
+      ? "it declares the approvals capability without an approvals object."
+      : undefined;
+  if (!declared) return "it declares approvals without the approvals capability.";
+  if (!manifest.proposedApi) return "it declares approvals, which need proposedApi: true.";
+  return undefined;
+};
+
 /**
  * Reads and validates `t3-plugin.json` in `directory`. The entry must resolve,
  * after symlinks, to a file inside the directory, and the manifest must target
@@ -148,6 +162,9 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   for (const capability of [PLUGIN_STATUS_CAPABILITY, PLUGIN_NOTIFICATIONS_CAPABILITY])
     if (manifest.capabilities.includes(capability) && !manifest.proposedApi)
       return yield* fail(`the "${capability}" capability needs "proposedApi": true.`);
+
+  const approvalProblem = checkApprovals(manifest);
+  if (approvalProblem !== undefined) return yield* fail(approvalProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))
