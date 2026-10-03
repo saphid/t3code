@@ -49,6 +49,7 @@ import * as PluginSupervisor from "./PluginSupervisor.ts";
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
 const FIXTURE = `${import.meta.dirname}/testFixtures/approvalsPlugin`;
 
+const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const environmentId = EnvironmentId.make("environment-approvals");
 const projectId = ProjectId.make("project:approvals");
 const threadId = ThreadId.make("thread:approvals");
@@ -133,34 +134,82 @@ const raise = Effect.fn("raise")(function* (
   name: string,
   prompt: string,
   kind: ProviderRequestKind = "command",
+  /** The command the approval is for, as a parent tool item the provider reported first. */
+  command?: string,
 ) {
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
   const requestId = RuntimeRequestId.make(`request:${name}`);
   const nodeId = NodeId.make(`node:${name}`);
+  const toolNodeId = NodeId.make(`tool:${name}`);
+  const node = {
+    threadId,
+    runId: null,
+    status: "waiting",
+    countsForRun: false,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    checkpointScopeId: null,
+    startedAt: now,
+    completedAt: null,
+  } as const;
   yield* sink.write({
     events: [
+      ...(command === undefined
+        ? []
+        : [
+            {
+              id: EventId.make(`tool-node:${name}`),
+              type: "node.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...node,
+                id: toolNodeId,
+                parentNodeId: null,
+                rootNodeId: toolNodeId,
+                kind: "tool_call" as const,
+                runtimeRequestId: null,
+              },
+            },
+            {
+              id: EventId.make(`tool-item:${name}`),
+              type: "turn-item.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`tool-item:${name}`),
+                threadId,
+                runId: null,
+                nodeId: toolNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: ++ordinal,
+                status: "waiting" as const,
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution" as const,
+                input: command,
+              },
+            },
+          ]),
       {
         id: EventId.make(`node:${name}`),
         type: "node.updated",
         threadId,
         occurredAt: now,
         payload: {
+          ...node,
           id: nodeId,
-          threadId,
-          runId: null,
-          parentNodeId: null,
-          rootNodeId: nodeId,
+          parentNodeId: command === undefined ? null : toolNodeId,
+          rootNodeId: command === undefined ? nodeId : toolNodeId,
           kind: "approval_request",
-          status: "waiting",
-          countsForRun: false,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
           runtimeRequestId: requestId,
-          checkpointScopeId: null,
-          startedAt: now,
-          completedAt: null,
         },
       },
       {
@@ -389,7 +438,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
             ]),
           );
 
-          const approved = yield* raise("approved", "git status");
+          const approved = yield* raise("approved", "git status", "command", "git status --short");
           expect(yield* until(is("Applied", "test.policy"))).toMatchObject({
             requestId: approved,
             decision: "accept",
@@ -411,6 +460,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
             requestId: approved,
             kind: "command",
             prompt: "git status",
+            subject: "git status --short",
             context: { environmentId, projectId, threadId, runId: null, provider: "codex" },
           });
           // The user's late answer is refused and changes nothing.
@@ -730,7 +780,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
         );
         yield* fs.writeFileString(
           path.join(directory, "t3-plugin.json"),
-          JSON.stringify({
+          toJson({
             id: `test.${name}`,
             name,
             version: "1.0.0",

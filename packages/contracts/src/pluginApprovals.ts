@@ -6,8 +6,8 @@
  *
  * ```js
  * export function activate(context) {
- *   context.proposed.handle("t3.approval.decide", ({ kind, prompt }) =>
- *     kind === "command" && prompt?.startsWith("git status")
+ *   context.proposed.handle("t3.approval.decide", ({ kind, subject }) =>
+ *     kind === "command" && subject?.startsWith("git status")
  *       ? { decision: "approve", reason: "Read-only git command." }
  *       : { decision: "abstain" },
  *   );
@@ -40,7 +40,7 @@ export const PLUGIN_APPROVAL_HANDLER = "t3.approval.decide";
 export const PLUGIN_APPROVAL_LIMITS = {
   defaultTimeoutSeconds: 15,
   maxTimeoutSeconds: 120,
-  /** Longest `prompt` sent to a plugin, in UTF-16 code units. Longer prompts are cut. */
+  /** Longest `prompt` or `subject` sent to a plugin, in UTF-16 code units. Longer ones are cut. */
   maxPromptLength: 8000,
   maxReasonLength: 500,
 } as const;
@@ -72,13 +72,20 @@ export type PluginApprovalDeclaration = typeof PluginApprovalDeclaration.Type;
 
 /**
  * What the handler receives. `prompt` is what the provider asked, as the
- * approval card shows it: a command, a path, or the provider's reason. It is
- * user and agent content and may contain anything the agent wrote.
+ * approval card shows it: a command, a path, a tool's description, or the
+ * provider's reason. `subject` is the tool call the approval is for, as the
+ * thread shows it, when the provider reported one first: the command line, the
+ * changed paths (one per line), or the tool name and its JSON input. Both are
+ * user and agent content and may contain anything the agent wrote. Each is cut
+ * to `maxPromptLength`.
  */
 export const PluginApprovalRequest = Schema.Struct({
   requestId: RuntimeRequestId,
   kind: PluginApprovalKind,
   prompt: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
+  ),
+  subject: Schema.optionalKey(
     Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
   ),
   context: Schema.Struct({

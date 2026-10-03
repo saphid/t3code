@@ -27,6 +27,7 @@ import {
   PluginApprovalKind,
   PluginApprovalRequest,
   type EnvironmentId,
+  type NodeId,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
   type PluginCatalogError,
@@ -118,6 +119,7 @@ const isPluginApprovalKind = Schema.is(PluginApprovalKind);
 const encodeRequest = Schema.encodeEffect(PluginApprovalRequest);
 const decodeAnswer = Schema.decodeUnknownResult(PluginApprovalAnswer);
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /** Cuts `text` to `max` UTF-16 units without splitting a surrogate pair. */
 const truncate = (text: string, max: number) => {
@@ -222,6 +224,29 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
     ).pipe(Effect.onInterrupt(() => abstain("withdrawn")));
   };
 
+  /** The tool call an approval is for: the item of the approval node's parent, if it has one yet. */
+  const subjectOf = Effect.fn("PluginApprovals.subjectOf")(function* (
+    threadId: ThreadId,
+    parentNodeId: NodeId | null,
+  ) {
+    if (parentNodeId === null) return undefined;
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemNodeIds: [parentNodeId],
+      turnItemTypes: ["command_execution", "file_change", "dynamic_tool"],
+    });
+    const item = turnItems[0];
+    switch (item?.type) {
+      case "command_execution":
+        return item.input;
+      case "file_change":
+        return (item.changes?.map((change) => change.path) ?? [item.fileName]).join("\n");
+      case "dynamic_tool":
+        return `${item.toolName ?? "tool"} ${encodeJson(item.input)}`;
+      default:
+        return undefined;
+    }
+  });
+
   /** Asks every plugin that answers this kind, all at once. Nothing to ask starts no process. */
   const offer = Effect.fn("PluginApprovals.offer")(
     function* (threadId: ThreadId, requestId: RuntimeRequestId, kind: PluginApprovalKind) {
@@ -234,12 +259,16 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
       const thread = yield* projections.getThreadShell(threadId);
       if (thread === null) return;
       const prompt = context.item?.type === "approval_request" ? context.item.prompt : undefined;
+      const subject = yield* subjectOf(threadId, context.node?.parentNodeId ?? null);
       const input = yield* encodeRequest({
         requestId,
         kind,
         ...(prompt === undefined
           ? {}
           : { prompt: truncate(prompt, PLUGIN_APPROVAL_LIMITS.maxPromptLength) }),
+        ...(subject === undefined
+          ? {}
+          : { subject: truncate(subject, PLUGIN_APPROVAL_LIMITS.maxPromptLength) }),
         context: {
           environmentId,
           projectId: thread.projectId,
