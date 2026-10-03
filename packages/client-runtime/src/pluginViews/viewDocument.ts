@@ -60,6 +60,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     const call = pending.get(id);
     if (call === undefined) return;
     pending.delete(id);
+    if (call.signal !== undefined) call.signal.removeEventListener("abort", call.cancel);
     finish(call);
   };
   const receive = (event) => {
@@ -96,12 +97,14 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     // A function, Symbol or toJSON() => undefined serializes away, leaving no input.
     if (!("input" in envelope)) return reject(failure("invalid", "The call input is not JSON."));
     if (tooDeep(envelope)) return reject(failure("too-deep", "The call input is nested too deeply."));
-    pending.set(id, { resolve, reject });
-    port.postMessage(text);
-    if (signal !== undefined) signal.addEventListener("abort", () => settle(id, (pendingCall) => {
+    const cancel = () => settle(id, () => {
       send({ _tag: "cancel", id });
-      pendingCall.reject(failure("cancelled", "The call was cancelled."));
-    }), { once: true });
+      reject(failure("cancelled", "The call was cancelled."));
+    });
+    // Before any state, so a signal that cannot listen leaves nothing behind.
+    if (signal !== undefined) signal.addEventListener("abort", cancel, { once: true });
+    pending.set(id, { resolve, reject, signal, cancel });
+    port.postMessage(text);
   }));
   window.addEventListener("message", (event) => {
     const data = event.data;
@@ -116,7 +119,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
 })();`;
 
 /** Base64 SHA-256 of `PLUGIN_VIEW_BOOTSTRAP_SOURCE`; a test keeps them in step. */
-export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "hfw1YPYw+O7vxSeakpMkn71nUnbGuHA3VQOMDLNGGZE=";
+export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "IVNrLjNNTDtqcmVrC8l0U0w2AA5ONkIZfjU/zfAcmZw=";
 
 export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocumentError>()(
   "PluginViewDocumentError",

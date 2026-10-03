@@ -102,6 +102,38 @@ const mountBootstrap = Effect.fn("mountBootstrap")(function* (
   return { t3View, toView, calls, until };
 });
 
+/**
+ * A real abort signal that counts the listeners attached to it. Node's
+ * `getEventListeners` would do, but this package has no Node types.
+ */
+const countedAbortSignal = () => {
+  const controller = new AbortController();
+  const { signal } = controller;
+  const attached = new Map<EventListener, EventListener>();
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  Object.assign(signal, {
+    addEventListener: (
+      type: string,
+      listener: EventListener,
+      options?: AddEventListenerOptions,
+    ) => {
+      const counted: EventListener = (event) => {
+        attached.delete(listener);
+        listener(event);
+      };
+      attached.set(listener, counted);
+      add(type, counted, options);
+    },
+    removeEventListener: (type: string, listener: EventListener) => {
+      const counted = attached.get(listener);
+      attached.delete(listener);
+      if (counted !== undefined) remove(type, counted);
+    },
+  });
+  return { signal, abort: () => controller.abort(), listeners: () => attached.size };
+};
+
 describe("plugin view bootstrap with the host bridge", () => {
   it.effect("settles a call burst past the rate budget, refusing only the excess", () =>
     Effect.gen(function* () {
@@ -181,6 +213,37 @@ describe("plugin view bootstrap with the host bridge", () => {
       controller.abort();
       expect((yield* settled).map(outcome)).toEqual(["cancelled"]);
       yield* Deferred.await(interrupted);
+    }),
+  );
+
+  it.effect("leaves no abort listener behind once a call settles", () =>
+    Effect.gen(function* () {
+      const interrupted = yield* Deferred.make<void>();
+      const { t3View, calls, until } = yield* mountBootstrap((handler, input) =>
+        handler === "hang"
+          ? Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
+          : handler === "fail"
+            ? Effect.die("plugin failed")
+            : Effect.succeed(input),
+      );
+      const { signal, abort, listeners } = countedAbortSignal();
+      for (let index = 0; index < 12; index += 1)
+        yield* Effect.promise(() => t3View.call("echo", index, { signal }));
+      const failed = yield* Effect.promise(() =>
+        Promise.allSettled([t3View.call("fail", null, { signal })]),
+      );
+      expect(failed.map(outcome)).toEqual(["unavailable"]);
+      expect(listeners()).toBe(0);
+
+      // The same signal still cancels a call in flight.
+      const hang = t3View.call("hang", null, { signal });
+      const hanging = Effect.promise(() => Promise.allSettled([hang]));
+      yield* until(() => calls.includes("hang"));
+      expect(listeners()).toBe(1);
+      abort();
+      expect((yield* hanging).map(outcome)).toEqual(["cancelled"]);
+      yield* Deferred.await(interrupted);
+      expect(listeners()).toBe(0);
     }),
   );
 });
