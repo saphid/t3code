@@ -15,10 +15,13 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
 import { pluginNotificationEnvironment } from "../../state/plugin-notifications";
+import {
+  type Banner,
+  queueBannerChanges,
+  removeEnvironmentBanners,
+} from "./plugin-notification-banners";
 
 const SHOWN_MS = 5_000;
-/** Banners waiting their turn; older ones are dropped past this. */
-const MAX_QUEUED = 5;
 
 const TONE_DOT_CLASS = {
   neutral: "bg-foreground-muted",
@@ -28,17 +31,13 @@ const TONE_DOT_CLASS = {
   error: "bg-adaptive-rose-600-400",
 } as const satisfies Record<ContributionStatusTone, string>;
 
-interface Banner {
-  readonly environmentId: EnvironmentId;
-  readonly entry: ReceivedPluginNotification;
-}
-
 /**
  * Plugin notifications as an in-app banner under the status bar, one at a
  * time for a few seconds each. Only notifications that arrive while the app
  * is open are shown; tapping one about a thread opens it, and a banner goes
  * away once the server no longer retains its notification (its plugin
- * stopped, it expired or was evicted, or the server restarted).
+ * stopped, it expired or was evicted, or the server restarted) or its
+ * environment is removed.
  */
 export function PluginNotificationBannerHost() {
   const { environments } = useEnvironments();
@@ -48,14 +47,12 @@ export function PluginNotificationBannerHost() {
       environmentId: EnvironmentId,
       show: ReadonlyArray<ReceivedPluginNotification>,
       keep: ReadonlySet<string>,
-    ) =>
-      setQueue((current) => {
-        const kept = current.filter(
-          (banner) => banner.environmentId !== environmentId || keep.has(banner.entry.key),
-        );
-        if (show.length === 0 && kept.length === current.length) return current;
-        return [...kept, ...show.map((entry) => ({ environmentId, entry }))].slice(-MAX_QUEUED);
-      }),
+    ) => setQueue((current) => queueBannerChanges(current, environmentId, show, keep)),
+    [],
+  );
+  const onRemoved = useCallback(
+    (environmentId: EnvironmentId) =>
+      setQueue((current) => removeEnvironmentBanners(current, environmentId)),
     [],
   );
   const dismiss = useCallback(
@@ -77,6 +74,7 @@ export function PluginNotificationBannerHost() {
           key={environment.environmentId}
           environmentId={environment.environmentId}
           onChanges={onChanges}
+          onRemoved={onRemoved}
         />
       ))}
       {head === undefined ? null : <PluginNotificationBanner banner={head} onDone={dismiss} />}
@@ -91,11 +89,15 @@ function EnvironmentPluginNotifications(props: {
     show: ReadonlyArray<ReceivedPluginNotification>,
     keep: ReadonlySet<string>,
   ) => void;
+  readonly onRemoved: (environmentId: EnvironmentId) => void;
 }) {
-  const { environmentId, onChanges } = props;
+  const { environmentId, onChanges, onRemoved } = props;
   const frame = useAtomValue(pluginNotificationEnvironment.frame(environmentId));
   // The newest notification seen; banners themselves live in the host's queue.
   const mark = useRef<PluginNotificationMark | undefined>(undefined);
+
+  // Unmounting means the environment was removed, so no later frame will drop its banners.
+  useEffect(() => () => onRemoved(environmentId), [environmentId, onRemoved]);
 
   useEffect(() => {
     const changes = pluginNotificationChanges(mark.current, frame);
