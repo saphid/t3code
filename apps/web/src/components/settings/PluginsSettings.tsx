@@ -19,6 +19,8 @@ import {
   canManagePlugins,
   createPluginActionGate,
   describePluginSource,
+  explainedPluginAccess,
+  PLUGIN_ACCESS_CHECKING,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
   PLUGIN_MANAGE_ACCESS_REQUIRED,
@@ -118,6 +120,30 @@ function usePluginActionGate(current: PluginActionSubject | null) {
     return () => gate.set(null);
   });
   return gate;
+}
+
+/** Explains the last settled access through a re-check, so the check moves no explanation. */
+function useExplainedPluginAccess(access: PluginManageAccess) {
+  const [settled, setSettled] = useState<PluginManageAccess | null>(null);
+  if (access !== "pending" && access !== settled) setSettled(access);
+  return explainedPluginAccess(access, settled);
+}
+
+/**
+ * The access-check status in a slot sized by an invisible copy of its text, so
+ * showing or clearing it changes no width or height.
+ */
+function AccessStatusSlot({ status }: { readonly status: string | null }) {
+  return (
+    <span className="grid whitespace-nowrap">
+      <span aria-hidden className="invisible col-start-1 row-start-1">
+        {PLUGIN_ACCESS_CHECKING}
+      </span>
+      <span role="status" className="col-start-1 row-start-1">
+        {status}
+      </span>
+    </span>
+  );
 }
 
 export function PluginsSettings() {
@@ -232,6 +258,7 @@ export function PluginEnvironmentCatalog({
       ? pluginEnvironment.catalog({ environmentId: environment.environmentId, input: {} })
       : null,
   );
+  const explainedAccess = useExplainedPluginAccess(access);
   const [adding, setAdding] = useState(false);
   const [reviewing, setReviewing] = useState<{
     readonly installationId: PluginInstallationId;
@@ -245,7 +272,7 @@ export function PluginEnvironmentCatalog({
   if (catalogState._tag === "unsupported") return null;
   const installations = catalogState._tag === "available" ? catalogState.view.installations : null;
   const canManage = canManagePlugins(access, catalogState);
-  const notice = pluginManagementNotice(access, catalogState, environment.label);
+  const notice = pluginManagementNotice(explainedAccess, catalogState, environment.label);
   const accessStatus = pluginAccessStatus(access, catalogState);
   return (
     <>
@@ -259,9 +286,8 @@ export function PluginEnvironmentCatalog({
         }
         headerAction={
           <span className="flex items-center gap-2">
-            {/* The header row's height is fixed, so the brief access check never moves the list. */}
-            <span role="status" className="text-xs text-muted-foreground">
-              {accessStatus}
+            <span className="text-xs text-muted-foreground">
+              <AccessStatusSlot status={accessStatus} />
             </span>
             <Button
               size="xs"
@@ -294,9 +320,9 @@ export function PluginEnvironmentCatalog({
           <SettingsRow title="Loading plugins…" role="status" />
         ) : (
           <>
-            {access === "denied" ? (
+            {explainedAccess === "denied" ? (
               <SettingsRow title="View only" description={PLUGIN_MANAGE_ACCESS_REQUIRED} />
-            ) : access === "unreadable" ? (
+            ) : explainedAccess === "unreadable" ? (
               <SettingsRow
                 title="View only"
                 description={PLUGIN_MANAGE_ACCESS_UNREADABLE}
@@ -334,6 +360,7 @@ export function PluginEnvironmentCatalog({
         <AddPluginDialog
           environment={environment}
           canManage={canManage}
+          status={accessStatus}
           notice={notice}
           onClose={() => setAdding(false)}
           onAdded={(installation) => {
@@ -354,6 +381,7 @@ export function PluginEnvironmentCatalog({
             added: reviewing.added,
           })}
           canManage={canManage}
+          status={accessStatus}
           notice={notice}
           onRetry={catalog.refresh}
           onClose={() => setReviewing(null)}
@@ -546,6 +574,7 @@ function PluginRow({
 export function AddPluginDialog({
   environment,
   canManage,
+  status,
   notice,
   onClose,
   onAdded,
@@ -553,6 +582,7 @@ export function AddPluginDialog({
   readonly environment: EnvironmentPresentation;
   /** Read at submit time, so a dialog that lost authority while open sends nothing. */
   readonly canManage: boolean;
+  readonly status: string | null;
   readonly notice: string | null;
   readonly onClose: () => void;
   readonly onAdded: (installation: PluginInstallation) => void;
@@ -617,8 +647,9 @@ export function AddPluginDialog({
               {pluginDirectoryLocation(environment.label, device)}
             </p>
             <p className="text-sm text-muted-foreground">{PLUGIN_DIRECTORY_GUIDANCE}</p>
-            <p role="status" className="min-h-5 text-sm text-muted-foreground">
-              {notice}
+            {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+            <p className="text-sm text-muted-foreground">
+              <AccessStatusSlot status={status} />
             </p>
             {error ? (
               <p role="alert" className="text-sm text-destructive">
@@ -664,6 +695,7 @@ export function PluginReviewDialog({
   environment,
   detail,
   canManage,
+  status,
   notice,
   onRetry,
   onClose,
@@ -671,6 +703,7 @@ export function PluginReviewDialog({
   readonly environment: EnvironmentPresentation;
   readonly detail: PluginDetailState;
   readonly canManage: boolean;
+  readonly status: string | null;
   readonly notice: string | null;
   readonly onRetry: () => void;
   readonly onClose: () => void;
@@ -837,8 +870,9 @@ export function PluginReviewDialog({
                     />
                     I trust this code to run as my user on {environment.label}
                   </label>
-                  <p role="status" className="min-h-5 text-sm text-muted-foreground">
-                    {notice}
+                  {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+                  <p className="text-sm text-muted-foreground">
+                    <AccessStatusSlot status={status} />
                   </p>
                 </>
               ) : (

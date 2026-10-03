@@ -1,5 +1,9 @@
 import type { ReactElement } from "react";
 import { EnvironmentId, type PluginInstallation, PluginInstallationId } from "@t3tools/contracts";
+import {
+  PLUGIN_MANAGE_ACCESS_REQUIRED,
+  type PluginManageAccess,
+} from "@t3tools/client-runtime/state/pluginPresentation";
 import { deliverPluginCatalog } from "@t3tools/client-runtime/state/plugins";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -71,6 +75,7 @@ function renderDialog(canManage: boolean): ReactElement<Record<string, unknown>>
   return AddPluginDialog({
     environment,
     canManage,
+    status: null,
     notice: canManage ? null : "Managing plugins needs administrative access.",
     onClose: () => undefined,
     onAdded: () => undefined,
@@ -81,6 +86,17 @@ function find(tree: ReactElement, match: (props: Record<string, unknown>) => boo
   const element = visitElements(tree, (candidate) => match(candidate.props));
   if (!element) throw new Error("Element not found");
   return element.props;
+}
+
+/** The access-check status slot, which always occupies the same space. */
+function accessStatus(tree: ReactElement) {
+  const slot = visitElements(
+    tree,
+    (candidate) =>
+      typeof candidate.type === "function" && candidate.type.name === "AccessStatusSlot",
+  );
+  if (!slot) throw new Error("Status slot not found");
+  return slot.props.status;
 }
 
 const isInput = (props: Record<string, unknown>) => props.id === "plugin-directory";
@@ -137,7 +153,7 @@ describe("PluginEnvironmentCatalog add handoff", () => {
     connection: { phase: "connected" },
     serverConfig: { environment: { platform: { machine: "server" } } },
   } as unknown as EnvironmentPresentation;
-  const renderCatalog = (access: "granted" | "pending" = "granted") => {
+  const renderCatalog = (access: PluginManageAccess = "granted") => {
     hooks.beginRender();
     return PluginEnvironmentCatalog({
       environment: connected,
@@ -188,15 +204,26 @@ describe("PluginEnvironmentCatalog add handoff", () => {
     expect(reviewDialog(renderCatalog())!.detail).toEqual({ _tag: "found", installation: listed });
   });
 
-  it("explains a pending access check on the list in the header's fixed slot", () => {
+  it("explains a pending access check on the list in the header's status slot", () => {
     catalogQuery.data = deliverPluginCatalog([reply]);
-    const isStatus = (props: Record<string, unknown>) => props.role === "status";
     const checking = renderCatalog("pending");
-    expect(find(checking, isStatus).children).toBe("Checking access…");
+    expect(accessStatus(checking)).toBe("Checking access…");
     expect(find(checking, isAddPlugin).disabled).toBe(true);
     const granted = renderCatalog("granted");
-    expect(find(granted, isStatus).children).toBeNull();
+    expect(accessStatus(granted)).toBeNull();
     expect(find(granted, isAddPlugin).disabled).toBe(false);
+  });
+
+  it("keeps the view-only explanation through a re-check of a denied session", () => {
+    catalogQuery.data = deliverPluginCatalog([reply]);
+    const isViewOnly = (props: Record<string, unknown>) => props.title === "View only";
+    expect(find(renderCatalog("denied"), isViewOnly).description).toBe(
+      PLUGIN_MANAGE_ACCESS_REQUIRED,
+    );
+    const checking = renderCatalog("pending");
+    expect(find(checking, isViewOnly).description).toBe(PLUGIN_MANAGE_ACCESS_REQUIRED);
+    expect(accessStatus(checking)).toBe("Checking access…");
+    expect(find(checking, isAddPlugin).disabled).toBe(true);
   });
 
   it("ends as removed when the restarted snapshot equals the old one", () => {
@@ -220,14 +247,15 @@ describe("PluginReviewDialog", () => {
       consent: null,
       enabled: false,
     }) as unknown as PluginInstallation;
-  const CHECKING = "Checking your access to this environment…";
+  const CHECKING = "Checking access…";
   const renderReview = (installation: PluginInstallation, canManage = true) => {
     hooks.beginRender();
     return PluginReviewDialog({
       environment,
       detail: { _tag: "found", installation },
       canManage,
-      notice: canManage ? null : CHECKING,
+      status: canManage ? null : CHECKING,
+      notice: null,
       onRetry: () => undefined,
       onClose: () => undefined,
     }) as ReactElement;
@@ -235,7 +263,6 @@ describe("PluginReviewDialog", () => {
   const isCheckbox = (props: Record<string, unknown>) =>
     typeof props.onCheckedChange === "function";
   const isApprove = (props: Record<string, unknown>) => props.children === "Approve and enable";
-  const isStatus = (props: Record<string, unknown>) => props.role === "status";
   const success = { _tag: "Success", value: { installation: reviewed(DIGEST_A) } };
 
   beforeEach(() => {
@@ -287,9 +314,9 @@ describe("PluginReviewDialog", () => {
     const granted = renderReview(reviewed(DIGEST_A));
     const checking = renderReview(reviewed(DIGEST_A), false);
     expect(find(checking, isCheckbox).disabled).toBe(true);
-    expect(find(checking, isStatus).children).toBe(CHECKING);
+    expect(accessStatus(checking)).toBe(CHECKING);
     expect(find(checking, isApprove).disabled).toBe(true);
     expect(find(granted, isCheckbox).disabled).toBe(false);
-    expect(find(granted, isStatus).children).toBeNull();
+    expect(accessStatus(granted)).toBeNull();
   });
 });
