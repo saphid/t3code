@@ -245,7 +245,9 @@ it.layer(NodeServices.layer)("PluginStatus", (it) => {
         );
         const registration = yield* loadPluginDirectory(FIXTURE_DIR);
         const pluginId = registration.manifest.id;
-        const frames = yield* Stream.toPull(notifications.subscribe({}));
+        const pull = yield* Stream.toPull(notifications.subscribe);
+        // Each change sends the whole retained set; the newest frame is the state.
+        const frames = Effect.map(pull, (chunk) => chunk.at(-1)!);
         yield* frames;
 
         const showBoth = Effect.fn("showBoth")(function* (text: string) {
@@ -254,25 +256,27 @@ it.layer(NodeServices.layer)("PluginStatus", (it) => {
           assert.deepStrictEqual(shown(yield* store.snapshot), [
             `thread-a: ["plugin","test.notify"] run=${text}`,
           ]);
-          const [frame] = yield* frames;
-          assert.strictEqual(frame.notifications[0]?.title, text);
-          return frame.notifications[0]!.sequence;
+          const frame = yield* frames;
+          assert.deepStrictEqual(
+            frame.notifications.map((notification) => notification.title),
+            [text],
+          );
         });
 
         yield* supervisor.enable(registration);
-        const first = yield* showBoth("first run");
+        yield* showBoth("first run");
         // Disable returns after the process's host work, and so its statuses, have ended.
         yield* supervisor.disable(pluginId);
         assert.deepStrictEqual((yield* store.snapshot).entries, []);
-        assert.deepStrictEqual((yield* frames)[0].withdrawn, [first]);
+        assert.deepStrictEqual((yield* frames).notifications, []);
 
         yield* supervisor.enable(registration);
-        const second = yield* showBoth("second run");
+        yield* showBoth("second run");
         const crash = yield* supervisor.invoke(pluginId, "crash", null).pipe(Effect.flip);
         assert.strictEqual(crash._tag, "PluginCrashedError");
         // A dead process's host work ends before its callers learn of the crash.
         assert.deepStrictEqual((yield* store.snapshot).entries, []);
-        assert.deepStrictEqual((yield* frames)[0].withdrawn, [second]);
+        assert.deepStrictEqual((yield* frames).notifications, []);
       }).pipe(Effect.scoped),
     );
   });

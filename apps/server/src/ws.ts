@@ -2074,10 +2074,10 @@ const makeWsRpcLayer = (
             pluginSettings.subscribe(input.installationId),
             { "rpc.aggregate": "plugins" },
           ),
-        [WS_METHODS.pluginsNotificationsSubscribe]: (input) =>
+        [WS_METHODS.pluginsNotificationsSubscribe]: () =>
           observeRpcStream(
             WS_METHODS.pluginsNotificationsSubscribe,
-            pluginNotifications.subscribe(input),
+            pluginNotifications.subscribe,
             { "rpc.aggregate": "plugins" },
           ),
         [WS_METHODS.pluginsSettingsUpdate]: (input) =>
