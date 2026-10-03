@@ -600,9 +600,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         ),
       );
     if (outcome === "removed") return;
-    const source = outcome === "committed" ? swap.next : swap.previous;
-    yield* writeRecord(entry.home, { source });
-    entry.source = source;
+    // Reported at once: the journal and the catalogue's consent already say the same
+    // after a restart, so only the record write below is retried if it fails.
+    entry.source = outcome === "committed" ? swap.next : swap.previous;
+    yield* writeRecord(entry.home, { source: entry.source });
     entry.swap = undefined;
     if (outcome === "committed") yield* removeTree(previous);
   });
@@ -801,6 +802,8 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       .pipe(Effect.exit);
     // Staged files that never moved can be applied again.
     if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
+    // After the commit a failure here is cleanup only: the apply still succeeds and
+    // reports the new version, and npm steps fail `storage` until the record is saved.
     yield* settle(entry).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not settle a plugin update; retrying later", {
