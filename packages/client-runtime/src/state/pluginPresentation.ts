@@ -2,9 +2,12 @@ import {
   AuthAccessWriteScope,
   type AuthSessionState,
   type PluginInstallation,
+  type PluginInstallationId,
   type PluginInstallationStatus,
   pluginInstallationStatus,
 } from "@t3tools/contracts";
+
+import type { PluginCatalogView } from "./plugins.ts";
 
 export type PluginStateTone = "neutral" | "success" | "info" | "warning" | "error";
 
@@ -159,12 +162,16 @@ export function pluginDirectoryLocation(
 export const PLUGIN_MANAGE_ACCESS_REQUIRED =
   "Managing plugins needs administrative access (access:write) to this environment. Pair with an administrative link to add, approve, enable, or remove plugins.";
 
-export type PluginManageAccess = "granted" | "denied" | "pending";
+export const PLUGIN_MANAGE_ACCESS_UNREADABLE =
+  "Could not check your access to this environment, so plugin management is off. Try again.";
+
+/** `unreadable`: the session could not be read, so there is no evidence of access:write. */
+export type PluginManageAccess = "granted" | "denied" | "pending" | "unreadable";
 
 /**
- * Management needs `access:write`. Any server with the plugin catalogue reports
- * its scopes, so a missing list means denied. A failed session read stays
- * optimistic: the server still refuses an unauthorized command.
+ * Management needs positive evidence of `access:write`. Any server with the
+ * plugin catalogue reports its scopes, so a missing list means denied. A session
+ * that cannot be read grants nothing; the last good read still counts.
  */
 export function resolvePluginManageAccess(input: {
   readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
@@ -173,11 +180,118 @@ export function resolvePluginManageAccess(input: {
 }): PluginManageAccess {
   if (input.session === null) {
     if (input.isPending) return "pending";
-    return input.hasError ? "granted" : "denied";
+    return input.hasError ? "unreadable" : "denied";
   }
   return input.session.authenticated && input.session.scopes?.includes(AuthAccessWriteScope)
     ? "granted"
     : "denied";
+}
+
+/** One environment's catalogue subscription as a screen sees it. */
+export type PluginCatalogState =
+  | { readonly _tag: "disconnected" }
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "failed"; readonly message: string }
+  | { readonly _tag: "unsupported" }
+  | {
+      readonly _tag: "available";
+      readonly view: Extract<PluginCatalogView, { readonly _tag: "available" }>;
+    };
+
+/**
+ * A failed subscription wins over the snapshot it last delivered: that snapshot
+ * may be stale, so nothing may be approved or managed from it.
+ */
+export function resolvePluginCatalogState(input: {
+  readonly connected: boolean;
+  readonly data: PluginCatalogView | null;
+  readonly error: string | null;
+}): PluginCatalogState {
+  if (!input.connected) return { _tag: "disconnected" };
+  if (input.error !== null) return { _tag: "failed", message: input.error };
+  if (input.data === null) return { _tag: "loading" };
+  if (input.data._tag === "unsupported") return { _tag: "unsupported" };
+  return { _tag: "available", view: input.data };
+}
+
+/** Controls need access:write and a live, current catalogue. */
+export function canManagePlugins(access: PluginManageAccess, catalog: PluginCatalogState): boolean {
+  return access === "granted" && catalog._tag === "available";
+}
+
+/** Why management controls are off, or null when they are on. */
+export function pluginManagementNotice(
+  access: PluginManageAccess,
+  catalog: PluginCatalogState,
+  environmentLabel: string,
+): string | null {
+  switch (catalog._tag) {
+    case "disconnected":
+      return `Reconnect ${environmentLabel} to manage its plugins.`;
+    case "failed":
+      return `Could not load the current plugins from ${environmentLabel}. Retry to manage them.`;
+    case "loading":
+      return "Loading plugins…";
+    case "unsupported":
+      return `${environmentLabel} does not support plugins. Update T3 Code there.`;
+    case "available":
+      switch (access) {
+        case "granted":
+          return null;
+        case "denied":
+          return PLUGIN_MANAGE_ACCESS_REQUIRED;
+        case "unreadable":
+          return PLUGIN_MANAGE_ACCESS_UNREADABLE;
+        case "pending":
+          return "Checking your access to this environment…";
+      }
+  }
+}
+
+/**
+ * Set on a screen opened by adding: the catalogue snapshot current when the add
+ * reply arrived, and the reply's installation when the screen has it. Until a
+ * newer snapshot arrives the new plugin may simply not be listed yet.
+ */
+export interface PluginAddedMarker {
+  readonly snapshot: PluginCatalogView | null;
+  readonly installation: PluginInstallation | null;
+}
+
+export type PluginDetailState =
+  | Exclude<PluginCatalogState, { readonly _tag: "available" }>
+  | { readonly _tag: "missing" }
+  | { readonly _tag: "found"; readonly installation: PluginInstallation };
+
+/** What an open plugin details or review screen shows. */
+export function resolvePluginDetail(input: {
+  readonly catalog: PluginCatalogState;
+  readonly installationId: PluginInstallationId;
+  readonly added: PluginAddedMarker | null;
+}): PluginDetailState {
+  const { catalog, added } = input;
+  if (catalog._tag === "loading" && added?.installation)
+    return { _tag: "found", installation: added.installation };
+  if (catalog._tag !== "available") return catalog;
+  const installation = catalog.view.installations.find(
+    (entry) => entry.installationId === input.installationId,
+  );
+  if (installation) return { _tag: "found", installation };
+  if (added !== null && catalog.view === added.snapshot)
+    return added.installation
+      ? { _tag: "found", installation: added.installation }
+      : { _tag: "loading" };
+  return { _tag: "missing" };
+}
+
+/** The directory to send to `plugins.add`, or null when nothing may be sent. */
+export function pluginAddDirectory(input: {
+  readonly canManage: boolean;
+  readonly busy: boolean;
+  readonly directory: string;
+}): string | null {
+  const directory = input.directory.trim();
+  return input.canManage && !input.busy && directory.length > 0 ? directory : null;
 }
 
 /** The server's own message for a failed plugin command. */
