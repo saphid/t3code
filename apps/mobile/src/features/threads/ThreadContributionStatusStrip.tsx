@@ -20,13 +20,18 @@ const TONE_DOT_CLASS = {
 
 /**
  * Advisory statuses the thread's provider set, such as Pi extension
- * `setStatus` text, as one row of chips above the composer. Renders nothing
- * when the server lacks the capability or the thread has no statuses.
- * Pressing a chip shows its tooltip and where it came from.
+ * `setStatus` text, as one row of chips floating just under the navigation
+ * header. It overlays the feed like the header does, so a status appearing or
+ * clearing never moves the feed or the composer. Renders nothing when the
+ * server lacks the capability or the thread has no statuses. Pressing a chip
+ * shows its tooltip and where it came from.
  */
 export function ThreadContributionStatusStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** Distance from the screen's top edge to the bottom of the navigation header. */
+  readonly top: number;
+  readonly contentMaxWidth: number | undefined;
 }) {
   const entries = useAtomValue(
     contributionStatusEnvironment.threadStatus(props.environmentId, props.threadId),
@@ -35,38 +40,52 @@ export function ThreadContributionStatusStrip(props: {
   if (chips.length === 0) return null;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      className="mb-1.5 grow-0"
-      contentContainerClassName="gap-1.5"
-    >
-      {chips.map((chip) => {
-        const dotClass = TONE_DOT_CLASS[chip.tone];
-        return (
-          <Pressable
-            key={chip.id}
-            accessibilityRole="button"
-            accessibilityLabel={chip.accessibilityLabel}
-            accessibilityHint={chip.tooltip ?? chip.help}
-            className="h-7 flex-row items-center gap-1.5 rounded-full border border-border-subtle bg-card-alt px-2.5 active:opacity-60"
-            onPress={() =>
-              Alert.alert(
-                chip.text,
-                chip.tooltip === null ? chip.help : `${chip.tooltip}\n\n${chip.help}`,
-              )
-            }
-          >
-            {chip.leadsSource ? <ProviderIcon provider={chip.driver} size={12} /> : null}
-            {dotClass === null ? null : (
-              <View className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)} />
-            )}
-            <Text numberOfLines={1} className="text-xs text-foreground-secondary">
-              {chip.text}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
+    <View pointerEvents="box-none" className="absolute inset-x-0" style={{ top: props.top }}>
+      <View
+        pointerEvents="box-none"
+        className="w-full self-center"
+        style={{ maxWidth: props.contentMaxWidth }}
+      >
+        {/* Sized to its chips, so the feed under the empty rest of the row
+            still takes touches. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          className="max-w-full grow-0 self-start"
+          contentContainerClassName="px-2.5"
+        >
+          {chips.map((chip) => {
+            const dotClass = TONE_DOT_CLASS[chip.tone];
+            // The compact pill sits inside a full-size touch target (44pt
+            // iOS, 48dp Android); neighbours abut without overlapping.
+            return (
+              <Pressable
+                key={chip.id}
+                accessibilityRole="button"
+                accessibilityLabel={chip.accessibilityLabel}
+                accessibilityHint={chip.tooltip ?? chip.help}
+                className="min-h-[44px] min-w-[44px] items-center justify-center px-[3px] active:opacity-60 android:min-h-[48px] android:min-w-[48px]"
+                onPress={() =>
+                  Alert.alert(
+                    chip.text,
+                    chip.tooltip === null ? chip.help : `${chip.tooltip}\n\n${chip.help}`,
+                  )
+                }
+              >
+                <View className="min-h-7 flex-row items-center gap-1.5 rounded-full border border-border-subtle bg-card-alt px-2.5">
+                  {chip.leadsSource ? <ProviderIcon provider={chip.driver} size={12} /> : null}
+                  {dotClass === null ? null : (
+                    <View className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)} />
+                  )}
+                  <Text numberOfLines={1} className="text-xs text-foreground-secondary">
+                    {chip.text}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </View>
   );
 }

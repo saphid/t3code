@@ -99,7 +99,6 @@ import {
 } from "./composerSendPresentation";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
-import { ThreadContributionStatusStrip } from "./ThreadContributionStatusStrip";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
@@ -803,10 +802,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
         ) : null}
-        <ThreadContributionStatusStrip
-          environmentId={props.environmentId}
-          threadId={props.selectedThread.id}
-        />
 
         <ComposerSurface
           style={
