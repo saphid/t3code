@@ -1,10 +1,13 @@
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ContextHandoff,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
+import {
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  PLUGIN_ENRICH_LIMITS,
 } from "@t3tools/contracts";
 import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+
+import { isPluginContextItem } from "./RunContextEnrichment.ts";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
@@ -96,6 +99,14 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
     case "dynamic_tool": {
+      // Plugin context is the record users inspect, and its transform limits
+      // already bound it, so it travels whole.
+      if (
+        isPluginContextItem(item) &&
+        Buffer.byteLength(JSON.stringify(item.output ?? null), "utf8") <=
+          PLUGIN_ENRICH_LIMITS.maxResultBytes
+      )
+        return item;
       const { output: rawOutput, ...projected } = item;
       const output = compactDynamicToolOutput(rawOutput);
       return {
