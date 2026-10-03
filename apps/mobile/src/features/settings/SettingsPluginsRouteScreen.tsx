@@ -11,6 +11,8 @@ import {
   canManagePlugins,
   createPluginActionGate,
   describePluginSource,
+  explainedPluginAccess,
+  PLUGIN_ACCESS_CHECKING,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
   pluginAccessStatus,
@@ -25,6 +27,7 @@ import {
   resolvePluginManageAccess,
   startPluginAddHandoff,
   type PluginActionSubject,
+  type PluginManageAccess,
   type PluginStateTone,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import {
@@ -135,20 +138,38 @@ function usePluginManagement(
 ) {
   const catalog = usePluginCatalog(environmentId, environment);
   const { access, retry: retryAccess } = usePluginManageAccess(environmentId);
+  // Through a re-check, explain the last settled access so no notice comes and goes.
+  const [settledAccess, setSettledAccess] = useState<PluginManageAccess | null>(null);
+  if (access !== "pending" && access !== settledAccess) setSettledAccess(access);
+  const explainedAccess = explainedPluginAccess(access, settledAccess);
   return {
     catalog,
-    access,
-    retryAccess,
+    retryAccess: explainedAccess === "unreadable" ? retryAccess : null,
     canManage: canManagePlugins(access, catalog.state),
-    notice: pluginManagementNotice(access, catalog.state, environment?.label ?? "this environment"),
+    notice: pluginManagementNotice(
+      explainedAccess,
+      catalog.state,
+      environment?.label ?? "this environment",
+    ),
     status: pluginAccessStatus(access, catalog.state),
   };
 }
 
-/** Shown in a section header, whose height is fixed, so the brief access check moves nothing. */
+/**
+ * A section-header status sized by an invisible copy of its text, so showing or
+ * clearing the brief access check changes neither the header nor how its title wraps.
+ */
 function AccessStatus({ status }: { readonly status: string | null }) {
-  if (status === null) return null;
-  return <Text className="px-2 text-sm text-foreground-muted">{status}</Text>;
+  return (
+    <View className="px-2">
+      <Text aria-hidden numberOfLines={1} className="text-sm opacity-0">
+        {PLUGIN_ACCESS_CHECKING}
+      </Text>
+      <Text numberOfLines={1} className="absolute inset-x-2 top-0 text-sm text-foreground-muted">
+        {status}
+      </Text>
+    </View>
+  );
 }
 
 /** Why controls are off for a lasting reason, with a retry when another read could turn them on. */
@@ -212,7 +233,7 @@ export function SettingsPluginsRouteScreen() {
 function EnvironmentPlugins({ environment }: { readonly environment: SettingsTarget }) {
   const navigation = useNavigation<NativeStackNavigationProp<PluginRoutes>>();
   const environmentId = environment.environmentId;
-  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
+  const { catalog, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -273,12 +294,7 @@ function EnvironmentPlugins({ environment }: { readonly environment: SettingsTar
           </>
         )}
       </SettingsSection>
-      {installations !== null ? (
-        <ManagementNotice
-          notice={status === null ? notice : null}
-          onRetry={access === "unreadable" ? retryAccess : null}
-        />
-      ) : null}
+      {installations !== null ? <ManagementNotice notice={notice} onRetry={retryAccess} /> : null}
     </View>
   );
 }
@@ -375,7 +391,7 @@ function PluginDetail({
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
+  const { catalog, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -614,10 +630,7 @@ function PluginDetail({
           />
         </SettingsSection>
 
-        <ManagementNotice
-          notice={status === null ? notice : null}
-          onRetry={access === "unreadable" ? retryAccess : null}
-        />
+        <ManagementNotice notice={notice} onRetry={retryAccess} />
         {error ? (
           <Text selectable className="px-2 text-sm text-danger-foreground">
             {error}
@@ -637,7 +650,7 @@ export function SettingsPluginAddRouteScreen({
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
+  const { catalog, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -709,10 +722,7 @@ export function SettingsPluginAddRouteScreen({
             </Text>
           ) : null}
         </View>
-        <ManagementNotice
-          notice={status === null ? notice : null}
-          onRetry={access === "unreadable" ? retryAccess : null}
-        />
+        <ManagementNotice notice={notice} onRetry={retryAccess} />
       </ScrollView>
     </SettingsScreen>
   );
