@@ -449,6 +449,117 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
     );
   });
 
+  describe("interrupted management", () => {
+    /** An approved, enabled installation in a catalogue that can be restarted on the same database. */
+    const enabledInStub = Effect.fn("enabledInStub")(function* () {
+      const stub = yield* makeStubSupervisor;
+      const before = yield* Scope.make();
+      const catalog = yield* startStubCatalog(before, stub.service);
+      const plugin = yield* preparePlugin("test.interrupted");
+      const { installation } = yield* catalog.add({ directory: plugin.directory });
+      const installationId = installation.installationId;
+      yield* catalog.consent({ installationId, digest: installation.source!.digest });
+      yield* catalog.enable({ installationId });
+      return { stub, before, catalog, installationId };
+    });
+
+    /** Starts the catalogue again and waits until its startup re-registration has run. */
+    const restart = Effect.fn("restart")(function* () {
+      const stub = yield* makeStubSupervisor;
+      const catalog = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+      // Management steps queue behind startup, so this returns after it.
+      const { installations } = yield* catalog.refresh({});
+      return { stub, installations };
+    });
+
+    const storedRows = Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ readonly record_json: string }>`
+        SELECT record_json FROM plugin_installations
+      `;
+      return rows.map((row) => JSON.parse(row.record_json) as { readonly enabled: boolean });
+    });
+
+    it.effect("keeps a disable whose caller left while the process stopped", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { stub, before, catalog, installationId } = yield* enabledInStub();
+          const stopping = yield* makeHold;
+          stub.holds.disable = stopping;
+          const disabling = yield* catalog
+            .disable({ installationId })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(stopping.reached);
+          yield* Fiber.interrupt(disabling);
+
+          const [row] = (yield* catalog.list).installations;
+          expect(row).toMatchObject({ enabled: false });
+          expect(row!.hostState).toBeUndefined();
+          expect(yield* storedRows).toMatchObject([{ enabled: false }]);
+          expect(stub.registrations.size).toBe(0);
+          yield* Deferred.succeed(stopping.release, undefined);
+          yield* Scope.close(before, Exit.void);
+
+          const after = yield* restart();
+          expect(after.installations).toMatchObject([{ installationId, enabled: false }]);
+          expect(after.stub.registrations.size).toBe(0);
+        }),
+      ),
+    );
+
+    it.effect("keeps a remove whose caller left while the process stopped", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { stub, before, catalog, installationId } = yield* enabledInStub();
+          const stopping = yield* makeHold;
+          stub.holds.disable = stopping;
+          const removing = yield* catalog
+            .remove({ installationId })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(stopping.reached);
+          yield* Fiber.interrupt(removing);
+
+          expect((yield* catalog.list).installations).toEqual([]);
+          expect(yield* storedRows).toEqual([]);
+          expect(stub.registrations.size).toBe(0);
+          yield* Deferred.succeed(stopping.release, undefined);
+          yield* Scope.close(before, Exit.void);
+
+          const after = yield* restart();
+          expect(after.installations).toEqual([]);
+          expect(after.stub.registrations.size).toBe(0);
+        }),
+      ),
+    );
+
+    it.effect("finishes an enable whose caller left during registration", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { stub, before, catalog, installationId } = yield* enabledInStub();
+          yield* catalog.disable({ installationId });
+          const registering = yield* makeHold;
+          stub.holds.enable = registering;
+          const enabling = yield* catalog
+            .enable({ installationId })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(registering.reached);
+          const interrupting = yield* Fiber.interrupt(enabling).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(registering.release, undefined);
+          yield* Fiber.join(interrupting);
+
+          // Registered, saved, and shown together: never one without the others.
+          const [row] = (yield* catalog.list).installations;
+          expect(row).toMatchObject({ enabled: true, generation: 2 });
+          expect(yield* storedRows).toMatchObject([{ enabled: true }]);
+          expect(stub.registrations.size).toBe(1);
+          yield* Scope.close(before, Exit.void);
+        }),
+      ),
+    );
+  });
+
   describe("server restart", () => {
     it.effect("re-enables approved plugins without starting them and drops changed ones", () =>
       withDatabase(

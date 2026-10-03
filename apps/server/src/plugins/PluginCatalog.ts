@@ -167,6 +167,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
+  const scope = yield* Effect.scope;
 
   const installations = new Map<PluginInstallationId, Installation>();
   // Management is rare and each step may wait for a process to exit; one at a time keeps the
@@ -192,6 +193,17 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       Effect.catch(storageError),
     );
 
+  /** Saves `record` and then shows it, or neither. */
+  const commit = (installation: Installation, record: PluginInstallationRecord) =>
+    save(record).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          installation.record = record;
+        }),
+      ),
+      Effect.uninterruptible,
+    );
+
   const inspect = (directory: string): Effect.Effect<Inspection> =>
     loadPluginDirectory(directory).pipe(
       Effect.flatMap((registration) =>
@@ -207,12 +219,35 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const isReady = (record: PluginInstallationRecord) =>
     pluginInstallationStatus({ ...record, enabled: true }) === "enabled";
 
-  /** Stops the plugin's process and forgets its registration. */
+  /**
+   * Revokes the installation's registration and returns the fiber that waits
+   * for its process to exit, if it had one. The supervisor revokes as soon as
+   * `disable` starts, so this starts it at once; only the wait may be cut short.
+   */
   const unregister = Effect.fnUntraced(function* (installation: Installation) {
     const registered = installation.registered;
+    if (registered === undefined) return undefined;
     installation.registered = undefined;
-    if (registered !== undefined) yield* supervisor.disable(registered.pluginId);
+    return yield* supervisor
+      .disable(registered.pluginId)
+      .pipe(Effect.forkIn(scope, { startImmediately: true }));
   });
+
+  /**
+   * Saves `record` (normally with `enabled: false`), revokes the registration,
+   * and waits for the process to exit. The row is written first and
+   * everything but the wait finishes even if the caller goes away, so a
+   * disable that was cut short never comes back enabled at the next start. A
+   * failed save changes nothing.
+   */
+  const revoke = (installation: Installation, record: PluginInstallationRecord) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        if (record !== installation.record) yield* commit(installation, record);
+        const stopping = yield* unregister(installation);
+        if (stopping) yield* restore(Fiber.join(stopping));
+      }),
+    );
 
   /**
    * Inspects the directory again and records the result. An enabled
@@ -222,7 +257,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const reinspect = Effect.fnUntraced(function* (installation: Installation) {
     const inspection = yield* inspect(installation.record.directory);
     const inspectedAt = yield* now;
-    let record: PluginInstallationRecord =
+    const record: PluginInstallationRecord =
       inspection._tag === "ok"
         ? {
             ...installation.record,
@@ -237,15 +272,18 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         installationId: record.installationId,
         directory: record.directory,
       });
-      yield* unregister(installation);
-      record = { ...record, enabled: false };
+      yield* revoke(installation, { ...record, enabled: false });
+    } else {
+      yield* commit(installation, record);
     }
-    installation.record = record;
-    yield* save(record);
     return inspection;
   });
 
-  /** Registers a ready installation with the supervisor under a new generation. */
+  /**
+   * Registers a ready installation with the supervisor under a new generation
+   * and saves it as enabled. Both happen or neither, even if the caller is
+   * interrupted.
+   */
   const register = Effect.fnUntraced(function* (
     installation: Installation,
     registration: PluginRegistration,
@@ -280,7 +318,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     // Together, so an invoke never sees the new registration with the old generation.
     installation.record = record;
     installation.registered = { pluginId, generation: record.generation };
-  });
+  }, Effect.uninterruptible);
 
   const find = (installationId: PluginInstallationId) =>
     Effect.suspend(() => {
@@ -354,9 +392,11 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       enabled: false,
       addedAt: at,
     };
-    yield* save(record);
     const installation: Installation = { record, registered: undefined };
-    installations.set(installationId, installation);
+    yield* save(record).pipe(
+      Effect.andThen(Effect.sync(() => installations.set(installationId, installation))),
+      Effect.uninterruptible,
+    );
     return yield* result(installation);
   });
 
@@ -380,16 +420,14 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         "The plugin's files changed after they were reviewed. Review the current version.",
         input.installationId,
       );
-    const record = {
+    yield* commit(installation, {
       ...installation.record,
       consent: {
         digest: inspection.source.digest,
         capabilities: inspection.registration.manifest.capabilities,
         grantedAt: yield* now,
       },
-    };
-    yield* save(record);
-    installation.record = record;
+    });
     return yield* result(installation);
   });
 
@@ -411,13 +449,13 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     return yield* result(installation);
   });
 
-  const disableInstallation = Effect.fnUntraced(function* (installation: Installation) {
-    yield* unregister(installation);
-    if (!installation.record.enabled) return;
-    const record = { ...installation.record, enabled: false };
-    installation.record = record;
-    yield* save(record);
-  });
+  const disableInstallation = (installation: Installation) =>
+    revoke(
+      installation,
+      installation.record.enabled
+        ? { ...installation.record, enabled: false }
+        : installation.record,
+    );
 
   const disable = Effect.fn("PluginCatalog.disable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -427,11 +465,17 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const remove = Effect.fn("PluginCatalog.remove")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
-    yield* unregister(installation);
-    yield* sql`DELETE FROM plugin_installations WHERE installation_id = ${input.installationId}`.pipe(
-      Effect.catch(storageError),
+    // Forgotten durably first, like disable, so an interrupted remove does not come back.
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM plugin_installations WHERE installation_id = ${input.installationId}`.pipe(
+          Effect.catch(storageError),
+        );
+        installations.delete(input.installationId);
+        const stopping = yield* unregister(installation);
+        if (stopping) yield* restore(Fiber.join(stopping));
+      }),
     );
-    installations.delete(input.installationId);
     return { installationId: input.installationId };
   });
 
