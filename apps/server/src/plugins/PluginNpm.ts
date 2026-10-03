@@ -27,7 +27,8 @@
  * works, the journal and `.previous` stay, and it is retried before every npm
  * step, after every catalogue change, and at startup.
  *
- * Removing the installation from the catalogue deletes its `<key>` directory.
+ * Removing the installation from the catalogue deletes its `<key>` directory,
+ * retried the same way if the deletion fails.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -534,6 +535,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       }),
     );
 
+  /** Homes of removed installations whose files could not be deleted yet. */
+  const orphans = new Set<string>();
+
   /** Forgets every installation the catalogue no longer has and deletes its files. */
   const collect = Effect.gen(function* () {
     const snapshot = yield* catalog.list;
@@ -541,8 +545,18 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     for (const entry of installed.values()) {
       if (present.has(entry.installationId)) continue;
       installed.delete(entry.installationId);
-      yield* removeTree(entry.home);
+      orphans.add(entry.home);
     }
+    for (const home of orphans)
+      yield* fs.remove(home, { recursive: true, force: true }).pipe(
+        Effect.andThen(Effect.sync(() => orphans.delete(home))),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not delete a removed npm plugin's files; retrying later", {
+            home,
+            cause,
+          }),
+        ),
+      );
   });
 
   /**
@@ -658,7 +672,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         installed.set(entry.installationId, entry);
         return { installation, package: toPackage(entry) };
       }).pipe(Effect.uninterruptible);
-    }).pipe(Effect.onError(() => removeTree(home)));
+      // Nothing in the catalogue points here; deleted now, or by a later collection.
+    }).pipe(
+      Effect.onError(() => Effect.sync(() => orphans.add(home)).pipe(Effect.andThen(collect))),
+    );
   });
 
   const discardStaged = (entry: Installed) =>
@@ -813,7 +830,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       const row = byDirectory.get(directory);
       if (row === undefined) {
         // Removed from the catalogue, or interrupted before it was added.
-        yield* removeTree(home);
+        orphans.add(home);
         continue;
       }
       const record = yield* readRecord(home);

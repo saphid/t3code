@@ -502,6 +502,34 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
     );
   });
 
+  describe("remove", () => {
+    it.effect("retries deleting a removed package's files until it works", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const faults = makeFaults(yield* FileSystem.FileSystem);
+          const { catalog, npm, registry, root, plugin } = yield* setup(faults.fileSystem);
+          registry.publish("kept", "1.0.0", { tarball: plugin("kept", "1.0.0") });
+          registry.publish("gone", "1.0.0", { tarball: plugin("gone", "1.0.0") });
+          const kept = yield* npm.add({ name: "kept", version: "1.0.0" });
+          const gone = yield* npm.add({ name: "gone", version: "1.0.0" });
+          const keptHome = path.basename(path.dirname(kept.installation.directory));
+          const goneHome = path.dirname(gone.installation.directory);
+          faults.armed.fail = (method, target) => method === "remove" && target === goneHome;
+
+          yield* catalog.remove({ installationId: gone.installation.installationId });
+          yield* npm.discardUpdate({ installationId: kept.installation.installationId });
+          expect((yield* npm.list).packages.map((item) => item.source.name)).toEqual(["kept"]);
+          expect(yield* entries(root)).toEqual([keptHome, path.basename(goneHome)].sort());
+
+          faults.armed.fail = undefined;
+          yield* npm.discardUpdate({ installationId: kept.installation.installationId });
+          expect(yield* entries(root)).toEqual([keptHome]);
+        }),
+      ),
+    );
+  });
+
   describe("update", () => {
     it.effect("stages a version beside the running one and swaps it in with new consent", () =>
       withDatabase(
