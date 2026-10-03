@@ -1,6 +1,7 @@
 import {
   PLUGIN_API_VERSION,
   PLUGIN_MANIFEST_FILE,
+  PLUGIN_VIEWS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
 } from "@t3tools/contracts";
@@ -10,7 +11,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
-export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set();
+export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  PLUGIN_VIEWS_CAPABILITY,
+]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 

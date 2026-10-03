@@ -102,6 +102,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pluginsDisable]: AuthAccessWriteScope,
   [WS_METHODS.pluginsRemove]: AuthAccessWriteScope,
   [WS_METHODS.pluginsResume]: AuthAccessWriteScope,
+  // A view call runs the plugin's own `view:` handlers, like an action a client takes.
+  [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
