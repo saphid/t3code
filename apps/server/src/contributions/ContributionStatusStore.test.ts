@@ -194,24 +194,41 @@ describe("ContributionStatusStore", () => {
     ),
   );
 
-  it.effect("caps how many threads carry statuses", () =>
+  it.effect("caps threads showing a status without counting silent producers", () =>
     Effect.gen(function* () {
       const store = yield* ContributionStatusStore.make();
-      for (
-        let index = 0;
-        index <= ContributionStatusStore.CONTRIBUTION_STATUS_MAX_THREADS;
-        index += 1
-      ) {
-        const { handle } = yield* openHandle(
-          store,
-          `session-${index}`,
-          ThreadId.make(`t-${index}`),
-        );
-        yield* handle.set({ key: "mode", text: "on" });
+      const max = ContributionStatusStore.CONTRIBUTION_STATUS_MAX_THREADS;
+      // More bound producers than the cap that never set anything take no capacity.
+      for (let index = 0; index <= max; index += 1) {
+        yield* openHandle(store, `silent-${index}`, ThreadId.make(`silent-${index}`));
       }
+      const visible = [];
+      for (let index = 0; index < max; index += 1) {
+        const opened = yield* openHandle(store, `visible-${index}`, ThreadId.make(`t-${index}`));
+        yield* opened.handle.set({ key: "mode", text: "on" });
+        visible.push(opened.handle);
+      }
+      assert.strictEqual((yield* store.snapshot).threads.length, max);
+
+      const late = yield* openHandle(store, "late", ThreadId.make("late"));
+      yield* late.handle.set({ key: "mode", text: "rejected" });
+      assert.isUndefined(
+        (yield* store.snapshot).threads.find((thread) => thread.threadId === "late"),
+      );
+
+      // Clearing a thread's last item returns its capacity, and the rejected producer's next set lands.
+      yield* visible[0]!.clear("mode");
+      yield* late.handle.set({ key: "mode", text: "admitted" });
+      const snapshot = yield* store.snapshot;
+      assert.strictEqual(snapshot.threads.length, max);
+      assert.deepStrictEqual(snapshot.threads.find((thread) => thread.threadId === "late")?.items, [
+        { key: "mode", text: "admitted" },
+      ]);
+      // A thread already showing a status can still replace it at the cap.
+      yield* visible[1]!.set({ key: "mode", text: "replaced" });
       assert.strictEqual(
-        (yield* store.snapshot).threads.length,
-        ContributionStatusStore.CONTRIBUTION_STATUS_MAX_THREADS,
+        (yield* store.snapshot).threads.find((thread) => thread.threadId === "t-1")?.items[0]?.text,
+        "replaced",
       );
     }),
   );

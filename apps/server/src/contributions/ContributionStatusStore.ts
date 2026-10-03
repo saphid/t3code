@@ -24,7 +24,7 @@ import {
   subscribeBeforeSnapshot,
 } from "../utils/subscribeBeforeSnapshot.ts";
 
-/** Upper bound on threads carrying statuses, independent of how many sessions are live. */
+/** Upper bound on threads showing a status, independent of how many producers are bound. */
 export const CONTRIBUTION_STATUS_MAX_THREADS = 256;
 
 /**
@@ -146,6 +146,20 @@ export const make = Effect.fn("contributions.status.make")(function* () {
   const mutex = yield* Semaphore.make(1);
   let nextGeneration = 0;
 
+  /**
+   * Binding a thread only records ownership; capacity is taken by the first
+   * visible item and returned by the last clear, so silent producers never
+   * crowd out ones that show something, and a rejected producer's later set
+   * is admitted once capacity frees up.
+   */
+  const admitsNewItem = (slot: ThreadSlot) => {
+    if (slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE) return false;
+    if (slot.items.size > 0) return true;
+    let visibleThreads = 0;
+    for (const other of slots.values()) if (other.items.size > 0) visibleThreads += 1;
+    return visibleThreads < CONTRIBUTION_STATUS_MAX_THREADS;
+  };
+
   const currentSnapshot = (): ContributionStatusSnapshot => ({
     threads: Array.from(slots, ([threadId, slot]) => ({
       threadId,
@@ -195,10 +209,6 @@ export const make = Effect.fn("contributions.status.make")(function* () {
             threadId = nextThreadId;
             if (nextThreadId === null) return released;
             const replaced = slots.get(nextThreadId);
-            if (replaced === undefined && slots.size >= CONTRIBUTION_STATUS_MAX_THREADS) {
-              threadId = null;
-              return released;
-            }
             generation = ++nextGeneration;
             slots.set(nextThreadId, { owner: generation, source, items: new Map() });
             return released || (replaced !== undefined && replaced.items.size > 0);
@@ -215,12 +225,7 @@ export const make = Effect.fn("contributions.status.make")(function* () {
             );
             if (text.length === 0) return slot.items.delete(key);
             const previous = slot.items.get(key);
-            if (
-              previous === undefined &&
-              slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE
-            ) {
-              return false;
-            }
+            if (previous === undefined && !admitsNewItem(slot)) return false;
             const tooltip =
               input.tooltip === undefined
                 ? ""
