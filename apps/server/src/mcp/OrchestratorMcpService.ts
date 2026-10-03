@@ -590,6 +590,7 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
 function threadDetail(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
+  runlessStatus: OrchestratorMcpThreadDetail["status"] | null,
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
@@ -599,7 +600,7 @@ function threadDetail(
     title: projection.thread.title,
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
-    status: active?.status ?? latest?.status ?? "idle",
+    status: active?.status ?? latest?.status ?? runlessStatus ?? "idle",
     latestRunId: latest?.id ?? null,
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
@@ -1810,8 +1811,20 @@ const make = Effect.gen(function* () {
             yield* readTask(scope, task.id, false, true, "thread-read-acknowledge");
           }
         }
+        // A thread with no runs (a provider-native subagent) gets its status
+        // from its shell, which reports the subagent's root turn.
+        const runlessShell =
+          target.runs.length === 0
+            ? yield* threadManagement
+                .getThreadShell(target.thread.id)
+                .pipe(Effect.mapError(threadManagementFailure))
+            : null;
         return {
-          thread: threadDetail(target, timeline.totalItems),
+          thread: threadDetail(
+            target,
+            timeline.totalItems,
+            runlessShell === null ? null : (runlessShell.activityRunStatus ?? runlessShell.status),
+          ),
           recentRuns: target.runs
             .toSorted((left, right) => right.ordinal - left.ordinal)
             .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
@@ -1893,7 +1906,7 @@ const make = Effect.gen(function* () {
         return {
           threadId: input.threadId,
           runId: result.run?.id ?? null,
-          status: result.run?.status ?? "idle",
+          status: result.run?.status ?? result.runlessStatus ?? "idle",
           timedOut: result.timedOut,
         } satisfies OrchestratorMcpThreadWaitResult;
       }),

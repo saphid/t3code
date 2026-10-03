@@ -411,6 +411,7 @@ it("readThread reaches a thread the user attached as context, but not one an age
             }
             return Effect.die(`unexpected thread ${threadId}`);
           },
+          getThreadShell: () => Effect.succeed(null),
           getTimelinePage: (threadId) =>
             Effect.succeed({
               items: foreignProjection(threadId).visibleTurnItems,

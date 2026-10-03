@@ -134,6 +134,8 @@ export interface ThreadManagementWaitInput {
 export interface ThreadManagementWaitResult {
   readonly threadId: ThreadId;
   readonly run: OrchestrationV2Run | null;
+  /** Shell status of a thread with no runs, such as a provider-native subagent. */
+  readonly runlessStatus?: OrchestrationV2ThreadShell["status"];
   readonly timedOut: boolean;
 }
 
@@ -607,6 +609,37 @@ const make = Effect.gen(function* () {
       return { dispatch, projection, message, run, turnItem, delivery };
     });
 
+  // A provider-native subagent's thread has no runs; its shell reports the
+  // subagent's root turn, so wait until that is no longer active.
+  const waitForRunlessThread = (input: ThreadManagementWaitInput) =>
+    Effect.gen(function* () {
+      const readShell = orchestrator.getThreadShell(input.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadManagementProjectionLoadError({
+              projectId: input.projectId,
+              threadId: input.threadId,
+              cause,
+            }),
+        ),
+      );
+      const settled = Effect.gen(function* () {
+        while (true) {
+          const shell = yield* readShell;
+          if (shell === null || shell.activityRunStatus == null) return shell;
+          yield* Effect.sleep(Duration.millis(Math.max(1, input.pollIntervalMs ?? 250)));
+        }
+      }).pipe(Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))));
+      const waited = yield* settled;
+      const shell = Option.isSome(waited) ? waited.value : yield* readShell;
+      return {
+        threadId: input.threadId,
+        run: null,
+        ...(shell === null ? {} : { runlessStatus: shell.activityRunStatus ?? shell.status }),
+        timedOut: shell?.activityRunStatus != null,
+      } satisfies ThreadManagementWaitResult;
+    });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
     Effect.gen(function* () {
       const target = yield* getProjectThreadRecords(input, ["runs"]);
@@ -621,7 +654,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (selectedRun === undefined) {
-        return { threadId: input.threadId, run: null, timedOut: false };
+        return yield* waitForRunlessThread(input);
       }
       if (isTerminalRunStatus(selectedRun.status)) {
         return { threadId: input.threadId, run: selectedRun, timedOut: false };

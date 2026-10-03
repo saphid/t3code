@@ -109,6 +109,19 @@ describe("V2 client presentation", () => {
     });
   });
 
+  it("keeps the runtime of an active thread with no run, such as a provider-run subagent", () => {
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: null,
+      activeProviderThreadId: null,
+      status: "running",
+      activityRunStatus: "running",
+    });
+
+    expect(shell.latestRun).toBeNull();
+    expect(shell.runtime).toMatchObject({ status: "running", activeRunId: null });
+  });
+
   it("preserves shell run timestamps for sidebar activity clocks", () => {
     const runId = RunId.make("run-working-clock");
     const requestedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");

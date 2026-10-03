@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -343,6 +344,50 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     expect(error).toMatchObject({ threadId, cause: importError });
   }).pipe(Effect.provide(testLayer));
 });
+
+it.effect("waitForThread waits on the shell of a thread with no runs", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-runless");
+    const threadId = ThreadId.make("thread:thread-management:wait-runless");
+    const firstShellRead = yield* Deferred.make<void>();
+    let shellReads = 0;
+    const testLayer = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          // A provider-native subagent: running, then finished.
+          getThreadShell: () =>
+            Effect.gen(function* () {
+              shellReads += 1;
+              if (shellReads === 1) {
+                yield* Deferred.succeed(firstShellRead, undefined);
+                return {
+                  status: "running",
+                  activityRunStatus: "running",
+                } as OrchestrationV2ThreadShell;
+              }
+              return { status: "completed", activityRunStatus: null } as OrchestrationV2ThreadShell;
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(testLayer),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, timeoutMs: 60_000, pollIntervalMs: 10 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(firstShellRead);
+    yield* TestClock.adjust(Duration.millis(10));
+    const result = yield* Fiber.join(fiber);
+
+    expect(result).toEqual({ threadId, run: null, runlessStatus: "completed", timedOut: false });
+  }),
+);
 
 for (const scenario of [
   { finalStatus: "completed" as const, timedOut: false },

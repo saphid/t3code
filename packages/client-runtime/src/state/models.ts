@@ -166,7 +166,15 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // latestRun keeps the latest run's status for history presentation.
 // A failed latest run outranks the roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
+  // A provider-native subagent has no run or provider thread; its shell
+  // activity comes from its root turn.
+  if (
+    thread.latestRunId === null &&
+    thread.activeProviderThreadId === null &&
+    thread.activityRunStatus == null
+  ) {
+    return null;
+  }
   const parkAtIdle = (thread.pendingBackgroundTasks?.length ?? 0) > 0 && thread.status !== "failed";
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
