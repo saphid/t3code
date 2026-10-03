@@ -1,0 +1,18 @@
+{
+  "id": "test.view-host",
+  "name": "View host probe",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "capabilities": ["views"],
+  "proposedApi": true,
+  "views": [
+    {
+      "id": "probe",
+      "title": "Host probe",
+      "placement": "side-panel",
+      "script": "views/probe.js",
+      "style": "views/probe.css"
+    }
+  ]
+}
