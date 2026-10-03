@@ -1088,6 +1088,7 @@ export default function FilesSidePanel({
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
+        isScopeCurrent,
         filePath: absolutePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
@@ -1106,7 +1107,15 @@ export default function FilesSidePanel({
         }),
       );
     })();
-  }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
+  }, [
+    absolutePath,
+    createAssetUrl,
+    cwd,
+    environmentHttpBaseUrl,
+    isScopeCurrent,
+    openPreview,
+    threadRef,
+  ]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
