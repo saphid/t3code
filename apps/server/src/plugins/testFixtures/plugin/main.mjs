@@ -4,10 +4,19 @@ import * as NodePath from "node:path";
 
 const IPC_FD = 3;
 
+let holdDeactivate = false;
+let log;
+
 export function activate(context) {
   NodeFS.writeFileSync(NodePath.join(process.cwd(), "activated.marker"), String(process.pid));
+  log = context.log;
   const handle = context.proposed.handle;
   handle("ping", (input) => ({ pid: process.pid, input }));
+  // The next deactivation never finishes, so only a kill stops this process.
+  handle("holdDeactivate", () => {
+    holdDeactivate = true;
+    return null;
+  });
   handle("throws", () => {
     throw new Error("nope");
   });
@@ -52,4 +61,10 @@ export function activate(context) {
     }
     return new Promise(() => {});
   });
+}
+
+export function deactivate() {
+  if (!holdDeactivate) return;
+  log.info("deactivate-held");
+  return new Promise(() => {});
 }

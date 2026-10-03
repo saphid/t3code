@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 
 import { loadPluginDirectory } from "./PluginManifestLoader.ts";
@@ -46,8 +47,9 @@ const preparePlugin = Effect.fn("preparePlugin")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-" });
-  for (const file of ["main.mjs", "spinActivate.mjs", "failActivate.mjs"])
-    yield* fs.copyFile(path.join(FIXTURE_DIR, file), path.join(directory, file));
+  for (const file of yield* fs.readDirectory(FIXTURE_DIR))
+    if (file.endsWith(".mjs"))
+      yield* fs.copyFile(path.join(FIXTURE_DIR, file), path.join(directory, file));
   yield* fs.writeFileString(
     path.join(directory, "t3-plugin.json"),
     toJson({
@@ -271,6 +273,71 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(Option.getOrUndefined(Exit.findErrorOption(exit))?._tag).toBe("PluginStoppedError");
         expect(isProcessAlive(pid)).toBe(false);
+      }),
+    );
+  });
+
+  describe("disable", () => {
+    it.effect("keeps stopping a plugin after the disabling caller is interrupted", () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const supervisor = yield* makeSupervisor().pipe(Scope.provide(scope));
+        const subscription = yield* supervisor.subscribe;
+        const { registration } = yield* preparePlugin("test.interrupted");
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const pid = pidOf(yield* supervisor.invoke(pluginId, "ping", null));
+        yield* supervisor.invoke(pluginId, "holdDeactivate", null);
+
+        const disabling = yield* supervisor
+          .disable(pluginId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* awaitLog(subscription, pluginId, "deactivate-held");
+        yield* Fiber.interrupt(disabling);
+        expect(yield* supervisor.state(pluginId)).toEqual(Option.none());
+        expect(isProcessAlive(pid)).toBe(true);
+
+        // Shutdown still owns the stopping process and kills it after the grace.
+        const closing = yield* Scope.close(scope, Exit.void).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(closing);
+        expect(isProcessAlive(pid)).toBe(false);
+      }),
+    );
+
+    it.effect("fails a call waiting for activation once disable begins", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        const subscription = yield* supervisor.subscribe;
+        const { registration } = yield* preparePlugin("test.racing", {
+          entry: "deferredActivate.mjs",
+        });
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+
+        const waiting = yield* supervisor
+          .invoke(pluginId, "ping", null)
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* awaitLog(subscription, pluginId, "activating");
+        // Deactivation lets activation finish, and the process keeps serving.
+        const disabling = yield* supervisor
+          .disable(pluginId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect((yield* Fiber.join(waiting))._tag).toBe("PluginStoppedError");
+
+        // A re-enabled plugin with the same id waits for the old process to go.
+        const replacement = (yield* preparePlugin("test.racing")).registration;
+        yield* supervisor.enable(replacement);
+        const early = yield* supervisor.invoke(pluginId, "ping", null).pipe(Effect.flip);
+        expect(early.message).toContain("its previous process is still stopping");
+
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(disabling);
+        expect(yield* supervisor.invoke(pluginId, "ping", "fresh")).toMatchObject({
+          input: "fresh",
+        });
       }),
     );
   });

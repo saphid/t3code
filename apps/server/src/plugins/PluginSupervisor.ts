@@ -13,8 +13,11 @@
  * has `cancelGrace` to answer. A child that cannot answer (a synchronous loop
  * never reads the cancel) is killed. Unexpected exits back the plugin off
  * with doubling delays; more than `maxRestarts` consecutive failures park it
- * in `quarantined` until `resume`. Disabling a plugin fails its in-flight
- * calls at once, so no result produced after that point reaches a caller.
+ * in `quarantined` until `resume`. Disabling a plugin revokes its
+ * registration at once: in-flight calls and calls still waiting for
+ * activation fail, nothing new is sent, and no result produced after that
+ * point reaches a caller. The supervisor owns a stopping process until it has
+ * exited, even if the caller that disabled it goes away.
  *
  * Plugins are trusted OS-user code. The process boundary protects the
  * server's availability, not its data.
@@ -32,6 +35,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -206,6 +210,7 @@ type ChildEvent =
   | { readonly _tag: "Drained" };
 
 interface Child {
+  readonly pluginId: PluginId;
   readonly process: NodeChildProcess.ChildProcess;
   readonly channel: NodeStream.Duplex;
   readonly startedAt: number;
@@ -226,6 +231,8 @@ interface Entry {
   readonly registration: PluginRegistration;
   readonly pluginId: PluginId;
   state: PluginHostState;
+  /** Set by disable; a removed entry never starts, admits, or reports again. */
+  removed: boolean;
   failures: number;
   child: Child | undefined;
   starting: Deferred.Deferred<Child, PluginInvokeError> | undefined;
@@ -322,12 +329,15 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
   if (invocation.entrypoint === undefined) childEnvironment.NODE_OPTIONS = heapFlag;
 
   const entries = new Map<PluginId, Entry>();
+  /** Every child process not yet exited, including ones whose plugin was disabled. */
+  const children = new Set<Child>();
   const events = yield* PubSub.sliding<PluginSupervisorEvent>(1024);
   // Child readers and timers live here and end after every child has stopped.
   const fibers = yield* Scope.make();
 
   const setState = (entry: Entry, state: PluginHostState) =>
     Effect.suspend(() => {
+      if (entry.removed) return Effect.void;
       entry.state = state;
       return PubSub.publish(events, { _tag: "StateChanged", pluginId: entry.pluginId, state });
     });
@@ -378,9 +388,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     yield* Effect.sleep(Duration.millis(delay)).pipe(
       Effect.andThen(
         Effect.suspend(() =>
-          entries.get(entry.pluginId) === entry && entry.state === backoff
-            ? setState(entry, { _tag: "idle" })
-            : Effect.void,
+          entry.state === backoff ? setState(entry, { _tag: "idle" }) : Effect.void,
         ),
       ),
       Effect.forkIn(fibers, { startImmediately: true }),
@@ -448,7 +456,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       : new PluginCrashedError({ pluginId: entry.pluginId, reason });
     // Settle the state first so a caller woken below already sees it.
     if (entry.child === child) entry.child = undefined;
-    if (entries.get(entry.pluginId) === entry) {
+    if (!entry.removed) {
       if (child.stopping) yield* setState(entry, { _tag: "idle" });
       else yield* recordFailure(entry, child.startedAt, reason);
     }
@@ -473,6 +481,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     });
     const channel = childProcess.stdio[PLUGIN_IPC_FD] as NodeStream.Duplex;
     const child: Child = {
+      pluginId: entry.pluginId,
       process: childProcess,
       channel,
       startedAt,
@@ -510,8 +519,10 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     channel.once("close", onStreamClosed);
     if (childProcess.stderr) childProcess.stderr.once("close", onStreamClosed);
     else onStreamClosed();
+    children.add(child);
     const onExit = (code: number | null, signal: string | null) => {
-      if (!Deferred.doneUnsafe(child.exited, Exit.void)) return;
+      if (!children.delete(child)) return;
+      Deferred.doneUnsafe(child.exited, Exit.void);
       Queue.offerUnsafe(queue, { _tag: "Exited", code, signal });
     };
     childProcess.on("exit", onExit);
@@ -542,14 +553,27 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     return child;
   });
 
+  /** Marks a disabled plugin's child as stopping and fails everyone waiting on it. */
+  const revokeChild = (entry: Entry, child: Child) => {
+    child.stopping = true;
+    const stopped = new PluginStoppedError({ pluginId: entry.pluginId });
+    Deferred.doneUnsafe(child.ready, Exit.fail(stopped));
+    for (const call of child.pending.values())
+      Deferred.doneUnsafe(call.deferred, Exit.fail(stopped));
+    child.pending.clear();
+  };
+
   /** Starts the plugin's process if needed and waits until it has activated. */
   const ensureChild = Effect.fnUntraced(function* (entry: Entry) {
     const claim = yield* Effect.sync(() => {
       if (entry.child && !entry.starting) return { _tag: "running" as const, child: entry.child };
       if (entry.starting) return { _tag: "wait" as const, deferred: entry.starting };
-      let running = 0;
-      for (const other of entries.values()) if (other.child || other.starting) running++;
+      // A disabled plugin's process counts until it has exited.
+      let running = children.size;
+      for (const other of entries.values()) if (other.starting && !other.child) running++;
       if (running >= options.maxRunningPlugins) return { _tag: "limit" as const };
+      for (const other of children)
+        if (other.pluginId === entry.pluginId) return { _tag: "previous" as const };
       const deferred = Deferred.makeUnsafe<Child, PluginInvokeError>();
       entry.starting = deferred;
       return { _tag: "start" as const, deferred };
@@ -561,11 +585,18 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         pluginId: entry.pluginId,
         reason: `${options.maxRunningPlugins} plugin processes are already running.`,
       });
+    if (claim._tag === "previous")
+      return yield* new PluginUnavailableError({
+        pluginId: entry.pluginId,
+        reason: "its previous process is still stopping.",
+      });
 
     const started = yield* Effect.gen(function* () {
       yield* setState(entry, { _tag: "starting" });
+      if (entry.removed) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
       const child = yield* spawnChild(entry);
       entry.child = child;
+      if (entry.removed) revokeChild(entry, child);
       const { manifest, entryPath } = entry.registration;
       write(child, {
         _tag: "Activate",
@@ -584,6 +615,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         yield* Deferred.await(child.exited);
         return yield* Deferred.await(child.ready).pipe(Effect.as(child));
       }
+      // Ready can arrive after disable began; that generation never runs.
+      if (child.stopping) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
       yield* setState(entry, { _tag: "running" });
       return child;
     }).pipe(
@@ -649,6 +682,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       const timeout = Duration.fromInputUnsafe(invokeOptions?.timeout ?? callTimeout);
 
       const call = yield* Effect.sync(() => {
+        if (entry.removed || child.stopping) return new PluginStoppedError({ pluginId });
         if (Deferred.isDoneUnsafe(child.exited))
           return new PluginUnavailableError({ pluginId, reason: "its process just stopped." });
         if (child.pending.size >= options.maxConcurrentCalls)
@@ -687,16 +721,13 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     },
   );
 
+  /** Deactivates a removed plugin's child, killing it after `stopGrace`, and waits for its exit. */
   const stopEntry = Effect.fnUntraced(function* (entry: Entry) {
-    // A child that is still activating is stopped like a running one.
+    // Only reachable between claiming a start and spawning; the start then fails fast.
     if (!entry.child && entry.starting) yield* Deferred.await(entry.starting).pipe(Effect.ignore);
     const child = entry.child;
-    if (!child) return;
-    child.stopping = true;
-    const stopped = new PluginStoppedError({ pluginId: entry.pluginId });
-    const pending = [...child.pending.values()];
-    child.pending.clear();
-    for (const call of pending) yield* Deferred.fail(call.deferred, stopped);
+    if (!child || Deferred.isDoneUnsafe(child.exited)) return;
+    revokeChild(entry, child);
     write(child, { _tag: "Deactivate" });
     const exited = yield* Deferred.await(child.exited).pipe(Effect.timeoutOption(stopGrace));
     if (Option.isNone(exited)) {
@@ -709,12 +740,29 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     const entry = entries.get(pluginId);
     if (!entry) return;
     entries.delete(pluginId);
-    yield* stopEntry(entry);
+    entry.removed = true;
+    if (entry.child) revokeChild(entry, entry.child);
+    // The stop belongs to the supervisor: interrupting this caller only stops the wait.
+    const stopping = yield* stopEntry(entry).pipe(
+      Effect.forkIn(fibers, { startImmediately: true, uninterruptible: true }),
+    );
+    yield* Fiber.join(stopping);
   });
 
+  // Closing `fibers` waits for every stop in progress; anything left is killed.
   yield* Effect.addFinalizer(() =>
     Effect.forEach([...entries.keys()], disable, { concurrency: "unbounded", discard: true }).pipe(
       Effect.andThen(Scope.close(fibers, Exit.void)),
+      Effect.andThen(
+        Effect.forEach(
+          [...children],
+          (child) => {
+            kill(child, "the server stopped.");
+            return Deferred.await(child.exited);
+          },
+          { discard: true },
+        ),
+      ),
     ),
   );
 
@@ -726,6 +774,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         registration,
         pluginId,
         state: { _tag: "idle" },
+        removed: false,
         failures: 0,
         child: undefined,
         starting: undefined,
