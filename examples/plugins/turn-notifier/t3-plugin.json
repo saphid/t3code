@@ -2,7 +2,7 @@
   "id": "example.turn-notifier",
   "name": "Turn notifier",
   "version": "1.0.0",
-  "description": "Shows a notification when a turn finishes.",
+  "description": "Shows a notification when a turn ends, or when finishing it fails.",
   "apiVersion": 1,
   "entry": "main.mjs",
   "proposedApi": true,

@@ -1,8 +1,9 @@
 # Turn notifier
 
-Shows a notification when a turn finishes in any thread of the environment, with the thread's
-title and whether the turn finished, failed, or was interrupted. The notification offers to open
-the thread.
+Shows a notification when a turn ends in any thread of the environment, with the thread's title
+and whether the turn finished, failed, or was interrupted. If the turn ended but finishing it
+failed, for example saving its checkpoint, the notification says so and names the step instead.
+The notification offers to open the thread.
 
 Capabilities: `events` (to learn when turns finish, including thread titles) and `notifications`.
 

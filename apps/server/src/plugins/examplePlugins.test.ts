@@ -100,17 +100,23 @@ const start = Effect.fn("start")(function* () {
     return installationId;
   });
 
-  /** Delivers `run.finalized` events to a plugin as the event feed would. */
+  /**
+   * Delivers turn events to a plugin as the event feed would: `run.finalized` with
+   * `outcome`, or `run.finalization-failed` with `operation`.
+   */
   const finishTurns = (
     installationId: PluginInstallationId,
-    turns: ReadonlyArray<{
-      readonly threadId: ThreadId;
-      readonly title: string;
-      readonly outcome: string;
-    }>,
+    turns: ReadonlyArray<
+      { readonly threadId: ThreadId; readonly title: string } & (
+        | { readonly outcome: string }
+        | { readonly operation: string }
+      )
+    >,
   ) => {
     const events = turns.map((turn, index) => ({
-      type: "run.finalized",
+      ...("outcome" in turn
+        ? { type: "run.finalized", outcome: turn.outcome }
+        : { type: "run.finalization-failed", operation: turn.operation }),
       deliveryId: `event-${index}`,
       sequence: index,
       occurredAt: "2026-10-04T00:00:00.000Z",
@@ -118,7 +124,6 @@ const start = Effect.fn("start")(function* () {
       threadId: turn.threadId,
       runId: `run-${index}`,
       thread: { projectId: "project-a", title: turn.title },
-      outcome: turn.outcome,
     }));
     // Checks the page is exactly what the feed sends.
     decodePage({ events });
@@ -177,6 +182,37 @@ it.layer(NodeServices.layer)("example plugins", (it) => {
                 title: "Upgrade deps failed",
                 tone: "error",
                 threadId: THREAD_B,
+              },
+            ],
+          );
+        }),
+      ),
+    );
+
+    it.effect("notifies when finishing a turn fails, naming the failed step", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { install, finishTurns, notifications } = yield* start();
+          const installationId = yield* install("turn-notifier");
+          yield* finishTurns(installationId, [
+            { threadId: THREAD_A, title: "Fix login", operation: "capture-checkpoint" },
+          ]);
+          const frame = yield* Stream.runHead(notifications.subscribe).pipe(
+            Effect.map(Option.getOrThrow),
+          );
+          assert.deepStrictEqual(
+            frame.notifications.map(({ title, body, tone, threadId }) => ({
+              title,
+              body,
+              tone,
+              threadId,
+            })),
+            [
+              {
+                title: "Fix login: finishing the turn failed",
+                body: "Saving the checkpoint failed.",
+                tone: "warning",
+                threadId: THREAD_A,
               },
             ],
           );
