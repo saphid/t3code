@@ -71,6 +71,7 @@ import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
 import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
+import * as PluginContextEnrichment from "./plugins/PluginContextEnrichment.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -414,7 +415,7 @@ const DeviceLayerLive = DeviceService.layer.pipe(
 );
 
 // Zero enabled plugins means zero plugin processes; each starts on first use.
-const PluginLayerLive = PluginTools.layer.pipe(
+const PluginLayerLive = Layer.merge(PluginTools.layer, PluginContextEnrichment.layer).pipe(
   Layer.provideMerge(PluginCatalog.layer()),
   Layer.provide(PluginSupervisor.layer()),
   // Shared with the event feed: the catalogue starts event cursors on enable.
