@@ -1,0 +1,351 @@
+{
+  "uid": "t3perf-resources",
+  "title": "T3 perf / Resources",
+  "tags": [
+    "t3perf"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "scenario",
+        "label": "scenario",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, scenario)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "command-palette-open"
+          ],
+          "value": [
+            "command-palette-open"
+          ]
+        }
+      },
+      {
+        "name": "label",
+        "label": "release",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, label)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "network",
+        "label": "network",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, network)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "good"
+          ],
+          "value": [
+            "good"
+          ]
+        }
+      },
+      {
+        "name": "size",
+        "label": "size",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, size)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "medium"
+          ],
+          "value": [
+            "medium"
+          ]
+        }
+      },
+      {
+        "name": "surface",
+        "label": "surface",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, surface)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "web"
+          ],
+          "value": [
+            "web"
+          ]
+        }
+      },
+      {
+        "name": "device_type",
+        "label": "device type",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "JS heap (median)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "pointSize": 8,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_js_heap_bytes{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Layout count (median)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "pointSize": 8,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_layout_count{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "GPU time (median)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms/s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "pointSize": 8,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_gpu_ms_per_s{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "GPU process CPU (median)",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms/s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "pointSize": 8,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (device_type, scenario, size, surface, network) (last_over_time(t3perf_gpu_process_cpu_ms_per_s{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__interval]))",
+          "legendFormat": "{{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

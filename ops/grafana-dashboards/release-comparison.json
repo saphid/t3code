@@ -1,0 +1,256 @@
+{
+  "uid": "t3perf-releases",
+  "title": "T3 perf / Release comparison",
+  "tags": [
+    "t3perf"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "scenario",
+        "label": "scenario",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, scenario)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "command-palette-open"
+          ],
+          "value": [
+            "command-palette-open"
+          ]
+        }
+      },
+      {
+        "name": "label",
+        "label": "release",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, label)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "network",
+        "label": "network",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, network)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "good"
+          ],
+          "value": [
+            "good"
+          ]
+        }
+      },
+      {
+        "name": "size",
+        "label": "size",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, size)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "medium"
+          ],
+          "value": [
+            "medium"
+          ]
+        }
+      },
+      {
+        "name": "surface",
+        "label": "surface",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms, surface)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "web"
+          ],
+          "value": [
+            "web"
+          ]
+        }
+      },
+      {
+        "name": "device_type",
+        "label": "device type",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(t3perf_wall_ms{time_basis=\"release\", device_type!=\"\"}, device_type)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "bargauge",
+      "title": "Wall time by release (median)",
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "valueMode": "color",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))",
+          "legendFormat": "{{build}} / {{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Wall time vs best release (% slower)",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "% slower than best",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range])) / on (device_type, scenario, surface, size, network) group_left () min by (device_type, scenario, surface, size, network) (max by (build, device_type, scenario, surface, size, network) (last_over_time(t3perf_wall_ms{time_basis=\"release\", device_type=~\"$device_type\", scenario=~\"$scenario\", stat=\"median\", label=~\"$label\", network=~\"$network\", size=~\"$size\", surface=~\"$surface\"}[$__range]))) - 100",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{build}} / {{device_type}} / {{scenario}} / {{surface}} / {{size}} / {{network}}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "% slower than best",
+              "build": "release"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "version": 1
+}
