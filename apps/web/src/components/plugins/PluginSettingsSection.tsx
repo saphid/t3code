@@ -11,19 +11,28 @@ import { PluginSettingsForm } from "./PluginSettingsForm";
 /**
  * One form per installed plugin that declares settings. Renders nothing on a
  * server without plugin settings or when no installed plugin declares any.
+ * Pass `readOnly` when the session cannot save (no access:write).
  */
 export function PluginSettingsSection({
   environmentId,
   capabilities,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly capabilities: Parameters<typeof supportsPluginSettings>[0];
+  readonly readOnly?: boolean;
 }) {
   if (!supportsPluginSettings(capabilities)) return null;
-  return <InstalledPluginSettings environmentId={environmentId} />;
+  return <InstalledPluginSettings environmentId={environmentId} readOnly={readOnly} />;
 }
 
-function InstalledPluginSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function InstalledPluginSettings({
+  environmentId,
+  readOnly,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly readOnly: boolean;
+}) {
   const catalog = Option.getOrNull(
     AsyncResult.value(useAtomValue(pluginEnvironment.catalog({ environmentId, input: {} }))),
   );
@@ -43,7 +52,11 @@ function InstalledPluginSettings({ environmentId }: { readonly environmentId: En
           title={installation.manifest?.name ?? "Plugin"}
         >
           <div className="p-4">
-            <PluginSettingsForm environmentId={environmentId} installation={installation} />
+            <PluginSettingsForm
+              environmentId={environmentId}
+              installation={installation}
+              readOnly={readOnly}
+            />
           </div>
         </SettingsSection>
       ))}

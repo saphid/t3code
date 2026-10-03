@@ -21,7 +21,22 @@ import {
 /** One environment's plugins, or `unsupported` for a server that has no plugin catalogue. */
 export type PluginCatalogView =
   | { readonly _tag: "unsupported" }
-  | { readonly _tag: "available"; readonly installations: ReadonlyArray<PluginInstallation> };
+  | {
+      readonly _tag: "available";
+      readonly installations: ReadonlyArray<PluginInstallation>;
+      /** Client-side delivery order across every catalogue subscription; later deliveries are greater. */
+      readonly revision: number;
+    };
+
+let deliveredRevision = 0;
+
+/** A catalogue snapshot as it is delivered, numbered after every snapshot delivered before it. */
+export const deliverPluginCatalog = (
+  installations: ReadonlyArray<PluginInstallation>,
+): PluginCatalogView => ({ _tag: "available", installations, revision: ++deliveredRevision });
+
+/** The revision of the latest delivered snapshot; anything delivered later has a greater one. */
+export const latestPluginCatalogRevision = () => deliveredRevision;
 
 const supportsPluginCatalog = (
   capabilities: Pick<ExecutionEnvironmentCapabilities, "plugins"> | null | undefined,
@@ -56,10 +71,7 @@ export const pluginCatalogStream = Stream.unwrap(
                   Effect.map((config) =>
                     supportsPluginCatalog(config.environment.capabilities)
                       ? subscribe(WS_METHODS.pluginsSubscribe, {}).pipe(
-                          Stream.map((snapshot): PluginCatalogView => ({
-                            _tag: "available",
-                            installations: snapshot.installations,
-                          })),
+                          Stream.map((snapshot) => deliverPluginCatalog(snapshot.installations)),
                         )
                       : Stream.succeed(UNSUPPORTED),
                   ),

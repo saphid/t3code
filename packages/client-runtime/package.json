@@ -203,6 +203,10 @@
       "types": "./src/state/pluginActions.ts",
       "default": "./src/state/pluginActions.ts"
     },
+    "./state/pluginPresentation": {
+      "types": "./src/state/pluginPresentation.ts",
+      "default": "./src/state/pluginPresentation.ts"
+    },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
