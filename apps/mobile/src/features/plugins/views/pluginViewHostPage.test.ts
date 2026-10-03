@@ -31,7 +31,7 @@ interface Posted {
  * and Node's MessageChannel in place of the browser's.
  */
 function loadHostPage(options: { readonly restricted: boolean }) {
-  const page = pluginViewHostPage({ document: WRAPPER, title: "Board" });
+  const page = pluginViewHostPage({ title: "Board" });
   const script = page.slice(
     page.indexOf("<script>") + "<script>".length,
     page.lastIndexOf("</script>"),
@@ -60,6 +60,7 @@ function loadHostPage(options: { readonly restricted: boolean }) {
     },
   };
   const appended: unknown[] = [];
+  let created = 0;
   const window: Record<string, unknown> = {
     __t3SubframesRestricted: options.restricted ? true : undefined,
     ReactNativeWebView: {
@@ -80,7 +81,10 @@ function loadHostPage(options: { readonly restricted: boolean }) {
     ) => listeners.delete(listener),
   };
   const document = {
-    createElement: () => frame,
+    createElement: () => {
+      created += 1;
+      return frame;
+    },
     body: { appendChild: (node: unknown) => appended.push(node) },
   };
   new Function("window", "document", "MessageChannel", script)(
@@ -88,13 +92,15 @@ function loadHostPage(options: { readonly restricted: boolean }) {
     document,
     NodeWorkerThreads.MessageChannel,
   );
-  const host = window.__t3PluginViewHost as { post: (text: string) => void; close: () => void };
   return {
     frame,
     view,
     appended,
     sent,
-    host,
+    window,
+    created: () => created,
+    /** Runs one of native's injected scripts in the page. */
+    inject: (command: string) => new Function("window", command)(window),
     dispatch: (source: unknown, data: unknown) => {
       for (const listener of listeners) listener({ source, data });
     },
@@ -109,28 +115,54 @@ function loadHostPage(options: { readonly restricted: boolean }) {
 }
 
 const connect = (page: ReturnType<typeof loadHostPage>) => {
+  page.inject(pluginViewHostPageCommand.mount(WRAPPER));
   page.dispatch(page.view, { type: PLUGIN_VIEW_READY_MESSAGE });
   const port = page.view.posted[0]?.transfer[0];
   if (port === undefined) throw new Error("The view got no port.");
   return port;
 };
 
+const HOST: PluginViewHostPageMessage = { type: "host", restricted: true };
+
 describe("pluginViewHostPage", () => {
-  it("creates the sandboxed wrapper through the DOM with the builder's document intact", () => {
+  it("reports the native marker first, then creates the sandboxed wrapper with native's document intact", () => {
     const page = loadHostPage({ restricted: true });
+    expect(page.sent).toEqual([HOST]);
+    expect(page.created()).toBe(0);
+    expect(page.appended).toEqual([]);
+
+    page.inject(pluginViewHostPageCommand.mount(WRAPPER));
     expect(Object.fromEntries(page.frame.attributes)).toEqual({ ...PLUGIN_VIEW_FRAME_ATTRIBUTES });
     expect(page.frame.srcdoc).toBe(WRAPPER);
     expect(page.frame.title).toBe("Board");
     expect(page.appended).toEqual([page.frame]);
+    // The view's document loads once.
+    page.inject(pluginViewHostPageCommand.mount("<p>another</p>"));
+    expect(page.created()).toBe(1);
+    expect(page.frame.srcdoc).toBe(WRAPPER);
   });
 
-  it("hands only the view's window one port, once, and tells native whether subframes are restricted", () => {
+  it("without the native marker, creates no frame, waits for no view and takes no document", () => {
+    const page = loadHostPage({ restricted: false });
+    expect(page.sent).toEqual([{ type: "host", restricted: false }]);
+    expect(page.window.__t3PluginViewHost).toBeUndefined();
+    expect(() => page.inject(pluginViewHostPageCommand.mount(WRAPPER))).toThrow(TypeError);
+    page.dispatch(page.view, { type: PLUGIN_VIEW_READY_MESSAGE });
+    expect(page.created()).toBe(0);
+    expect(page.appended).toEqual([]);
+    expect(page.listening()).toBe(false);
+    expect(page.view.posted).toEqual([]);
+    expect(page.sent).toHaveLength(1);
+  });
+
+  it("hands only the view's window one port, once", () => {
     const page = loadHostPage({ restricted: true });
+    page.inject(pluginViewHostPageCommand.mount(WRAPPER));
     page.dispatch({}, { type: PLUGIN_VIEW_READY_MESSAGE });
     page.dispatch(page.view, { type: "something-else" });
     page.dispatch(page.view, PLUGIN_VIEW_READY_MESSAGE);
     expect(page.view.posted).toEqual([]);
-    expect(page.sent).toEqual([]);
+    expect(page.sent).toEqual([HOST]);
 
     const port = connect(page);
     expect(page.view.posted).toHaveLength(1);
@@ -139,18 +171,12 @@ describe("pluginViewHostPage", () => {
       target: "*",
     });
     expect(page.view.posted[0]?.transfer).toHaveLength(1);
-    expect(page.sent).toEqual([{ type: "connected", restricted: true }]);
+    expect(page.sent).toEqual([HOST, { type: "connected" }]);
     // Connected: the page reads no window message any more.
     expect(page.listening()).toBe(false);
     page.dispatch(page.view, { type: PLUGIN_VIEW_READY_MESSAGE });
     expect(page.view.posted).toHaveLength(1);
     port.close();
-  });
-
-  it("reports a WebView without the subframe patch as unrestricted", () => {
-    const page = loadHostPage({ restricted: false });
-    connect(page).close();
-    expect(page.sent).toEqual([{ type: "connected", restricted: false }]);
   });
 
   it("relays every port message with the facts the bridge judges it by", async () => {
@@ -161,8 +187,8 @@ describe("pluginViewHostPage", () => {
     port.postMessage("x".repeat(PLUGIN_VIEW_MESSAGE_MAX_BYTES * 3));
     port.postMessage({ not: "text" });
     port.postMessage("with a port", [extra.port1]);
-    await page.sentCount(5);
-    expect(page.sent.slice(1)).toEqual([
+    await page.sentCount(6);
+    expect(page.sent.slice(2)).toEqual([
       { type: "message", text: '{"_tag":"pong","n":1}', ports: 0 },
       // Too large either way; native never carries more than one byte past the bound.
       { type: "message", text: "x".repeat(PLUGIN_VIEW_MESSAGE_MAX_BYTES + 1), ports: 0 },
@@ -177,26 +203,27 @@ describe("pluginViewHostPage", () => {
     const page = loadHostPage({ restricted: true });
     const port = connect(page);
     const received = new Promise<unknown>((resolve) => port.once("message", resolve));
-    new Function("window", pluginViewHostPageCommand.post('{"_tag":"ping","n":1}'))({
-      __t3PluginViewHost: page.host,
-    });
+    page.inject(pluginViewHostPageCommand.post('{"_tag":"ping","n":1}'));
     // Node's port emits the message value itself.
     expect(await received).toBe('{"_tag":"ping","n":1}');
 
     const closed = new Promise<void>((resolve) => port.once("close", () => resolve()));
-    new Function("window", pluginViewHostPageCommand.close)({ __t3PluginViewHost: page.host });
+    page.inject(pluginViewHostPageCommand.close);
     await closed;
     expect(page.frame.removed).toBe(true);
-    // Nothing more reaches native or the view.
-    page.host.post('{"_tag":"ping","n":2}');
-    expect(page.sent).toEqual([{ type: "connected", restricted: true }]);
+    // Nothing more reaches native or the view, and no document loads again.
+    page.inject(pluginViewHostPageCommand.post('{"_tag":"ping","n":2}'));
+    page.inject(pluginViewHostPageCommand.mount(WRAPPER));
+    expect(page.created()).toBe(1);
+    expect(page.sent).toEqual([HOST, { type: "connected" }]);
   });
 
   it("decodes only what the page sends", () => {
     for (const data of [
       "not json",
       "{}",
-      '{"type":"connected"}',
+      '{"type":"host"}',
+      '{"type":"host","restricted":"true"}',
       '{"type":"message","text":1,"ports":0}',
       '{"type":"message","text":"a","ports":-1}',
     ])

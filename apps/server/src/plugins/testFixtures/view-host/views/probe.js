@@ -53,7 +53,8 @@ const forge = (target, id) => {
   handlers.ReactNativeWebView?.postMessage(
     JSON.stringify({ type: "message", text: call, ports: 0 }),
   );
-  handlers.ReactNativeWebView?.postMessage(JSON.stringify({ type: "connected", restricted: true }));
+  handlers.ReactNativeWebView?.postMessage(JSON.stringify({ type: "host", restricted: true }));
+  handlers.ReactNativeWebView?.postMessage(JSON.stringify({ type: "connected" }));
   handlers.ReactNativeHistoryShim?.postMessage("other");
   return "visible";
 };

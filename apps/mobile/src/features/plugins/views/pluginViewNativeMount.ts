@@ -29,41 +29,69 @@ const MAX_PENDING_MESSAGES = PLUGIN_VIEW_MESSAGE_BURST + PLUGIN_VIEW_MAX_VIOLATI
 type PortMessage = { readonly text: string | null; readonly ports: number };
 
 /**
- * Follows one host page. `onConnect` runs once, when the view has its port;
- * `restricted` is false on a build whose WebView lacks the subframe patch,
- * and such a view must not be served.
+ * Follows one host page. Its first message reports whether this WebView
+ * keeps subframes from native, and is sent before any other frame exists, so
+ * only that first report is trusted; only `restricted: true` sends the page
+ * `document`. Anything else first, a later report, or a second `connected`
+ * means the page can no longer be told apart from a subframe: `onRefuse` runs
+ * once and nothing more reaches the bridge. `onConnect` runs once, when the
+ * view has its port.
  */
 export function makePluginViewRelay(options: {
+  readonly document: string;
   readonly inject: (script: string) => void;
-  readonly onConnect: (restricted: boolean) => void;
+  readonly onConnect: () => void;
+  readonly onRefuse: () => void;
 }) {
-  let connected = false;
+  let phase: "starting" | "mounted" | "connected" | "refused" = "starting";
   let bridge: PluginViewBridge | null = null;
   const pending: PortMessage[] = [];
   const deliver = (target: PluginViewBridge, message: PortMessage) =>
     target.receive(message.text ?? undefined, message.ports);
+  const refuse = () => {
+    // Before `mount` the page has no frame to close.
+    if (phase !== "starting") options.inject(pluginViewHostPageCommand.close);
+    phase = "refused";
+    bridge = null;
+    pending.length = 0;
+    options.onRefuse();
+  };
 
   return {
     /** Every `onMessage` payload from the WebView; anything else the page could send is ignored. */
     receive: (data: string) => {
+      if (phase === "refused") return;
       const decoded = decodePluginViewHostPageMessage(data);
+      if (phase === "starting") {
+        if (Option.isNone(decoded) || decoded.value.type !== "host" || !decoded.value.restricted)
+          return refuse();
+        phase = "mounted";
+        return options.inject(pluginViewHostPageCommand.mount(options.document));
+      }
       if (Option.isNone(decoded)) return;
       const message = decoded.value;
-      if (message.type === "connected") {
-        if (connected) return;
-        connected = true;
-        return options.onConnect(message.restricted);
+      switch (message.type) {
+        case "host":
+          return refuse();
+        case "connected":
+          if (phase !== "mounted") return refuse();
+          phase = "connected";
+          return options.onConnect();
+        case "message":
+          if (phase !== "connected") return;
+          if (bridge !== null) return deliver(bridge, message);
+          if (pending.length < MAX_PENDING_MESSAGES) pending.push(message);
       }
-      if (!connected) return;
-      if (bridge !== null) return deliver(bridge, message);
-      if (pending.length < MAX_PENDING_MESSAGES) pending.push(message);
     },
     /** The host's end of the view's port, as the bridge sees it. */
     port: {
-      post: (text: string) => options.inject(pluginViewHostPageCommand.post(text)),
+      post: (text: string) => {
+        if (phase !== "refused") options.inject(pluginViewHostPageCommand.post(text));
+      },
       close: () => options.inject(pluginViewHostPageCommand.close),
     },
     attach: (next: PluginViewBridge) => {
+      if (phase === "refused") return;
       bridge = next;
       for (const message of pending.splice(0)) deliver(next, message);
     },

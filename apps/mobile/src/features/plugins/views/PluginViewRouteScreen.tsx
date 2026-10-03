@@ -11,7 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import type * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
 
@@ -150,9 +150,10 @@ function PluginViewMount(props: {
   );
   const page = useMemo(() => {
     if (bundle.data === null) return null;
-    return Result.map(buildPluginViewDocument(bundle.data, view.title), (document) =>
-      pluginViewHostPage({ document, title: view.title }),
-    );
+    return Result.map(buildPluginViewDocument(bundle.data, view.title), (document) => ({
+      document,
+      html: pluginViewHostPage({ title: view.title }),
+    }));
   }, [bundle.data, view.title]);
   const [ended, setEnded] = useState<MountEnd | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -191,7 +192,7 @@ function PluginViewMount(props: {
       key={attempt}
       environmentId={environmentId}
       view={view}
-      html={page.success}
+      page={page.success}
       onEnd={setEnded}
     />
   );
@@ -206,20 +207,21 @@ function PluginViewMount(props: {
 function PluginViewWebView(props: {
   readonly environmentId: EnvironmentId;
   readonly view: PluginView;
-  readonly html: string;
+  readonly page: { readonly document: string; readonly html: string };
   readonly onEnd: (end: MountEnd) => void;
 }) {
-  const { environmentId, view, html, onEnd } = props;
+  const { environmentId, view, page, onEnd } = props;
   const webView = useRef<WebView<object>>(null);
   const runtime = useAtomValue(connectionAtomRuntime);
   const services = AsyncResult.isSuccess(runtime) ? runtime.value : null;
-  const source = useMemo(() => ({ html }), [html]);
+  const source = useMemo(() => ({ html: page.html }), [page.html]);
   const mount = useRef<{
     readonly receive: (data: string) => void;
     readonly end: (reason: MountEnd) => void;
   } | null>(null);
 
-  useEffect(() => {
+  // Set up during commit: the page reports the native marker as soon as it parses.
+  useLayoutEffect(() => {
     if (services === null) return;
     let live = true;
     let bridge: Fiber.Fiber<never, unknown> | null = null;
@@ -246,11 +248,12 @@ function PluginViewWebView(props: {
         Effect.map((result) => result.value),
       );
     const relay = makePluginViewRelay({
+      document: page.document,
       inject: (script) => webView.current?.injectJavaScript(script),
-      onConnect: (restricted) => {
+      // Without the native patch a subframe could message native; the view never loads.
+      onRefuse: () => end("unprotected"),
+      onConnect: () => {
         clearTimeout(readyTimeout);
-        // Without the native patch a subframe could message native; refuse to serve it.
-        if (!restricted) return end("unprotected");
         bridge = Effect.runForkWith(services)(
           Effect.scoped(
             runPluginViewRelayMount({
@@ -273,7 +276,7 @@ function PluginViewWebView(props: {
       clearTimeout(readyTimeout);
       if (bridge !== null) Effect.runFork(Fiber.interrupt(bridge));
     };
-  }, [environmentId, view, services, onEnd]);
+  }, [environmentId, view, page.document, services, onEnd]);
 
   // The relay must exist before the page can connect.
   if (services === null) return null;

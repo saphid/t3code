@@ -8,8 +8,12 @@
  *
  * The page is the only frame with native authority. The patched WebView
  * (`t3RestrictSubframes`) drops script messages from subframes and refuses
- * any navigation a subframe starts, and tells this page so through
- * `window.__t3SubframesRestricted`; `connected.restricted` reports it.
+ * any navigation a subframe starts, and marks this page with
+ * `window.__t3SubframesRestricted`. The page reads that marker before any
+ * other frame exists and reports it as its first message, so the report
+ * cannot be forged. Without the marker it stops there; with it, native sends
+ * the view's document through `mount`. A build without the patch therefore
+ * never receives the view's bytes, let alone runs them.
  */
 import {
   NonNegativeInt,
@@ -22,8 +26,10 @@ import * as Schema from "effect/Schema";
 
 /** What the page tells native. */
 const PluginViewHostPageMessage = Schema.Union([
+  /** The page's first message: whether this WebView keeps subframes from native. */
+  Schema.Struct({ type: Schema.Literal("host"), restricted: Schema.Boolean }),
   /** The view asked for its port and got it. */
-  Schema.Struct({ type: Schema.Literal("connected"), restricted: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("connected") }),
   /** One port message: its text (null when it was not text) and how many ports it carried. */
   Schema.Struct({
     type: Schema.Literal("message"),
@@ -37,8 +43,9 @@ export const decodePluginViewHostPageMessage = Schema.decodeUnknownOption(
   Schema.fromJsonString(PluginViewHostPageMessage),
 );
 
-/** Script native injects to send the view one host message, or to end the mount. */
+/** Scripts native injects: load the view's document once, send the view one host message, or end the mount. */
 export const pluginViewHostPageCommand = {
+  mount: (document: string) => `window.__t3PluginViewHost.mount(${JSON.stringify(document)});true;`,
   post: (text: string) => `window.__t3PluginViewHost.post(${JSON.stringify(text)});true;`,
   close: "window.__t3PluginViewHost.close();true;",
 } as const;
@@ -55,11 +62,11 @@ const HOST_PAGE_SCRIPT = `(function (config) {
   "use strict";
   var native = window.ReactNativeWebView;
   var send = function (message) { native.postMessage(JSON.stringify(message)); };
-  var frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", config.sandbox);
-  frame.setAttribute("referrerpolicy", config.referrerpolicy);
-  frame.setAttribute("allow", config.allow);
-  frame.title = config.title;
+  // No other frame exists yet, so this report is the page's own.
+  var restricted = window.__t3SubframesRestricted === true;
+  send({ type: "host", restricted: restricted });
+  if (!restricted) return;
+  var frame = null;
   var port = null;
   var closed = false;
   var relay = function (event) {
@@ -86,22 +93,30 @@ const HOST_PAGE_SCRIPT = `(function (config) {
     };
     // The view's origin is opaque, so "*" is the only target that reaches it.
     view.postMessage({ type: config.connect }, "*", [channel.port2]);
-    send({ type: "connected", restricted: window.__t3SubframesRestricted === true });
+    send({ type: "connected" });
   };
-  window.addEventListener("message", onReady);
   Object.defineProperty(window, "__t3PluginViewHost", {
     value: Object.freeze({
+      mount: function (html) {
+        if (frame !== null || closed) return;
+        frame = document.createElement("iframe");
+        frame.setAttribute("sandbox", config.sandbox);
+        frame.setAttribute("referrerpolicy", config.referrerpolicy);
+        frame.setAttribute("allow", config.allow);
+        frame.title = config.title;
+        window.addEventListener("message", onReady);
+        frame.srcdoc = html;
+        document.body.appendChild(frame);
+      },
       post: function (text) { if (port !== null && !closed) port.postMessage(text); },
       close: function () {
         closed = true;
         window.removeEventListener("message", onReady);
         if (port !== null) port.close();
-        frame.remove();
+        if (frame !== null) frame.remove();
       },
     }),
   });
-  frame.srcdoc = config.document;
-  document.body.appendChild(frame);
 })`;
 
 /** Embeds data in a script element: no `</script`, and no line separators in old engines. */
@@ -111,10 +126,9 @@ const scriptJson = (value: unknown) =>
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 
-/** The host page for one mount of `document`, the builder's policy wrapper. */
-export function pluginViewHostPage(input: { readonly document: string; readonly title: string }) {
+/** The host page for one mount; the view's document (the builder's policy wrapper) follows through `mount`. */
+export function pluginViewHostPage(input: { readonly title: string }) {
   const config = scriptJson({
-    document: input.document,
     title: input.title,
     sandbox: PLUGIN_VIEW_FRAME_ATTRIBUTES.sandbox,
     referrerpolicy: PLUGIN_VIEW_FRAME_ATTRIBUTES.referrerpolicy,
