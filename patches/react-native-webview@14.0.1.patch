@@ -1,0 +1,149 @@
+diff --git a/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java b/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+index fa8efb88e2b7c09afbfe473363cdb29af964563c..430c05fea46bb9d9cd416cc476ada41b6018a563 100644
+--- a/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
++++ b/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java
+@@ -420,6 +420,9 @@ public class RNCWebViewManager extends ViewGroupManager<RNCWebViewWrapper>
+     @Override
+     public void setLimitsNavigationsToAppBoundDomains(RNCWebViewWrapper view, boolean value) {}
+ 
++    @Override
++    public void setT3RestrictSubframes(RNCWebViewWrapper view, boolean value) {}
++
+     @Override
+     public void setTextInteractionEnabled(RNCWebViewWrapper view, boolean value) {}
+ 
+diff --git a/apple/RNCWebView.mm b/apple/RNCWebView.mm
+index 2be787788bbfdfefe8e327f3aac3c86bf300874d..14e6eddc3798a95e934cb7f1a9fa12236b27beef 100644
+--- a/apple/RNCWebView.mm
++++ b/apple/RNCWebView.mm
+@@ -315,6 +315,7 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+     REMAP_WEBVIEW_PROP(allowsLinkPreview)
+     REMAP_WEBVIEW_STRING_PROP(allowingReadAccessToURL)
+     REMAP_WEBVIEW_PROP(messagingEnabled)
++    REMAP_WEBVIEW_PROP(t3RestrictSubframes)
+     #if !TARGET_OS_OSX
+     REMAP_WEBVIEW_PROP(fraudulentWebsiteWarningEnabled)
+     #endif // !TARGET_OS_OSX
+diff --git a/apple/RNCWebViewImpl.h b/apple/RNCWebViewImpl.h
+index 1f637c1d761c867ac5b63c1e16de866798944fc8..8958b411b31ba3d794e889f2b99802443a192fa6 100644
+--- a/apple/RNCWebViewImpl.h
++++ b/apple/RNCWebViewImpl.h
+@@ -69,6 +69,8 @@ shouldStartLoadForRequest:(NSMutableDictionary<NSString *, id> *)request
+ @property (nonatomic, weak) id<RNCWebViewDelegate> _Nullable delegate;
+ @property (nonatomic, copy) NSDictionary * _Nullable source;
+ @property (nonatomic, assign) BOOL messagingEnabled;
++// T3 Code patch: only the main frame may message native or navigate subframes.
++@property (nonatomic, assign) BOOL t3RestrictSubframes;
+ @property (nonatomic, copy) NSString * _Nullable injectedJavaScript;
+ @property (nonatomic, copy) NSString * _Nullable injectedJavaScriptBeforeContentLoaded;
+ @property (nonatomic, assign) BOOL injectedJavaScriptForMainFrameOnly;
+diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
+index 38904266dc37b006274104f4680778ffbfece369..66416ca15bb2cc7ace0ca259f70b36d7c44c4c32 100644
+--- a/apple/RNCWebViewImpl.m
++++ b/apple/RNCWebViewImpl.m
+@@ -789,6 +789,10 @@ - (void)setAutomaticallyAdjustsScrollIndicatorInsets:(BOOL)automaticallyAdjustsS
+ - (void)userContentController:(WKUserContentController *)userContentController
+       didReceiveScriptMessage:(WKScriptMessage *)message
+ {
++  // T3 Code patch: every frame can see the handlers, but only the main frame may use them.
++  if (_t3RestrictSubframes && !message.frameInfo.isMainFrame) {
++    return;
++  }
+   if ([message.name isEqualToString:HistoryShimName]) {
+     if (_onLoadingFinish) {
+       NSMutableDictionary<NSString *, id> *event = [self baseEvent];
+@@ -1362,6 +1366,19 @@ - (void)                  webView:(WKWebView *)webView
+     BOOL isTopFrame = [request.URL isEqual:request.mainDocumentURL];
+     BOOL hasTargetFrame = navigationAction.targetFrame != nil;
+ 
++    // T3 Code patch: a subframe may load its srcdoc, or be navigated by the main
++    // frame; nothing inside a subframe may navigate one. Decided on WKFrameInfo,
++    // never on URLs (isTopFrame above is URL-derived).
++    if (_t3RestrictSubframes && hasTargetFrame && !navigationAction.targetFrame.isMainFrame) {
++      WKFrameInfo *sourceFrame = navigationAction.sourceFrame;
++      BOOL fromMainFrame = sourceFrame != nil && sourceFrame.isMainFrame;
++      BOOL srcdoc = [request.URL.absoluteString isEqualToString:@"about:srcdoc"];
++      if (!fromMainFrame && !srcdoc) {
++        decisionHandler(WKNavigationActionPolicyCancel);
++        return;
++      }
++    }
++
+     if (_onOpenWindow && !hasTargetFrame) {
+       // When OnOpenWindow should be called, we want to prevent the navigation
+       // If not prevented, the `decisionHandler` is called first and after that `createWebViewWithConfiguration` is called
+@@ -1876,6 +1893,11 @@ - (void)resetupScripts:(WKWebViewConfiguration *)wkWebViewConfig {
+   WKUserScript *userScript = [[WKUserScript alloc] initWithSource:html5HistoryAPIShimSource injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES];
+   [wkWebViewConfig.userContentController addUserScript:userScript];
+ 
++  if (_t3RestrictSubframes) {
++    // T3 Code patch: tells the main frame's page that subframes have no authority here.
++    [wkWebViewConfig.userContentController addUserScript:[[WKUserScript alloc] initWithSource:@"window.__t3SubframesRestricted = true;" injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
++  }
++
+   if(_sharedCookiesEnabled) {
+     // More info to sending cookies with WKWebView
+     // https://stackoverflow.com/questions/26573137/can-i-set-the-cookies-to-be-used-by-a-wkwebview/26577303#26577303
+diff --git a/apple/RNCWebViewManager.mm b/apple/RNCWebViewManager.mm
+index a510ffd9ce9d2d78df46803ca9966ea38c49d27c..723dacb9aee7544e005f4b62ad103584293281e1 100644
+--- a/apple/RNCWebViewManager.mm
++++ b/apple/RNCWebViewManager.mm
+@@ -112,6 +112,7 @@ - (RNCView *)view
+  * Expose methods to enable messaging the webview.
+  */
+ RCT_EXPORT_VIEW_PROPERTY(messagingEnabled, BOOL)
++RCT_EXPORT_VIEW_PROPERTY(t3RestrictSubframes, BOOL)
+ RCT_EXPORT_VIEW_PROPERTY(onMessage, RCTDirectEventBlock)
+ RCT_EXPORT_VIEW_PROPERTY(onScroll, RCTDirectEventBlock)
+ RCT_EXPORT_VIEW_PROPERTY(enableApplePay, BOOL)
+diff --git a/lib/WebViewTypes.d.ts b/lib/WebViewTypes.d.ts
+index f666e8142adcf0e976d60024065291fb291ec012..b4f60c43f1c3ab73f38e2fedf5a039ff1319de3e 100644
+--- a/lib/WebViewTypes.d.ts
++++ b/lib/WebViewTypes.d.ts
+@@ -568,6 +568,14 @@ export interface IOSWebViewProps extends WebViewSharedProps {
+      * @platform ios
+      */
+     limitsNavigationsToAppBoundDomains?: boolean;
++    /**
++     * T3 Code patch. When true, only the main frame has authority: script
++     * messages from subframes are dropped before `onMessage`, and a subframe may
++     * be navigated only by the main frame (or to its own `about:srcdoc`). The
++     * main frame sees `window.__t3SubframesRestricted === true`.
++     * @platform ios
++     */
++    t3RestrictSubframes?: boolean;
+     /**
+      * If false indicates to WebKit that a WKWebView will not interact with text, thus
+      * not showing a text selection loop. Only applicable for iOS 14.5 or greater.
+diff --git a/src/RNCWebViewNativeComponent.ts b/src/RNCWebViewNativeComponent.ts
+index ca3af151a378c516266ae965a44898920e831172..e62df0fa1d68266c8518a1910e8bed2a22dd0664 100644
+--- a/src/RNCWebViewNativeComponent.ts
++++ b/src/RNCWebViewNativeComponent.ts
+@@ -204,6 +204,7 @@ export interface NativeProps extends ViewProps {
+   hideKeyboardAccessoryView?: boolean;
+   keyboardDisplayRequiresUserAction?: WithDefault<boolean, true>;
+   limitsNavigationsToAppBoundDomains?: boolean;
++  t3RestrictSubframes?: boolean;
+   mediaCapturePermissionGrantType?: WithDefault<
+     'prompt' | 'grant' | 'deny' | 'grantIfSameHostElsePrompt' | 'grantIfSameHostElseDeny',
+     'prompt'
+diff --git a/src/WebViewTypes.ts b/src/WebViewTypes.ts
+index 4e7247f82e2bc418b495196132add7b416780a08..504e4ddcd07cb342ccbc75e66af2977011f796e1 100644
+--- a/src/WebViewTypes.ts
++++ b/src/WebViewTypes.ts
+@@ -714,6 +714,15 @@ export interface IOSWebViewProps extends WebViewSharedProps {
+    */
+   limitsNavigationsToAppBoundDomains?: boolean;
+ 
++  /**
++   * T3 Code patch. When true, only the main frame has authority: script
++   * messages from subframes are dropped before `onMessage`, and a subframe may
++   * be navigated only by the main frame (or to its own `about:srcdoc`). The
++   * main frame sees `window.__t3SubframesRestricted === true`.
++   * @platform ios
++   */
++  t3RestrictSubframes?: boolean;
++
+   /**
+    * If false indicates to WebKit that a WKWebView will not interact with text, thus
+    * not showing a text selection loop. Only applicable for iOS 14.5 or greater.
