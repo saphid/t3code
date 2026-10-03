@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
-import { resolvePluginManageAccess } from "@t3tools/client-runtime/state/pluginPresentation";
+import {
+  pluginSettingsReadOnly,
+  resolvePluginManageAccess,
+} from "@t3tools/client-runtime/state/pluginPresentation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
@@ -80,12 +83,13 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const checkedRelease = release?.fromVersion === version ? release : null;
   const capabilities = config?.environment.capabilities;
   // Saving plugin settings needs access:write; other sessions see the values read-only.
-  const pluginSettingsReadOnly =
+  const readOnlyPluginSettings = pluginSettingsReadOnly(
     resolvePluginManageAccess({
       session,
       isPending: sessionResult.waiting,
       hasError: AsyncResult.isFailure(sessionResult),
-    }) !== "granted";
+    }),
+  );
 
   async function run(label: string, action: () => Promise<void>) {
     if (pendingRef.current) return;
@@ -343,7 +347,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 <PluginSettingsSections
                   environmentId={environmentId}
                   capabilities={capabilities}
-                  readOnly={pluginSettingsReadOnly}
+                  readOnly={readOnlyPluginSettings}
                 />
               </>
             ) : null}
