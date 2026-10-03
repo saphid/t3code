@@ -84,9 +84,12 @@ export type PluginApprovalReceipt =
       readonly cause: PluginApprovalAbstainCause;
       readonly message?: string;
     }
-  /** The plugin's answer was recorded and sent to the provider. */
+  /**
+   * The plugin's answer was recorded and its provider response queued. The
+   * response worker delivers it to the provider afterwards.
+   */
   | {
-      readonly _tag: "Applied";
+      readonly _tag: "Recorded";
       readonly requestId: RuntimeRequestId;
       readonly installationId: PluginInstallationId;
       readonly decision: "accept" | "decline";
@@ -213,7 +216,7 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
           })
           .pipe(Effect.result);
         yield* Result.isSuccess(recorded)
-          ? publish({ _tag: "Applied", ...ids, decision })
+          ? publish({ _tag: "Recorded", ...ids, decision })
           : publish({
               _tag: "Refused",
               ...ids,

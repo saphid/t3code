@@ -439,7 +439,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           );
 
           const approved = yield* raise("approved", "git status", "command", "git status --short");
-          expect(yield* until(is("Applied", "test.policy"))).toMatchObject({
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({
             requestId: approved,
             decision: "accept",
           });
@@ -469,7 +469,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           expect((yield* outcome(approved)).decision).toBe("accept");
 
           const denied = yield* raise("denied", "rm -rf build");
-          expect(yield* until(is("Applied", "test.policy"))).toMatchObject({
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({
             requestId: denied,
             decision: "decline",
           });
@@ -609,7 +609,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
             yield* until(is("Asked", id));
 
           yield* Deferred.succeed(first, { decision: "approve" });
-          yield* until(is("Applied", "test.first"));
+          yield* until(is("Recorded", "test.first"));
           // An answer that crossed the cancellation is refused by the orchestrator.
           yield* Deferred.succeed(crossing, { decision: "deny" });
           const refused = yield* until(is("Refused", "test.crossing"));
@@ -717,7 +717,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
             stubCatalog([{ id: "test.policy", decide: () => answer({ decision: "approve" }) }]),
           );
           const after = yield* raise("after-start", "git status");
-          yield* until(is("Applied", "test.policy"));
+          yield* until(is("Recorded", "test.policy"));
           expect(seen.map((receipt) => receipt.requestId)).toEqual([after, after]);
           expect(yield* outcome(before)).toMatchObject({ status: "pending" });
         }),
@@ -759,7 +759,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
         );
         // A later command request is offered, and the elicitation never was.
         const command = yield* raise("command", "ls");
-        yield* until(is("Applied", "test.everything"));
+        yield* until(is("Recorded", "test.everything"));
         expect(seen.every((receipt) => receipt.requestId === command)).toBe(true);
         expect(yield* outcome(elicitation)).toMatchObject({ status: "pending" });
       }),
@@ -844,7 +844,7 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
         const { until } = yield* startApprovals(catalog);
 
         const approved = yield* raise("real-approve", "git status --short");
-        yield* until(is("Applied", installationId));
+        yield* until(is("Recorded", installationId));
         expect(yield* outcome(approved)).toMatchObject({
           status: "resolved",
           resolvedBy: {
