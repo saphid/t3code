@@ -20,6 +20,7 @@ import {
   toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
+  pluginContextInspection,
   toolGroupAction,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -751,6 +752,14 @@ function toFeedActivity(
   const getFullDetail = memoizeValue(() => {
     if (readPaths) {
       return readPaths.join("\n") || null;
+    }
+    // Like web's inspector: the context the provider received, or why none was added.
+    const pluginContext = pluginContextInspection(item);
+    if (pluginContext) {
+      return [
+        `From ${pluginContext.source}`,
+        ...pluginContext.blocks.map((block) => `${block.label}\n${block.text}`),
+      ].join("\n\n");
     }
     const json = JSON.stringify(
       {
