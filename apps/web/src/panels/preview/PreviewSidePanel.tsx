@@ -1,31 +1,19 @@
 "use client";
 
-import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
-
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
 import { PreviewView } from "~/components/preview/PreviewView";
-import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
-export interface PreviewSidePanelProps {
-  threadRef: ScopedThreadRef;
+import { usePanelHost } from "../panelHost";
+
+interface PreviewSidePanelProps {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
-  visible: boolean;
-  onSendAnnotation?: (
-    annotation: PreviewAnnotationPayload,
-    image: ComposerImageAttachment | null,
-  ) => void;
 }
 
 // RightPanelTabs owns placement, so the side panel is always embedded.
-export default function PreviewSidePanel({
-  threadRef,
-  tabId,
-  configuredUrls,
-  visible,
-  onSendAnnotation,
-}: PreviewSidePanelProps) {
+export default function PreviewSidePanel({ tabId, configuredUrls }: PreviewSidePanelProps) {
+  const { threadRef, visible, sendAnnotation } = usePanelHost();
   if (!isPreviewSupportedInRuntime()) {
     return (
       <PreviewPanelShell mode="embedded">
@@ -45,7 +33,7 @@ export default function PreviewSidePanel({
         {...(tabId !== undefined ? { tabId } : {})}
         configuredUrls={configuredUrls}
         visible={visible}
-        {...(onSendAnnotation ? { onSendAnnotation } : {})}
+        onSendAnnotation={sendAnnotation}
       />
     </PreviewPanelShell>
   );

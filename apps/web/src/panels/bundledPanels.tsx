@@ -18,11 +18,21 @@ const bundledPanels = createPanelRegistry([
 ]);
 
 type SidePanel = NonNullable<ReturnType<typeof bundledPanels.get>>;
+type SidePanelPropKey = SidePanel extends infer Panel
+  ? Panel extends SidePanel
+    ? keyof PanelProps<Panel>
+    : never
+  : never;
 
-/** One member per registered id, so a widened id cannot be paired with another panel's props. */
+/**
+ * One member per registered id. Other panels' prop keys are forbidden on each
+ * member, so a widened id cannot carry props the selected panel does not take.
+ */
 export type RegisteredSidePanelProps = SidePanel extends infer Panel
   ? Panel extends SidePanel
-    ? { id: Panel["id"] } & PanelProps<Panel>
+    ? { id: Panel["id"] } & PanelProps<Panel> & {
+          [Key in Exclude<SidePanelPropKey, keyof PanelProps<Panel>>]?: never;
+        }
     : never
   : never;
 

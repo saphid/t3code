@@ -78,6 +78,16 @@ describe("panel registry", () => {
       { id: "counter", title: "Counter", placement: "side-panel", load: loadCounter },
     ]);
     const NotesPanel = registry.get("notes")!.Component;
+    // Compile-only: the project typecheck rejects these pairings.
+    const compileOnly = () => [
+      // @ts-expect-error Missing required text.
+      <NotesPanel key="missing" />,
+      // @ts-expect-error Counter's props on Notes.
+      <NotesPanel key="foreign" count={1} />,
+      // @ts-expect-error Unknown id.
+      registry.get("missing"),
+    ];
+    expect(compileOnly).toBeTypeOf("function");
     expect(registry.get("notes")!.Component).toBe(NotesPanel);
     expect(loadNotes).not.toHaveBeenCalled();
     expect(loadCounter).not.toHaveBeenCalled();

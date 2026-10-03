@@ -3,7 +3,7 @@ import { act, Suspense } from "react";
 import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-const loaded = vi.hoisted(() => ({ diff: 0, preview: 0, previewProps: [] as unknown[] }));
+const loaded = vi.hoisted(() => ({ diff: 0, preview: 0, previewRenders: [] as unknown[] }));
 vi.mock("./diff/DiffSidePanel", () => {
   loaded.diff += 1;
   return { default: () => null };
@@ -11,32 +11,43 @@ vi.mock("./diff/DiffSidePanel", () => {
 vi.mock("./preview/PreviewSidePanel", () => {
   loaded.preview += 1;
   return {
-    default: (props: unknown) => {
-      loaded.previewProps.push(props);
+    default: function PreviewSidePanel(props: unknown) {
+      loaded.previewRenders.push({ props, host: usePanelHost() });
       return null;
     },
   };
 });
 
 import { RegisteredSidePanel } from "./bundledPanels";
+import { PanelHostContext, usePanelHost, type PanelHost } from "./panelHost";
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-a"),
 };
+const host: PanelHost = {
+  threadRef,
+  surfaceId: "preview:1",
+  visible: true,
+  composerDraftTarget: threadRef,
+  workspaceMutationId: null,
+  sendAnnotation: () => undefined,
+};
 
 describe("bundled side panels", () => {
-  it("loads only the selected panel body", async () => {
+  it("loads only the selected panel body and lends it the host", async () => {
     expect(loaded).toMatchObject({ diff: 0, preview: 0 });
     await act(async () => {
       create(
-        <Suspense fallback={null}>
-          <RegisteredSidePanel id="preview" threadRef={threadRef} tabId="tab-1" visible />
-        </Suspense>,
+        <PanelHostContext value={host}>
+          <Suspense fallback={null}>
+            <RegisteredSidePanel id="preview" tabId="tab-1" />
+          </Suspense>
+        </PanelHostContext>,
       );
     });
     expect(loaded).toMatchObject({ diff: 0, preview: 1 });
-    expect(loaded.previewProps).toEqual([{ threadRef, tabId: "tab-1", visible: true }]);
+    expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
 });
 
@@ -45,38 +56,18 @@ describe("bundled side panels", () => {
 export function typeFixtures(widenedId: "diff" | "preview") {
   return (
     <>
-      <RegisteredSidePanel id="diff" composerDraftTarget={threadRef} workspaceMutationId={null} />
-      <RegisteredSidePanel
-        id="preview"
-        threadRef={threadRef}
-        visible
-        onSendAnnotation={(annotation, image) => [annotation.comment, image?.id]}
-      />
+      <RegisteredSidePanel id="diff" />
+      <RegisteredSidePanel id="preview" tabId="tab-1" configuredUrls={["http://localhost:3000"]} />
       {/* @ts-expect-error Preview props on Diff. */}
-      <RegisteredSidePanel id="diff" threadRef={threadRef} visible />
-      <RegisteredSidePanel
-        id="preview"
-        // @ts-expect-error Diff props on Preview.
-        composerDraftTarget={threadRef}
-        workspaceMutationId={null}
-      />
-      {/* @ts-expect-error Missing required threadRef. */}
-      <RegisteredSidePanel id="preview" visible />
-      <RegisteredSidePanel
-        id="preview"
-        threadRef={threadRef}
-        visible
-        // @ts-expect-error Wrong callback input shape.
-        onSendAnnotation={(annotation: string) => annotation}
-      />
+      <RegisteredSidePanel id="diff" tabId="tab-1" />
+      {/* @ts-expect-error The host owns the thread; panels do not take it as a prop. */}
+      <RegisteredSidePanel id="preview" threadRef={threadRef} />
+      {/* @ts-expect-error Wrong input shape. */}
+      <RegisteredSidePanel id="preview" configuredUrls="http://localhost:3000" />
       {/* @ts-expect-error Unknown id. */}
-      <RegisteredSidePanel id="terminal" threadRef={threadRef} visible />
+      <RegisteredSidePanel id="terminal" />
       {/* @ts-expect-error A widened id cannot borrow one panel's props. */}
-      <RegisteredSidePanel
-        id={widenedId}
-        composerDraftTarget={threadRef}
-        workspaceMutationId={null}
-      />
+      <RegisteredSidePanel id={widenedId} tabId="tab-1" />
     </>
   );
 }

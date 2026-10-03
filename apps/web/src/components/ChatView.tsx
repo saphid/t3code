@@ -157,6 +157,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import { RegisteredSidePanel } from "~/panels/bundledPanels";
+import { PanelHostContext, type PanelHost } from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -10141,6 +10142,31 @@ export default function ChatView(props: ChatViewProps) {
   }, [cancelWorktreeSetup, draftId, setupTarget.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
+  const sendPanelAnnotation = useCallback<PanelHost["sendAnnotation"]>((annotation, image) => {
+    void onSendRef.current(undefined, "auto", "foreground", { annotation, image });
+  }, []);
+  const renderedRightPanelSurfaceId = renderedRightPanelSurface?.id ?? null;
+  const panelHost = useMemo<PanelHost | null>(
+    () =>
+      activeThreadRef && renderedRightPanelSurfaceId
+        ? {
+            threadRef: activeThreadRef,
+            surfaceId: renderedRightPanelSurfaceId,
+            visible: rightPanelOpen,
+            composerDraftTarget,
+            workspaceMutationId,
+            sendAnnotation: sendPanelAnnotation,
+          }
+        : null,
+    [
+      activeThreadRef,
+      composerDraftTarget,
+      renderedRightPanelSurfaceId,
+      rightPanelOpen,
+      sendPanelAnnotation,
+      workspaceMutationId,
+    ],
+  );
   // Resend once the cancelled dispatch has settled and the composer is free.
   // Every state that makes `onSend` bail and wait is part of the readiness
   // check, so the flag survives a reconnect, a reverting checkpoint, or a
@@ -10258,18 +10284,13 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent = activeThreadRef ? (
+  const rightPanelSurfaceContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <RegisteredSidePanel
           id="preview"
-          threadRef={activeThreadRef}
           tabId={renderedRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
-          onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "auto", "foreground", { annotation, image });
-          }}
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
@@ -10293,12 +10314,7 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
-        <RegisteredSidePanel
-          key={activeThreadKey}
-          id="diff"
-          composerDraftTarget={composerDraftTarget}
-          workspaceMutationId={workspaceMutationId}
-        />
+        <RegisteredSidePanel key={activeThreadKey} id="diff" />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
@@ -10414,6 +10430,9 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : null
   ) : null;
+  const rightPanelContent = (
+    <PanelHostContext value={panelHost}>{rightPanelSurfaceContent}</PanelHostContext>
+  );
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
     handle: threadPanelPopoverHandle,
