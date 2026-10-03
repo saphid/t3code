@@ -25,9 +25,9 @@ import {
 } from "./baseSchemas.ts";
 
 export const PLUGIN_ACTIONS_MAX_PER_PLUGIN = 16;
-export const PLUGIN_ACTION_NAME_MAX_LENGTH = 48;
-export const PLUGIN_ACTION_TITLE_MAX_LENGTH = 60;
-export const PLUGIN_ACTION_DESCRIPTION_MAX_LENGTH = 240;
+const PLUGIN_ACTION_NAME_MAX_LENGTH = 48;
+const PLUGIN_ACTION_TITLE_MAX_LENGTH = 60;
+const PLUGIN_ACTION_DESCRIPTION_MAX_LENGTH = 240;
 export const PLUGIN_ACTION_MESSAGE_MAX_LENGTH = 500;
 
 /** Unique within one plugin; also the slash command, `/<name>`. */

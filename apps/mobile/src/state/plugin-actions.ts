@@ -12,7 +12,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentQuery } from "./query";
 
-export const pluginActionEnvironment = createPluginActionEnvironmentAtoms(connectionAtomRuntime);
+const pluginActionEnvironment = createPluginActionEnvironmentAtoms(connectionAtomRuntime);
 
 const NO_ACTIONS: ReadonlyArray<PluginAction> = [];
 

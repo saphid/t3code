@@ -37,7 +37,7 @@ import * as Stream from "effect/Stream";
 import type { PluginCatalog } from "./PluginCatalog.ts";
 import type { PluginInvokeError } from "./PluginSupervisor.ts";
 
-export const PLUGIN_ACTION_TIMEOUT: Duration.Input = "30 seconds";
+const PLUGIN_ACTION_TIMEOUT: Duration.Input = "30 seconds";
 
 /** What an action handler receives as `input.target`: the target the user picked, resolved. */
 export type PluginActionTargetContext =
@@ -110,7 +110,7 @@ export interface PluginActions {
   ) => Effect.Effect<PluginActionInvokeResult, PluginActionError>;
 }
 
-export const pluginActionHandlerName = (name: string) => `action:${name}`;
+const pluginActionHandlerName = (name: string) => `action:${name}`;
 
 const actionId = (installationId: string, generation: number, name: string) =>
   PluginActionId.make(`${installationId}:${generation}:${name}`);
@@ -194,7 +194,6 @@ const fromInvokeError = (
 export const makePluginActions = (options: {
   readonly catalog: PluginCatalog["Service"];
   readonly resolveTarget: ResolvePluginActionTarget;
-  readonly timeout?: Duration.Input;
 }): PluginActions => {
   const { catalog, resolveTarget } = options;
 
@@ -228,7 +227,7 @@ export const makePluginActions = (options: {
         installation.installationId,
         pluginActionHandlerName(action.name),
         { action: action.name, target: target.value },
-        { generation: parsed.generation, timeout: options.timeout ?? PLUGIN_ACTION_TIMEOUT },
+        { generation: parsed.generation, timeout: PLUGIN_ACTION_TIMEOUT },
       )
       .pipe(Effect.mapError((error) => fromInvokeError(error, action.title)));
     return { message: resultMessage(value) };

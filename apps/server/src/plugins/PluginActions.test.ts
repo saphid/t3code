@@ -30,6 +30,9 @@ const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
 const FIXTURE = `${import.meta.dirname}/testFixtures/actions`;
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const fromJson = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 const THREAD = ThreadId.make("thread-1");
 const PROJECT = ProjectId.make("project-1");
@@ -77,7 +80,7 @@ const preparePlugin = Effect.fn("preparePlugin")(function* (
     path.join(directory, "main.mjs"),
     yield* fs.readFileString(path.join(FIXTURE, "main.mjs")),
   );
-  const original = JSON.parse(yield* fs.readFileString(path.join(FIXTURE, "t3-plugin.json")));
+  const original = fromJson(yield* fs.readFileString(path.join(FIXTURE, "t3-plugin.json")));
   yield* fs.writeFileString(
     path.join(directory, "t3-plugin.json"),
     toJson(manifest ? manifest(original) : original),

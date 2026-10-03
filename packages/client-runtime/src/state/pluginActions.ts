@@ -81,7 +81,7 @@ export interface PluginActionContext {
 }
 
 /** The target `action` runs on from `context`, or null when the surface cannot supply it. */
-export function pluginActionTarget(
+function pluginActionTarget(
   action: Pick<PluginAction, "target">,
   context: PluginActionContext,
 ): PluginActionTarget | null {
