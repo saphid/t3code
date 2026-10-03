@@ -1,8 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type PluginSettingDraft,
-  type PluginSettingRow,
-  pluginSettingDraftChange,
+  type PluginSettingDrafts,
+  pluginSettingDraftsAfterSave,
+  pluginSettingForm,
   pluginSettingRows,
 } from "@t3tools/client-runtime/state/pluginSettings";
 import {
@@ -23,20 +24,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-
-const draftOf = (row: PluginSettingRow): PluginSettingDraft =>
-  row.field.type === "boolean"
-    ? row.value === true
-    : row.value === undefined
-      ? ""
-      : String(row.value);
-
-/** The saved change a draft makes, or why it cannot be saved; undefined when it matches what is shown. */
-const draftOutcome = (row: PluginSettingRow, draft: PluginSettingDraft | undefined) => {
-  if (draft === undefined || draft === draftOf(row)) return undefined;
-  const outcome = pluginSettingDraftChange(row.field, draft);
-  return outcome._tag === "unchanged" ? undefined : outcome;
-};
 
 /**
  * The settings a plugin declares, for one installation on one environment.
@@ -62,31 +49,26 @@ export function PluginSettingsForm({
   const update = useAtomCommand(pluginSettingsEnvironment.update, {
     label: `save ${installation.manifest?.name ?? "plugin"} settings`,
   });
-  const [drafts, setDrafts] = useState<Readonly<Record<string, PluginSettingDraft>>>({});
+  const [drafts, setDrafts] = useState<PluginSettingDrafts>(() => new Map());
   const [saving, setSaving] = useState(false);
   const view = Option.getOrNull(AsyncResult.value(result));
   if (fields.length === 0 || view === null || view._tag === "unsupported") return null;
 
-  const rows = pluginSettingRows(fields, view.values);
-  const outcomes = rows.map((row) => draftOutcome(row, drafts[row.field.key]));
-  const changes = outcomes.flatMap((outcome) =>
-    outcome?._tag === "change" ? [outcome.change] : [],
+  const { entries, changes, invalid } = pluginSettingForm(
+    pluginSettingRows(fields, view.values),
+    drafts,
   );
-  const invalid = outcomes.some((outcome) => outcome?._tag === "invalid");
   const setDraft = (key: string, draft: PluginSettingDraft) =>
-    setDrafts((current) => ({ ...current, [key]: draft }));
+    setDrafts((current) => new Map(current).set(key, draft));
 
   const save = async (next: ReadonlyArray<PluginSettingChange>, clearDrafts: boolean) => {
     setSaving(true);
     try {
       const saved = await update({ environmentId, input: { installationId, changes: next } });
       if (saved._tag === "Success")
-        setDrafts((current) => {
-          if (clearDrafts) return {};
-          const kept = { ...current };
-          for (const change of next) delete kept[change.key];
-          return kept;
-        });
+        setDrafts((current) =>
+          clearDrafts ? new Map() : pluginSettingDraftsAfterSave(current, next),
+        );
     } finally {
       setSaving(false);
     }
@@ -102,11 +84,9 @@ export function PluginSettingsForm({
     >
       {/* Locked while saving: a successful save clears the drafts it sent. */}
       <fieldset disabled={saving || readOnly} className="contents">
-        {rows.map((row, index) => {
+        {entries.map(({ row, draft, outcome }) => {
           const { field } = row;
           const id = `plugin-setting-${installationId}-${field.key}`;
-          const outcome = outcomes[index];
-          const draft = drafts[field.key] ?? draftOf(row);
           const reset = () => void save([{ key: field.key, value: null }], false);
           return (
             <div key={field.key} className="grid gap-1.5">

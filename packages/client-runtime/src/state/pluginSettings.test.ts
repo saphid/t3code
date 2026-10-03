@@ -28,6 +28,8 @@ import type * as RpcSession from "../rpc/session.ts";
 import {
   createPluginSettingsEnvironmentAtoms,
   pluginSettingDraftChange,
+  pluginSettingDraftsAfterSave,
+  pluginSettingForm,
   pluginSettingRows,
   pluginSettingsStream,
 } from "./pluginSettings.ts";
@@ -181,5 +183,61 @@ describe("plugin settings form", () => {
       _tag: "change",
       change: { key: "verbose", value: true },
     });
+  });
+
+  it("reads only the user's edits for keys named like object properties", () => {
+    const named: ReadonlyArray<PluginSettingField> = [
+      { type: "text", key: "constructor", label: "Constructor", default: "base" },
+      { type: "boolean", key: "toString", label: "To string", default: true },
+      { type: "text", key: "apiUrl", label: "API URL" },
+    ];
+    const form = (saved: PluginSettingsValues["values"], drafts: Map<string, string | boolean>) =>
+      pluginSettingForm(
+        pluginSettingRows(named, { installationId: INSTALLATION_ID, values: saved, secrets: [] }),
+        drafts,
+      );
+
+    // Untouched, they show their defaults and the form has nothing to save.
+    const initial = form([], new Map());
+    expect(initial.entries.map(({ draft, outcome }) => ({ draft, outcome }))).toEqual([
+      { draft: "base", outcome: undefined },
+      { draft: true, outcome: undefined },
+      { draft: "", outcome: undefined },
+    ]);
+    expect(initial).toMatchObject({ changes: [], invalid: false });
+
+    // An unrelated edit saves alone; once saved, the drafts are empty and the form clean again.
+    const edited = form([], new Map([["apiUrl", "https://api.example.com"]]));
+    expect(edited).toMatchObject({
+      changes: [{ key: "apiUrl", value: "https://api.example.com" }],
+      invalid: false,
+    });
+    const afterSave = pluginSettingDraftsAfterSave(
+      new Map([["apiUrl", "https://api.example.com"]]),
+      edited.changes,
+    );
+    expect(afterSave.size).toBe(0);
+    const saved = [
+      { key: "apiUrl", value: "https://api.example.com" },
+      { key: "constructor", value: "mine" },
+    ];
+    expect(form(saved, new Map(afterSave))).toMatchObject({ changes: [], invalid: false });
+
+    // Editing them saves what was typed; resetting one keeps the other edits.
+    const drafts = new Map<string, string | boolean>([
+      ["constructor", "other"],
+      ["toString", false],
+      ["apiUrl", "https://next.example.com"],
+    ]);
+    expect(form(saved, drafts).changes).toEqual([
+      { key: "constructor", value: "other" },
+      { key: "toString", value: false },
+      { key: "apiUrl", value: "https://next.example.com" },
+    ]);
+    const reset = pluginSettingDraftsAfterSave(drafts, [{ key: "constructor", value: null }]);
+    expect([...reset.keys()]).toEqual(["toString", "apiUrl"]);
+    const afterReset = form(saved.slice(0, 1), new Map(reset));
+    expect(afterReset.entries[0]).toMatchObject({ draft: "base", outcome: undefined });
+    expect(afterReset.changes.map((change) => change.key)).toEqual(["toString", "apiUrl"]);
   });
 });

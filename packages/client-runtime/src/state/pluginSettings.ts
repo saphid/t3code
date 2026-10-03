@@ -142,3 +142,48 @@ export const pluginSettingDraftChange = (
     ? { _tag: "change", change: { key: field.key, value } }
     : { _tag: "invalid", message: problem };
 };
+
+/** What a field shows before it is edited: its value as text, or a switch's state. */
+export const pluginSettingDraftOf = (row: PluginSettingRow): PluginSettingDraft =>
+  row.field.type === "boolean"
+    ? row.value === true
+    : row.value === undefined
+      ? ""
+      : String(row.value);
+
+/**
+ * A form's unsaved edits by setting key. A Map, so a declared key named like an
+ * object property ("constructor", "toString") holds only what the user typed.
+ */
+export type PluginSettingDrafts = ReadonlyMap<string, PluginSettingDraft>;
+
+/**
+ * Each row with what it shows and the change its draft makes (or why it cannot
+ * be saved; undefined when it matches what is saved), and the form's changes.
+ */
+export const pluginSettingForm = (
+  rows: ReadonlyArray<PluginSettingRow>,
+  drafts: PluginSettingDrafts,
+) => {
+  const entries = rows.map((row) => {
+    const shown = pluginSettingDraftOf(row);
+    const draft = drafts.get(row.field.key) ?? shown;
+    const outcome = draft === shown ? undefined : pluginSettingDraftChange(row.field, draft);
+    return { row, draft, outcome: outcome?._tag === "unchanged" ? undefined : outcome };
+  });
+  return {
+    entries,
+    changes: entries.flatMap(({ outcome }) => (outcome?._tag === "change" ? [outcome.change] : [])),
+    invalid: entries.some(({ outcome }) => outcome?._tag === "invalid"),
+  };
+};
+
+/** The drafts once `saved` succeeded: the edits it sent are gone, others stay. */
+export const pluginSettingDraftsAfterSave = (
+  drafts: PluginSettingDrafts,
+  saved: ReadonlyArray<PluginSettingChange>,
+): PluginSettingDrafts => {
+  const next = new Map(drafts);
+  for (const change of saved) next.delete(change.key);
+  return next;
+};

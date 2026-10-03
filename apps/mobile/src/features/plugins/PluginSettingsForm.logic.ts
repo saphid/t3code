@@ -30,3 +30,25 @@ export const endPluginSettingEdit = (
  */
 export const pluginSettingInputKey = (row: PluginSettingRow, saves: number) =>
   `${row.saved}:${String(row.value)}:${saves}`;
+
+/**
+ * A field's problem after an edit ends: set when the text cannot be saved,
+ * gone otherwise. Problems and save counts are Maps keyed by setting key, so
+ * a key named like an object property ("constructor") reads only what was set.
+ */
+export const pluginSettingProblemsAfterEdit = (
+  problems: ReadonlyMap<string, string>,
+  key: string,
+  outcome: ReturnType<typeof endPluginSettingEdit>,
+): ReadonlyMap<string, string> => {
+  const next = new Map(problems);
+  if (outcome._tag === "invalid") next.set(key, outcome.message);
+  else next.delete(key);
+  return next;
+};
+
+/** Counts a field's successful save, for `pluginSettingInputKey`. */
+export const pluginSettingSavesAfterSave = (
+  saves: ReadonlyMap<string, number>,
+  key: string,
+): ReadonlyMap<string, number> => new Map(saves).set(key, (saves.get(key) ?? 0) + 1);

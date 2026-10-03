@@ -19,7 +19,12 @@ import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsChoiceRow } from "../settings/components/SettingsChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
-import { endPluginSettingEdit, pluginSettingInputKey } from "./PluginSettingsForm.logic";
+import {
+  endPluginSettingEdit,
+  pluginSettingInputKey,
+  pluginSettingProblemsAfterEdit,
+  pluginSettingSavesAfterSave,
+} from "./PluginSettingsForm.logic";
 
 /**
  * The settings a plugin declares, for one installation on one environment.
@@ -46,8 +51,8 @@ export function PluginSettingsForm({
     label: `save ${installation.manifest?.name ?? "plugin"} settings`,
   });
   const [pending, setPending] = useState<string | null>(null);
-  const [problems, setProblems] = useState<Readonly<Record<string, string>>>({});
-  const [saves, setSaves] = useState<Readonly<Record<string, number>>>({});
+  const [problems, setProblems] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [saves, setSaves] = useState<ReadonlyMap<string, number>>(() => new Map());
   const view = Option.getOrNull(AsyncResult.value(result));
   if (fields.length === 0 || view === null || view._tag === "unsupported") return null;
 
@@ -57,7 +62,7 @@ export function PluginSettingsForm({
     void update({ environmentId, input: { installationId, changes: [change] } })
       .then((outcome) => {
         if (AsyncResult.isSuccess(outcome))
-          setSaves((current) => ({ ...current, [change.key]: (current[change.key] ?? 0) + 1 }));
+          setSaves((current) => pluginSettingSavesAfterSave(current, change.key));
       })
       .finally(() => setPending(null));
   };
@@ -66,7 +71,7 @@ export function PluginSettingsForm({
     <SettingsSection title={installation.manifest?.name ?? "Plugin"}>
       {pluginSettingRows(fields, view.values).map((row, index) => {
         const { field } = row;
-        const problem = problems[field.key];
+        const problem = problems.get(field.key);
         const separated = index > 0 ? "border-t border-border-subtle" : "";
         const clear = row.saved ? (
           <SettingsActionRow
@@ -102,7 +107,7 @@ export function PluginSettingsForm({
               {field.type === "select" ? null : (
                 <AppTextInput
                   // Remount after a save so the field shows the server's value, never a secret.
-                  key={pluginSettingInputKey(row, saves[field.key] ?? 0)}
+                  key={pluginSettingInputKey(row, saves.get(field.key) ?? 0)}
                   accessibilityLabel={field.label}
                   defaultValue={row.value === undefined ? "" : String(row.value)}
                   placeholder={
@@ -125,12 +130,9 @@ export function PluginSettingsForm({
                   className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
                   onEndEditing={(event) => {
                     const outcome = endPluginSettingEdit(row, event.nativeEvent.text);
-                    setProblems((current) => {
-                      const { [field.key]: _previous, ...rest } = current;
-                      return outcome._tag === "invalid"
-                        ? { ...rest, [field.key]: outcome.message }
-                        : rest;
-                    });
+                    setProblems((current) =>
+                      pluginSettingProblemsAfterEdit(current, field.key, outcome),
+                    );
                     if (outcome._tag === "save") save(outcome.change);
                   }}
                 />
