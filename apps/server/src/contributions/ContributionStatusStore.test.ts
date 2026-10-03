@@ -75,13 +75,40 @@ describe("ContributionStatusStore", () => {
         yield* handle.set({ key: `k${index}`, text: "on" });
       }
       yield* handle.set({ key: "k0", text: `${"a".repeat(78)}😀tail` });
-      yield* handle.set({ key: "x".repeat(70), text: "ignored at the cap" });
 
       const [thread] = (yield* store.snapshot).threads;
       assert.strictEqual(thread?.items.length, 8);
       assert.isFalse(thread?.items.some((item) => item.key === "k8"));
       // The emoji would straddle the limit, so it is dropped rather than split.
       assert.strictEqual(thread?.items[0]?.text, `${"a".repeat(78)}…`);
+    }),
+  );
+
+  it.effect("treats keys as identities that never collide", () =>
+    Effect.gen(function* () {
+      const store = yield* ContributionStatusStore.make();
+      const { handle } = yield* openHandle(store, "session-1", THREAD_A);
+      const prefix = "x".repeat(63);
+
+      yield* handle.set({ key: `${prefix}A`, text: "first" });
+      yield* handle.set({ key: `${prefix}B`, text: "second" });
+      yield* handle.set({ key: "a b", text: "spaced" });
+      yield* handle.set({ key: "a  b", text: "double spaced" });
+      // Overlong or control-character keys are rejected, never rewritten into another key.
+      yield* handle.set({ key: `${prefix}AB`, text: "overlong" });
+      yield* handle.set({ key: "a\nb", text: "control" });
+      assert.deepStrictEqual(yield* itemsByThread(store), {
+        [THREAD_A]: ["a  b=double spaced", "a b=spaced", `${prefix}A=first`, `${prefix}B=second`],
+      });
+
+      // Clearing applies the same rule, so it cannot remove a neighbouring key.
+      yield* handle.clear(`${prefix}AB`);
+      yield* handle.clear("a\tb");
+      yield* handle.clear(`${prefix}A`);
+      yield* handle.clear("a b");
+      assert.deepStrictEqual(yield* itemsByThread(store), {
+        [THREAD_A]: ["a  b=double spaced", `${prefix}B=second`],
+      });
     }),
   );
 

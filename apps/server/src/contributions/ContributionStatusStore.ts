@@ -94,29 +94,37 @@ export class ContributionStatusStore extends Context.Reference<ContributionStatu
 // Line breaks, tabs, other C0/C1 controls, DEL, and Unicode line/paragraph separators.
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+// eslint-disable-next-line no-control-regex
+const HAS_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/**
+ * Keys are identities, not display text, so they are never rewritten: two
+ * different keys must never collide. A key that is empty, longer than the
+ * contract allows, or contains a control character is rejected on set and
+ * clear alike.
+ */
+const isValidKey = (key: string) =>
+  key.length > 0 &&
+  key.length <= CONTRIBUTION_STATUS_KEY_MAX_LENGTH &&
+  !HAS_CONTROL_CHARACTER.test(key);
 
 /**
  * Producer text as one plain line: terminal styling removed, controls turned
  * into spaces, whitespace collapsed, and at most `maxLength` UTF-16 units
- * without splitting a surrogate pair. `ellipsis` marks a truncated value.
+ * without splitting a surrogate pair. A truncated value ends in `…`.
  */
-function normalizeContributionStatusText(
-  raw: string,
-  maxLength: number,
-  ellipsis: boolean,
-): string {
+function normalizeContributionStatusText(raw: string, maxLength: number): string {
   const text = NodeUtil.stripVTControlCharacters(raw)
     .replace(CONTROL_CHARACTERS, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (text.length <= maxLength) return text;
-  const budget = ellipsis ? maxLength - 1 : maxLength;
   let truncated = "";
   for (const codePoint of text) {
-    if (truncated.length + codePoint.length > budget) break;
+    if (truncated.length + codePoint.length > maxLength - 1) break;
     truncated += codePoint;
   }
-  return ellipsis ? `${truncated.trimEnd()}…` : truncated;
+  return `${truncated.trimEnd()}…`;
 }
 
 interface ThreadSlot {
@@ -199,16 +207,11 @@ export const make = Effect.fn("contributions.status.make")(function* () {
           update(() => {
             const slot = ownedSlot();
             if (slot === undefined) return false;
-            const key = normalizeContributionStatusText(
-              input.key,
-              CONTRIBUTION_STATUS_KEY_MAX_LENGTH,
-              false,
-            );
-            if (key.length === 0) return false;
+            const key = input.key;
+            if (!isValidKey(key)) return false;
             const text = normalizeContributionStatusText(
               input.text,
               CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
-              true,
             );
             if (text.length === 0) return slot.items.delete(key);
             const previous = slot.items.get(key);
@@ -224,7 +227,6 @@ export const make = Effect.fn("contributions.status.make")(function* () {
                 : normalizeContributionStatusText(
                     input.tooltip,
                     CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH,
-                    true,
                   );
             const item: ContributionStatusItem = {
               key,
@@ -239,10 +241,8 @@ export const make = Effect.fn("contributions.status.make")(function* () {
         clear: (key) =>
           update(() => {
             const slot = ownedSlot();
-            if (slot === undefined) return false;
-            return slot.items.delete(
-              normalizeContributionStatusText(key, CONTRIBUTION_STATUS_KEY_MAX_LENGTH, false),
-            );
+            if (slot === undefined || !isValidKey(key)) return false;
+            return slot.items.delete(key);
           }),
         clearAll: update(() => {
           const slot = ownedSlot();
