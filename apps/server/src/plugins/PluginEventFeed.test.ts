@@ -29,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
+import { LiveStreamBufferError } from "../orchestration-v2/LiveStreamBudget.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
@@ -58,14 +59,19 @@ const observedAfter =
     subscribe: Stream.unwrap(Deferred.await(observed).pipe(Effect.as(catalog.subscribe))),
   });
 
+type Sink = EventSink.EventSinkV2["Service"];
+
 /**
  * Starts a supervisor, catalogue and event feed in `scope`, as one server start
- * would. `feedCatalog` changes the catalogue the feed sees.
+ * would. `feedSees` changes the catalogue or event sink the feed sees.
  */
 const startServer = Effect.fn("startServer")(function* (
   scope: Scope.Scope,
   options: Partial<PluginEventFeed.PluginEventFeedOptions> = {},
-  feedCatalog: (catalog: Catalog) => Catalog = (catalog) => catalog,
+  feedSees: {
+    readonly catalog?: (catalog: Catalog) => Catalog;
+    readonly eventSink?: (eventSink: Sink) => Sink;
+  } = {},
 ) {
   const delivery = yield* PluginEventDelivery.make;
   const supervisor = yield* PluginSupervisor.make({
@@ -82,7 +88,11 @@ const startServer = Effect.fn("startServer")(function* (
     Effect.provideService(Scope.Scope, scope),
   );
   const feed = yield* PluginEventFeed.make(options).pipe(
-    Effect.provideService(PluginCatalog.PluginCatalog, feedCatalog(catalog)),
+    Effect.provideService(PluginCatalog.PluginCatalog, feedSees.catalog?.(catalog) ?? catalog),
+    Effect.provideService(
+      EventSink.EventSinkV2,
+      feedSees.eventSink?.(yield* EventSink.EventSinkV2) ?? (yield* EventSink.EventSinkV2),
+    ),
     Effect.provideService(PluginEventDelivery.PluginEventDelivery, delivery),
     Effect.provideService(
       ServerEnvironment,
@@ -318,6 +328,71 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
     );
   });
 
+  describe("wakeups", () => {
+    it.effect("replaces a wakeup subscription that fell behind and delivers what it missed", () =>
+      withStores(
+        Effect.gen(function* () {
+          yield* seedThread;
+          const plugin = yield* preparePlugin("test.overflow");
+          const overflow = yield* Deferred.make<void>();
+          const resubscribed = yield* Deferred.make<void>();
+          const reopen = yield* Deferred.make<void>();
+          const requests: Array<Parameters<Sink["stream"]>[0]> = [];
+          const { catalog, receipts } = yield* startServer(
+            yield* Scope.Scope,
+            {},
+            {
+              eventSink: (eventSink) => ({
+                ...eventSink,
+                stream: (input) => {
+                  requests.push(input);
+                  // The first subscription per type overflows on demand; the next ones wait
+                  // for `reopen`, so commits in between reach no live subscription.
+                  return requests.length <= 2
+                    ? Stream.merge(
+                        eventSink.stream(input),
+                        Stream.fromEffect(Deferred.await(overflow)).pipe(
+                          Stream.flatMap(() =>
+                            Stream.fail(
+                              new EventSink.EventSinkStreamError({
+                                cause: new LiveStreamBufferError({ message: "full" }),
+                              }),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Stream.unwrap(
+                        Deferred.succeed(resubscribed, undefined).pipe(
+                          Effect.andThen(Deferred.await(reopen)),
+                          Effect.as(eventSink.stream(input)),
+                        ),
+                      );
+                },
+              }),
+            },
+          );
+          const installationId = yield* install(catalog, plugin.directory);
+          yield* next(receipts, "Started", installationId);
+          const before = yield* finalizeRun("before-overflow");
+          yield* next(receipts, "Acknowledged", installationId);
+
+          yield* Deferred.succeed(overflow, undefined);
+          yield* Deferred.await(resubscribed);
+          const missed = yield* finalizeRun("while-resubscribing");
+          yield* Deferred.succeed(reopen, undefined);
+          expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
+            delivered: 1,
+            throughSequence: missed,
+          });
+          expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([before, missed]);
+          // Every subscription is bounded, and a new one starts at the log's end, not at startup.
+          expect(requests.every((input) => input?.bounded === true)).toBe(true);
+          expect(requests.slice(2).map((input) => input?.afterSequence)).toEqual([before, before]);
+        }),
+      ),
+    );
+  });
+
   describe("starting point", () => {
     it.effect(
       "delivers events committed after enable even when the feed sees the enable late",
@@ -327,7 +402,11 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             yield* seedThread;
             const plugin = yield* preparePlugin("test.late-observer");
             const observed = yield* Deferred.make<void>();
-            const server = yield* startServer(yield* Scope.Scope, {}, observedAfter(observed));
+            const server = yield* startServer(
+              yield* Scope.Scope,
+              {},
+              { catalog: observedAfter(observed) },
+            );
             const installationId = yield* install(server.catalog, plugin.directory);
             const enabledAt = yield* storedCursor(installationId);
             const sequence = yield* finalizeRun("right-after-enable");
@@ -357,7 +436,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             const server = yield* startServer(
               first,
               {},
-              observedAfter(yield* Deferred.make<void>()),
+              { catalog: observedAfter(yield* Deferred.make<void>()) },
             );
             const installationId = yield* install(server.catalog, plugin.directory);
             const sequence = yield* finalizeRun("before-restart");
@@ -427,7 +506,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           const { catalog, feed, receipts } = yield* startServer(
             yield* Scope.Scope,
             {},
-            observedAfter(observed),
+            { catalog: observedAfter(observed) },
           );
           const installationId = yield* install(catalog, plugin.directory);
           const [first, broken, last] = yield* Effect.forEach(["a", "b", "c"], (name) =>
@@ -476,15 +555,19 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           const { catalog, feed, receipts } = yield* startServer(
             yield* Scope.Scope,
             { maxFailures: 1, retryBackoff: "1 second" },
-            (catalog) => ({
-              ...catalog,
-              invoke: (installationId, handler, input, options) => {
-                const reason = refusals.shift();
-                return reason === undefined
-                  ? catalog.invoke(installationId, handler, input, options)
-                  : Effect.fail(new PluginCatalogError({ reason, message: `Refused: ${reason}.` }));
-              },
-            }),
+            {
+              catalog: (catalog) => ({
+                ...catalog,
+                invoke: (installationId, handler, input, options) => {
+                  const reason = refusals.shift();
+                  return reason === undefined
+                    ? catalog.invoke(installationId, handler, input, options)
+                    : Effect.fail(
+                        new PluginCatalogError({ reason, message: `Refused: ${reason}.` }),
+                      );
+                },
+              }),
+            },
           );
           const installationId = yield* install(catalog, plugin.directory);
           const { cursor, generation } = yield* next(receipts, "Started", installationId);

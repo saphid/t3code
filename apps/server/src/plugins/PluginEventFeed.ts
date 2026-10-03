@@ -51,7 +51,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
+import { EventSinkV2, type EventSinkV2Error } from "../orchestration-v2/EventSink.ts";
+import { LiveStreamBufferError } from "../orchestration-v2/LiveStreamBudget.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { PluginCatalog } from "./PluginCatalog.ts";
 import { PluginEventDelivery } from "./PluginEventDelivery.ts";
@@ -186,6 +187,7 @@ const decodeFinalizationFailed = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2RunFinalizationFailed),
 );
 const encodePage = Schema.encodeEffect(PluginEventPage);
+const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 
 /** Cuts `text` to `max` UTF-16 units without splitting a surrogate pair. */
 const truncate = (text: string, max: number) => {
@@ -539,12 +541,22 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   );
 
   // Only commits of projected types wake workers; the events themselves are read from the store.
-  const head = yield* eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0));
-  yield* Stream.mergeAll(
-    PLUGIN_EVENT_TYPES.map((eventType) => eventSink.stream({ eventType, afterSequence: head })),
-    { concurrency: "unbounded" },
-  ).pipe(
-    Stream.runForEach(() => PubSub.publish(wakes, undefined)),
+  // The subscriptions are bounded. One that falls behind fails and is replaced at once: the wake
+  // sent before resubscribing makes every worker read what was committed meanwhile.
+  const wakeOnCommits = Effect.gen(function* () {
+    const head = yield* eventSink.latestSequence();
+    yield* PubSub.publish(wakes, undefined);
+    yield* Stream.mergeAll(
+      PLUGIN_EVENT_TYPES.map((eventType) =>
+        eventSink.stream({ eventType, afterSequence: head, bounded: true }),
+      ),
+      { concurrency: "unbounded" },
+    ).pipe(Stream.runForEach(() => PubSub.publish(wakes, undefined)));
+  });
+  const fellBehind = (error: EventSinkV2Error) =>
+    error._tag === "EventSinkStreamError" && isLiveStreamBufferError(error.cause);
+  yield* wakeOnCommits.pipe(
+    Effect.retry({ while: fellBehind }),
     Effect.tapError((error) => Effect.logWarning("Plugin event wakeups stopped", { error })),
     Effect.retry(Schedule.spaced(maxRetryBackoff)),
     Effect.forkScoped,
