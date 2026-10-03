@@ -226,6 +226,10 @@ function compactWorkEntryText(value: string): string {
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
+  // A plugin's answer leads with who answered; expanding shows the prompt and reason.
+  const resolution =
+    !expanded && entry.structuredPayload && approvalResolutionLabel(entry.structuredPayload);
+  if (resolution) return resolution;
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
