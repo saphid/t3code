@@ -84,7 +84,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     }
     return false;
   };
-  const call = (handler, input, options) => ready.then(() => new Promise((resolve, reject) => {
+  const call = (handler, input, options) => new Promise((resolve, reject) => {
     const signal = options === undefined ? undefined : options.signal;
     if (signal !== undefined && signal.aborted) return reject(failure("cancelled", "The call was cancelled."));
     if (typeof handler !== "string" || handler.length > ${PLUGIN_VIEW_HANDLER_MAX_LENGTH} || !/${PLUGIN_VIEW_HANDLER_PATTERN.source}/.test(handler)) return reject(failure("invalid", "The handler name is invalid."));
@@ -97,15 +97,21 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     // A function, Symbol or toJSON() => undefined serializes away, leaving no input.
     if (!("input" in envelope)) return reject(failure("invalid", "The call input is not JSON."));
     if (tooDeep(envelope)) return reject(failure("too-deep", "The call input is nested too deeply."));
-    const cancel = () => settle(id, () => {
-      send({ _tag: "cancel", id });
-      reject(failure("cancelled", "The call was cancelled."));
+    const cancel = () => settle(id, (pendingCall) => {
+      if (pendingCall.sent) send({ _tag: "cancel", id });
+      pendingCall.reject(failure("cancelled", "The call was cancelled."));
     });
     // Before any state, so a signal that cannot listen leaves nothing behind.
     if (signal !== undefined) signal.addEventListener("abort", cancel, { once: true });
-    pending.set(id, { resolve, reject, signal, cancel });
-    port.postMessage(text);
-  }));
+    const entry = { resolve, reject, signal, cancel, sent: false };
+    pending.set(id, entry);
+    // A call made before the handshake is checked and cancellable now, and sent once connected.
+    ready.then(() => {
+      if (pending.get(id) !== entry) return;
+      entry.sent = true;
+      port.postMessage(text);
+    });
+  });
   window.addEventListener("message", (event) => {
     const data = event.data;
     if (data === null || typeof data !== "object" || data.type !== "${PLUGIN_VIEW_CONNECT_MESSAGE}") return;
@@ -119,7 +125,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
 })();`;
 
 /** Base64 SHA-256 of `PLUGIN_VIEW_BOOTSTRAP_SOURCE`; a test keeps them in step. */
-export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "IVNrLjNNTDtqcmVrC8l0U0w2AA5ONkIZfjU/zfAcmZw=";
+export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "H33H3yNN3orj6qcJVdCPv17UfOb00EG+yj3qD1q3Yl4=";
 
 export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocumentError>()(
   "PluginViewDocumentError",

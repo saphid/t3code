@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { makePluginViewBridge } from "./viewBridge.ts";
+import { makePluginViewBridge, type PluginViewBridge } from "./viewBridge.ts";
 import { PLUGIN_VIEW_BOOTSTRAP_SOURCE } from "./viewDocument.ts";
 
 interface ViewApi {
@@ -32,11 +32,12 @@ const outcome = (result: PromiseSettledResult<unknown>) =>
     : String((result.reason as { readonly code?: unknown }).code);
 
 /**
- * Runs the real bootstrap against a fake frame window and connects its port
- * to a real bridge. Port messages are delivered asynchronously, as a
- * MessagePort does. `answer` decides each call the host makes.
+ * Runs the real bootstrap against a fake frame window. `connect` hands it a
+ * port wired to a real bridge and waits for `t3View.ready`. Port messages are
+ * delivered asynchronously, as a MessagePort does. `answer` decides each call
+ * the host makes.
  */
-const mountBootstrap = Effect.fn("mountBootstrap")(function* (
+const loadBootstrap = Effect.fn("loadBootstrap")(function* (
   answer: (handler: string, input: Schema.Json) => Effect.Effect<Schema.Json> = (_handler, input) =>
     Effect.succeed(input),
 ) {
@@ -63,43 +64,54 @@ const mountBootstrap = Effect.fn("mountBootstrap")(function* (
     addEventListener: (_type: string, listener: (event: unknown) => void) =>
       listeners.push(listener),
   };
+  let bridge: PluginViewBridge | undefined;
   const viewPort = {
     onmessage: null as ((event: { readonly data: string }) => void) | null,
-    postMessage: (text: string) => queueMicrotask(() => bridge.receive(text, 0)),
+    postMessage: (text: string) => queueMicrotask(() => bridge?.receive(text, 0)),
   };
   new Function("window", "console", PLUGIN_VIEW_BOOTSTRAP_SOURCE)(frameWindow, {
     warn: () => undefined,
   });
   expect(toHost).toEqual([PLUGIN_VIEW_READY_MESSAGE]);
+  const t3View = frameWindow.t3View!;
 
   const scope = yield* Scope.make();
-  const bridge = yield* makePluginViewBridge({
-    view: { pluginId: "acme.board", viewId: "board", title: "Board" },
-    port: {
-      post: (text) => {
-        toView.push(parse(text) as PluginViewHostMessage);
-        notify();
-        queueMicrotask(() => viewPort.onmessage?.({ data: text }));
+  const connect = Effect.gen(function* () {
+    for (const listener of listeners)
+      listener({
+        data: { type: PLUGIN_VIEW_CONNECT_MESSAGE },
+        source: hostWindow,
+        ports: [viewPort],
+        stopImmediatePropagation: () => undefined,
+      });
+    bridge = yield* makePluginViewBridge({
+      view: { pluginId: "acme.board", viewId: "board", title: "Board" },
+      port: {
+        post: (text) => {
+          toView.push(parse(text) as PluginViewHostMessage);
+          notify();
+          queueMicrotask(() => viewPort.onmessage?.({ data: text }));
+        },
+        close: () => undefined,
       },
-      close: () => undefined,
-    },
-    call: (handler, input) => {
-      calls.push(handler);
-      notify();
-      return answer(handler, input);
-    },
-    onClose: () => undefined,
-  }).pipe(Scope.provide(scope));
-  for (const listener of listeners)
-    listener({
-      data: { type: PLUGIN_VIEW_CONNECT_MESSAGE },
-      source: hostWindow,
-      ports: [viewPort],
-      stopImmediatePropagation: () => undefined,
-    });
-  const t3View = frameWindow.t3View!;
-  yield* Effect.promise(() => t3View.ready);
-  return { t3View, toView, calls, until };
+      call: (handler, input) => {
+        calls.push(handler);
+        notify();
+        return answer(handler, input);
+      },
+      onClose: () => undefined,
+    }).pipe(Scope.provide(scope));
+    yield* Effect.promise(() => t3View.ready);
+  });
+  return { t3View, toView, calls, until, connect };
+});
+
+const mountBootstrap = Effect.fn("mountBootstrap")(function* (
+  answer?: (handler: string, input: Schema.Json) => Effect.Effect<Schema.Json>,
+) {
+  const mount = yield* loadBootstrap(answer);
+  yield* mount.connect;
+  return mount;
 });
 
 /**
@@ -244,6 +256,30 @@ describe("plugin view bootstrap with the host bridge", () => {
       expect((yield* hanging).map(outcome)).toEqual(["cancelled"]);
       yield* Deferred.await(interrupted);
       expect(listeners()).toBe(0);
+    }),
+  );
+
+  it.effect("settles calls made before the handshake without waiting for it", () =>
+    Effect.gen(function* () {
+      const { t3View, toView, calls, connect } = yield* loadBootstrap();
+      const { signal, abort, listeners } = countedAbortSignal();
+      const early = [
+        t3View.call("echo", 1),
+        t3View.call("echo", 2, { signal }),
+        t3View.call("echo", () => undefined),
+      ];
+      abort();
+      const refused = (yield* Effect.promise(() => Promise.allSettled(early.slice(1)))).map(
+        outcome,
+      );
+      expect(refused).toEqual(["cancelled", "invalid"]);
+      expect(listeners()).toBe(0);
+
+      yield* connect;
+      expect(yield* Effect.promise(() => early[0]!)).toBe(1);
+      // The aborted call was never sent, so the host has nothing to cancel.
+      expect(calls).toEqual(["echo"]);
+      expect(toView.filter((message) => message._tag === "violation")).toEqual([]);
     }),
   );
 });
