@@ -1,6 +1,7 @@
 import {
   EnvironmentAuthorizationError,
   ORCHESTRATION_V2_WS_METHODS,
+  type ServerConfig,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -54,6 +55,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
+  | typeof WS_METHODS.pluginsSubscribe
   | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents
@@ -148,15 +150,10 @@ export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServer
   },
 );
 
-export const request = Effect.fn("EnvironmentRpc.request")(function* <
+const requestOnSession = Effect.fn("EnvironmentRpc.requestOnSession")(function* <
   TTag extends EnvironmentUnaryRpcTag,
->(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+>(session: RpcSession, tag: TTag, input: EnvironmentRpcInput<TTag>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  yield* Effect.annotateCurrentSpan({
-    "environment.id": supervisor.target.environmentId,
-    "rpc.method": tag,
-  });
-  const session = yield* currentSession();
   const observer = yield* EnvironmentRpcRequestObserver;
   const method = session.client[tag] as (
     input: EnvironmentRpcInput<TTag>,
@@ -166,6 +163,48 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
+});
+
+export const request = Effect.fn("EnvironmentRpc.request")(function* <
+  TTag extends EnvironmentUnaryRpcTag,
+>(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": tag,
+  });
+  return yield* requestOnSession(yield* currentSession(), tag, input);
+});
+
+/**
+ * Like `request`, but only to a server whose capabilities pass `supported`.
+ * The check and the request use the same session, so a reconnect to an older
+ * server in between cannot receive the call. Otherwise fails with
+ * `EnvironmentRpcUnavailableError` and sends nothing.
+ */
+export const requestIfSupported = Effect.fn("EnvironmentRpc.requestIfSupported")(function* <
+  TTag extends EnvironmentUnaryRpcTag,
+>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+  supported: (capabilities: ServerConfig["environment"]["capabilities"]) => boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": tag,
+  });
+  const session = yield* currentSession();
+  const isSupported = yield* session.initialConfig.pipe(
+    Effect.map((config) => supported(config.environment.capabilities)),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!isSupported)
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: `${supervisor.target.label} runs a server version without this feature.`,
+    });
+  return yield* requestOnSession(session, tag, input);
 });
 
 export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
