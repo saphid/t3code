@@ -45,6 +45,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
+import * as RunContextEnrichment from "./RunContextEnrichment.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
@@ -109,6 +110,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const contextEnricher = yield* Effect.serviceOption(RunContextEnrichment.RunContextEnricherV2);
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -519,6 +521,33 @@ export const layer: Layer.Layer<
         thread: projection.thread,
         modelSelection: run.modelSelection,
       });
+      const providerUserText = projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      });
+      // Saved before the session opens, so a retried or replayed start reuses
+      // the plugins' answers instead of calling them again. Commands go to the
+      // provider as typed.
+      const pluginContext =
+        Option.isNone(contextEnricher) ||
+        (message.attachments.length === 0 && message.text.trimStart().startsWith("/"))
+          ? { _tag: "ready" as const, entries: [] }
+          : yield* RunContextEnrichment.prepareRunContext({
+              enricher: contextEnricher.value,
+              eventSink,
+              idAllocator,
+              threadId: projection.thread.id,
+              projectId: projection.thread.projectId,
+              runId,
+              attemptId: attempt.id,
+              rootNodeId: rootNode.id,
+              providerThreadId: providerThread.id,
+              providerInstanceId: run.providerInstanceId,
+              turnItems: projection.turnItems,
+              userText: providerUserText,
+              cwd: resolvedRuntimePolicy.cwd ?? null,
+            });
+      if (pluginContext._tag === "stale") return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
@@ -943,10 +972,10 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const userText = RunContextEnrichment.withPluginContext(
+        providerUserText,
+        pluginContext.entries,
+      );
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

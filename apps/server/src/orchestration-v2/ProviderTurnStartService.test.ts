@@ -35,6 +35,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { ProviderAdapterEventStreamError } from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import * as RunContextEnrichment from "./RunContextEnrichment.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
@@ -171,6 +172,10 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  /** Loads the thread and starts the run; with `openFailsFirst`, only from the second open. */
+  readonly opensSession?: boolean;
+  readonly openFailsFirst?: boolean;
+  readonly contextEnricher?: RunContextEnrichment.RunContextEnricherV2Shape;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -393,50 +398,59 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  let opens = 0;
   const open = vi.fn(() =>
-    input.interruptOpen === true
-      ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
-        ? Effect.succeed(resumeFallbackSession as never)
-        : "ensureThreadFailure" in input
-          ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-          : "openFailure" in input
-            ? Effect.sync(() => {
-                if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-              }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProviderSessionManager.ProviderSessionOpenError({
-                      instanceId: newInstanceId,
-                      providerSessionId,
-                      cause: input.openFailure,
-                    }),
+    input.openFailsFirst === true && opens++ === 0
+      ? Effect.fail(
+          new ProviderSessionManager.ProviderSessionOpenError({
+            instanceId: newInstanceId,
+            providerSessionId,
+            cause: "first open fails",
+          }),
+        )
+      : input.interruptOpen === true
+        ? Effect.interrupt
+        : "historyReadFailureAfterFallback" in input
+          ? Effect.succeed(resumeFallbackSession as never)
+          : "ensureThreadFailure" in input
+            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+            : "openFailure" in input
+              ? Effect.sync(() => {
+                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderSessionManager.ProviderSessionOpenError({
+                        instanceId: newInstanceId,
+                        providerSessionId,
+                        cause: input.openFailure,
+                      }),
+                    ),
                   ),
-                ),
-              )
-            : input.failReadsAfterRunning === true
-              ? Effect.succeed({
-                  driver: providerThread.driver,
-                  providerSession: {
-                    id: providerSessionId,
+                )
+              : input.failReadsAfterRunning === true || input.opensSession === true
+                ? Effect.succeed({
                     driver: providerThread.driver,
-                    providerInstanceId: newInstanceId,
-                    status: "ready",
-                    cwd: "/tmp/native-account-command",
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
-                  ensureThread: () => Effect.succeed(providerThread),
-                } as never)
-              : Effect.die("A local command must not open a native session."),
+                    providerSession: {
+                      id: providerSessionId,
+                      driver: providerThread.driver,
+                      providerInstanceId: newInstanceId,
+                      status: "ready",
+                      cwd: "/tmp/native-account-command",
+                      model: null,
+                      capabilities: CodexProviderCapabilitiesV2,
+                      createdAt: now,
+                      updatedAt: now,
+                      lastError: null,
+                    },
+                    ensureThread: () => Effect.succeed(providerThread),
+                  } as never)
+                : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.opensSession === true
       ? Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
@@ -527,6 +541,9 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        input.contextEnricher === undefined
+          ? Layer.empty
+          : Layer.succeed(RunContextEnrichment.RunContextEnricherV2, input.contextEnricher),
       ),
     ),
   );
@@ -855,3 +872,86 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+const codenameEnricher = () => {
+  let calls = 0;
+  const enricher: RunContextEnrichment.RunContextEnricherV2Shape = {
+    sources: Effect.succeed([
+      {
+        installationId: "installation-codename",
+        generation: 1,
+        pluginId: "test.codename",
+        name: "Codename notes",
+        timeoutSeconds: 5,
+      },
+    ]),
+    enrich: () =>
+      Effect.sync(() => {
+        calls += 1;
+        return {
+          _tag: "added",
+          context: [{ title: "Codename", text: "The codename is PERIWINKLE-42." }],
+        } as const;
+      }),
+  };
+  return { enricher, calls: () => calls };
+};
+
+const providerContext =
+  '<plugin-context plugin="test.codename" title="Codename">\nThe codename is PERIWINKLE-42.\n</plugin-context>\n\nWhat is the codename?';
+
+effectIt.effect("saves plugin context before the provider starts and sends exactly that", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(1);
+    const contextItem = harness
+      .projection()
+      .turnItems.find(RunContextEnrichment.isPluginContextItem);
+    expect(contextItem).toMatchObject({
+      status: "completed",
+      title: "Added context from Codename notes",
+    });
+    // The context commit lands before the run is marked running.
+    const contextEvent = harness.events.findIndex(
+      (event) => event.type === "turn-item.updated" && event.payload.id === contextItem!.id,
+    );
+    const runningEvent = harness.events.findIndex(
+      (event) => event.type === "run.updated" && event.payload.status === "running",
+    );
+    expect(contextEvent).toBeGreaterThanOrEqual(0);
+    expect(contextEvent).toBeLessThan(runningEvent);
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+effectIt.effect("reuses saved plugin context when a failed session open is retried", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      openFailsFirst: true,
+      contextEnricher: enricher,
+    });
+
+    const error = yield* harness.startWithRetry.pipe(Effect.flip);
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(calls()).toBe(1);
+
+    yield* harness.startWithRetry;
+
+    expect(calls()).toBe(1);
+    expect(harness.open).toHaveBeenCalledTimes(2);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
