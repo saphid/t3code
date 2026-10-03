@@ -68,6 +68,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -154,6 +155,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import {
   OrchestrationEventInfrastructureLayerLive,
+  OrchestrationV2EventSinkLayerLive,
   OrchestrationV2ProductionLayerLive,
   ProjectServiceLayerLive,
   ProjectSetupScriptRunnerLayerLive,
@@ -542,6 +544,10 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   ProviderUsageLimitsIngestionLive,
   ProviderInstallationRefreshLive,
   ReplayMarkers.layer,
+  // The orchestrator's own event sink, so commits wake event delivery.
+  PluginEventFeed.layer().pipe(
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, OrchestrationV2EventSinkLayerLive)),
+  ),
 ).pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
