@@ -1,5 +1,7 @@
-import type { ComponentType } from "react";
+import { Suspense, type ComponentType } from "react";
 
+import { PanelErrorBoundary } from "./PanelErrorBoundary";
+import { usePanelHost } from "./panelHost";
 import { createPanelRegistry, type PanelProps } from "./panelRegistry";
 
 const bundledPanels = createPanelRegistry([
@@ -37,9 +39,19 @@ export type RegisteredSidePanelProps = SidePanel extends infer Panel
   : never;
 
 export function RegisteredSidePanel({ id, ...props }: RegisteredSidePanelProps) {
+  const { threadRef, surfaceId } = usePanelHost();
   const panel = bundledPanels.get(id);
   if (!panel) throw new Error(`Unknown panel id: ${id}`);
   // The union caller already paired id with its props; destructuring loses that correlation.
   const Component = panel.Component as ComponentType<typeof props>;
-  return <Component {...props} />;
+  return (
+    <PanelErrorBoundary
+      resourceKey={`${threadRef.environmentId}:${threadRef.threadId}:${id}:${surfaceId}`}
+      title={panel.title}
+    >
+      <Suspense fallback={null}>
+        <Component {...props} />
+      </Suspense>
+    </PanelErrorBoundary>
+  );
 }

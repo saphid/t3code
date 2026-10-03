@@ -10286,13 +10286,11 @@ export default function ChatView(props: ChatViewProps) {
 
   const rightPanelSurfaceContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
-      <Suspense fallback={null}>
-        <RegisteredSidePanel
-          id="preview"
-          tabId={renderedRightPanelSurface.resourceId}
-          configuredUrls={configuredPreviewUrls}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        id="preview"
+        tabId={renderedRightPanelSurface.resourceId}
+        configuredUrls={configuredPreviewUrls}
+      />
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         visible={rightPanelOpen}
@@ -10313,9 +10311,7 @@ export default function ChatView(props: ChatViewProps) {
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <RegisteredSidePanel key={activeThreadKey} id="diff" />
-      </Suspense>
+      <RegisteredSidePanel key={activeThreadKey} id="diff" />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
