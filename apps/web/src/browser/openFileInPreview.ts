@@ -51,10 +51,19 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
+/**
+ * False once the caller has left the thread it started in. Work that settles
+ * after that ends as an interruption: nothing is opened, applied or reported.
+ */
+type ScopeCheck = (() => boolean) | undefined;
+
+const leftScope = (isScopeCurrent: ScopeCheck) => isScopeCurrent?.() === false;
+
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
+  readonly isScopeCurrent?: ScopeCheck;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
@@ -62,6 +71,7 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  if (leftScope(input.isScopeCurrent)) return AsyncResult.failure(Cause.interrupt());
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
@@ -74,6 +84,9 @@ export async function openUrlInPreview<E>(input: {
       profileId: browserDefaultOpenProfileId(defaults),
     },
   });
+  if (result._tag === "Success" && leftScope(input.isScopeCurrent)) {
+    return AsyncResult.failure(Cause.interrupt());
+  }
   return mapAtomCommandResult(result, (snapshot) => {
     applyPreviewServerSnapshot(input.threadRef, snapshot);
     rememberPreviewUrl(input.threadRef, input.url);
@@ -95,6 +108,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
+  readonly isScopeCurrent?: ScopeCheck;
 }): Promise<
   AtomCommandResult<
     void,
@@ -125,6 +139,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
   }
+  if (leftScope(input.isScopeCurrent)) return AsyncResult.failure(Cause.interrupt());
   const assetUrl = resolveAssetUrl(input.httpBaseUrl, assetResult.value.relativeUrl);
   if (assetUrl === null) {
     return AsyncResult.failure(
@@ -135,5 +150,6 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     threadRef: input.threadRef,
     url: assetUrl,
     openPreview: input.openPreview,
+    isScopeCurrent: input.isScopeCurrent,
   });
 }
