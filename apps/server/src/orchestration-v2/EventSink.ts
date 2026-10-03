@@ -139,6 +139,25 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
+  /**
+   * Fails a claimed effect and records `events` in one transaction. Commits
+   * nothing when `workerId` no longer holds the effect's lease.
+   */
+  readonly failEffect: (input: {
+    readonly commandId: CommandId;
+    readonly effectId: string;
+    readonly workerId: string;
+    readonly error: string;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
+  /** Whether the run recorded `run.finalized` or `run.finalization-failed`. */
+  readonly hasRunFinalization: (runId: RunId) => Effect.Effect<boolean, EventSinkV2Error>;
   readonly commitRejectedCommand: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -306,6 +325,14 @@ const baseLayer: Layer.Layer<
         });
       });
 
+    const isRunFinalizationRecorded = (runId: RunId) =>
+      sql<{ readonly found: number }>`
+        SELECT 1 AS found
+        FROM orchestration_events
+        WHERE event_id = ${RunFinalized.runFinalizedEventId(runId)}
+        LIMIT 1
+      `.pipe(Effect.map((rows) => rows.length > 0));
+
     // A run records one finalization. A run with a checkpoint capture, in any
     // state, finalizes only through RunFinalizationService; a run that never
     // enqueued one finalizes in the commit that writes its terminal status.
@@ -321,13 +348,6 @@ const baseLayer: Layer.Layer<
         if (!events.some((event) => event.type === "run.updated" || isFinalizationRecord(event))) {
           return events;
         }
-        const isRecorded = (runId: RunId) =>
-          sql<{ readonly found: number }>`
-            SELECT 1 AS found
-            FROM orchestration_events
-            WHERE event_id = ${RunFinalized.runFinalizedEventId(runId)}
-            LIMIT 1
-          `.pipe(Effect.map((rows) => rows.length > 0));
         // A failed or cancelled capture still counts: its run did not finalize.
         const hasCapture = (runId: RunId) =>
           effects.some(
@@ -355,7 +375,7 @@ const baseLayer: Layer.Layer<
         for (const event of events) {
           if (event.type === "run.finalized" || event.type === "run.finalization-failed") {
             const runId = event.payload.runId;
-            if (!finalized.has(runId) && !(yield* isRecorded(runId))) {
+            if (!finalized.has(runId) && !(yield* isRunFinalizationRecorded(runId))) {
               finalized.add(runId);
               result.push(event);
             }
@@ -377,7 +397,7 @@ const baseLayer: Layer.Layer<
             outcome === null ||
             finalized.has(run.id) ||
             (previous !== undefined && RunFinalized.isSettledRunStatus(previous)) ||
-            (yield* isRecorded(run.id)) ||
+            (yield* isRunFinalizationRecorded(run.id)) ||
             (yield* hasCapture(run.id))
           ) {
             continue;
@@ -610,6 +630,45 @@ const baseLayer: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    const failEffectEffect = Effect.fn("orchestrationV2.EventSink.failEffect")(function* (
+      input: Parameters<EventSinkV2Shape["failEffect"]>[0],
+    ) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.command_id": input.commandId,
+        "orchestration_v2.effect_id": input.effectId,
+        "orchestration_v2.event_count": input.events.length,
+      });
+
+      return yield* commitThenPublish(
+        Effect.gen(function* () {
+          const failed = yield* effectOutbox.fail({
+            effectId: input.effectId,
+            workerId: input.workerId,
+            error: input.error,
+          });
+          if (!failed) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents =
+            normalized.length === 0
+              ? []
+              : yield* eventStore.append({ commandId: input.commandId, events: normalized });
+          yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents };
+        }),
+        (result) =>
+          result.committed
+            ? effectOutbox
+                .notifyAvailable()
+                .pipe(Effect.andThen(publishStoredEvents(result.storedEvents)))
+            : Effect.void,
+      );
+    });
+
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
@@ -630,28 +689,17 @@ const baseLayer: Layer.Layer<
           }
 
           const normalized = yield* normalizeEvents(input.events, input.effects);
-          const storedEvents = yield* eventStore.append({
+          const appended = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
           });
-          const sequence = storedEvents.at(-1)?.sequence;
-          if (sequence === undefined) {
+          if (appended.length === 0) {
             return yield* Effect.die(
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
-          yield* applyStoredEvents(storedEvents);
+          yield* applyStoredEvents(appended);
           yield* effectOutbox.enqueue(input.effects);
-          const receipt: CommandReceiptStore.CommandReceiptV2 = {
-            commandId: input.commandId,
-            threadId: input.threadId,
-            commandType: input.commandType,
-            acceptedAt: input.acceptedAt,
-            resultSequence: sequence,
-            status: "accepted",
-            error: null,
-          };
-          yield* commandReceipts.upsert(receipt);
           const cancelledEffectIds =
             input.cancelUnsettledEffects === undefined
               ? []
@@ -659,6 +707,17 @@ const baseLayer: Layer.Layer<
                   threadId: input.threadId,
                   ...input.cancelUnsettledEffects,
                 });
+          const storedEvents = appended;
+          const receipt: CommandReceiptStore.CommandReceiptV2 = {
+            commandId: input.commandId,
+            threadId: input.threadId,
+            commandType: input.commandType,
+            acceptedAt: input.acceptedAt,
+            resultSequence: storedEvents.at(-1)?.sequence ?? 0,
+            status: "accepted",
+            error: null,
+          };
+          yield* commandReceipts.upsert(receipt);
           return { receipt, storedEvents, committed: true as const, cancelledEffectIds };
         }),
         (result) =>
@@ -900,6 +959,21 @@ const baseLayer: Layer.Layer<
                 cause,
               }),
           ),
+        ),
+      failEffect: (input) =>
+        failEffectEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({
+                commandId: input.commandId,
+                eventCount: input.events.length,
+                cause,
+              }),
+          ),
+        ),
+      hasRunFinalization: (runId) =>
+        isRunFinalizationRecorded(runId).pipe(
+          Effect.mapError((cause) => new EventSinkStreamError({ cause })),
         ),
       commitRejectedCommand: (input) =>
         commitRejectedCommandEffect(input).pipe(

@@ -55,7 +55,10 @@ it.effect("refreshes workspace after checkpoint capture, then records finalizati
               readyCheckpointOrdinals: [],
             }),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ write }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write,
+          hasRunFinalization: () => Effect.succeed(false),
+        }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,
           refreshAfterTurn: () => Effect.void,
@@ -65,7 +68,7 @@ it.effect("refreshes workspace after checkpoint capture, then records finalizati
   );
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
-    yield* service.finalize({ threadId, runId, scopeId, willRetry: false });
+    yield* service.finalize({ threadId, runId, scopeId });
     assert.equal(capture.mock.calls.length, 1);
     assert.deepEqual(refresh.mock.calls[0], [{ cwd: "/repo", threadId, runId }]);
     assert.deepEqual(steps, ["capture", "refresh", "record"]);

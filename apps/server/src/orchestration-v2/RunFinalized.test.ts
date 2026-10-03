@@ -16,7 +16,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -37,7 +40,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
-import { checkpointCaptureEffectId } from "./RunFinalized.ts";
+import { checkpointCaptureEffectId, makeRunFinalizationFailedEvent } from "./RunFinalized.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
@@ -56,7 +59,8 @@ const firstRetryDelay = "100 millis";
 
 /**
  * Real stores, outbox, worker, finalization and restart recovery. Checkpoint
- * capture and workspace refresh are stubs.
+ * capture and workspace refresh are stubs. `finalizationSink` can inject
+ * faults into the event sink the finalization service writes through.
  */
 const makeLayer = (
   capture: Effect.Effect<
@@ -66,6 +70,8 @@ const makeLayer = (
   >,
   refresh: () => Effect.Effect<void, RunFinalization.RunFinalizationRefreshError> = () =>
     Effect.void,
+  finalizationSink: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape = (sink) =>
+    sink,
 ) => {
   const stores = Layer.mergeAll(
     SqlitePersistenceMemory,
@@ -78,7 +84,10 @@ const makeLayer = (
     Layer.provide(
       Layer.mergeAll(
         stores,
-        eventSink,
+        Layer.effect(
+          EventSink.EventSinkV2,
+          EventSink.EventSinkV2.pipe(Effect.map(finalizationSink)),
+        ).pipe(Layer.provide(eventSink)),
         Layer.effect(
           CheckpointCapture.CheckpointCaptureServiceV2,
           Effect.gen(function* () {
@@ -379,8 +388,9 @@ it.effect("recording the milestone leaves thread activity where the run left it"
   ),
 );
 
-it.effect("a restart after finalizing but before settling records one milestone", () =>
-  Effect.gen(function* () {
+it.effect("a restart after finalizing but before settling records one milestone", () => {
+  let captures = 0;
+  return Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const finalization = yield* RunFinalization.RunFinalizationService;
@@ -388,14 +398,15 @@ it.effect("a restart after finalizing but before settling records one milestone"
     yield* finishProviderTurn("waiting");
     // A worker finalized, then its process died before settling the effect.
     yield* outbox.claimNext({ workerId: "worker:crashed", leaseDurationMs: 60_000 });
-    yield* finalization.finalize({ threadId, runId, scopeId, willRetry: true });
+    yield* finalization.finalize({ threadId, runId, scopeId });
     assert.lengthOf(finalizedEvents(yield* storedEvents), 1);
 
-    // Restart requeues the capture and the worker runs the whole step again.
+    // Restart requeues the capture; the worker settles it without capturing again.
     const summary = yield* restartServer;
     assert.equal(summary.requeuedEffects, 1);
     yield* drainWorker;
     assert.deepEqual(yield* captureStatus, Option.some("succeeded"));
+    assert.equal(captures, 1);
     // A later write of the finished run adds nothing either.
     const now = yield* DateTime.now;
     yield* eventSink.write({
@@ -406,8 +417,17 @@ it.effect("a restart after finalizing but before settling records one milestone"
     assert.deepEqual(yield* finalizationRecords, [
       { type: "run.finalized", payload: { runId, outcome: "completed", checkpointId } },
     ]);
-  }).pipe(Effect.provide(makeLayer(commitCapture("completed")))),
-);
+  }).pipe(
+    Effect.provide(
+      makeLayer(
+        Effect.suspend(() => {
+          captures += 1;
+          return commitCapture("completed");
+        }),
+      ),
+    ),
+  );
+});
 
 it.effect.each(["interrupted", "cancelled"] as const)(
   "a stopped run with a capture finalizes as %s after the capture",
@@ -460,7 +480,7 @@ it.effect("unfinished, discarded, and previously finished runs never finalize", 
     yield* eventSink.write({
       events: [runEvent("run.updated", makeRun(now, "rolled_back", { completedAt: now }), now)],
     });
-    yield* finalization.finalize({ threadId, runId, scopeId, willRetry: false });
+    yield* finalization.finalize({ threadId, runId, scopeId });
     assert.lengthOf(yield* finalizationRecords, 0);
 
     // A run that finished before this milestone existed has no event. A later
@@ -573,3 +593,210 @@ it.effect("a run whose capture was cancelled records nothing when it later ends"
     assert.lengthOf(yield* finalizationRecords, 0);
   }).pipe(Effect.provide(makeLayer(Effect.void))),
 );
+
+const captureDefect = Effect.die("simulated unexpected checkpoint defect");
+const refreshDefect = () => Effect.die("simulated unexpected refresh defect");
+
+it.effect.each([
+  {
+    label: "a capture defect after a waiting turn",
+    turn: "waiting" as const,
+    capture: captureDefect,
+    refresh: undefined,
+    operation: "capture-checkpoint" as const,
+    runAfterRestart: "cancelled",
+  },
+  {
+    label: "a capture defect after an interrupted turn",
+    turn: "interrupted" as const,
+    capture: captureDefect,
+    refresh: undefined,
+    operation: "capture-checkpoint" as const,
+    runAfterRestart: "interrupted",
+  },
+  {
+    label: "a refresh defect after a completed run's checkpoint",
+    turn: "waiting" as const,
+    capture: commitCapture("completed"),
+    refresh: refreshDefect,
+    operation: "refresh-workspace" as const,
+    runAfterRestart: "completed",
+  },
+  {
+    label: "a refresh defect after an interrupted run's checkpoint",
+    turn: "interrupted" as const,
+    capture: commitCapture("interrupted"),
+    refresh: refreshDefect,
+    operation: "refresh-workspace" as const,
+    runAfterRestart: "interrupted",
+  },
+])("$label records the failure when retries run out", (testCase) =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    yield* finishProviderTurn(testCase.turn);
+    yield* drainWorker;
+    assert.deepEqual(yield* captureStatus, Option.some("pending"));
+    assert.lengthOf(yield* finalizationRecords, 0);
+
+    yield* TestClock.adjust(firstRetryDelay);
+    yield* drainWorker;
+    assert.deepEqual(yield* captureStatus, Option.some("failed"));
+    const failure = [
+      {
+        type: "run.finalization-failed" as const,
+        payload: { runId, operation: testCase.operation },
+      },
+    ];
+    assert.deepEqual(yield* finalizationRecords, failure);
+
+    yield* restartServer;
+    yield* drainWorker;
+    assert.equal(yield* runStatus, testCase.runAfterRestart);
+    assert.deepEqual(yield* captureStatus, Option.some("failed"));
+    assert.deepEqual(yield* finalizationRecords, failure);
+  }).pipe(Effect.provide(makeLayer(testCase.capture, testCase.refresh))),
+);
+
+it.effect("a failure record that cannot commit keeps the capture recoverable", () => {
+  let faults = 1;
+  return Effect.gen(function* () {
+    yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    yield* drainWorker;
+    yield* TestClock.adjust(firstRetryDelay);
+    // The last attempt fails and its failure record cannot commit.
+    const exit = yield* Effect.exit(drainWorker);
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(faults, 0);
+    // The rolled-back commit neither failed the capture nor recorded anything.
+    assert.deepEqual(yield* captureStatus, Option.some("pending"));
+    assert.lengthOf(yield* finalizationRecords, 0);
+
+    // A restart keeps the work; the next attempt gives up and records it.
+    yield* restartServer;
+    yield* drainWorker;
+    assert.deepEqual(yield* captureStatus, Option.some("failed"));
+    assert.deepEqual(yield* finalizationRecords, [
+      {
+        type: "run.finalization-failed",
+        payload: { runId, operation: "capture-checkpoint" },
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      makeLayer(failCapture, undefined, (sink) => ({
+        ...sink,
+        // Also append an event whose id is taken, so the commit fails after
+        // the capture's terminal status was written inside it.
+        failEffect: (input) =>
+          Effect.suspend(() => {
+            if (faults === 0) return sink.failEffect(input);
+            faults -= 1;
+            const at = input.events[0]!.occurredAt;
+            return sink.failEffect({
+              ...input,
+              events: [
+                ...input.events,
+                {
+                  ...runEvent("run.updated", makeRun(at, "waiting"), at),
+                  id: EventId.make("event:run-finalized-test:thread"),
+                },
+              ],
+            });
+          }),
+      })),
+    ),
+  );
+});
+
+it.effect("a restart after a failure record but before settling never finalizes again", () => {
+  let captures = 0;
+  return Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    // A worker recorded the failure, then its process died before settling
+    // the capture (the state a non-atomic writer could leave).
+    yield* outbox.claimNext({ workerId: "worker:crashed", leaseDurationMs: 60_000 });
+    const context = yield* ProjectionStore.ProjectionStoreV2.pipe(
+      Effect.flatMap((projections) =>
+        projections.getCheckpointCaptureContext(threadId, { runId, scopeId }),
+      ),
+    );
+    yield* eventSink.write({
+      events: [
+        makeRunFinalizationFailedEvent({
+          run: context.run!,
+          operation: "capture-checkpoint",
+          occurredAt: yield* DateTime.now,
+        }),
+      ],
+    });
+
+    const summary = yield* restartServer;
+    assert.equal(summary.requeuedEffects, 1);
+    yield* drainWorker;
+    assert.equal(captures, 0);
+    assert.deepEqual(yield* captureStatus, Option.some("succeeded"));
+    assert.deepEqual(yield* finalizationRecords, [
+      {
+        type: "run.finalization-failed",
+        payload: { runId, operation: "capture-checkpoint" },
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      makeLayer(
+        Effect.suspend(() => {
+          captures += 1;
+          return commitCapture("completed");
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("an interrupted capture is replayed, never recorded as a failure", () => {
+  let captures = 0;
+  const started = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    // Interrupted on every attempt in a live worker: retried, not given up.
+    yield* drainWorker;
+    yield* TestClock.adjust(firstRetryDelay);
+    yield* drainWorker;
+    yield* TestClock.adjust("30 seconds");
+    assert.deepEqual(yield* captureStatus, Option.some("pending"));
+    assert.lengthOf(yield* finalizationRecords, 0);
+
+    // A shutdown interrupts the worker mid-capture and leaves the claim running.
+    const shuttingDown = yield* Effect.forkChild(drainWorker);
+    yield* Deferred.await(started);
+    yield* Fiber.interrupt(shuttingDown);
+    assert.deepEqual(yield* captureStatus, Option.some("running"));
+    assert.lengthOf(yield* finalizationRecords, 0);
+
+    // Restart replays it and the capture now succeeds.
+    yield* restartServer;
+    yield* drainWorker;
+    assert.equal(captures, 4);
+    assert.deepEqual(yield* finalizationRecords, [
+      { type: "run.finalized", payload: { runId, outcome: "completed", checkpointId } },
+    ]);
+  }).pipe(
+    Effect.provide(
+      makeLayer(
+        Effect.suspend(() => {
+          captures += 1;
+          return captures <= 2
+            ? Effect.interrupt
+            : captures === 3
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+              : commitCapture("completed");
+        }),
+      ),
+    ),
+  );
+});
