@@ -2,11 +2,13 @@
  * Mounts a verified view document in an opaque-origin frame and hands it one
  * MessagePort. The port is the only channel: window messages other than the
  * frame's own `ready` are ignored, a second `ready` never gets a second port,
- * and any navigation of the frame tears the mount down.
+ * and any further load of the frame tears the mount down.
+ *
+ * The load guard only detects; it cannot prevent a view committing another
+ * document. Prevention is the `wrapper` navigation policy on web (see
+ * viewDocument.ts) and a native veto on desktop and iOS.
  */
-
-/** No allow-same-origin: the frame gets an opaque origin and no app storage or cookies. */
-export const VIEW_FRAME_SANDBOX = "allow-scripts";
+import { VIEW_FRAME_SANDBOX, type ViewNavigationPolicy } from "./viewDocument";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 
 export interface IsolatedViewMount {
@@ -15,6 +17,7 @@ export interface IsolatedViewMount {
 }
 
 export interface IsolatedViewStats {
+  loads: number;
   connects: number;
   ignoredWindowMessages: number;
   droppedPortMessages: number;
@@ -25,13 +28,13 @@ export function mountIsolatedView(input: {
   readonly frame: HTMLIFrameElement;
   readonly documentSource: string;
   readonly generation: number;
+  readonly navigationPolicy: ViewNavigationPolicy;
   readonly init: unknown;
   readonly stats: IsolatedViewStats;
   readonly onMessage: (message: unknown) => void;
 }): IsolatedViewMount {
   const { frame, stats } = input;
   let port: MessagePort | null = null;
-  let loads = 0;
   let disposed = false;
 
   const dispose = (reason: string) => {
@@ -46,8 +49,12 @@ export function mountIsolatedView(input: {
     frame.src = "about:blank";
   };
 
+  // With a policy wrapper the view is the wrapper's only child frame.
+  const viewWindow = () =>
+    input.navigationPolicy === "wrapper" ? (frame.contentWindow?.[0] ?? null) : frame.contentWindow;
+
   const onWindowMessage = (event: MessageEvent) => {
-    const target = frame.contentWindow;
+    const target = viewWindow();
     if (target === null || event.source !== target) return;
     const isReady =
       typeof event.data === "object" &&
@@ -69,8 +76,9 @@ export function mountIsolatedView(input: {
       input.onMessage(portEvent.data);
     });
     port.start();
-    // An opaque origin cannot be named as a target; the source check above and
-    // the load guard below bind the port to this exact document.
+    // An opaque origin cannot be named as a target. The source check binds the
+    // port to this browsing context, not to a document: only the navigation
+    // policy keeps that context on the verified document.
     target.postMessage(
       { type: "t3-view:connect", generation: input.generation, init: input.init },
       "*",
@@ -81,8 +89,8 @@ export function mountIsolatedView(input: {
   // srcdoc loads once. Any further load is the view navigating or reloading
   // itself into a document the host never verified.
   const onLoad = () => {
-    loads += 1;
-    if (loads > 1) dispose("frame-navigated");
+    stats.loads += 1;
+    if (stats.loads > 1) dispose("frame-navigated");
   };
 
   window.addEventListener("message", onWindowMessage);

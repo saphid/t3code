@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   VIEW_BOOTSTRAP_SOURCE,
   ViewDocumentError,
+  WRAPPED_VIEW_BOOTSTRAP_SOURCE,
   buildViewDocument,
   sha256Base64,
 } from "./viewDocument";
@@ -55,5 +56,30 @@ describe("buildViewDocument", () => {
 
   it("hashes UTF-8 bytes like the CSP hash source", async () => {
     expect(await sha256Base64("✓ view")).toBe(nodeDigest("✓ view"));
+  });
+
+  it("wraps the view in a script-free policy frame whose srcdoc decodes to the view exactly", async () => {
+    const viewSource = `document.title = "a & b"; const quote = '"';`;
+    const html = await buildViewDocument({
+      viewSource,
+      declaredDigest: nodeDigest(viewSource),
+      title: "view",
+      navigationPolicy: "wrapper",
+    });
+    const [wrapperHtml, attribute] = html.split(' srcdoc="');
+    expect(wrapperHtml).not.toContain("<script");
+    expect(wrapperHtml).toContain(`sandbox="allow-scripts"`);
+    const inner = attribute!
+      .slice(0, attribute!.lastIndexOf('"'))
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, "&");
+    expect(inner).toContain(`<script>${WRAPPED_VIEW_BOOTSTRAP_SOURCE}</script>`);
+    expect(inner).toContain(`<script>${viewSource}</script>`);
+    const policyOf = (document: string) =>
+      /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(document)?.[1];
+    // default-src 'none' in the wrapper is what refuses the view's own navigations.
+    expect(policyOf(wrapperHtml!)).toBe(policyOf(inner));
+    expect(policyOf(inner)).toContain(`'sha256-${nodeDigest(WRAPPED_VIEW_BOOTSTRAP_SOURCE)}'`);
+    expect(policyOf(inner)?.startsWith("default-src 'none'")).toBe(true);
   });
 });

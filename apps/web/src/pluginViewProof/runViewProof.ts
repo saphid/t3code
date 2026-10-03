@@ -10,7 +10,12 @@ import {
   type IsolatedViewStats,
   mountIsolatedView,
 } from "./isolatedViewHost";
-import { VIEW_BOOTSTRAP_SOURCE, ViewDocumentError, buildViewDocument } from "./viewDocument";
+import {
+  VIEW_BOOTSTRAP_SOURCE,
+  type ViewNavigationPolicy,
+  ViewDocumentError,
+  buildViewDocument,
+} from "./viewDocument";
 
 export type ProofOutcome = "blocked" | "works" | "LEAKED" | "info" | "refused" | "unverified";
 
@@ -36,6 +41,8 @@ interface ReportedRow {
 }
 
 const PROOF_TIMEOUT_MS = 10_000;
+// nav-* views try to leave their document and, if still there, say so after 1.5 s.
+const NAVIGATION_SETTLE_MS = 4_000;
 
 function messageType(message: unknown): string | null {
   return typeof message === "object" && message !== null && "type" in message
@@ -50,6 +57,7 @@ function messageType(message: unknown): string | null {
 export function runViewProof(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
+  readonly navigationPolicy: ViewNavigationPolicy;
   readonly container: HTMLElement;
   readonly onRows: (rows: ReadonlyArray<ProofRow>) => void;
 }): { readonly dispose: () => void } {
@@ -143,6 +151,7 @@ export function runViewProof(input: {
     frame.className = "h-24 w-full rounded border border-border bg-white";
     input.container.append(frame);
     const viewStats: IsolatedViewStats = {
+      loads: 0,
       connects: 0,
       ignoredWindowMessages: 0,
       droppedPortMessages: 0,
@@ -153,6 +162,8 @@ export function runViewProof(input: {
       frame,
       documentSource,
       generation,
+      // The control document has no wrapper: it shows the inherited policy alone.
+      navigationPolicy: view.control ? "none" : input.navigationPolicy,
       init: {
         viewId: view.id,
         appOrigin: window.location.origin,
@@ -162,9 +173,22 @@ export function runViewProof(input: {
       onMessage: (message) => onViewMessage(view, generation, frame, viewStats, message),
     });
     mounts.set(`${view.id}#${generation}`, handle);
+    if (view.id.startsWith("nav-")) {
+      setTimeout(() => {
+        if (stillAlive.has(view.id)) return;
+        push({
+          view: view.id,
+          name: "verified document still loaded after self-navigation attempt",
+          outcome: "info",
+          detail: `no still-alive message; the runner's fixture log and frame state decide (host loads=${viewStats.loads}, teardown=${viewStats.teardownReason})`,
+        });
+        settle(view.id);
+      }, NAVIGATION_SETTLE_MS);
+    }
     return { frame, handle, viewStats };
   };
 
+  const stillAlive = new Set<string>();
   let victimReady = false;
   let attackerDone = false;
   const staleState = { gen1AfterReplace: 0, gen2Ticks: 0, gen2AfterRevoke: 0, replaced: false };
@@ -190,15 +214,38 @@ export function runViewProof(input: {
       releaseVictim();
       return;
     }
+    if (type === "still-alive") {
+      if (stillAlive.has(view.id)) return;
+      stillAlive.add(view.id);
+      push({
+        view: view.id,
+        name: "verified document still loaded after self-navigation attempt",
+        outcome: "blocked",
+        detail: `still-alive after ${String((message as { target?: unknown }).target)}`,
+      });
+      settle(view.id);
+      return;
+    }
     if (type === "tick") {
       onStaleTick(view, generation, frame);
       return;
     }
     if (type === "navigating") {
-      // The frame's next load must tear the mount down.
+      // The frame's next load must tear the mount down. A navigation the policy
+      // refuses never loads, so settle on a timer too.
+      const fallback = setTimeout(() => {
+        push({
+          view: view.id,
+          name: "host tore down after self-navigation",
+          outcome: "info",
+          detail: `no second load (navigation refused or replaced by an error page); loads=${viewStats.loads}`,
+        });
+        settle(view.id);
+      }, NAVIGATION_SETTLE_MS);
       frame.addEventListener(
         "load",
         () => {
+          clearTimeout(fallback);
           queueMicrotask(() => {
             push({
               view: view.id,
@@ -236,7 +283,12 @@ export function runViewProof(input: {
       frame.remove();
       void readText(view.file)
         .then((source) =>
-          buildViewDocument({ viewSource: source, declaredDigest: view.sha256, title: view.id }),
+          buildViewDocument({
+            viewSource: source,
+            declaredDigest: view.sha256,
+            title: view.id,
+            navigationPolicy: input.navigationPolicy,
+          }),
         )
         .then((source) => {
           if (!cancelled) mount(view, source, 2);
@@ -282,6 +334,7 @@ export function runViewProof(input: {
               viewSource: source,
               declaredDigest: view.sha256,
               title: view.id,
+              navigationPolicy: input.navigationPolicy,
             });
       } catch (error) {
         push({

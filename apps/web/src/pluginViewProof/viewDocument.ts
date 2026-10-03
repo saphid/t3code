@@ -5,7 +5,18 @@
  * CSP that sits first in the document. The frame inherits the app's own
  * policy (srcdoc shares the parent's policy container), so this policy can only
  * narrow what runs: no app-wide CSP change, no blob: or remote script source.
+ *
+ * A document's own CSP cannot stop its frame navigating away; only the embedding
+ * document's `frame-src` can. With the `wrapper` navigation policy the view sits
+ * inside a script-free srcdoc wrapper whose CSP (`default-src 'none'`, so
+ * `frame-src 'none'`) refuses every network or `data:` navigation of the view.
  */
+
+/** No allow-same-origin: the frame gets an opaque origin and no app storage or cookies. */
+export const VIEW_FRAME_SANDBOX = "allow-scripts";
+
+/** `none`: the view frame is a direct child of the host. `wrapper`: a policy frame sits between. */
+export type ViewNavigationPolicy = "none" | "wrapper";
 
 export class ViewDocumentError extends Error {
   readonly _tag = "ViewDocumentError";
@@ -39,9 +50,9 @@ export function assertInlineSafe(source: string, label: string): void {
   }
 }
 
-/** Host-owned handshake: accepts exactly one port, only from the embedding window. */
-export const VIEW_BOOTSTRAP_SOURCE = `(() => {
-  const host = window.parent;
+/** Host-owned handshake: accepts exactly one port, only from the host window. */
+const bootstrapSource = (host: "window.parent" | "window.parent.parent") => `(() => {
+  const host = ${host};
   let resolvePort;
   const port = new Promise((resolve) => { resolvePort = resolve; });
   let connected = false;
@@ -63,11 +74,15 @@ export const VIEW_BOOTSTRAP_SOURCE = `(() => {
   host.postMessage({ type: "t3-view:ready" }, "*");
 })();`;
 
+export const VIEW_BOOTSTRAP_SOURCE = bootstrapSource("window.parent");
+export const WRAPPED_VIEW_BOOTSTRAP_SOURCE = bootstrapSource("window.parent.parent");
+
 export interface ViewDocumentInput {
   readonly viewSource: string;
   /** Digest declared by the plugin's manifest, base64 SHA-256. */
   readonly declaredDigest: string;
   readonly title: string;
+  readonly navigationPolicy?: ViewNavigationPolicy;
 }
 
 export async function buildViewDocument(input: ViewDocumentInput): Promise<string> {
@@ -79,7 +94,9 @@ export async function buildViewDocument(input: ViewDocumentInput): Promise<strin
       `View script digest ${viewDigest} does not match the declared ${input.declaredDigest}.`,
     );
   }
-  const bootstrapDigest = await sha256Base64(VIEW_BOOTSTRAP_SOURCE);
+  const wrapped = input.navigationPolicy === "wrapper";
+  const bootstrap = wrapped ? WRAPPED_VIEW_BOOTSTRAP_SOURCE : VIEW_BOOTSTRAP_SOURCE;
+  const bootstrapDigest = await sha256Base64(bootstrap);
   const policy = [
     "default-src 'none'",
     `script-src 'sha256-${bootstrapDigest}' 'sha256-${viewDigest}'`,
@@ -89,5 +106,10 @@ export async function buildViewDocument(input: ViewDocumentInput): Promise<strin
     "form-action 'none'",
   ].join("; ");
   const title = input.title.replace(/[<>&"]/g, "");
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>${title}</title><script>${VIEW_BOOTSTRAP_SOURCE}</script></head><body><script>${input.viewSource}</script></body></html>`;
+  const head = `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>${title}</title>`;
+  const view = `<!doctype html><html><head>${head}<script>${bootstrap}</script></head><body><script>${input.viewSource}</script></body></html>`;
+  if (!wrapped) return view;
+  // Escaping only & and " makes the parsed srcdoc attribute equal `view` exactly.
+  const srcdoc = view.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return `<!doctype html><html><head>${head}<style>html,body,iframe{margin:0;border:0;width:100%;height:100%;display:block}</style></head><body><iframe sandbox="${VIEW_FRAME_SANDBOX}" referrerpolicy="no-referrer" allow="" srcdoc="${srcdoc}"></iframe></body></html>`;
 }

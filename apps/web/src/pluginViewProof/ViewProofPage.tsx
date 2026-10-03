@@ -3,9 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 
 import { type ProofRow, runViewProof } from "./runViewProof";
+import type { ViewNavigationPolicy } from "./viewDocument";
 
-/** Dev-only harness: `/view-proof?root=<absolute payload directory on the environment host>`. */
-export function ViewProofPage({ root }: { readonly root: string | null }) {
+/** Dev-only harness: `/view-proof?root=<absolute payload directory on the environment host>&nav=none|wrapper`. */
+export function ViewProofPage({
+  root,
+  navigationPolicy,
+}: {
+  readonly root: string | null;
+  readonly navigationPolicy: ViewNavigationPolicy;
+}) {
   const environmentId = usePrimaryEnvironmentId();
   const containerRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<ReadonlyArray<ProofRow>>([]);
@@ -13,13 +20,15 @@ export function ViewProofPage({ root }: { readonly root: string | null }) {
   useEffect(() => {
     const container = containerRef.current;
     if (environmentId === null || container === null || root === null) return;
-    const run = runViewProof({ environmentId, root, container, onRows: setRows });
+    const run = runViewProof({ environmentId, root, navigationPolicy, container, onRows: setRows });
     return run.dispose;
-  }, [environmentId, root]);
+  }, [environmentId, root, navigationPolicy]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-4 text-sm">
-      <h1 className="font-semibold">Isolated plugin view proof</h1>
+      <h1 className="font-semibold">
+        Isolated plugin view proof (navigation policy: {navigationPolicy})
+      </h1>
       {root === null ? <p>Missing ?root= payload directory.</p> : null}
       <div ref={containerRef} className="grid grid-cols-4 gap-2" />
       <table className="w-full text-left" data-testid="view-proof-results">

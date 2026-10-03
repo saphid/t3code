@@ -5,6 +5,9 @@ import { ViewProofPage } from "../pluginViewProof/ViewProofPage";
 export const Route = createFileRoute("/view-proof")({
   validateSearch: (search: Record<string, unknown>) => ({
     root: typeof search.root === "string" ? search.root : undefined,
+    nav: search.nav === "wrapper" ? ("wrapper" as const) : undefined,
+    // Read by the iOS proof's patched WebView to turn its native veto off for a baseline run.
+    nativeVeto: search.nativeVeto === "off" ? ("off" as const) : undefined,
   }),
   beforeLoad: () => {
     if (!import.meta.env.DEV) throw notFound();
@@ -13,6 +16,6 @@ export const Route = createFileRoute("/view-proof")({
 });
 
 function ViewProofRoute() {
-  const { root } = Route.useSearch();
-  return <ViewProofPage root={root ?? null} />;
+  const { root, nav } = Route.useSearch();
+  return <ViewProofPage root={root ?? null} navigationPolicy={nav ?? "none"} />;
 }
