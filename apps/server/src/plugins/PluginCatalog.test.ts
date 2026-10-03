@@ -3,14 +3,18 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   PluginInstallationId,
   pluginInstallationStatus,
+  type PluginId,
   type PluginInstallation,
 } from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -18,6 +22,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
+import type { PluginRegistration } from "./PluginManifestLoader.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
@@ -94,6 +99,103 @@ const awaitSnapshot = (
     Stream.runHead,
     Effect.map((snapshot) => Option.getOrThrow(snapshot).installations),
   );
+
+/** A step a test can stop at: `reached` completes when it is entered, `release` lets it go on. */
+interface Hold {
+  readonly reached: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+}
+
+const makeHold = Effect.gen(function* () {
+  const hold: Hold = {
+    reached: yield* Deferred.make<void>(),
+    release: yield* Deferred.make<void>(),
+  };
+  return hold;
+});
+
+const passHold = (hold: Hold | undefined) =>
+  hold === undefined
+    ? Effect.void
+    : Deferred.succeed(hold.reached, undefined).pipe(Effect.andThen(Deferred.await(hold.release)));
+
+/**
+ * A supervisor without processes that behaves like the real one at its
+ * boundary: registration by plugin id, revocation at the start of `disable`,
+ * and `invoke` answering with the registered directory. Tests can hold
+ * `enable` and `disable` open.
+ */
+const makeStubSupervisor = Effect.gen(function* () {
+  const registrations = new Map<PluginId, PluginRegistration>();
+  const invoked: Array<string> = [];
+  const holds: { enable?: Hold; disable?: Hold } = {};
+  const events = yield* PubSub.unbounded<PluginSupervisor.PluginSupervisorEvent>();
+  const service = PluginSupervisor.PluginSupervisor.of({
+    enable: (registration) =>
+      Effect.suspend(() => {
+        const pluginId = registration.manifest.id;
+        if (registrations.has(pluginId))
+          return Effect.fail(new PluginSupervisor.PluginAlreadyEnabledError({ pluginId }));
+        registrations.set(pluginId, registration);
+        return passHold(holds.enable);
+      }),
+    disable: (pluginId) =>
+      Effect.suspend(() => {
+        registrations.delete(pluginId);
+        return passHold(holds.disable);
+      }),
+    resume: () => Effect.void,
+    invoke: (pluginId) =>
+      Effect.suspend(() => {
+        const registration = registrations.get(pluginId);
+        if (registration === undefined)
+          return Effect.fail(new PluginSupervisor.PluginNotEnabledError({ pluginId }));
+        invoked.push(registration.directory);
+        return Effect.succeed(registration.directory);
+      }),
+    state: (pluginId) =>
+      Effect.sync(() =>
+        registrations.has(pluginId) ? Option.some({ _tag: "idle" as const }) : Option.none(),
+      ),
+    subscribe: PubSub.subscribe(events),
+  });
+  return { service, registrations, invoked, holds };
+});
+
+/** The real file system, except that the next read of a held directory waits for its hold. */
+const makeHoldingFileSystem = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  let held: { readonly directory: string; readonly hold: Hold } | undefined;
+  const fileSystem: FileSystem.FileSystem = {
+    ...fs,
+    realPath: (target) =>
+      Effect.suspend(() => {
+        if (held === undefined || !target.startsWith(held.directory)) return fs.realPath(target);
+        const { hold } = held;
+        held = undefined;
+        return passHold(hold).pipe(Effect.andThen(fs.realPath(target)));
+      }),
+  };
+  const holdDirectory = Effect.fn("holdDirectory")(function* (directory: string) {
+    const hold = yield* makeHold;
+    held = { directory, hold };
+    return hold;
+  });
+  return { fileSystem, holdDirectory };
+});
+
+/** A catalogue over the stub supervisor, reading files through `fileSystem`. */
+const startStubCatalog = Effect.fn("startStubCatalog")(function* (
+  scope: Scope.Scope,
+  supervisor: PluginSupervisor.PluginSupervisor["Service"],
+  fileSystem?: FileSystem.FileSystem,
+) {
+  return yield* PluginCatalog.make().pipe(
+    Effect.provideService(PluginSupervisor.PluginSupervisor, supervisor),
+    Effect.provideService(FileSystem.FileSystem, fileSystem ?? (yield* FileSystem.FileSystem)),
+    Effect.provideService(Scope.Scope, scope),
+  );
+});
 
 const pidOf = (value: unknown) => (value as { readonly pid: number }).pid;
 
@@ -258,6 +360,92 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
           expect(unknown.reason).toBe("not-found");
         }),
       ),
+    );
+  });
+
+  describe("calls racing management", () => {
+    it.effect("fails a call whose installation is replaced while its bytes are checked", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const stub = yield* makeStubSupervisor;
+          const files = yield* makeHoldingFileSystem;
+          const catalog = yield* startStubCatalog(
+            yield* Scope.Scope,
+            stub.service,
+            files.fileSystem,
+          );
+          const approve = Effect.fn(function* (directory: string) {
+            const { installation } = yield* catalog.add({ directory });
+            yield* catalog.consent({
+              installationId: installation.installationId,
+              digest: installation.source!.digest,
+            });
+            return installation;
+          });
+          const first = yield* approve((yield* preparePlugin("test.same")).directory);
+          const second = yield* approve((yield* preparePlugin("test.same")).directory);
+          yield* catalog.enable({ installationId: first.installationId });
+
+          // The call stops in its byte check, before a fresh process would start.
+          const hold = yield* files.holdDirectory(first.directory);
+          const call = yield* catalog
+            .invoke(first.installationId, "ping", null)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(hold.reached);
+          yield* catalog.disable({ installationId: first.installationId });
+          yield* catalog.enable({ installationId: second.installationId });
+          yield* Deferred.succeed(hold.release, undefined);
+
+          const refused = yield* Fiber.join(call).pipe(Effect.flip);
+          expect(refused).toMatchObject({ _tag: "PluginCatalogError", reason: "unavailable" });
+          expect(stub.invoked).toEqual([]);
+          expect(yield* catalog.invoke(second.installationId, "ping", null)).toBe(second.directory);
+        }),
+      ),
+    );
+
+    it.effect(
+      "fails a call when its installation is enabled again or names an old generation",
+      () =>
+        withDatabase(
+          Effect.gen(function* () {
+            const stub = yield* makeStubSupervisor;
+            const files = yield* makeHoldingFileSystem;
+            const catalog = yield* startStubCatalog(
+              yield* Scope.Scope,
+              stub.service,
+              files.fileSystem,
+            );
+            const plugin = yield* preparePlugin("test.generation");
+            const { installation } = yield* catalog.add({ directory: plugin.directory });
+            const installationId = installation.installationId;
+            yield* catalog.consent({ installationId, digest: installation.source!.digest });
+            const { installation: enabled } = yield* catalog.enable({ installationId });
+
+            const hold = yield* files.holdDirectory(installation.directory);
+            const call = yield* catalog
+              .invoke(installationId, "ping", null)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Deferred.await(hold.reached);
+            yield* catalog.disable({ installationId });
+            const { installation: again } = yield* catalog.enable({ installationId });
+            yield* Deferred.succeed(hold.release, undefined);
+            expect(yield* Fiber.join(call).pipe(Effect.flip)).toMatchObject({
+              reason: "unavailable",
+            });
+            expect(stub.invoked).toEqual([]);
+
+            expect(again.generation).toBe(enabled.generation + 1);
+            const stale = yield* catalog
+              .invoke(installationId, "ping", null, { generation: enabled.generation })
+              .pipe(Effect.flip);
+            expect(stale).toMatchObject({ reason: "generation-changed" });
+            expect(stub.invoked).toEqual([]);
+            expect(
+              yield* catalog.invoke(installationId, "ping", null, { generation: again.generation }),
+            ).toBe(installation.directory);
+          }),
+        ),
     );
   });
 

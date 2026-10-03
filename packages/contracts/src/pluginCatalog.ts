@@ -143,7 +143,7 @@ export type PluginRemoveResult = typeof PluginRemoveResult.Type;
 /**
  * `reason` is an open set so newer servers can add cases: `not-found`,
  * `invalid-directory`, `already-added`, `source-changed`, `consent-required`,
- * `plugin-id-conflict`, `unavailable`, `storage`.
+ * `plugin-id-conflict`, `unavailable`, `storage`, `generation-changed`.
  */
 export class PluginCatalogError extends Schema.TaggedError<PluginCatalogError>()(
   "PluginCatalogError",

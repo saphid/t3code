@@ -35,6 +35,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -62,10 +63,16 @@ type PluginInstallationRecord = typeof PluginInstallationRecord.Type;
 const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(PluginInstallationRecord));
 const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(PluginInstallationRecord));
 
+/** One registration with the supervisor. A re-enable makes a new one; it is never mutated. */
+interface Registration {
+  readonly pluginId: PluginId;
+  readonly generation: number;
+}
+
 interface Installation {
   record: PluginInstallationRecord;
-  /** The id this installation runs under in the supervisor, while enabled. */
-  registeredAs: PluginId | undefined;
+  /** The registration this installation runs under, while enabled. */
+  registered: Registration | undefined;
 }
 
 type Inspection =
@@ -75,6 +82,13 @@ type Inspection =
       readonly source: PluginSource;
     }
   | { readonly _tag: "failed"; readonly reason: string };
+
+/** What one admission attempt of `invoke` found. */
+type Admission =
+  | { readonly _tag: "called"; readonly value: Schema.Json }
+  | { readonly _tag: "revoked" }
+  /** A fresh process would start: the bytes must be checked against `consented` first. */
+  | { readonly _tag: "check"; readonly consented: string };
 
 const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
   id: manifest.id,
@@ -130,13 +144,17 @@ export class PluginCatalog extends Context.Service<
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
     /**
      * Calls a handler of an enabled installation. A call that would start a
-     * fresh process first checks the bytes still match the consent.
+     * fresh process first checks the bytes still match the consent. Pass the
+     * `generation` the caller saw to refuse a call that would reach a later
+     * registration (`generation-changed`). A call whose installation is
+     * disabled, removed, or re-registered before the supervisor takes it
+     * fails; it never follows the plugin id to a replacement.
      */
     readonly invoke: (
       installationId: PluginInstallationId,
       handler: string,
       input: Schema.Json,
-      options?: { readonly timeout?: Duration.Input },
+      options?: { readonly timeout?: Duration.Input; readonly generation?: number },
     ) => Effect.Effect<Schema.Json, PluginCatalogError | PluginInvokeError>;
   }
 >()("t3/plugins/PluginCatalog") {}
@@ -191,9 +209,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   /** Stops the plugin's process and forgets its registration. */
   const unregister = Effect.fnUntraced(function* (installation: Installation) {
-    const pluginId = installation.registeredAs;
-    installation.registeredAs = undefined;
-    if (pluginId !== undefined) yield* supervisor.disable(pluginId);
+    const registered = installation.registered;
+    installation.registered = undefined;
+    if (registered !== undefined) yield* supervisor.disable(registered.pluginId);
   });
 
   /**
@@ -234,7 +252,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   ) {
     const pluginId = registration.manifest.id;
     const holder = [...installations.values()].find(
-      (other) => other !== installation && other.registeredAs === pluginId,
+      (other) => other !== installation && other.registered?.pluginId === pluginId,
     );
     if (holder)
       return yield* catalogError(
@@ -253,14 +271,15 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
           ),
         ),
       );
-    installation.registeredAs = pluginId;
     const record = {
       ...installation.record,
       enabled: true,
       generation: installation.record.generation + 1,
     };
-    yield* save(record).pipe(Effect.tapError(() => unregister(installation)));
+    yield* save(record).pipe(Effect.tapError(() => supervisor.disable(pluginId)));
+    // Together, so an invoke never sees the new registration with the old generation.
     installation.record = record;
+    installation.registered = { pluginId, generation: record.generation };
   });
 
   const find = (installationId: PluginInstallationId) =>
@@ -275,9 +294,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const toWire = Effect.fnUntraced(function* (installation: Installation) {
     const state =
-      installation.registeredAs === undefined
+      installation.registered === undefined
         ? Option.none()
-        : yield* supervisor.state(installation.registeredAs);
+        : yield* supervisor.state(installation.registered.pluginId);
     return Option.match(state, {
       onNone: (): PluginInstallation => installation.record,
       onSome: (hostState): PluginInstallation => ({ ...installation.record, hostState }),
@@ -336,7 +355,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       addedAt: at,
     };
     yield* save(record);
-    const installation: Installation = { record, registeredAs: undefined };
+    const installation: Installation = { record, registered: undefined };
     installations.set(installationId, installation);
     return yield* result(installation);
   });
@@ -376,7 +395,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const enable = Effect.fn("PluginCatalog.enable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
-    if (installation.registeredAs !== undefined) return yield* result(installation);
+    if (installation.registered !== undefined) return yield* result(installation);
     const inspection = yield* reinspect(installation);
     if (inspection._tag === "failed")
       return yield* catalogError("unavailable", inspection.reason, input.installationId);
@@ -418,41 +437,103 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
-    if (installation.registeredAs === undefined)
+    if (installation.registered === undefined)
       return yield* catalogError("unavailable", "The plugin is not enabled.", input.installationId);
-    yield* supervisor.resume(installation.registeredAs).pipe(Effect.ignore);
+    yield* supervisor.resume(installation.registered.pluginId).pipe(Effect.ignore);
     return yield* result(installation);
   });
+
+  /**
+   * Re-checks that `registered` is still this installation's registration and, unless the call
+   * would start a fresh process with unchecked bytes, hands the call to the supervisor. It runs
+   * in a fiber that starts synchronously, so no management step can revoke or replace the
+   * registration between the check and the supervisor admitting the call.
+   */
+  const admit = (
+    installation: Installation,
+    registered: Registration,
+    verified: string | undefined,
+    call: (pluginId: PluginId) => Effect.Effect<Schema.Json, PluginInvokeError>,
+  ) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.forkChild(
+        Effect.suspend((): Effect.Effect<Admission, PluginInvokeError> => {
+          if (
+            installations.get(installation.record.installationId) !== installation ||
+            installation.registered !== registered ||
+            installation.record.consent === null
+          )
+            return Effect.succeed({ _tag: "revoked" });
+          const consented = installation.record.consent.digest;
+          return supervisor
+            .state(registered.pluginId)
+            .pipe(
+              Effect.flatMap((state): Effect.Effect<Admission, PluginInvokeError> =>
+                Option.isSome(state) && state.value._tag === "idle" && verified !== consented
+                  ? Effect.succeed({ _tag: "check", consented })
+                  : call(registered.pluginId).pipe(
+                      Effect.map((value) => ({ _tag: "called", value })),
+                    ),
+              ),
+            );
+        }),
+        { startImmediately: true },
+      ).pipe(
+        Effect.flatMap((fiber) =>
+          restore(Fiber.join(fiber)).pipe(Effect.onInterrupt(() => Fiber.interrupt(fiber))),
+        ),
+      ),
+    );
 
   const invoke: PluginCatalog["Service"]["invoke"] = Effect.fn("PluginCatalog.invoke")(
     function* (installationId, handler, input, options) {
       const installation = yield* find(installationId);
-      const pluginId = installation.registeredAs;
-      const consented = installation.record.consent?.digest;
-      if (pluginId === undefined || consented === undefined)
+      const registered = installation.registered;
+      if (registered === undefined)
         return yield* catalogError("unavailable", "The plugin is not enabled.", installationId);
-      const state = yield* supervisor.state(pluginId);
-      if (Option.isSome(state) && state.value._tag === "idle") {
-        const current = yield* digestPluginSource(installation.record.directory, sourceLimits).pipe(
-          Effect.option,
+      if (options?.generation !== undefined && options.generation !== registered.generation)
+        return yield* catalogError(
+          "generation-changed",
+          "The plugin was enabled again since this call was prepared.",
+          installationId,
         );
-        if (Option.isNone(current) || current.value.digest !== consented) {
-          // Skip the record if it was removed meanwhile, so it is not written back.
-          yield* managed(
-            Effect.suspend(() =>
-              installations.get(installationId) === installation
-                ? reinspect(installation)
-                : Effect.void,
-            ),
-          );
+      const call = (pluginId: PluginId) =>
+        supervisor.invoke(
+          pluginId,
+          handler,
+          input,
+          options?.timeout === undefined ? undefined : { timeout: options.timeout },
+        );
+      let verified: string | undefined;
+      while (true) {
+        const admission = yield* admit(installation, registered, verified, call);
+        if (admission._tag === "called") return admission.value;
+        if (admission._tag === "revoked")
           return yield* catalogError(
-            "source-changed",
-            "The plugin's files changed since they were approved, so it was disabled.",
+            "unavailable",
+            "The plugin was disabled or replaced before the call started.",
             installationId,
           );
+        const inspection = yield* inspect(installation.record.directory);
+        if (inspection._tag === "ok" && inspection.source.digest === admission.consented) {
+          verified = admission.consented;
+          continue;
         }
+        // Skip the record if it was disabled or removed meanwhile, so it is not written back.
+        yield* managed(
+          Effect.suspend(() =>
+            installations.get(installationId) === installation &&
+            installation.registered === registered
+              ? reinspect(installation)
+              : Effect.void,
+          ),
+        );
+        return yield* catalogError(
+          "source-changed",
+          "The plugin's files changed since they were approved, so it was disabled.",
+          installationId,
+        );
       }
-      return yield* supervisor.invoke(pluginId, handler, input, options);
     },
   );
 
@@ -468,7 +549,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     }
     installations.set(decoded.value.installationId, {
       record: decoded.value,
-      registeredAs: undefined,
+      registered: undefined,
     });
   }
 
