@@ -179,6 +179,10 @@
       "types": "./src/state/plugins.ts",
       "default": "./src/state/plugins.ts"
     },
+    "./state/pluginSettings": {
+      "types": "./src/state/pluginSettings.ts",
+      "default": "./src/state/pluginSettings.ts"
+    },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
