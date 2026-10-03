@@ -104,7 +104,11 @@ describe("pluginCatalogStream", () => {
   it.effect("subscribes on a server that announces it", () =>
     Effect.gen(function* () {
       const { view, calls } = yield* firstView({ repositoryIdentity: true, plugins: true });
-      expect(view).toEqual({ _tag: "available", installations: SNAPSHOT.installations });
+      expect(view).toEqual({
+        _tag: "available",
+        installations: SNAPSHOT.installations,
+        revision: expect.any(Number),
+      });
       expect(calls).toEqual([WS_METHODS.pluginsSubscribe]);
     }),
   );

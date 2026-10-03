@@ -7,7 +7,7 @@ import {
   pluginInstallationStatus,
 } from "@t3tools/contracts";
 
-import type { PluginCatalogView } from "./plugins.ts";
+import { latestPluginCatalogRevision, type PluginCatalogView } from "./plugins.ts";
 
 export type PluginStateTone = "neutral" | "success" | "info" | "warning" | "error";
 
@@ -196,8 +196,6 @@ export type PluginCatalogState =
   | {
       readonly _tag: "available";
       readonly view: Extract<PluginCatalogView, { readonly _tag: "available" }>;
-      /** Client clock time (ms) when this snapshot arrived. */
-      readonly receivedAt: number;
     };
 
 /**
@@ -208,14 +206,12 @@ export function resolvePluginCatalogState(input: {
   readonly connected: boolean;
   readonly data: PluginCatalogView | null;
   readonly error: string | null;
-  /** The query result's timestamp for `data`. */
-  readonly receivedAt: number;
 }): PluginCatalogState {
   if (!input.connected) return { _tag: "disconnected" };
   if (input.error !== null) return { _tag: "failed", message: input.error };
   if (input.data === null) return { _tag: "loading" };
   if (input.data._tag === "unsupported") return { _tag: "unsupported" };
-  return { _tag: "available", view: input.data, receivedAt: input.receivedAt };
+  return { _tag: "available", view: input.data };
 }
 
 /** Controls need access:write and a live, current catalogue. */
@@ -252,28 +248,45 @@ export function pluginManagementNotice(
   }
 }
 
+/** Short text for a status slot that is always laid out, shown while access is being checked. */
+export const PLUGIN_ACCESS_CHECKING = "Checking access…";
+
 /**
- * Set on a screen opened by adding: when the add reply arrived, and the reply's
- * installation when the screen has it. A snapshot that arrived earlier may not
- * list the new plugin yet; only one that arrived later can say it is gone.
+ * Status while the session read that decides access is in flight, or null. The
+ * check is brief and repeats on revalidation, so screens show this in a slot that
+ * is always there and keep `pluginManagementNotice` blocks for lasting reasons.
+ */
+export function pluginAccessStatus(
+  access: PluginManageAccess,
+  catalog: PluginCatalogState,
+): string | null {
+  return catalog._tag === "available" && access === "pending" ? PLUGIN_ACCESS_CHECKING : null;
+}
+
+/**
+ * Set on a screen opened by adding: the latest catalogue revision delivered when
+ * the add reply arrived, and the reply's installation when the screen has it. A
+ * snapshot delivered by then may not list the new plugin yet; only one delivered
+ * later can say it is gone.
  */
 export interface PluginAddedMarker {
-  readonly since: number;
+  readonly afterRevision: number;
   readonly installation: PluginInstallation | null;
 }
 
 /**
  * Call when `plugins.add` replies. Restarting the catalogue subscription makes
  * the server send its current snapshot even when it equals the last one (a
- * subscription drops repeats), so the handoff always ends: listed or missing.
+ * subscription drops repeats), and that delivery is numbered after the marker,
+ * so the handoff always ends: listed or missing.
  */
 export function startPluginAddHandoff(input: {
   readonly installation: PluginInstallation | null;
   readonly restartCatalog: () => void;
-  readonly now: number;
 }): PluginAddedMarker {
+  const afterRevision = latestPluginCatalogRevision();
   input.restartCatalog();
-  return { since: input.now, installation: input.installation };
+  return { afterRevision, installation: input.installation };
 }
 
 export type PluginDetailState =
@@ -295,8 +308,7 @@ export function resolvePluginDetail(input: {
     (entry) => entry.installationId === input.installationId,
   );
   if (installation) return { _tag: "found", installation };
-  // Same-millisecond arrivals count as later: a brief "missing" beats waiting forever.
-  if (added !== null && catalog.receivedAt < added.since)
+  if (added !== null && catalog.view.revision <= added.afterRevision)
     return added.installation
       ? { _tag: "found", installation: added.installation }
       : { _tag: "loading" };
@@ -312,35 +324,72 @@ export type PluginActionOutcome =
   | { readonly _tag: "refused" }
   | { readonly _tag: "failed"; readonly error: string | null };
 
+/** What a plugin screen may act on right now. */
+export interface PluginActionSubject {
+  readonly environmentId: string;
+  readonly installation: PluginInstallation;
+  /** The digest the user acknowledged on this screen, or null. */
+  readonly acknowledgedDigest: string | null;
+}
+
+/** What an action was started on. An approval also binds the exact files the user reviewed. */
+export interface PluginActionTarget {
+  readonly environmentId: string;
+  readonly installationId: PluginInstallationId;
+  readonly approvedDigest?: string;
+}
+
+/** Whether an action started on `target` may still dispatch against what the screen shows now. */
+export function pluginActionStillApplies(
+  target: PluginActionTarget,
+  current: PluginActionSubject | null,
+): boolean {
+  if (
+    current === null ||
+    current.environmentId !== target.environmentId ||
+    current.installation.installationId !== target.installationId
+  )
+    return false;
+  return (
+    target.approvedDigest === undefined ||
+    (current.installation.source?.digest === target.approvedDigest &&
+      current.acknowledgedDigest === target.approvedDigest)
+  );
+}
+
 /**
  * Decides at dispatch time whether a plugin screen may still act. Confirmations
  * and multi-step actions call `run` from callbacks created earlier, so they read
- * this instead of a captured value. The screen calls `set` on every commit and
- * `set(false)` when it closes.
+ * this instead of a captured value. The screen calls `set` with what it may act
+ * on (null when it may not) on every commit, and `set(null)` when it closes.
  */
 export interface PluginActionGate {
-  readonly set: (actionable: boolean) => void;
-  /** Runs steps in order, re-checking before each; refuses while another run is going. */
+  readonly set: (current: PluginActionSubject | null) => void;
+  /**
+   * Runs steps in order, re-checking `target` against the current subject before
+   * each; refuses while another run is going.
+   */
   readonly run: (
+    target: PluginActionTarget,
     steps: ReadonlyArray<PluginActionStep>,
     onStart?: () => void,
   ) => Promise<PluginActionOutcome>;
 }
 
 export function createPluginActionGate(): PluginActionGate {
-  let actionable = false;
+  let current: PluginActionSubject | null = null;
   let running = false;
   return {
     set: (next) => {
-      actionable = next;
+      current = next;
     },
-    run: async (steps, onStart) => {
-      if (running || !actionable) return { _tag: "refused" };
+    run: async (target, steps, onStart) => {
+      if (running || !pluginActionStillApplies(target, current)) return { _tag: "refused" };
       running = true;
       onStart?.();
       try {
         for (const step of steps) {
-          if (!actionable) return { _tag: "refused" };
+          if (!pluginActionStillApplies(target, current)) return { _tag: "refused" };
           const outcome = await step();
           if ("error" in outcome) return { _tag: "failed", error: outcome.error };
         }

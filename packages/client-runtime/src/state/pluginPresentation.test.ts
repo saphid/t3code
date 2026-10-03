@@ -15,14 +15,18 @@ import {
   canManagePlugins,
   createPluginActionGate,
   describePluginSource,
+  PLUGIN_ACCESS_CHECKING,
+  type PluginActionSubject,
+  pluginAccessStatus,
   pluginAddDirectory,
+  pluginManagementNotice,
   presentPluginInstallation,
   resolvePluginCatalogState,
   resolvePluginDetail,
   resolvePluginManageAccess,
   startPluginAddHandoff,
 } from "./pluginPresentation.ts";
-import type { PluginCatalogView } from "./plugins.ts";
+import { deliverPluginCatalog, type PluginCatalogView } from "./plugins.ts";
 
 /** Resolves once the atom's value satisfies `done`, without polling. */
 function settled<A>(
@@ -218,12 +222,12 @@ describe("resolvePluginManageAccess", () => {
   });
 });
 
-const available = (installations: ReadonlyArray<PluginInstallation>): PluginCatalogView => ({
-  _tag: "available",
-  installations,
-});
-const availableState = (view: PluginCatalogView, receivedAt = 0) =>
-  resolvePluginCatalogState({ connected: true, data: view, error: null, receivedAt });
+const available = (
+  installations: ReadonlyArray<PluginInstallation>,
+  revision = 0,
+): PluginCatalogView => ({ _tag: "available", installations, revision });
+const availableState = (view: PluginCatalogView) =>
+  resolvePluginCatalogState({ connected: true, data: view, error: null });
 
 describe("plugin management readiness", () => {
   it("manages only with access:write and a live catalogue", () => {
@@ -238,7 +242,6 @@ describe("plugin management readiness", () => {
       connected: true,
       data: available([installation()]),
       error: "Subscription lost.",
-      receivedAt: 0,
     });
     expect(catalog).toEqual({ _tag: "failed", message: "Subscription lost." });
     expect(canManagePlugins("granted", catalog)).toBe(false);
@@ -246,21 +249,37 @@ describe("plugin management readiness", () => {
 
   it("stops management while disconnected or loading", () => {
     for (const catalog of [
-      resolvePluginCatalogState({
-        connected: false,
-        data: available([]),
-        error: null,
-        receivedAt: 0,
-      }),
-      resolvePluginCatalogState({ connected: true, data: null, error: null, receivedAt: 0 }),
-      resolvePluginCatalogState({
-        connected: true,
-        data: { _tag: "unsupported" },
-        error: null,
-        receivedAt: 0,
-      }),
+      resolvePluginCatalogState({ connected: false, data: available([]), error: null }),
+      resolvePluginCatalogState({ connected: true, data: null, error: null }),
+      resolvePluginCatalogState({ connected: true, data: { _tag: "unsupported" }, error: null }),
     ])
       expect(canManagePlugins("granted", catalog)).toBe(false);
+  });
+});
+
+describe("pluginAccessStatus", () => {
+  const live = availableState(available([]));
+
+  it("explains a pending access check as a short status, with every control off", () => {
+    expect(pluginAccessStatus("pending", live)).toBe(PLUGIN_ACCESS_CHECKING);
+    expect(canManagePlugins("pending", live)).toBe(false);
+    // Dialogs still have the full sentence for their own status slot.
+    expect(pluginManagementNotice("pending", live, "Build box")).not.toBeNull();
+  });
+
+  it("has no status once access is settled, either way", () => {
+    for (const access of ["granted", "denied", "unreadable"] as const)
+      expect(pluginAccessStatus(access, live)).toBeNull();
+    expect(pluginManagementNotice("denied", live, "Build box")).not.toBeNull();
+  });
+
+  it("leaves catalogue states to their own notice", () => {
+    for (const catalog of [
+      resolvePluginCatalogState({ connected: false, data: null, error: null }),
+      resolvePluginCatalogState({ connected: true, data: null, error: null }),
+      resolvePluginCatalogState({ connected: true, data: available([]), error: "Lost." }),
+    ])
+      expect(pluginAccessStatus("pending", catalog)).toBeNull();
   });
 });
 
@@ -276,7 +295,6 @@ describe("pluginAddDirectory", () => {
       connected: true,
       data: available([]),
       error: "Subscription lost.",
-      receivedAt: 0,
     });
     const directory = " /srv/plugins/notifier ";
     expect(
@@ -299,13 +317,13 @@ describe("pluginAddDirectory", () => {
 describe("resolvePluginDetail", () => {
   const id = PluginInstallationId.make("installation-1");
   const added = installation();
-  const ADDED_AT = 2_000;
+  const MARKED = 7;
 
-  it("shows a just-added plugin until a snapshot from after the add lists it", () => {
-    const marker = { since: ADDED_AT, installation: added };
+  it("shows a just-added plugin until a snapshot delivered after the add lists it", () => {
+    const marker = { afterRevision: MARKED, installation: added };
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([]), ADDED_AT - 1),
+        catalog: availableState(available([], MARKED)),
         installationId: id,
         added: marker,
       }),
@@ -313,43 +331,41 @@ describe("resolvePluginDetail", () => {
     const listed = installation({ enabled: true });
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([listed]), ADDED_AT + 5),
+        catalog: availableState(available([listed], MARKED + 1)),
         installationId: id,
         added: marker,
       }),
     ).toEqual({ _tag: "found", installation: listed });
   });
 
-  it("waits for a snapshot from after the add without the reply, then finds the plugin", () => {
-    const marker = { since: ADDED_AT, installation: null };
+  it("waits for a snapshot delivered after the add without the reply, then finds the plugin", () => {
+    const marker = { afterRevision: MARKED, installation: null };
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([]), ADDED_AT - 1),
+        catalog: availableState(available([], MARKED)),
         installationId: id,
         added: marker,
       }),
     ).toEqual({ _tag: "loading" });
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([added]), ADDED_AT + 5),
+        catalog: availableState(available([added], MARKED + 1)),
         installationId: id,
         added: marker,
       }),
     ).toEqual({ _tag: "found", installation: added });
   });
 
-  it("reports removal when a snapshot from after the add does not list the plugin", () => {
+  it("reports removal when a snapshot delivered after the add does not list the plugin", () => {
     // Covers a removal that reached the client before the detail screen opened.
     for (const reply of [added, null]) {
-      for (const receivedAt of [ADDED_AT, ADDED_AT + 5]) {
-        expect(
-          resolvePluginDetail({
-            catalog: availableState(available([]), receivedAt),
-            installationId: id,
-            added: { since: ADDED_AT, installation: reply },
-          }),
-        ).toEqual({ _tag: "missing" });
-      }
+      expect(
+        resolvePluginDetail({
+          catalog: availableState(available([], MARKED + 1)),
+          installationId: id,
+          added: { afterRevision: MARKED, installation: reply },
+        }),
+      ).toEqual({ _tag: "missing" });
     }
   });
 
@@ -370,7 +386,6 @@ describe("resolvePluginDetail", () => {
           connected: true,
           data: available([added]),
           error: "Subscription lost.",
-          receivedAt: 0,
         }),
         installationId: id,
         added: null,
@@ -382,67 +397,80 @@ describe("resolvePluginDetail", () => {
 describe("startPluginAddHandoff", () => {
   const id = PluginInstallationId.make("installation-1");
 
-  it("ends as missing when add and remove coalesce into an unchanged catalogue", async () => {
-    // A subscription that drops repeats: after add+remove the server state equals
-    // the old snapshot, so only a restarted subscription delivers it again.
-    let now = 1_000;
-    let serverInstallations: ReadonlyArray<PluginInstallation> = [];
-    const catalog = Atom.make(
-      Stream.concat(
-        Stream.fromEffect(
-          Effect.sync((): PluginCatalogView => available([...serverInstallations])),
+  it.each([
+    ["without the add reply", null],
+    ["with the add reply", installation()],
+  ] as const)(
+    "ends as missing %s when add and remove coalesce, even if the clock steps back",
+    async (_label, reply) => {
+      // A subscription that drops repeats: after add+remove the server state equals
+      // the old snapshot, so only a restarted subscription delivers it again.
+      let serverInstallations: ReadonlyArray<PluginInstallation> = [];
+      const catalog = Atom.make(
+        Stream.concat(
+          Stream.fromEffect(Effect.sync(() => deliverPluginCatalog([...serverInstallations]))),
+          Stream.never,
         ),
-        Stream.never,
-      ),
-    );
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(catalog);
-    const state = () => {
-      const result = registry.get(catalog);
-      return resolvePluginCatalogState({
-        connected: true,
-        data: Option.getOrNull(AsyncResult.value(result)),
-        error: null,
-        receivedAt: AsyncResult.isSuccess(result) ? result.timestamp : 0,
-      });
-    };
-    const originalNow = Date.now;
-    Date.now = () => now;
-    try {
-      await settled(registry, catalog, AsyncResult.isSuccess);
-      // The plugin is added and removed again before the subscription reports either.
-      serverInstallations = [installation()];
-      serverInstallations = [];
-
-      now = 2_000;
-      let restarts = 0;
-      const marker = startPluginAddHandoff({
-        installation: null,
-        restartCatalog: () => {
-          restarts += 1;
-          now = 2_001;
-          registry.refresh(catalog);
-        },
-        now: 2_000,
-      });
-      expect(restarts).toBe(1);
-      await settled(
-        registry,
-        catalog,
-        (result) => AsyncResult.isSuccess(result) && result.timestamp >= marker.since,
       );
-      expect(resolvePluginDetail({ catalog: state(), installationId: id, added: marker })).toEqual({
-        _tag: "missing",
-      });
-    } finally {
-      Date.now = originalNow;
-      unmount();
-      registry.dispose();
-    }
-  });
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(catalog);
+      const state = () =>
+        resolvePluginCatalogState({
+          connected: true,
+          data: Option.getOrNull(AsyncResult.value(registry.get(catalog))),
+          error: null,
+        });
+      const originalNow = Date.now;
+      let now = 2_000;
+      Date.now = () => now;
+      try {
+        await settled(registry, catalog, AsyncResult.isSuccess);
+        const before = AsyncResult.getOrThrow(registry.get(catalog));
+        // The plugin is added and removed again before the subscription reports either.
+        serverInstallations = [installation()];
+        serverInstallations = [];
+
+        let restarts = 0;
+        const marker = startPluginAddHandoff({
+          installation: reply,
+          restartCatalog: () => {
+            restarts += 1;
+            // The device clock is adjusted backwards before the restarted snapshot arrives.
+            now = 1_500;
+            registry.refresh(catalog);
+          },
+        });
+        expect(restarts).toBe(1);
+        await settled(
+          registry,
+          catalog,
+          (result) => AsyncResult.isSuccess(result) && result.value !== before,
+        );
+        expect(AsyncResult.isSuccess(registry.get(catalog)) && registry.get(catalog)).toMatchObject(
+          { timestamp: 1_500 },
+        );
+        expect(
+          resolvePluginDetail({ catalog: state(), installationId: id, added: marker }),
+        ).toEqual({ _tag: "missing" });
+      } finally {
+        Date.now = originalNow;
+        unmount();
+        registry.dispose();
+      }
+    },
+  );
 });
 
 describe("createPluginActionGate", () => {
+  const ENVIRONMENT = "environment-1";
+  const id = PluginInstallationId.make("installation-1");
+  const subject = (overrides: Partial<PluginActionSubject> = {}): PluginActionSubject => ({
+    environmentId: ENVIRONMENT,
+    installation: installation(),
+    acknowledgedDigest: null,
+    ...overrides,
+  });
+  const target = { environmentId: ENVIRONMENT, installationId: id };
   const counted = () => {
     const calls: Array<string> = [];
     const step = (name: string) => () => {
@@ -455,22 +483,37 @@ describe("createPluginActionGate", () => {
   it("sends nothing from a confirmation opened before management was lost or its screen closed", async () => {
     const gate = createPluginActionGate();
     const { calls, step } = counted();
-    gate.set(true);
+    gate.set(subject());
     // A native confirmation keeps the callback it was opened with.
-    const confirmRemove = () => gate.run([step("remove")]);
-    gate.set(false);
+    const confirmRemove = () => gate.run(target, [step("remove")]);
+    gate.set(null);
     expect(await confirmRemove()).toEqual({ _tag: "refused" });
+    expect(calls).toEqual([]);
+  });
+
+  it("sends nothing for a different installation or environment", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    gate.set(subject());
+    expect(
+      await gate.run({ ...target, installationId: PluginInstallationId.make("other") }, [
+        step("remove"),
+      ]),
+    ).toEqual({ _tag: "refused" });
+    expect(await gate.run({ ...target, environmentId: "environment-2" }, [step("remove")])).toEqual(
+      { _tag: "refused" },
+    );
     expect(calls).toEqual([]);
   });
 
   it("stops between steps when management is lost mid-action", async () => {
     const gate = createPluginActionGate();
     const calls: Array<string> = [];
-    gate.set(true);
-    const outcome = await gate.run([
+    gate.set(subject());
+    const outcome = await gate.run(target, [
       () => {
         calls.push("consent");
-        gate.set(false);
+        gate.set(null);
         return Promise.resolve({ value: null });
       },
       () => {
@@ -482,18 +525,75 @@ describe("createPluginActionGate", () => {
     expect(calls).toEqual(["consent"]);
   });
 
+  it("approves only the reviewed files with a current acknowledgement", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    const approval = { ...target, approvedDigest: DIGEST };
+    gate.set(subject());
+    expect(await gate.run(approval, [step("consent")])).toEqual({ _tag: "refused" });
+    gate.set(
+      subject({
+        installation: installation({ source: { digest: OLD_DIGEST, files: 3, bytes: 2048 } }),
+        acknowledgedDigest: DIGEST,
+      }),
+    );
+    expect(await gate.run(approval, [step("consent")])).toEqual({ _tag: "refused" });
+    expect(calls).toEqual([]);
+    gate.set(subject({ acknowledgedDigest: DIGEST }));
+    expect(await gate.run(approval, [step("consent")])).toEqual({ _tag: "done" });
+    expect(calls).toEqual(["consent"]);
+  });
+
+  it("never enables after the source changes while consent is in flight", async () => {
+    const gate = createPluginActionGate();
+    const calls: Array<string> = [];
+    let releaseConsent: (value: { readonly value: null }) => void = () => undefined;
+    gate.set(subject({ acknowledgedDigest: DIGEST }));
+    // Management readiness stays true throughout; only the reviewed subject changes.
+    const outcome = gate.run({ ...target, approvedDigest: DIGEST }, [
+      () => {
+        calls.push("consent");
+        return new Promise((resolve) => {
+          releaseConsent = resolve;
+        });
+      },
+      () => {
+        calls.push("enable");
+        return Promise.resolve({ value: null });
+      },
+    ]);
+    // A snapshot reports new files for the same installation; the screen recomputes.
+    const changed = installation({ source: { digest: OLD_DIGEST, files: 4, bytes: 4096 } });
+    gate.set(subject({ installation: changed, acknowledgedDigest: DIGEST }));
+    releaseConsent({ value: null });
+    expect(await outcome).toEqual({ _tag: "refused" });
+    expect(calls).toEqual(["consent"]);
+  });
+
+  it("keeps disable and remove bound to the installation, not its files", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    gate.set(
+      subject({
+        installation: installation({ source: { digest: OLD_DIGEST, files: 4, bytes: 4096 } }),
+      }),
+    );
+    expect(await gate.run(target, [step("disable")])).toEqual({ _tag: "done" });
+    expect(calls).toEqual(["disable"]);
+  });
+
   it("runs every step once, one action at a time, and reports the first failure", async () => {
     const gate = createPluginActionGate();
     const { calls, step } = counted();
-    gate.set(true);
+    gate.set(subject());
     let started = 0;
-    const first = gate.run([step("consent"), step("enable")], () => (started += 1));
-    expect(await gate.run([step("remove")])).toEqual({ _tag: "refused" });
+    const first = gate.run(target, [step("consent"), step("enable")], () => (started += 1));
+    expect(await gate.run(target, [step("remove")])).toEqual({ _tag: "refused" });
     expect(await first).toEqual({ _tag: "done" });
     expect(started).toBe(1);
     expect(calls).toEqual(["consent", "enable"]);
     expect(
-      await gate.run([() => Promise.resolve({ error: "source-changed" }), step("enable")]),
+      await gate.run(target, [() => Promise.resolve({ error: "source-changed" }), step("enable")]),
     ).toEqual({ _tag: "failed", error: "source-changed" });
     expect(calls).toEqual(["consent", "enable"]);
   });
