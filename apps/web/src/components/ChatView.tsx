@@ -667,9 +667,6 @@ function useDraftHeroLayoutTransition(
   } as const;
 }
 
-const PreviewPanel = lazy(() =>
-  import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -10264,8 +10261,8 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
-        <PreviewPanel
-          mode="embedded"
+        <RegisteredSidePanel
+          id="preview"
           threadRef={activeThreadRef}
           tabId={renderedRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}

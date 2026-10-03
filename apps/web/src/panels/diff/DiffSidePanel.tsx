@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { RunId } from "@t3tools/contracts";
+import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -62,8 +62,7 @@ import { DiffFileLoadingBoundary } from "~/components/diffs/DiffFileLoadingBound
 import { DiffFileStatus } from "~/components/diffs/DiffFileStatus";
 import { DiffPanelLoadingState } from "~/components/diffs/DiffLoadingState";
 
-import type { SidePanelProps } from "../bundledPanels";
-
+import type { DraftId } from "~/composerDraftStore";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { useFileContextMenuHandler } from "~/fileContextMenu";
 import { openDiffFilePrimaryAction } from "~/diffFileActions";
@@ -140,10 +139,15 @@ function DiffSidePanelFrame({ header, children }: { header: ReactNode; children:
   );
 }
 
+export interface DiffSidePanelProps {
+  composerDraftTarget: ScopedThreadRef | DraftId;
+  workspaceMutationId: string | null;
+}
+
 export default function DiffSidePanel({
   composerDraftTarget,
   workspaceMutationId,
-}: SidePanelProps) {
+}: DiffSidePanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
   const diffLayout = settings.diffLayout;

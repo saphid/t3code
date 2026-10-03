@@ -53,4 +53,64 @@ describe("panel registry", () => {
     });
     expect(disposed).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps heterogeneous panels independent and their lazy identities stable", async () => {
+    const events: string[] = [];
+    function Notes({ text }: { text: string }) {
+      useEffect(() => {
+        events.push(`mount notes:${text}`);
+        return () => {
+          events.push("dispose notes");
+        };
+      }, [text]);
+      return null;
+    }
+    function Counter({ count }: { count: number }) {
+      useEffect(() => {
+        events.push(`mount counter:${count}`);
+      }, [count]);
+      return null;
+    }
+    const loadNotes = vi.fn(async () => ({ default: Notes }));
+    const loadCounter = vi.fn(async () => ({ default: Counter }));
+    const registry = createPanelRegistry([
+      { id: "notes", title: "Notes", placement: "side-panel", load: loadNotes },
+      { id: "counter", title: "Counter", placement: "side-panel", load: loadCounter },
+    ]);
+    const NotesPanel = registry.get("notes")!.Component;
+    expect(registry.get("notes")!.Component).toBe(NotesPanel);
+    expect(loadNotes).not.toHaveBeenCalled();
+    expect(loadCounter).not.toHaveBeenCalled();
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Suspense fallback={null}>
+          <NotesPanel text="a" />
+        </Suspense>,
+      );
+    });
+    await act(async () => {
+      renderer.update(
+        <Suspense fallback={null}>
+          <NotesPanel text="a" />
+        </Suspense>,
+      );
+    });
+    expect(loadNotes).toHaveBeenCalledTimes(1);
+    expect(loadCounter).not.toHaveBeenCalled();
+    expect(events).toEqual(["mount notes:a"]);
+
+    const CounterPanel = registry.get("counter")!.Component;
+    await act(async () => {
+      renderer.update(
+        <Suspense fallback={null}>
+          <CounterPanel count={2} />
+        </Suspense>,
+      );
+    });
+    expect(loadCounter).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(["mount notes:a", "dispose notes", "mount counter:2"]);
+    expect(registry.get("counter")!.Component).toBe(CounterPanel);
+  });
 });

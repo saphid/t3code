@@ -2,14 +2,12 @@
 
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
 
+import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
+import { PreviewView } from "~/components/preview/PreviewView";
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
-import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
-import { PreviewView } from "./PreviewView";
-
-interface Props {
-  mode: PreviewPanelMode;
+export interface PreviewSidePanelProps {
   threadRef: ScopedThreadRef;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
@@ -20,17 +18,17 @@ interface Props {
   ) => void;
 }
 
-export function PreviewPanel({
-  mode,
+// RightPanelTabs owns placement, so the side panel is always embedded.
+export default function PreviewSidePanel({
   threadRef,
   tabId,
   configuredUrls,
   visible,
   onSendAnnotation,
-}: Props) {
+}: PreviewSidePanelProps) {
   if (!isPreviewSupportedInRuntime()) {
     return (
-      <PreviewPanelShell mode={mode}>
+      <PreviewPanelShell mode="embedded">
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
             Preview is only available in the T3 Code desktop app.
@@ -41,7 +39,7 @@ export function PreviewPanel({
   }
 
   return (
-    <PreviewPanelShell mode={mode}>
+    <PreviewPanelShell mode="embedded">
       <PreviewView
         threadRef={threadRef}
         {...(tabId !== undefined ? { tabId } : {})}
