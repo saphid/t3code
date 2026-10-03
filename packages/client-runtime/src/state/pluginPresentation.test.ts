@@ -1,21 +1,44 @@
 import {
+  type AuthSessionState,
   type PluginInstallation,
   PluginInstallationId,
   PluginInstallationManifest,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   canManagePlugins,
+  createPluginActionGate,
   describePluginSource,
   pluginAddDirectory,
   presentPluginInstallation,
   resolvePluginCatalogState,
   resolvePluginDetail,
   resolvePluginManageAccess,
+  startPluginAddHandoff,
 } from "./pluginPresentation.ts";
 import type { PluginCatalogView } from "./plugins.ts";
+
+/** Resolves once the atom's value satisfies `done`, without polling. */
+function settled<A>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<A>,
+  done: (value: A) => boolean,
+): Promise<void> {
+  if (done(registry.get(atom))) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = registry.subscribe(atom, (value) => {
+      if (!done(value)) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const OLD_DIGEST = `sha256:${"b".repeat(64)}`;
@@ -144,11 +167,54 @@ describe("resolvePluginManageAccess", () => {
     );
   });
 
-  it("keeps the last good read when a later read fails", () => {
+  it("grants nothing from an earlier read while the current one fails or is in flight", () => {
     const session = { authenticated: true, scopes: ["access:write" as never] };
     expect(resolvePluginManageAccess({ session, isPending: false, hasError: true })).toBe(
-      "granted",
+      "unreadable",
     );
+    expect(resolvePluginManageAccess({ session, isPending: true, hasError: false })).toBe(
+      "pending",
+    );
+  });
+
+  it("drops an administrative read once the credential changes, even if the new read fails", async () => {
+    // Mirrors environmentSession.sessionStateAtom: re-read per prepared credential, with SWR.
+    const reads = new Map<string, PromiseWithResolvers<AuthSessionState>>();
+    const credential = Atom.make("admin");
+    const sessionState = Atom.make((get) => {
+      const read = Promise.withResolvers<AuthSessionState>();
+      reads.set(get(credential), read);
+      return Effect.tryPromise(() => read.promise);
+    }).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(sessionState);
+    const access = () => {
+      const result = registry.get(sessionState);
+      return resolvePluginManageAccess({
+        session: Option.getOrNull(AsyncResult.value(result)),
+        isPending: result.waiting,
+        hasError: AsyncResult.isFailure(result),
+      });
+    };
+    try {
+      expect(access()).toBe("pending");
+      reads.get("admin")!.resolve({ authenticated: true, scopes: ["access:write"] } as never);
+      await settled(registry, sessionState, AsyncResult.isSuccess);
+      expect(access()).toBe("granted");
+
+      registry.set(credential, "standard");
+      expect(access()).toBe("pending");
+      reads.get("standard")!.reject(new Error("session read failed"));
+      await settled(registry, sessionState, AsyncResult.isFailure);
+      // The failed result still carries the administrative read as its previous success.
+      expect(Option.getOrNull(AsyncResult.value(registry.get(sessionState)))?.scopes).toEqual([
+        "access:write",
+      ]);
+      expect(access()).toBe("unreadable");
+    } finally {
+      unmount();
+      registry.dispose();
+    }
   });
 });
 
@@ -156,8 +222,8 @@ const available = (installations: ReadonlyArray<PluginInstallation>): PluginCata
   _tag: "available",
   installations,
 });
-const availableState = (view: PluginCatalogView) =>
-  resolvePluginCatalogState({ connected: true, data: view, error: null });
+const availableState = (view: PluginCatalogView, receivedAt = 0) =>
+  resolvePluginCatalogState({ connected: true, data: view, error: null, receivedAt });
 
 describe("plugin management readiness", () => {
   it("manages only with access:write and a live catalogue", () => {
@@ -172,6 +238,7 @@ describe("plugin management readiness", () => {
       connected: true,
       data: available([installation()]),
       error: "Subscription lost.",
+      receivedAt: 0,
     });
     expect(catalog).toEqual({ _tag: "failed", message: "Subscription lost." });
     expect(canManagePlugins("granted", catalog)).toBe(false);
@@ -179,9 +246,19 @@ describe("plugin management readiness", () => {
 
   it("stops management while disconnected or loading", () => {
     for (const catalog of [
-      resolvePluginCatalogState({ connected: false, data: available([]), error: null }),
-      resolvePluginCatalogState({ connected: true, data: null, error: null }),
-      resolvePluginCatalogState({ connected: true, data: { _tag: "unsupported" }, error: null }),
+      resolvePluginCatalogState({
+        connected: false,
+        data: available([]),
+        error: null,
+        receivedAt: 0,
+      }),
+      resolvePluginCatalogState({ connected: true, data: null, error: null, receivedAt: 0 }),
+      resolvePluginCatalogState({
+        connected: true,
+        data: { _tag: "unsupported" },
+        error: null,
+        receivedAt: 0,
+      }),
     ])
       expect(canManagePlugins("granted", catalog)).toBe(false);
   });
@@ -199,6 +276,7 @@ describe("pluginAddDirectory", () => {
       connected: true,
       data: available([]),
       error: "Subscription lost.",
+      receivedAt: 0,
     });
     const directory = " /srv/plugins/notifier ";
     expect(
@@ -221,48 +299,57 @@ describe("pluginAddDirectory", () => {
 describe("resolvePluginDetail", () => {
   const id = PluginInstallationId.make("installation-1");
   const added = installation();
+  const ADDED_AT = 2_000;
 
-  it("shows a just-added plugin until a newer snapshot lists it", () => {
-    const before = available([]);
-    const marker = { snapshot: before, installation: added };
+  it("shows a just-added plugin until a snapshot from after the add lists it", () => {
+    const marker = { since: ADDED_AT, installation: added };
     expect(
-      resolvePluginDetail({ catalog: availableState(before), installationId: id, added: marker }),
+      resolvePluginDetail({
+        catalog: availableState(available([]), ADDED_AT - 1),
+        installationId: id,
+        added: marker,
+      }),
     ).toEqual({ _tag: "found", installation: added });
     const listed = installation({ enabled: true });
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([listed])),
+        catalog: availableState(available([listed]), ADDED_AT + 5),
         installationId: id,
         added: marker,
       }),
     ).toEqual({ _tag: "found", installation: listed });
   });
 
-  it("waits for the first snapshot after adding without the reply, then finds the plugin", () => {
-    const before = available([]);
-    const marker = { snapshot: before, installation: null };
+  it("waits for a snapshot from after the add without the reply, then finds the plugin", () => {
+    const marker = { since: ADDED_AT, installation: null };
     expect(
-      resolvePluginDetail({ catalog: availableState(before), installationId: id, added: marker }),
+      resolvePluginDetail({
+        catalog: availableState(available([]), ADDED_AT - 1),
+        installationId: id,
+        added: marker,
+      }),
     ).toEqual({ _tag: "loading" });
     expect(
       resolvePluginDetail({
-        catalog: availableState(available([added])),
+        catalog: availableState(available([added]), ADDED_AT + 5),
         installationId: id,
         added: marker,
       }),
     ).toEqual({ _tag: "found", installation: added });
   });
 
-  it("reports removal when a newer snapshot never listed the just-added plugin", () => {
-    const before = available([]);
+  it("reports removal when a snapshot from after the add does not list the plugin", () => {
+    // Covers a removal that reached the client before the detail screen opened.
     for (const reply of [added, null]) {
-      expect(
-        resolvePluginDetail({
-          catalog: availableState(available([])),
-          installationId: id,
-          added: { snapshot: before, installation: reply },
-        }),
-      ).toEqual({ _tag: "missing" });
+      for (const receivedAt of [ADDED_AT, ADDED_AT + 5]) {
+        expect(
+          resolvePluginDetail({
+            catalog: availableState(available([]), receivedAt),
+            installationId: id,
+            added: { since: ADDED_AT, installation: reply },
+          }),
+        ).toEqual({ _tag: "missing" });
+      }
     }
   });
 
@@ -283,10 +370,131 @@ describe("resolvePluginDetail", () => {
           connected: true,
           data: available([added]),
           error: "Subscription lost.",
+          receivedAt: 0,
         }),
         installationId: id,
         added: null,
       }),
     ).toEqual({ _tag: "failed", message: "Subscription lost." });
+  });
+});
+
+describe("startPluginAddHandoff", () => {
+  const id = PluginInstallationId.make("installation-1");
+
+  it("ends as missing when add and remove coalesce into an unchanged catalogue", async () => {
+    // A subscription that drops repeats: after add+remove the server state equals
+    // the old snapshot, so only a restarted subscription delivers it again.
+    let now = 1_000;
+    let serverInstallations: ReadonlyArray<PluginInstallation> = [];
+    const catalog = Atom.make(
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.sync((): PluginCatalogView => available([...serverInstallations])),
+        ),
+        Stream.never,
+      ),
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(catalog);
+    const state = () => {
+      const result = registry.get(catalog);
+      return resolvePluginCatalogState({
+        connected: true,
+        data: Option.getOrNull(AsyncResult.value(result)),
+        error: null,
+        receivedAt: AsyncResult.isSuccess(result) ? result.timestamp : 0,
+      });
+    };
+    const originalNow = Date.now;
+    Date.now = () => now;
+    try {
+      await settled(registry, catalog, AsyncResult.isSuccess);
+      // The plugin is added and removed again before the subscription reports either.
+      serverInstallations = [installation()];
+      serverInstallations = [];
+
+      now = 2_000;
+      let restarts = 0;
+      const marker = startPluginAddHandoff({
+        installation: null,
+        restartCatalog: () => {
+          restarts += 1;
+          now = 2_001;
+          registry.refresh(catalog);
+        },
+        now: 2_000,
+      });
+      expect(restarts).toBe(1);
+      await settled(
+        registry,
+        catalog,
+        (result) => AsyncResult.isSuccess(result) && result.timestamp >= marker.since,
+      );
+      expect(resolvePluginDetail({ catalog: state(), installationId: id, added: marker })).toEqual({
+        _tag: "missing",
+      });
+    } finally {
+      Date.now = originalNow;
+      unmount();
+      registry.dispose();
+    }
+  });
+});
+
+describe("createPluginActionGate", () => {
+  const counted = () => {
+    const calls: Array<string> = [];
+    const step = (name: string) => () => {
+      calls.push(name);
+      return Promise.resolve({ value: name });
+    };
+    return { calls, step };
+  };
+
+  it("sends nothing from a confirmation opened before management was lost or its screen closed", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    gate.set(true);
+    // A native confirmation keeps the callback it was opened with.
+    const confirmRemove = () => gate.run([step("remove")]);
+    gate.set(false);
+    expect(await confirmRemove()).toEqual({ _tag: "refused" });
+    expect(calls).toEqual([]);
+  });
+
+  it("stops between steps when management is lost mid-action", async () => {
+    const gate = createPluginActionGate();
+    const calls: Array<string> = [];
+    gate.set(true);
+    const outcome = await gate.run([
+      () => {
+        calls.push("consent");
+        gate.set(false);
+        return Promise.resolve({ value: null });
+      },
+      () => {
+        calls.push("enable");
+        return Promise.resolve({ value: null });
+      },
+    ]);
+    expect(outcome).toEqual({ _tag: "refused" });
+    expect(calls).toEqual(["consent"]);
+  });
+
+  it("runs every step once, one action at a time, and reports the first failure", async () => {
+    const gate = createPluginActionGate();
+    const { calls, step } = counted();
+    gate.set(true);
+    let started = 0;
+    const first = gate.run([step("consent"), step("enable")], () => (started += 1));
+    expect(await gate.run([step("remove")])).toEqual({ _tag: "refused" });
+    expect(await first).toEqual({ _tag: "done" });
+    expect(started).toBe(1);
+    expect(calls).toEqual(["consent", "enable"]);
+    expect(
+      await gate.run([() => Promise.resolve({ error: "source-changed" }), step("enable")]),
+    ).toEqual({ _tag: "failed", error: "source-changed" });
+    expect(calls).toEqual(["consent", "enable"]);
   });
 });

@@ -169,20 +169,20 @@ export const PLUGIN_MANAGE_ACCESS_UNREADABLE =
 export type PluginManageAccess = "granted" | "denied" | "pending" | "unreadable";
 
 /**
- * Management needs positive evidence of `access:write`. Any server with the
- * plugin catalogue reports its scopes, so a missing list means denied. A session
- * that cannot be read grants nothing; the last good read still counts.
+ * Management needs positive evidence of `access:write` from the session read
+ * that is current now. Any server with the plugin catalogue reports its scopes,
+ * so a missing list means denied. While a read is failing or in flight, an
+ * earlier read grants nothing: it may belong to a previous credential.
  */
 export function resolvePluginManageAccess(input: {
+  /** The latest successful read, which may predate the current one. */
   readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
 }): PluginManageAccess {
-  if (input.session === null) {
-    if (input.isPending) return "pending";
-    return input.hasError ? "unreadable" : "denied";
-  }
-  return input.session.authenticated && input.session.scopes?.includes(AuthAccessWriteScope)
+  if (input.hasError) return "unreadable";
+  if (input.isPending) return "pending";
+  return input.session?.authenticated && input.session.scopes?.includes(AuthAccessWriteScope)
     ? "granted"
     : "denied";
 }
@@ -196,6 +196,8 @@ export type PluginCatalogState =
   | {
       readonly _tag: "available";
       readonly view: Extract<PluginCatalogView, { readonly _tag: "available" }>;
+      /** Client clock time (ms) when this snapshot arrived. */
+      readonly receivedAt: number;
     };
 
 /**
@@ -206,12 +208,14 @@ export function resolvePluginCatalogState(input: {
   readonly connected: boolean;
   readonly data: PluginCatalogView | null;
   readonly error: string | null;
+  /** The query result's timestamp for `data`. */
+  readonly receivedAt: number;
 }): PluginCatalogState {
   if (!input.connected) return { _tag: "disconnected" };
   if (input.error !== null) return { _tag: "failed", message: input.error };
   if (input.data === null) return { _tag: "loading" };
   if (input.data._tag === "unsupported") return { _tag: "unsupported" };
-  return { _tag: "available", view: input.data };
+  return { _tag: "available", view: input.data, receivedAt: input.receivedAt };
 }
 
 /** Controls need access:write and a live, current catalogue. */
@@ -249,13 +253,27 @@ export function pluginManagementNotice(
 }
 
 /**
- * Set on a screen opened by adding: the catalogue snapshot current when the add
- * reply arrived, and the reply's installation when the screen has it. Until a
- * newer snapshot arrives the new plugin may simply not be listed yet.
+ * Set on a screen opened by adding: when the add reply arrived, and the reply's
+ * installation when the screen has it. A snapshot that arrived earlier may not
+ * list the new plugin yet; only one that arrived later can say it is gone.
  */
 export interface PluginAddedMarker {
-  readonly snapshot: PluginCatalogView | null;
+  readonly since: number;
   readonly installation: PluginInstallation | null;
+}
+
+/**
+ * Call when `plugins.add` replies. Restarting the catalogue subscription makes
+ * the server send its current snapshot even when it equals the last one (a
+ * subscription drops repeats), so the handoff always ends: listed or missing.
+ */
+export function startPluginAddHandoff(input: {
+  readonly installation: PluginInstallation | null;
+  readonly restartCatalog: () => void;
+  readonly now: number;
+}): PluginAddedMarker {
+  input.restartCatalog();
+  return { since: input.now, installation: input.installation };
 }
 
 export type PluginDetailState =
@@ -277,11 +295,61 @@ export function resolvePluginDetail(input: {
     (entry) => entry.installationId === input.installationId,
   );
   if (installation) return { _tag: "found", installation };
-  if (added !== null && catalog.view === added.snapshot)
+  // Same-millisecond arrivals count as later: a brief "missing" beats waiting forever.
+  if (added !== null && catalog.receivedAt < added.since)
     return added.installation
       ? { _tag: "found", installation: added.installation }
       : { _tag: "loading" };
   return { _tag: "missing" };
+}
+
+type PluginActionStep = () => Promise<
+  { readonly error: string | null } | { readonly value: unknown }
+>;
+
+export type PluginActionOutcome =
+  | { readonly _tag: "done" }
+  | { readonly _tag: "refused" }
+  | { readonly _tag: "failed"; readonly error: string | null };
+
+/**
+ * Decides at dispatch time whether a plugin screen may still act. Confirmations
+ * and multi-step actions call `run` from callbacks created earlier, so they read
+ * this instead of a captured value. The screen calls `set` on every commit and
+ * `set(false)` when it closes.
+ */
+export interface PluginActionGate {
+  readonly set: (actionable: boolean) => void;
+  /** Runs steps in order, re-checking before each; refuses while another run is going. */
+  readonly run: (
+    steps: ReadonlyArray<PluginActionStep>,
+    onStart?: () => void,
+  ) => Promise<PluginActionOutcome>;
+}
+
+export function createPluginActionGate(): PluginActionGate {
+  let actionable = false;
+  let running = false;
+  return {
+    set: (next) => {
+      actionable = next;
+    },
+    run: async (steps, onStart) => {
+      if (running || !actionable) return { _tag: "refused" };
+      running = true;
+      onStart?.();
+      try {
+        for (const step of steps) {
+          if (!actionable) return { _tag: "refused" };
+          const outcome = await step();
+          if ("error" in outcome) return { _tag: "failed", error: outcome.error };
+        }
+        return { _tag: "done" };
+      } finally {
+        running = false;
+      }
+    },
+  };
 }
 
 /** The directory to send to `plugins.add`, or null when nothing may be sent. */
