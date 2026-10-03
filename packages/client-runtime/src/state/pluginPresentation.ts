@@ -219,7 +219,11 @@ export function canManagePlugins(access: PluginManageAccess, catalog: PluginCata
   return access === "granted" && catalog._tag === "available";
 }
 
-/** Why management controls are off, or null when they are on. */
+/**
+ * Why management controls are off for a lasting reason, or null. A pending check
+ * has no notice of its own: screens explain `explainedPluginAccess` here and show
+ * `pluginAccessStatus` in a slot that is always laid out.
+ */
 export function pluginManagementNotice(
   access: PluginManageAccess,
   catalog: PluginCatalogState,
@@ -237,13 +241,12 @@ export function pluginManagementNotice(
     case "available":
       switch (access) {
         case "granted":
+        case "pending":
           return null;
         case "denied":
           return PLUGIN_MANAGE_ACCESS_REQUIRED;
         case "unreadable":
           return PLUGIN_MANAGE_ACCESS_UNREADABLE;
-        case "pending":
-          return "Checking your access to this environment…";
       }
   }
 }
@@ -254,13 +257,24 @@ export const PLUGIN_ACCESS_CHECKING = "Checking access…";
 /**
  * Status while the session read that decides access is in flight, or null. The
  * check is brief and repeats on revalidation, so screens show this in a slot that
- * is always there and keep `pluginManagementNotice` blocks for lasting reasons.
+ * keeps the same size whether or not it has text.
  */
 export function pluginAccessStatus(
   access: PluginManageAccess,
   catalog: PluginCatalogState,
 ): string | null {
   return catalog._tag === "available" && access === "pending" ? PLUGIN_ACCESS_CHECKING : null;
+}
+
+/**
+ * The access a screen explains: while a re-check is in flight, the last settled
+ * one, so the check adds or removes no explanation. Controls follow the live access.
+ */
+export function explainedPluginAccess(
+  access: PluginManageAccess,
+  lastSettled: PluginManageAccess | null,
+): PluginManageAccess {
+  return access === "pending" ? (lastSettled ?? "pending") : access;
 }
 
 /**

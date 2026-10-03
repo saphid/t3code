@@ -15,8 +15,12 @@ import {
   canManagePlugins,
   createPluginActionGate,
   describePluginSource,
+  explainedPluginAccess,
   PLUGIN_ACCESS_CHECKING,
+  PLUGIN_MANAGE_ACCESS_REQUIRED,
+  PLUGIN_MANAGE_ACCESS_UNREADABLE,
   type PluginActionSubject,
+  type PluginManageAccess,
   pluginAccessStatus,
   pluginAddDirectory,
   pluginManagementNotice,
@@ -263,8 +267,19 @@ describe("pluginAccessStatus", () => {
   it("explains a pending access check as a short status, with every control off", () => {
     expect(pluginAccessStatus("pending", live)).toBe(PLUGIN_ACCESS_CHECKING);
     expect(canManagePlugins("pending", live)).toBe(false);
-    // Dialogs still have the full sentence for their own status slot.
-    expect(pluginManagementNotice("pending", live, "Build box")).not.toBeNull();
+    // The short status is all a check shows; no notice block comes and goes with it.
+    expect(pluginManagementNotice("pending", live, "Build box")).toBeNull();
+  });
+
+  it("keeps explaining the last settled access through a re-check", () => {
+    const explain = (lastSettled: PluginManageAccess | null) =>
+      pluginManagementNotice(explainedPluginAccess("pending", lastSettled), live, "Build box");
+    expect(explain("denied")).toBe(PLUGIN_MANAGE_ACCESS_REQUIRED);
+    expect(explain("unreadable")).toBe(PLUGIN_MANAGE_ACCESS_UNREADABLE);
+    expect(explain("granted")).toBeNull();
+    expect(explain(null)).toBeNull();
+    // A settled read replaces what an earlier one explained.
+    expect(explainedPluginAccess("granted", "denied")).toBe("granted");
   });
 
   it("has no status once access is settled, either way", () => {
