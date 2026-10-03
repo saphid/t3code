@@ -282,4 +282,44 @@ describe("plugin view bootstrap with the host bridge", () => {
       expect(toView.filter((message) => message._tag === "violation")).toEqual([]);
     }),
   );
+
+  it.effect("never sends a call aborted while its input serializes", () =>
+    Effect.gen(function* () {
+      const { t3View, toView, calls, connect } = yield* loadBootstrap();
+      const first = countedAbortSignal();
+      const second = countedAbortSignal();
+      const aborting = [
+        t3View.call(
+          "aborted",
+          {
+            toJSON: () => {
+              first.abort();
+              return { value: 1 };
+            },
+          },
+          { signal: first.signal },
+        ),
+        t3View.call(
+          "aborted",
+          {
+            get value() {
+              second.abort();
+              return 2;
+            },
+          },
+          { signal: second.signal },
+        ),
+      ];
+      // Rejected before the handshake, which may never come.
+      const outcomes = (yield* Effect.promise(() => Promise.allSettled(aborting))).map(outcome);
+      expect(outcomes).toEqual(["cancelled", "cancelled"]);
+      expect(first.listeners()).toBe(0);
+      expect(second.listeners()).toBe(0);
+
+      yield* connect;
+      expect(yield* Effect.promise(() => t3View.call("echo", 3))).toBe(3);
+      expect(calls).toEqual(["echo"]);
+      expect(toView.filter((message) => message._tag === "violation")).toEqual([]);
+    }),
+  );
 });

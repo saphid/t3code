@@ -97,6 +97,8 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     // A function, Symbol or toJSON() => undefined serializes away, leaving no input.
     if (!("input" in envelope)) return reject(failure("invalid", "The call input is not JSON."));
     if (tooDeep(envelope)) return reject(failure("too-deep", "The call input is nested too deeply."));
+    // Serializing ran the input's own toJSON() and getters, which may have aborted the signal.
+    if (signal !== undefined && signal.aborted) return reject(failure("cancelled", "The call was cancelled."));
     const cancel = () => settle(id, (pendingCall) => {
       if (pendingCall.sent) send({ _tag: "cancel", id });
       pendingCall.reject(failure("cancelled", "The call was cancelled."));
@@ -108,6 +110,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     // A call made before the handshake is checked and cancellable now, and sent once connected.
     ready.then(() => {
       if (pending.get(id) !== entry) return;
+      if (signal !== undefined && signal.aborted) return cancel();
       entry.sent = true;
       port.postMessage(text);
     });
@@ -125,7 +128,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
 })();`;
 
 /** Base64 SHA-256 of `PLUGIN_VIEW_BOOTSTRAP_SOURCE`; a test keeps them in step. */
-export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "H33H3yNN3orj6qcJVdCPv17UfOb00EG+yj3qD1q3Yl4=";
+export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "ct0RJkh/B5f81yANQ/pOR46WVF3JWK5yc+fQtXGZ4YU=";
 
 export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocumentError>()(
   "PluginViewDocumentError",
