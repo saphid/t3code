@@ -23,6 +23,7 @@ import {
   PLUGIN_DIRECTORY_GUIDANCE,
   PLUGIN_MANAGE_ACCESS_REQUIRED,
   PLUGIN_MANAGE_ACCESS_UNREADABLE,
+  pluginAccessStatus,
   pluginAddDirectory,
   pluginCommandErrorMessage,
   pluginDirectoryLocation,
@@ -33,6 +34,7 @@ import {
   resolvePluginDetail,
   resolvePluginManageAccess,
   startPluginAddHandoff,
+  type PluginActionSubject,
   type PluginAddedMarker,
   type PluginDetailState,
   type PluginManageAccess,
@@ -108,12 +110,12 @@ async function settle<A, E>(command: Promise<AtomCommandResult<A, E>>): Promise<
   };
 }
 
-/** Lets callbacks created earlier (dialogs, multi-step actions) act only while `actionable` is still true. */
-function usePluginActionGate(actionable: boolean) {
+/** Lets callbacks created earlier (dialogs, multi-step actions) act only on what the screen still shows. */
+function usePluginActionGate(current: PluginActionSubject | null) {
   const [gate] = useState(createPluginActionGate);
   useLayoutEffect(() => {
-    gate.set(actionable);
-    return () => gate.set(false);
+    gate.set(current);
+    return () => gate.set(null);
   });
   return gate;
 }
@@ -239,12 +241,12 @@ export function PluginEnvironmentCatalog({
     connected,
     data: catalog.data,
     error: catalog.error,
-    receivedAt: catalog.dataUpdatedAt,
   });
   if (catalogState._tag === "unsupported") return null;
   const installations = catalogState._tag === "available" ? catalogState.view.installations : null;
   const canManage = canManagePlugins(access, catalogState);
   const notice = pluginManagementNotice(access, catalogState, environment.label);
+  const accessStatus = pluginAccessStatus(access, catalogState);
   return (
     <>
       <SettingsSection
@@ -256,15 +258,21 @@ export function PluginEnvironmentCatalog({
           />
         }
         headerAction={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            disabled={!canManage}
-            onClick={() => setAdding(true)}
-          >
-            <PlusIcon className="size-3" />
-            Add plugin
-          </Button>
+          <span className="flex items-center gap-2">
+            {/* The header row's height is fixed, so the brief access check never moves the list. */}
+            <span role="status" className="text-xs text-muted-foreground">
+              {accessStatus}
+            </span>
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={!canManage}
+              onClick={() => setAdding(true)}
+            >
+              <PlusIcon className="size-3" />
+              Add plugin
+            </Button>
+          </span>
         }
       >
         {catalogState._tag === "disconnected" ? (
@@ -332,11 +340,7 @@ export function PluginEnvironmentCatalog({
             setAdding(false);
             setReviewing({
               installationId: installation.installationId,
-              added: startPluginAddHandoff({
-                installation,
-                restartCatalog: catalog.refresh,
-                now: Date.now(),
-              }),
+              added: startPluginAddHandoff({ installation, restartCatalog: catalog.refresh }),
             });
           }}
         />
@@ -382,10 +386,18 @@ function PluginRow({
     environmentId: environment.environmentId,
     input: { installationId: installation.installationId },
   };
-  const gate = usePluginActionGate(canManage);
+  const gate = usePluginActionGate(
+    canManage
+      ? { environmentId: environment.environmentId, installation, acknowledgedDigest: null }
+      : null,
+  );
   const act = async (failureTitle: string, command: () => Promise<Settled<unknown>>) => {
     let started = false;
-    const outcome = await gate.run([command], () => {
+    const actionTarget = {
+      environmentId: environment.environmentId,
+      installationId: installation.installationId,
+    };
+    const outcome = await gate.run(actionTarget, [command], () => {
       started = true;
       setBusy(true);
     });
@@ -605,7 +617,9 @@ export function AddPluginDialog({
               {pluginDirectoryLocation(environment.label, device)}
             </p>
             <p className="text-sm text-muted-foreground">{PLUGIN_DIRECTORY_GUIDANCE}</p>
-            {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+            <p role="status" className="min-h-5 text-sm text-muted-foreground">
+              {notice}
+            </p>
             {error ? (
               <p role="alert" className="text-sm text-destructive">
                 {error}
@@ -646,7 +660,7 @@ function ReviewField({
 }
 
 /** Details of one installation; for one that needs consent, the consent screen. */
-function PluginReviewDialog({
+export function PluginReviewDialog({
   environment,
   detail,
   canManage,
@@ -673,7 +687,15 @@ function PluginReviewDialog({
   const digest = installation?.source?.digest ?? null;
   const acknowledged = digest !== null && trustedDigest === digest;
 
-  const gate = usePluginActionGate(canManage && installation !== null);
+  const gate = usePluginActionGate(
+    canManage && installation !== null
+      ? {
+          environmentId: environment.environmentId,
+          installation,
+          acknowledgedDigest: acknowledged ? digest : null,
+        }
+      : null,
+  );
 
   const approve = async () => {
     if (!installation || digest === null || !acknowledged) return;
@@ -682,7 +704,13 @@ function PluginReviewDialog({
       input: { installationId: installation.installationId },
     };
     let started = false;
+    // Bound to these exact files: new bytes or a withdrawn acknowledgement stop it before each step.
     const outcome = await gate.run(
+      {
+        environmentId: environment.environmentId,
+        installationId: installation.installationId,
+        approvedDigest: digest,
+      },
       [
         () => settle(consent({ ...target, input: { ...target.input, digest } })),
         () => settle(enable(target)),
@@ -798,19 +826,20 @@ function PluginReviewDialog({
                       <p>{PLUGIN_DIGEST_STATEMENT}</p>
                     </AlertDescription>
                   </Alert>
-                  {canManage || acknowledged ? (
-                    <label htmlFor={checkboxId} className="flex items-start gap-2 text-sm">
-                      <Checkbox
-                        id={checkboxId}
-                        className="mt-0.5"
-                        checked={acknowledged}
-                        disabled={busy || digest === null || !canManage}
-                        onCheckedChange={(checked) => setTrustedDigest(checked ? digest : null)}
-                      />
-                      I trust this code to run as my user on {environment.label}
-                    </label>
-                  ) : null}
-                  {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+                  {/* Always laid out, so an access check while reviewing moves nothing. */}
+                  <label htmlFor={checkboxId} className="flex items-start gap-2 text-sm">
+                    <Checkbox
+                      id={checkboxId}
+                      className="mt-0.5"
+                      checked={acknowledged}
+                      disabled={busy || digest === null || !canManage}
+                      onCheckedChange={(checked) => setTrustedDigest(checked ? digest : null)}
+                    />
+                    I trust this code to run as my user on {environment.label}
+                  </label>
+                  <p role="status" className="min-h-5 text-sm text-muted-foreground">
+                    {notice}
+                  </p>
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
