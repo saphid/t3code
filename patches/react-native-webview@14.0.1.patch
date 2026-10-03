@@ -1,0 +1,52 @@
+diff --git a/apple/RNCWebViewImpl.m b/apple/RNCWebViewImpl.m
+index 3890426..ffa243d 100644
+--- a/apple/RNCWebViewImpl.m
++++ b/apple/RNCWebViewImpl.m
+@@ -786,9 +786,23 @@ - (void)setAutomaticallyAdjustsScrollIndicatorInsets:(BOOL)automaticallyAdjustsS
+  * This method is called whenever JavaScript running within the web view calls:
+  *   - window.webkit.messageHandlers[MessageHandlerName].postMessage
+  */
++// T3 view proof: plugin views run in sandboxed subframes of the host page.
++// The handler is visible to every frame, so only the main frame may use it, and
++// a subframe may only be navigated by the main frame (or load its srcdoc).
++// A main document URL containing nativeVeto=off turns both off for a baseline run.
++static BOOL RNCT3ViewProofPolicyOff(WKWebView *webView)
++{
++  return [webView.URL.query containsString:@"nativeVeto=off"];
++}
++
+ - (void)userContentController:(WKUserContentController *)userContentController
+       didReceiveScriptMessage:(WKScriptMessage *)message
+ {
++  if (!message.frameInfo.isMainFrame && !RNCT3ViewProofPolicyOff(message.webView)) {
++    NSLog(@"[t3-view-proof-native] bridge message dropped: non-main frame url=%@ handler=%@",
++          message.frameInfo.request.URL.absoluteString, message.name);
++    return;
++  }
+   if ([message.name isEqualToString:HistoryShimName]) {
+     if (_onLoadingFinish) {
+       NSMutableDictionary<NSString *, id> *event = [self baseEvent];
+@@ -1362,6 +1376,23 @@ - (void)                  webView:(WKWebView *)webView
+     BOOL isTopFrame = [request.URL isEqual:request.mainDocumentURL];
+     BOOL hasTargetFrame = navigationAction.targetFrame != nil;
+ 
++    WKFrameInfo *targetFrame = navigationAction.targetFrame;
++    if (targetFrame != nil && !targetFrame.isMainFrame) {
++      WKFrameInfo *sourceFrame = navigationAction.sourceFrame;
++      BOOL fromMainFrame = sourceFrame != nil && sourceFrame.isMainFrame;
++      BOOL srcdoc = [request.URL.absoluteString isEqualToString:@"about:srcdoc"];
++      BOOL off = RNCT3ViewProofPolicyOff(webView);
++      BOOL deny = !fromMainFrame && !srcdoc;
++      NSLog(@"[t3-view-proof-native] subframe navigation %@ url=%@ sourceMainFrame=%d rnIsTopFrame=%d",
++            deny ? (off ? @"would deny (veto off)" : @"denied") : @"allowed",
++            [request.URL.absoluteString substringToIndex:MIN((NSUInteger)120, request.URL.absoluteString.length)],
++            fromMainFrame, isTopFrame);
++      if (deny && !off) {
++        decisionHandler(WKNavigationActionPolicyCancel);
++        return;
++      }
++    }
++
+     if (_onOpenWindow && !hasTargetFrame) {
+       // When OnOpenWindow should be called, we want to prevent the navigation
+       // If not prevented, the `decisionHandler` is called first and after that `createWebViewWithConfiguration` is called
