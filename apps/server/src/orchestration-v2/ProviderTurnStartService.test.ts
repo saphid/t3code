@@ -179,6 +179,12 @@ function makeLocalCommandHarness(input: {
   readonly opensSession?: boolean;
   readonly openFailsFirst?: boolean;
   readonly contextEnricher?: RunContextEnrichment.RunContextEnricherV2Shape;
+  /** Who wrote the run's message; a user on the web by default. */
+  readonly messageOrigin?: Pick<
+    OrchestrationV2ThreadProjection["messages"][number],
+    "createdBy" | "creationSource"
+  >;
+  readonly restartContinuationOfRunId?: RunId;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -208,6 +214,9 @@ function makeLocalCommandHarness(input: {
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(input.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: input.restartContinuationOfRunId }),
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
@@ -237,6 +246,7 @@ function makeLocalCommandHarness(input: {
     streaming: false,
     createdBy: "user",
     creationSource: "web",
+    ...input.messageOrigin,
     createdAt: now,
     updatedAt: now,
   };
@@ -955,5 +965,60 @@ effectIt.effect("reuses saved plugin context when a failed session open is retri
     expect(calls()).toBe(1);
     expect(harness.open).toHaveBeenCalledTimes(2);
     expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+effectIt.effect("does not enrich a wake that drains output the adapter buffered", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "Background activity updated",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "provider" },
+    });
+
+    yield* harness.start;
+
+    // Claude, OpenCode 2 and Grok send no prompt on this path, so nothing is
+    // asked of plugins and nothing claims context was added.
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe("Background activity updated");
+  }),
+);
+
+effectIt.effect("enriches a wake whose text is the prompt", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "What is the codename?",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "server" },
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(1);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+  }),
+);
+
+effectIt.effect("does not enrich a restart continuation that resumes its turn natively", () =>
+  Effect.gen(function* () {
+    const { enricher, calls } = codenameEnricher();
+    const harness = makeLocalCommandHarness({
+      text: "Continue where you left off.",
+      opensSession: true,
+      contextEnricher: enricher,
+      messageOrigin: { createdBy: "agent", creationSource: "server" },
+      restartContinuationOfRunId: RunId.make("run-cancelled-by-restart"),
+    });
+
+    yield* harness.start;
+
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
   }),
 );

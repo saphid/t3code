@@ -74,6 +74,26 @@ export class RunContextEnricherV2 extends Context.Service<
 
 type DynamicToolItem = Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>;
 
+/**
+ * Whether plugins add context to a run's message. Only a message the provider
+ * receives as a prompt is enriched: not a command typed with `/`, not an
+ * adapter-buffered wake (`creationSource: "provider"`, which drains output the
+ * provider already produced), and not a restart continuation that resumes the
+ * cancelled turn natively.
+ */
+export const enrichesRunMessage = (input: {
+  readonly message: {
+    readonly text: string;
+    readonly attachments: ReadonlyArray<unknown>;
+    readonly createdBy: string;
+    readonly creationSource: string;
+  };
+  readonly resumesTurnNatively: boolean;
+}) =>
+  !(input.message.attachments.length === 0 && input.message.text.trimStart().startsWith("/")) &&
+  !(input.message.createdBy === "agent" && input.message.creationSource === "provider") &&
+  !input.resumesTurnNatively;
+
 const decodeAdded = Schema.decodeUnknownOption(
   Schema.Struct({ context: Schema.Array(PluginContextItemSchema) }),
 );

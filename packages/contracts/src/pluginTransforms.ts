@@ -22,7 +22,9 @@
  * After a run's message is saved and before the provider turn starts, the
  * server calls `t3.transform.enrich` once per run on the first
  * `maxPluginsPerRun` enabled plugins (in catalogue order) that declare it.
- * A message starting with `/` is not enriched. Each answer
+ * Only a message the provider receives as a prompt is enriched: commands
+ * typed with `/`, wakes that drain output the provider already produced, and
+ * restart continuations that resume their turn natively are not. Each answer
  * is saved as an item in the run's timeline before the provider starts, and
  * the provider receives exactly the saved items, delimited, ahead of the
  * message text. A plugin is never called twice for one run: a retried or
