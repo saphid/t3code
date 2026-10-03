@@ -21,6 +21,8 @@ import * as PluginViews from "./PluginViews.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
+/** A views plugin whose `board` view has `view:board:*` handlers; tests never write to it. */
+const BOARD_FIXTURE = `${import.meta.dirname}/testFixtures/views`;
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -51,7 +53,7 @@ const startViews = Effect.fn("startViews")(function* (
   return { catalog, views };
 });
 
-/** Writes a views plugin whose `panel` view calls `view:panel:*` handlers in its process. */
+/** Writes a views plugin with a `panel` view, in a directory the test may edit. */
 const preparePlugin = Effect.fn("preparePlugin")(function* (options?: {
   readonly script?: string;
   readonly views?: unknown;
@@ -61,19 +63,7 @@ const preparePlugin = Effect.fn("preparePlugin")(function* (options?: {
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-views-" });
   const directory = path.join(root, "plugin");
   yield* fs.makeDirectory(path.join(directory, "views"), { recursive: true });
-  yield* fs.writeFileString(
-    path.join(directory, "main.mjs"),
-    [
-      `export function activate(context) {`,
-      `  context.proposed.handle("ping", () => "not for views");`,
-      `  context.proposed.handle("view:panel:echo", (input) => ({ echo: input }));`,
-      `  context.proposed.handle("view:panel:big", () => "x".repeat(70 * 1024));`,
-      `  context.proposed.handle("view:panel:hang", (_input, { signal }) =>`,
-      `    new Promise((resolve) => signal.addEventListener("abort", () => resolve(null))));`,
-      `}`,
-      ``,
-    ].join("\n"),
-  );
+  yield* fs.writeFileString(path.join(directory, "main.mjs"), `export function activate() {}\n`);
   yield* fs.writeFileString(
     path.join(directory, "views", "panel.js"),
     options?.script ?? VIEW_SCRIPT,
@@ -314,12 +304,11 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
       withDatabase(
         Effect.gen(function* () {
           const { catalog, views } = yield* startViews(yield* Scope.Scope);
-          const plugin = yield* preparePlugin();
-          const installation = yield* install(catalog, plugin.directory);
+          const installation = yield* install(catalog, BOARD_FIXTURE);
           const target = {
             installationId: installation.installationId,
             generation: installation.generation,
-            viewId: "panel",
+            viewId: "board",
           };
 
           const echoed = yield* views.call({ ...target, handler: "echo", input: { n: 1 } });
