@@ -1,0 +1,751 @@
+// @effect-diagnostics nodeBuiltinImport:off
+/**
+ * Runs each enabled plugin in its own child process.
+ *
+ * A child starts the first time a plugin is invoked, never at enable time, so
+ * zero enabled (or zero used) plugins means zero processes. Each child gets a
+ * V8 heap limit, a minimal environment, and a byte-bounded JSON line channel
+ * on fd 3; the server decodes everything it reads and kills a child that
+ * sends anything malformed or oversized.
+ *
+ * A call that outlives its deadline, or whose caller is interrupted, is
+ * cancelled cooperatively: the plugin's handler signal aborts and the child
+ * has `cancelGrace` to answer. A child that cannot answer (a synchronous loop
+ * never reads the cancel) is killed. Unexpected exits back the plugin off
+ * with doubling delays; more than `maxRestarts` consecutive failures park it
+ * in `quarantined` until `resume`. Disabling a plugin fails its in-flight
+ * calls at once, so no result produced after that point reaches a caller.
+ *
+ * Plugins are trusted OS-user code. The process boundary protects the
+ * server's availability, not its data.
+ */
+import * as NodeChildProcess from "node:child_process";
+import type * as NodeStream from "node:stream";
+
+import type { PluginHostState, PluginId } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+
+import {
+  decodePluginChildMessage,
+  encodePluginHostMessage,
+  PluginHandlerName,
+  type PluginHostMessage,
+  type PluginLogLevel,
+} from "./PluginIpc.ts";
+import {
+  DEFAULT_PLUGIN_IPC_MAX_BYTES,
+  PLUGIN_IPC_FD,
+  PLUGIN_IPC_MAX_BYTES_LIMIT,
+  makeLineDecoder,
+} from "./pluginIpcFraming.ts";
+import type { PluginRegistration } from "./PluginManifestLoader.ts";
+
+/** Hidden CLI command that bin.ts routes to the plugin child runtime. */
+const PLUGIN_HOST_COMMAND = "__plugin-host";
+
+export interface PluginSupervisorOptions {
+  readonly heapLimitMb: number;
+  readonly maxMessageBytes: number;
+  readonly activationTimeout: Duration.Input;
+  readonly callTimeout: Duration.Input;
+  readonly cancelGrace: Duration.Input;
+  readonly stopGrace: Duration.Input;
+  /** In-flight calls per plugin. */
+  readonly maxConcurrentCalls: number;
+  /** Plugin processes alive at once across the environment. */
+  readonly maxRunningPlugins: number;
+  /** Consecutive failures that still restart; one more quarantines. */
+  readonly maxRestarts: number;
+  readonly restartBackoff: Duration.Input;
+  readonly maxRestartBackoff: Duration.Input;
+  /** A child that ran this long before failing starts a fresh failure count. */
+  readonly stableUptime: Duration.Input;
+}
+
+export const defaultPluginSupervisorOptions: PluginSupervisorOptions = {
+  heapLimitMb: 256,
+  maxMessageBytes: DEFAULT_PLUGIN_IPC_MAX_BYTES,
+  activationTimeout: Duration.seconds(10),
+  callTimeout: Duration.seconds(30),
+  cancelGrace: Duration.seconds(2),
+  stopGrace: Duration.seconds(2),
+  maxConcurrentCalls: 16,
+  maxRunningPlugins: 16,
+  maxRestarts: 3,
+  restartBackoff: Duration.seconds(1),
+  maxRestartBackoff: Duration.seconds(30),
+  stableUptime: Duration.minutes(1),
+};
+
+export class PluginAlreadyEnabledError extends Schema.TaggedError<PluginAlreadyEnabledError>()(
+  "PluginAlreadyEnabledError",
+  { pluginId: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} is already enabled.`;
+  }
+}
+
+export class PluginNotEnabledError extends Schema.TaggedError<PluginNotEnabledError>()(
+  "PluginNotEnabledError",
+  { pluginId: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} is not enabled.`;
+  }
+}
+
+export class PluginUnavailableError extends Schema.TaggedError<PluginUnavailableError>()(
+  "PluginUnavailableError",
+  { pluginId: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} is unavailable: ${this.reason}`;
+  }
+}
+
+export class PluginCrashedError extends Schema.TaggedError<PluginCrashedError>()(
+  "PluginCrashedError",
+  { pluginId: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} stopped unexpectedly: ${this.reason}`;
+  }
+}
+
+export class PluginStoppedError extends Schema.TaggedError<PluginStoppedError>()(
+  "PluginStoppedError",
+  { pluginId: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} was stopped before the call finished.`;
+  }
+}
+
+export class PluginTimeoutError extends Schema.TaggedError<PluginTimeoutError>()(
+  "PluginTimeoutError",
+  { pluginId: Schema.String, handler: Schema.String, timeoutMs: Schema.Number },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} did not answer "${this.handler}" within ${this.timeoutMs}ms.`;
+  }
+}
+
+export class PluginCallFailedError extends Schema.TaggedError<PluginCallFailedError>()(
+  "PluginCallFailedError",
+  { pluginId: Schema.String, handler: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} failed "${this.handler}": ${this.reason}`;
+  }
+}
+
+export class PluginBusyError extends Schema.TaggedError<PluginBusyError>()("PluginBusyError", {
+  pluginId: Schema.String,
+  limit: Schema.Number,
+}) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} already has ${this.limit} calls in flight.`;
+  }
+}
+
+export class PluginPayloadTooLargeError extends Schema.TaggedError<PluginPayloadTooLargeError>()(
+  "PluginPayloadTooLargeError",
+  { pluginId: Schema.String, bytes: Schema.Number, limit: Schema.Number },
+) {
+  override get message(): string {
+    return `The call to plugin ${this.pluginId} is ${this.bytes} bytes; the limit is ${this.limit}.`;
+  }
+}
+
+export type PluginInvokeError =
+  | PluginNotEnabledError
+  | PluginUnavailableError
+  | PluginCrashedError
+  | PluginStoppedError
+  | PluginTimeoutError
+  | PluginCallFailedError
+  | PluginBusyError
+  | PluginPayloadTooLargeError;
+
+export type PluginSupervisorEvent =
+  | { readonly _tag: "StateChanged"; readonly pluginId: PluginId; readonly state: PluginHostState }
+  | {
+      readonly _tag: "Log";
+      readonly pluginId: PluginId;
+      readonly level: PluginLogLevel;
+      readonly message: string;
+    };
+
+type CallOutcome = Exit.Exit<Schema.Json, PluginInvokeError>;
+
+interface PendingCall {
+  readonly handler: string;
+  readonly deferred: Deferred.Deferred<Schema.Json, PluginInvokeError>;
+}
+
+type ChildEvent =
+  | { readonly _tag: "Line"; readonly line: string }
+  | { readonly _tag: "Overflow" }
+  | { readonly _tag: "Exited"; readonly code: number | null; readonly signal: string | null }
+  /** fd 3 and stderr have closed, so every line and the stderr tail have been read. */
+  | { readonly _tag: "Drained" };
+
+interface Child {
+  readonly process: NodeChildProcess.ChildProcess;
+  readonly channel: NodeStream.Duplex;
+  readonly startedAt: number;
+  readonly ready: Deferred.Deferred<void, PluginCrashedError | PluginStoppedError>;
+  readonly exited: Deferred.Deferred<void>;
+  readonly pending: Map<number, PendingCall>;
+  /** Cancelled calls whose answer has not arrived yet. */
+  readonly settling: Map<number, Deferred.Deferred<void>>;
+  nextRequestId: number;
+  stopping: boolean;
+  killReason: string | undefined;
+  stderrTail: string;
+  /** V8 reported reaching the heap limit; its message can scroll out of the tail. */
+  outOfMemory: boolean;
+}
+
+interface Entry {
+  readonly registration: PluginRegistration;
+  readonly pluginId: PluginId;
+  state: PluginHostState;
+  failures: number;
+  child: Child | undefined;
+  starting: Deferred.Deferred<Child, PluginInvokeError> | undefined;
+}
+
+const STDERR_TAIL_BYTES = 4096;
+// A grandchild that inherited stderr can hold it open after the plugin exits.
+const DRAIN_TIMEOUT = Duration.millis(250);
+
+const LOG_SEVERITY = { debug: "Debug", info: "Info", warn: "Warn", error: "Error" } as const;
+
+// Enough for a trusted plugin to find its tools and temp space without
+// inheriting the server's credentials or Node options.
+const CHILD_ENV_KEYS = [
+  "PATH",
+  "Path",
+  "HOME",
+  "USERPROFILE",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "SystemRoot",
+  "LANG",
+  "LC_ALL",
+];
+
+const isHandlerName = Schema.is(PluginHandlerName);
+
+const isAlive = (child: Child) =>
+  child.process.exitCode === null && child.process.signalCode === null;
+
+const describeExit = (child: Child, code: number | null, signal: string | null, heapMb: number) => {
+  if (child.outOfMemory) return `ran out of memory (heap limit ${heapMb} MB).`;
+  const base = signal ? `was killed by ${signal}` : `exited with code ${code ?? "unknown"}`;
+  const lastLine = child.stderrTail.trim().split("\n").at(-1)?.slice(0, 300);
+  return lastLine ? `${base}: ${lastLine}` : `${base}.`;
+};
+
+export class PluginSupervisor extends Context.Service<
+  PluginSupervisor,
+  {
+    /** Registers a plugin; its process starts on first invoke. */
+    readonly enable: (
+      registration: PluginRegistration,
+    ) => Effect.Effect<void, PluginAlreadyEnabledError>;
+    /** Stops the plugin's process, failing in-flight calls, and forgets it. Idempotent. */
+    readonly disable: (pluginId: PluginId) => Effect.Effect<void>;
+    /** Clears backoff or quarantine so the next invoke starts a fresh process. */
+    readonly resume: (pluginId: PluginId) => Effect.Effect<void, PluginNotEnabledError>;
+    readonly invoke: (
+      pluginId: PluginId,
+      handler: string,
+      input: Schema.Json,
+      options?: { readonly timeout?: Duration.Input },
+    ) => Effect.Effect<Schema.Json, PluginInvokeError>;
+    readonly state: (pluginId: PluginId) => Effect.Effect<Option.Option<PluginHostState>>;
+    /** Subscribes before returning, so no event after this point is missed. */
+    readonly subscribe: Effect.Effect<
+      PubSub.Subscription<PluginSupervisorEvent>,
+      never,
+      Scope.Scope
+    >;
+  }
+>()("t3/plugins/PluginSupervisor") {}
+
+export const make = Effect.fn("PluginSupervisor.make")(function* (
+  overrides: Partial<PluginSupervisorOptions> = {},
+) {
+  const options = { ...defaultPluginSupervisorOptions, ...overrides };
+  const maxMessageBytes = Math.min(options.maxMessageBytes, PLUGIN_IPC_MAX_BYTES_LIMIT);
+  const activationTimeout = Duration.fromInputUnsafe(options.activationTimeout);
+  const callTimeout = Duration.fromInputUnsafe(options.callTimeout);
+  const cancelGrace = Duration.fromInputUnsafe(options.cancelGrace);
+  const stopGrace = Duration.fromInputUnsafe(options.stopGrace);
+  const restartBackoffMs = Duration.toMillis(Duration.fromInputUnsafe(options.restartBackoff));
+  const maxRestartBackoffMs = Duration.toMillis(
+    Duration.fromInputUnsafe(options.maxRestartBackoff),
+  );
+  const stableUptimeMs = Duration.toMillis(Duration.fromInputUnsafe(options.stableUptime));
+
+  const invocation = yield* resolveSelfInvocation();
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const heapFlag = `--max-old-space-size=${options.heapLimitMb}`;
+  const childEnvironment: Record<string, string> = { ELECTRON_RUN_AS_NODE: "1" };
+  for (const key of CHILD_ENV_KEYS) {
+    const value = hostEnvironment[key];
+    if (value !== undefined) childEnvironment[key] = value;
+  }
+  // The single executable takes no Node flags on its command line.
+  const spawnArgs =
+    invocation.entrypoint === undefined
+      ? [PLUGIN_HOST_COMMAND]
+      : [heapFlag, invocation.entrypoint, PLUGIN_HOST_COMMAND];
+  if (invocation.entrypoint === undefined) childEnvironment.NODE_OPTIONS = heapFlag;
+
+  const entries = new Map<PluginId, Entry>();
+  const events = yield* PubSub.sliding<PluginSupervisorEvent>(1024);
+  // Child readers and timers live here and end after every child has stopped.
+  const fibers = yield* Scope.make();
+
+  const setState = (entry: Entry, state: PluginHostState) =>
+    Effect.suspend(() => {
+      entry.state = state;
+      return PubSub.publish(events, { _tag: "StateChanged", pluginId: entry.pluginId, state });
+    });
+
+  const kill = (child: Child, reason: string) => {
+    child.killReason ??= reason;
+    if (isAlive(child)) child.process.kill("SIGKILL");
+  };
+
+  /** Sends a message, or says why it cannot be sent. */
+  const write = (child: Child, message: PluginHostMessage) => {
+    const encoded = encodePluginHostMessage(message);
+    if (Exit.isFailure(encoded)) return { _tag: "invalid" as const };
+    const bytes = Buffer.byteLength(encoded.value);
+    if (bytes > maxMessageBytes) return { _tag: "tooLarge" as const, bytes };
+    if (!child.channel.destroyed) child.channel.write(`${encoded.value}\n`);
+    return undefined;
+  };
+
+  const recordFailure = Effect.fnUntraced(function* (
+    entry: Entry,
+    startedAt: number,
+    reason: string,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    entry.failures = now - startedAt >= stableUptimeMs ? 1 : entry.failures + 1;
+    if (entry.failures > options.maxRestarts) {
+      yield* Effect.logWarning("Plugin quarantined", { pluginId: entry.pluginId, reason });
+      return yield* setState(entry, {
+        _tag: "quarantined",
+        failures: entry.failures,
+        reason: reason.slice(0, 1000),
+      });
+    }
+    const delay = Math.min(restartBackoffMs * 2 ** (entry.failures - 1), maxRestartBackoffMs);
+    const backoff: PluginHostState = {
+      _tag: "backoff",
+      failures: entry.failures,
+      reason: reason.slice(0, 1000),
+      retryAt: DateTime.formatIso(DateTime.makeUnsafe(now + delay)),
+    };
+    yield* Effect.logWarning("Plugin failed; backing off", {
+      pluginId: entry.pluginId,
+      reason,
+      delayMs: delay,
+    });
+    yield* setState(entry, backoff);
+    yield* Effect.sleep(Duration.millis(delay)).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          entries.get(entry.pluginId) === entry && entry.state === backoff
+            ? setState(entry, { _tag: "idle" })
+            : Effect.void,
+        ),
+      ),
+      Effect.forkIn(fibers, { startImmediately: true }),
+    );
+  });
+
+  const handleLine = Effect.fnUntraced(function* (entry: Entry, child: Child, line: string) {
+    const decoded = decodePluginChildMessage(line);
+    if (Exit.isFailure(decoded)) return kill(child, "sent a malformed IPC message.");
+    const message = decoded.value;
+    switch (message._tag) {
+      case "Ready":
+        yield* Deferred.succeed(child.ready, undefined);
+        return;
+      case "ActivationFailed":
+        // The exit fails activation, after the state reflects the failure.
+        return kill(child, `activation failed: ${message.message}`);
+      case "Succeeded":
+      case "Failed": {
+        const pending = child.pending.get(message.requestId);
+        if (pending) {
+          child.pending.delete(message.requestId);
+          yield* message._tag === "Succeeded"
+            ? Deferred.succeed(pending.deferred, message.value)
+            : Deferred.fail(
+                pending.deferred,
+                new PluginCallFailedError({
+                  pluginId: entry.pluginId,
+                  handler: pending.handler,
+                  reason: message.message,
+                }),
+              );
+          return;
+        }
+        const settling = child.settling.get(message.requestId);
+        child.settling.delete(message.requestId);
+        if (settling) yield* Deferred.succeed(settling, undefined);
+        return;
+      }
+      case "Log":
+        yield* Effect.logWithLevel(LOG_SEVERITY[message.level])(message.message).pipe(
+          Effect.annotateLogs({ pluginId: entry.pluginId, pluginLogLevel: message.level }),
+        );
+        yield* PubSub.publish(events, {
+          _tag: "Log",
+          pluginId: entry.pluginId,
+          level: message.level,
+          message: message.message,
+        });
+        return;
+      case "Deactivated":
+        return;
+    }
+  });
+
+  const handleExit = Effect.fnUntraced(function* (
+    entry: Entry,
+    child: Child,
+    code: number | null,
+    signal: string | null,
+  ) {
+    const reason = child.killReason ?? describeExit(child, code, signal, options.heapLimitMb);
+    const crashed = child.stopping
+      ? new PluginStoppedError({ pluginId: entry.pluginId })
+      : new PluginCrashedError({ pluginId: entry.pluginId, reason });
+    // Settle the state first so a caller woken below already sees it.
+    if (entry.child === child) entry.child = undefined;
+    if (entries.get(entry.pluginId) === entry) {
+      if (child.stopping) yield* setState(entry, { _tag: "idle" });
+      else yield* recordFailure(entry, child.startedAt, reason);
+    }
+    yield* Deferred.fail(child.ready, crashed);
+    const pending = [...child.pending.values()];
+    child.pending.clear();
+    for (const call of pending) yield* Deferred.fail(call.deferred, crashed);
+    const settling = [...child.settling.values()];
+    child.settling.clear();
+    for (const deferred of settling) yield* Deferred.succeed(deferred, undefined);
+  });
+
+  const spawnChild = Effect.fnUntraced(function* (entry: Entry) {
+    const queue = yield* Queue.unbounded<ChildEvent>();
+    const startedAt = yield* Clock.currentTimeMillis;
+    const childProcess = NodeChildProcess.spawn(invocation.command, spawnArgs, {
+      cwd: entry.registration.directory,
+      env: childEnvironment,
+      // fd 3 must be overlapped on Windows for the child to open it as a socket.
+      stdio: ["ignore", "ignore", "pipe", "overlapped"],
+      windowsHide: true,
+    });
+    const channel = childProcess.stdio[PLUGIN_IPC_FD] as NodeStream.Duplex;
+    const child: Child = {
+      process: childProcess,
+      channel,
+      startedAt,
+      ready: Deferred.makeUnsafe(),
+      exited: Deferred.makeUnsafe(),
+      pending: new Map(),
+      settling: new Map(),
+      nextRequestId: 0,
+      stopping: false,
+      killReason: undefined,
+      stderrTail: "",
+      outOfMemory: false,
+    };
+    // Stream errors follow the child's death; its exit carries the outcome. A
+    // child that drops fd 3 but lives on is killed when a call cannot settle.
+    channel.on("error", () => {});
+    childProcess.stderr?.on("error", () => {});
+    childProcess.stderr?.on("data", (chunk: Buffer) => {
+      const text = child.stderrTail + chunk.toString("utf8");
+      child.outOfMemory ||= /heap limit|heap out of memory/i.test(text);
+      child.stderrTail = text.slice(-STDERR_TAIL_BYTES);
+    });
+    channel.on(
+      "data",
+      makeLineDecoder({
+        maxBytes: maxMessageBytes,
+        onLine: (line) => Queue.offerUnsafe(queue, { _tag: "Line", line }),
+        onOverflow: () => Queue.offerUnsafe(queue, { _tag: "Overflow" }),
+      }),
+    );
+    let openStreams = 2;
+    const onStreamClosed = () => {
+      if (--openStreams === 0) Queue.offerUnsafe(queue, { _tag: "Drained" });
+    };
+    channel.once("close", onStreamClosed);
+    if (childProcess.stderr) childProcess.stderr.once("close", onStreamClosed);
+    else onStreamClosed();
+    const onExit = (code: number | null, signal: string | null) => {
+      if (!Deferred.doneUnsafe(child.exited, Exit.void)) return;
+      Queue.offerUnsafe(queue, { _tag: "Exited", code, signal });
+    };
+    childProcess.on("exit", onExit);
+    childProcess.on("error", (error) => {
+      child.killReason ??= `could not start: ${error.message}`;
+      if (childProcess.pid === undefined) onExit(null, null);
+    });
+
+    yield* Effect.gen(function* () {
+      let exit: { readonly code: number | null; readonly signal: string | null } | undefined;
+      let drained = false;
+      while (true) {
+        const event = yield* Queue.take(queue);
+        if (event._tag === "Line") yield* handleLine(entry, child, event.line);
+        else if (event._tag === "Overflow")
+          kill(child, `sent an IPC message larger than ${maxMessageBytes} bytes.`);
+        else if (event._tag === "Drained") drained = true;
+        else {
+          exit = event;
+          yield* Effect.sleep(DRAIN_TIMEOUT).pipe(
+            Effect.andThen(Queue.offer(queue, { _tag: "Drained" })),
+            Effect.forkIn(fibers, { startImmediately: true }),
+          );
+        }
+        if (exit && drained) return yield* handleExit(entry, child, exit.code, exit.signal);
+      }
+    }).pipe(Effect.forkIn(fibers));
+    return child;
+  });
+
+  /** Starts the plugin's process if needed and waits until it has activated. */
+  const ensureChild = Effect.fnUntraced(function* (entry: Entry) {
+    const claim = yield* Effect.sync(() => {
+      if (entry.child && !entry.starting) return { _tag: "running" as const, child: entry.child };
+      if (entry.starting) return { _tag: "wait" as const, deferred: entry.starting };
+      let running = 0;
+      for (const other of entries.values()) if (other.child || other.starting) running++;
+      if (running >= options.maxRunningPlugins) return { _tag: "limit" as const };
+      const deferred = Deferred.makeUnsafe<Child, PluginInvokeError>();
+      entry.starting = deferred;
+      return { _tag: "start" as const, deferred };
+    });
+    if (claim._tag === "running") return claim.child;
+    if (claim._tag === "wait") return yield* Deferred.await(claim.deferred);
+    if (claim._tag === "limit")
+      return yield* new PluginUnavailableError({
+        pluginId: entry.pluginId,
+        reason: `${options.maxRunningPlugins} plugin processes are already running.`,
+      });
+
+    const started = yield* Effect.gen(function* () {
+      yield* setState(entry, { _tag: "starting" });
+      const child = yield* spawnChild(entry);
+      entry.child = child;
+      const { manifest, entryPath } = entry.registration;
+      write(child, {
+        _tag: "Activate",
+        pluginId: manifest.id,
+        version: manifest.version,
+        apiVersion: manifest.apiVersion,
+        entryPath,
+        proposedApi: manifest.proposedApi,
+        maxMessageBytes,
+      });
+      const activated = yield* Deferred.await(child.ready).pipe(
+        Effect.timeoutOption(activationTimeout),
+      );
+      if (Option.isNone(activated)) {
+        kill(child, `did not activate within ${Duration.toMillis(activationTimeout)}ms.`);
+        yield* Deferred.await(child.exited);
+        return yield* Deferred.await(child.ready).pipe(Effect.as(child));
+      }
+      yield* setState(entry, { _tag: "running" });
+      return child;
+    }).pipe(
+      Effect.uninterruptible,
+      Effect.exit,
+      Effect.ensuring(Effect.sync(() => (entry.starting = undefined))),
+    );
+    yield* Deferred.done(claim.deferred, started);
+    return yield* started;
+  });
+
+  const cancel = (entry: Entry, child: Child, requestId: number, handler: string) =>
+    Effect.suspend(() => {
+      if (!child.pending.delete(requestId)) return Effect.void;
+      if (!isAlive(child)) return Effect.void;
+      const settled = Deferred.makeUnsafe<void>();
+      child.settling.set(requestId, settled);
+      write(child, { _tag: "Cancel", requestId });
+      return Deferred.await(settled).pipe(
+        Effect.timeoutOption(cancelGrace),
+        Effect.flatMap((answered) =>
+          Effect.sync(() => {
+            if (Option.isNone(answered) && entry.child === child)
+              kill(
+                child,
+                `did not stop "${handler}" within ${Duration.toMillis(cancelGrace)}ms of cancellation.`,
+              );
+          }),
+        ),
+        Effect.forkIn(fibers, { startImmediately: true }),
+        Effect.asVoid,
+      );
+    });
+
+  const availability = (entry: Entry) => {
+    const state = entry.state;
+    if (state._tag === "backoff")
+      return new PluginUnavailableError({
+        pluginId: entry.pluginId,
+        reason: `restarting after a failure at ${state.retryAt}: ${state.reason}`,
+      });
+    if (state._tag === "quarantined")
+      return new PluginUnavailableError({
+        pluginId: entry.pluginId,
+        reason: `quarantined after ${state.failures} failures: ${state.reason}`,
+      });
+    return undefined;
+  };
+
+  const invoke: PluginSupervisor["Service"]["invoke"] = Effect.fn("PluginSupervisor.invoke")(
+    function* (pluginId, handler, input, invokeOptions) {
+      const entry = entries.get(pluginId);
+      if (!entry) return yield* new PluginNotEnabledError({ pluginId });
+      if (!isHandlerName(handler))
+        return yield* new PluginCallFailedError({
+          pluginId,
+          handler,
+          reason: "the handler name is invalid.",
+        });
+      const unavailable = availability(entry);
+      if (unavailable) return yield* unavailable;
+      const child = yield* ensureChild(entry);
+      const timeout = Duration.fromInputUnsafe(invokeOptions?.timeout ?? callTimeout);
+
+      const call = yield* Effect.sync(() => {
+        if (Deferred.isDoneUnsafe(child.exited))
+          return new PluginUnavailableError({ pluginId, reason: "its process just stopped." });
+        if (child.pending.size >= options.maxConcurrentCalls)
+          return new PluginBusyError({ pluginId, limit: options.maxConcurrentCalls });
+        const requestId = ++child.nextRequestId;
+        const deferred = Deferred.makeUnsafe<Schema.Json, PluginInvokeError>();
+        child.pending.set(requestId, { handler, deferred });
+        const unsent = write(child, { _tag: "Invoke", requestId, handler, input });
+        if (unsent) child.pending.delete(requestId);
+        if (unsent?._tag === "tooLarge")
+          return new PluginPayloadTooLargeError({
+            pluginId,
+            bytes: unsent.bytes,
+            limit: maxMessageBytes,
+          });
+        if (unsent)
+          return new PluginCallFailedError({ pluginId, handler, reason: "the input is not JSON." });
+        return { requestId, deferred };
+      });
+      if (!("requestId" in call)) return yield* call;
+
+      const outcome: Option.Option<CallOutcome> = yield* Deferred.await(call.deferred).pipe(
+        Effect.exit,
+        Effect.timeoutOption(timeout),
+        Effect.onInterrupt(() => cancel(entry, child, call.requestId, handler)),
+      );
+      if (Option.isNone(outcome)) {
+        yield* cancel(entry, child, call.requestId, handler);
+        return yield* new PluginTimeoutError({
+          pluginId,
+          handler,
+          timeoutMs: Duration.toMillis(timeout),
+        });
+      }
+      return yield* outcome.value;
+    },
+  );
+
+  const stopEntry = Effect.fnUntraced(function* (entry: Entry) {
+    // A child that is still activating is stopped like a running one.
+    if (!entry.child && entry.starting) yield* Deferred.await(entry.starting).pipe(Effect.ignore);
+    const child = entry.child;
+    if (!child) return;
+    child.stopping = true;
+    const stopped = new PluginStoppedError({ pluginId: entry.pluginId });
+    const pending = [...child.pending.values()];
+    child.pending.clear();
+    for (const call of pending) yield* Deferred.fail(call.deferred, stopped);
+    write(child, { _tag: "Deactivate" });
+    const exited = yield* Deferred.await(child.exited).pipe(Effect.timeoutOption(stopGrace));
+    if (Option.isNone(exited)) {
+      kill(child, `did not stop within ${Duration.toMillis(stopGrace)}ms.`);
+      yield* Deferred.await(child.exited);
+    }
+  });
+
+  const disable = Effect.fn("PluginSupervisor.disable")(function* (pluginId: PluginId) {
+    const entry = entries.get(pluginId);
+    if (!entry) return;
+    entries.delete(pluginId);
+    yield* stopEntry(entry);
+  });
+
+  yield* Effect.addFinalizer(() =>
+    Effect.forEach([...entries.keys()], disable, { concurrency: "unbounded", discard: true }).pipe(
+      Effect.andThen(Scope.close(fibers, Exit.void)),
+    ),
+  );
+
+  return PluginSupervisor.of({
+    enable: Effect.fn("PluginSupervisor.enable")(function* (registration) {
+      const pluginId = registration.manifest.id;
+      if (entries.has(pluginId)) return yield* new PluginAlreadyEnabledError({ pluginId });
+      const entry: Entry = {
+        registration,
+        pluginId,
+        state: { _tag: "idle" },
+        failures: 0,
+        child: undefined,
+        starting: undefined,
+      };
+      entries.set(pluginId, entry);
+      yield* setState(entry, entry.state);
+    }),
+    disable,
+    resume: Effect.fn("PluginSupervisor.resume")(function* (pluginId) {
+      const entry = entries.get(pluginId);
+      if (!entry) return yield* new PluginNotEnabledError({ pluginId });
+      if (entry.state._tag !== "backoff" && entry.state._tag !== "quarantined") return;
+      entry.failures = 0;
+      yield* setState(entry, { _tag: "idle" });
+    }),
+    invoke,
+    state: (pluginId) => Effect.sync(() => Option.fromUndefinedOr(entries.get(pluginId)?.state)),
+    subscribe: PubSub.subscribe(events),
+  });
+});
+
+export const layer = (overrides: Partial<PluginSupervisorOptions> = {}) =>
+  Layer.effect(PluginSupervisor, make(overrides));

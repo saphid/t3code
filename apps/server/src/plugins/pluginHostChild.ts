@@ -1,0 +1,164 @@
+// @effect-diagnostics nodeBuiltinImport:off
+// The child hosts one plugin and runs without the Effect runtime: bin.ts
+// dispatches `__plugin-host` here before the CLI module graph loads, so each
+// plugin process pays only for this file. Nothing here may run on import.
+import * as NodeModule from "node:module";
+import * as NodeNet from "node:net";
+import * as NodeSea from "node:sea";
+import * as NodeURL from "node:url";
+
+import type { PluginContext, PluginHandler, PluginJson, PluginModule } from "./pluginApi.ts";
+import type { PluginChildMessage, PluginHostMessage, PluginLogLevel } from "./PluginIpc.ts";
+import {
+  DEFAULT_PLUGIN_IPC_MAX_BYTES,
+  PLUGIN_IPC_FD,
+  PLUGIN_IPC_MAX_BYTES_LIMIT,
+  makeLineDecoder,
+} from "./pluginIpcFraming.ts";
+
+// A single executable can only import() built-ins, so it loads the entry
+// through require, which also accepts ES modules without top-level await.
+const loadEntry = (entryPath: string): Promise<Partial<PluginModule>> =>
+  NodeSea.isSea()
+    ? Promise.resolve().then(() => NodeModule.createRequire(entryPath)(entryPath))
+    : import(NodeURL.pathToFileURL(entryPath).href);
+
+const errorMessage = (error: unknown) =>
+  (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+
+/** Serves one plugin over fd 3 until the server deactivates it or goes away. */
+export const runPluginHostChild = (): void => {
+  const channel = new NodeNet.Socket({ fd: PLUGIN_IPC_FD, readable: true, writable: true });
+  let maxBytes = DEFAULT_PLUGIN_IPC_MAX_BYTES;
+  let activated: { module: Partial<PluginModule>; controller: AbortController } | undefined;
+  const handlers = new Map<string, PluginHandler>();
+  const requests = new Map<number, AbortController>();
+
+  const write = (line: string) => {
+    if (!channel.destroyed && channel.writable) channel.write(`${line}\n`);
+  };
+  const send = (message: PluginChildMessage) => write(JSON.stringify(message));
+  const log = (level: PluginLogLevel, message: unknown) =>
+    send({ _tag: "Log", level, message: String(message).slice(0, 4000) });
+
+  const settle = (requestId: number, outcome: PluginJson | Error) => {
+    requests.delete(requestId);
+    if (outcome instanceof Error) {
+      send({ _tag: "Failed", requestId, message: errorMessage(outcome) });
+      return;
+    }
+    let line: string;
+    try {
+      line = JSON.stringify({ _tag: "Succeeded", requestId, value: outcome ?? null });
+    } catch (error) {
+      send({ _tag: "Failed", requestId, message: `Result is not JSON: ${errorMessage(error)}` });
+      return;
+    }
+    if (Buffer.byteLength(line) > maxBytes) {
+      send({ _tag: "Failed", requestId, message: `Result exceeds ${maxBytes} bytes.` });
+      return;
+    }
+    write(line);
+  };
+
+  const activate = async (message: Extract<PluginHostMessage, { _tag: "Activate" }>) => {
+    maxBytes = message.maxMessageBytes;
+    const controller = new AbortController();
+    const proposed = message.proposedApi
+      ? {
+          handle(name: string, handler: PluginHandler) {
+            if (handlers.has(name)) throw new Error(`Handler "${name}" is already registered.`);
+            handlers.set(name, handler);
+            return {
+              dispose() {
+                if (handlers.get(name) === handler) handlers.delete(name);
+              },
+            };
+          },
+        }
+      : undefined;
+    const context: PluginContext = {
+      apiVersion: 1,
+      plugin: { id: message.pluginId, version: message.version },
+      signal: controller.signal,
+      log: {
+        debug: (text) => log("debug", text),
+        info: (text) => log("info", text),
+        warn: (text) => log("warn", text),
+        error: (text) => log("error", text),
+      },
+      proposed,
+    };
+    try {
+      const module = await loadEntry(message.entryPath);
+      if (typeof module.activate !== "function")
+        throw new Error("The plugin entry does not export an activate function.");
+      activated = { module, controller };
+      await module.activate(context);
+      send({ _tag: "Ready" });
+    } catch (error) {
+      send({ _tag: "ActivationFailed", message: errorMessage(error) });
+    }
+  };
+
+  const invoke = (message: Extract<PluginHostMessage, { _tag: "Invoke" }>) => {
+    const handler = handlers.get(message.handler);
+    if (!handler) {
+      settle(message.requestId, new Error(`No handler named "${message.handler}".`));
+      return;
+    }
+    const controller = new AbortController();
+    requests.set(message.requestId, controller);
+    Promise.resolve()
+      .then(() => handler(message.input, { signal: controller.signal }))
+      .then(
+        (value) => settle(message.requestId, value),
+        (error) => settle(message.requestId, new Error(errorMessage(error))),
+      );
+  };
+
+  const deactivate = async () => {
+    const reason = new Error("Plugin deactivated.");
+    activated?.controller.abort(reason);
+    for (const controller of requests.values()) controller.abort(reason);
+    try {
+      await activated?.module.deactivate?.();
+    } catch (error) {
+      log("error", `deactivate failed: ${errorMessage(error)}`);
+    }
+    send({ _tag: "Deactivated" });
+    channel.end(() => process.exit(0));
+  };
+
+  const receive = (line: string) => {
+    const message = JSON.parse(line) as PluginHostMessage;
+    switch (message._tag) {
+      case "Activate":
+        void activate(message);
+        return;
+      case "Invoke":
+        invoke(message);
+        return;
+      case "Cancel":
+        requests.get(message.requestId)?.abort(new Error("Call cancelled."));
+        return;
+      case "Deactivate":
+        void deactivate();
+        return;
+    }
+  };
+
+  channel.on(
+    "data",
+    // The server bounds what it sends by its configured limit; this only stops a
+    // corrupt stream from growing without end.
+    makeLineDecoder({
+      maxBytes: PLUGIN_IPC_MAX_BYTES_LIMIT,
+      onLine: receive,
+      onOverflow: () => process.exit(1),
+    }),
+  );
+  // The server closed the channel or died: nothing can reach this plugin again.
+  channel.on("end", () => process.exit(0));
+  channel.on("error", () => process.exit(1));
+};
