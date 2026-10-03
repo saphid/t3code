@@ -1,5 +1,6 @@
 import {
   type ContributionStatusEntry,
+  type ContributionStatusSource,
   type ContributionStatusTone,
   contributionStatusSourceKey,
   PROVIDER_DISPLAY_NAMES,
@@ -9,8 +10,9 @@ import {
 export interface ThreadContributionStatusChip {
   /** Source key plus item key, so a provider session taking over re-keys the chip. */
   readonly id: string;
-  readonly driver: ProviderDriverKind;
-  /** The first chip of each source carries that source's provider icon. */
+  /** The provider that set it, or null for a plugin's status. */
+  readonly driver: ProviderDriverKind | null;
+  /** The first chip of each provider source carries that provider's icon. */
   readonly leadsSource: boolean;
   readonly text: string;
   readonly tone: ContributionStatusTone;
@@ -24,8 +26,13 @@ function providerLabel(driver: ProviderDriverKind): string {
   return PROVIDER_DISPLAY_NAMES[driver] ?? driver;
 }
 
-function statusHelp(driver: ProviderDriverKind): string {
-  const origin = driver === "pi" ? "a Pi extension" : providerLabel(driver);
+function sourceLabel(source: ContributionStatusSource): string {
+  return source.kind === "plugin" ? source.name : providerLabel(source.driver);
+}
+
+function statusHelp(source: ContributionStatusSource): string {
+  if (source.kind === "plugin") return `Set by the ${source.name} plugin.`;
+  const origin = source.driver === "pi" ? "a Pi extension" : providerLabel(source.driver);
   return `Set by ${origin}. It can lag a session change.`;
 }
 
@@ -34,17 +41,17 @@ export function threadContributionStatusChips(
   entries: ReadonlyArray<ContributionStatusEntry>,
 ): ReadonlyArray<ThreadContributionStatusChip> {
   return entries.flatMap((entry) => {
-    const sourceKey = contributionStatusSourceKey(entry.source);
-    const { driver } = entry.source;
+    const { source } = entry;
+    const sourceKey = contributionStatusSourceKey(source);
     return entry.items.map((item, index) => ({
       id: JSON.stringify([sourceKey, item.key]),
-      driver,
+      driver: source.kind === "plugin" ? null : source.driver,
       leadsSource: index === 0,
       text: item.text,
       tone: item.tone ?? "neutral",
       tooltip: item.tooltip ?? null,
-      accessibilityLabel: `${providerLabel(driver)} status: ${item.text}`,
-      help: statusHelp(driver),
+      accessibilityLabel: `${sourceLabel(source)} status: ${item.text}`,
+      help: statusHelp(source),
     }));
   });
 }

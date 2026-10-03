@@ -20,7 +20,7 @@ const TONE_DOT_CLASS = {
 
 /**
  * Advisory statuses the thread's provider set, such as Pi extension
- * `setStatus` text, as one row of chips floating just under the navigation
+ * `setStatus` text, and statuses plugins set, as one row of chips floating just under the navigation
  * header. It overlays the feed like the header does, so a status appearing or
  * clearing never moves the feed or the composer. Renders nothing when the
  * server lacks the capability or the thread has no statuses. Pressing a chip
@@ -73,7 +73,9 @@ export function ThreadContributionStatusStrip(props: {
                 }
               >
                 <View className="min-h-7 flex-row items-center gap-1.5 rounded-full border border-border-subtle bg-card-alt px-2.5">
-                  {chip.leadsSource ? <ProviderIcon provider={chip.driver} size={12} /> : null}
+                  {chip.leadsSource && chip.driver !== null ? (
+                    <ProviderIcon provider={chip.driver} size={12} />
+                  ) : null}
                   {dotClass === null ? null : (
                     <View className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass)} />
                   )}

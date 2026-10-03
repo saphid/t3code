@@ -73,6 +73,8 @@ import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
 import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
+import * as PluginStatus from "./plugins/PluginStatus.ts";
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PluginContextEnrichment from "./plugins/PluginContextEnrichment.ts";
 import * as PluginTools from "./plugins/PluginTools.ts";
@@ -424,6 +426,8 @@ const PluginLayerLive = Layer.mergeAll(
   PluginViews.layer,
   PluginSettings.layer(),
   PluginNpm.layer,
+  PluginStatus.layer,
+  PluginNotifications.layer,
   PluginContextEnrichment.layer,
 ).pipe(
   Layer.provideMerge(PluginCatalog.layer()),

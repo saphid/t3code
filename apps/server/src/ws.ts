@@ -122,6 +122,7 @@ import * as PluginViews from "./plugins/PluginViews.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginActions from "./plugins/PluginActions.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1143,6 +1144,7 @@ const makeWsRpcLayer = (
         }),
       });
       const pluginNpm = yield* PluginNpm.PluginNpm;
+      const pluginNotifications = yield* PluginNotifications.PluginNotifications;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2080,6 +2082,12 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.pluginsSettingsSubscribe,
             pluginSettings.subscribe(input.installationId),
+            { "rpc.aggregate": "plugins" },
+          ),
+        [WS_METHODS.pluginsNotificationsSubscribe]: () =>
+          observeRpcStream(
+            WS_METHODS.pluginsNotificationsSubscribe,
+            pluginNotifications.subscribe,
             { "rpc.aggregate": "plugins" },
           ),
         [WS_METHODS.pluginsSettingsUpdate]: (input) =>
