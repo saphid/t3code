@@ -39,6 +39,7 @@ describe("RPC authorization scopes", () => {
   it("lets ordinary clients see plugins but only administrators change what runs", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pluginsList)).toBe(AuthOrchestrationReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.pluginsSubscribe)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginsNpmList)).toBe(AuthOrchestrationReadScope);
     for (const method of [
       WS_METHODS.pluginsAdd,
       WS_METHODS.pluginsRefresh,
@@ -47,6 +48,10 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.pluginsDisable,
       WS_METHODS.pluginsRemove,
       WS_METHODS.pluginsResume,
+      WS_METHODS.pluginsNpmAdd,
+      WS_METHODS.pluginsNpmStageUpdate,
+      WS_METHODS.pluginsNpmApplyUpdate,
+      WS_METHODS.pluginsNpmDiscardUpdate,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthAccessWriteScope);
     }

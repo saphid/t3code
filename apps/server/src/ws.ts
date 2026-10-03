@@ -118,6 +118,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginNpm from "./plugins/PluginNpm.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1123,6 +1124,7 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+      const pluginNpm = yield* PluginNpm.PluginNpm;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2048,6 +2050,26 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.pluginsResume]: (input) =>
           observeRpcEffect(WS_METHODS.pluginsResume, pluginCatalog.resume(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmList]: (_input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmList, pluginNpm.list, {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmAdd]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmAdd, pluginNpm.add(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmStageUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmStageUpdate, pluginNpm.stageUpdate(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmApplyUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmApplyUpdate, pluginNpm.applyUpdate(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmDiscardUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmDiscardUpdate, pluginNpm.discardUpdate(input), {
             "rpc.aggregate": "plugins",
           }),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
