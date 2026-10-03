@@ -141,7 +141,9 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
             Effect.map((error) => error.message),
           );
         expect(yield* reason({ apiVersion: 2 })).toContain("targets plugin API version 2");
-        expect(yield* reason({ capabilities: ["tools"] })).toContain("does not support tools");
+        expect(yield* reason({ capabilities: ["unimplemented"] })).toContain(
+          "does not support unimplemented",
+        );
         expect(yield* reason({ entry: "../main.mjs" })).toContain("is invalid");
         expect(yield* reason({ entry: "main.ts" })).toContain("is invalid");
         expect(yield* reason({ id: "Not-Qualified" })).toContain("is invalid");
