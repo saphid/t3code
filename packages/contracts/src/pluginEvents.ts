@@ -36,7 +36,7 @@ import {
 export const PLUGIN_EVENTS_CAPABILITY = "events";
 
 /** Most events in one delivered page. */
-export const PLUGIN_EVENT_PAGE_MAX_EVENTS = 256;
+const PLUGIN_EVENT_PAGE_MAX_EVENTS = 256;
 
 /** Longest thread title in an event, in UTF-16 code units. Longer titles are cut. */
 export const PLUGIN_EVENT_THREAD_TITLE_MAX_LENGTH = 200;

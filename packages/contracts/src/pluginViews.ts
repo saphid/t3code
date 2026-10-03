@@ -28,7 +28,7 @@ import { PluginInstallationId } from "./pluginCatalog.ts";
 /** The manifest capability a plugin declares to ship views. */
 export const PLUGIN_VIEWS_CAPABILITY = "views";
 
-export const PLUGIN_VIEW_MAX_PER_PLUGIN = 8;
+const PLUGIN_VIEW_MAX_PER_PLUGIN = 8;
 export const PLUGIN_VIEW_SCRIPT_MAX_BYTES = 1024 * 1024;
 export const PLUGIN_VIEW_STYLE_MAX_BYTES = 256 * 1024;
 /** Script plus style of one view. */
