@@ -1,11 +1,14 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { getSidePanelMetadata } from "~/panels/bundledPanels";
 
 import {
   RightPanelTabs,
   resolvePullRequestTabLink,
+  rightPanelSurfaceActions,
   shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
@@ -17,6 +20,54 @@ describe("browser profile submenu", () => {
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
+  });
+});
+
+describe("right panel surface actions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const inputs = (openPreview = () => undefined) => ({
+    panels: {
+      preview: { available: true, onOpen: openPreview },
+      diff: { available: true, onOpen: () => undefined },
+      terminal: { available: true, onOpen: () => undefined },
+      device: { available: true, onOpen: () => undefined },
+      "pull-request": { available: true, onOpen: () => undefined },
+      "pull-requests": { available: true, onOpen: () => undefined },
+      files: { available: true, onOpen: () => undefined },
+    },
+  });
+
+  it("describes registered panels from their definitions in launcher order", () => {
+    const actions = rightPanelSurfaceActions(inputs());
+    expect(actions.map((action) => action.shortcut).join("")).toBe("BTFDPLM");
+    const diff = actions.find((action) => action.id === "diff");
+    expect(diff).toMatchObject({
+      label: getSidePanelMetadata("diff").title,
+      icon: getSidePanelMetadata("diff").icon,
+      unavailableHint: getSidePanelMetadata("diff").unavailableHint,
+      available: true,
+    });
+  });
+
+  it("keeps desktop-only Preview unavailable on web even when the thread allows it", () => {
+    vi.stubGlobal("window", {});
+    expect(rightPanelSurfaceActions(inputs())[0]).toMatchObject({
+      id: "preview",
+      available: false,
+    });
+    vi.stubGlobal("window", { desktopBridge: { preview: {} } });
+    expect(rightPanelSurfaceActions(inputs())[0]).toMatchObject({ id: "preview", available: true });
+  });
+
+  it("opens a registered panel without forwarding the click event", () => {
+    const openPreview = vi.fn();
+    const preview = rightPanelSurfaceActions(inputs(openPreview))[0]!;
+    // Menu items and launcher rows call onClick with their DOM event.
+    (preview.onClick as (event: unknown) => void)({ type: "click" });
+    expect(openPreview).toHaveBeenCalledWith();
   });
 });
 
@@ -115,21 +166,16 @@ function renderTabs(
       onCloseSurfacesToRight={() => undefined}
       onCloseAllSurfaces={() => undefined}
       onCopyFilePath={() => undefined}
-      onAddBrowser={() => undefined}
+      panels={{
+        preview: { available: true, onOpen: () => undefined },
+        diff: { available: false, onOpen: () => undefined },
+        terminal: { available: false, onOpen: () => undefined },
+        device: { available: false, onOpen: () => undefined },
+        "pull-request": { available: false, onOpen: () => undefined },
+        "pull-requests": { available: false, onOpen: () => undefined },
+        files: { available: false, onOpen: () => undefined },
+      }}
       onAddBrowserInProfile={() => undefined}
-      onAddTerminal={() => undefined}
-      onAddPullRequest={() => undefined}
-      onAddPullRequests={() => undefined}
-      onAddDiff={() => undefined}
-      onAddFiles={() => undefined}
-      onAddDevice={() => undefined}
-      browserAvailable
-      terminalAvailable={false}
-      diffAvailable={false}
-      filesAvailable={false}
-      pullRequestAvailable={false}
-      pullRequestsAvailable={false}
-      deviceAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,
