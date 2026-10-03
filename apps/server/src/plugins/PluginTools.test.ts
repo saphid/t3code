@@ -3,7 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   PLUGIN_TOOL_LIMITS,
+  PluginInstallation,
   ThreadId,
+  type PluginToolDeclaration,
   type PluginToolError,
   type PluginToolsListResult,
 } from "@t3tools/contracts";
@@ -119,6 +121,62 @@ const reasonOf = (error: PluginToolError) => error.reason;
 
 const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistenceMemory));
+
+const DIGEST = `sha256:${"0".repeat(64)}`;
+const decodeInstallation = Schema.decodeUnknownSync(PluginInstallation);
+
+/**
+ * An in-memory catalogue of `count` enabled one-tool plugins. It records which
+ * plugins had their declarations read and how often the catalogue was listed.
+ */
+const inventory = (count: number) => {
+  const prepared = new Set<string>();
+  const counts = { lists: 0, revision: 0 };
+  const rows = Array.from({ length: count }, (_, index) => {
+    const id = `test.p${String(index).padStart(4, "0")}`;
+    const row = decodeInstallation({
+      installationId: `installation-${index}`,
+      generation: 1,
+      directory: `/plugins/${id}`,
+      manifest: { id, name: id, version: "1.0.0", capabilities: ["tools"], proposedApi: true },
+      source: { digest: DIGEST, files: 1, bytes: 1 },
+      problem: null,
+      inspectedAt: "2026-01-01T00:00:00.000Z",
+      consent: { digest: DIGEST, capabilities: ["tools"], grantedAt: "2026-01-01T00:00:00.000Z" },
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const declaration: PluginToolDeclaration = {
+      name: "ping",
+      description: "x".repeat(1_500),
+      sideEffect: "read",
+      openWorld: false,
+      get inputSchema() {
+        prepared.add(id);
+        return { type: "object", additionalProperties: false };
+      },
+    };
+    return { ...row, manifest: { ...row.manifest!, tools: [declaration] } };
+  });
+  const unused = () => Effect.die("not used by PluginTools");
+  const catalog = PluginCatalog.PluginCatalog.of({
+    list: Effect.sync(() => {
+      counts.lists++;
+      return { installations: rows };
+    }),
+    revision: Effect.sync(() => counts.revision),
+    subscribe: Stream.empty,
+    add: unused,
+    refresh: unused,
+    consent: unused,
+    enable: unused,
+    disable: unused,
+    remove: unused,
+    resume: unused,
+    invoke: () => Effect.succeed("pong"),
+  });
+  return { rows, prepared, counts, catalog };
+};
 
 it.layer(NodeServices.layer)("PluginTools", (it) => {
   describe("granted plugins", () => {
@@ -327,6 +385,51 @@ it.layer(NodeServices.layer)("PluginTools", (it) => {
           expect(states).toEqual(["idle", "idle", "idle", "idle"]);
         }),
       ),
+    );
+
+    it.effect("prepares only the plugins a page shows, however many are installed", () =>
+      Effect.gen(function* () {
+        const { rows, prepared, counts, catalog } = inventory(1_000);
+        const tools = yield* PluginTools.make.pipe(
+          Effect.provideService(PluginCatalog.PluginCatalog, catalog),
+        );
+        const grants = yield* tools.grants;
+        expect(grants).toHaveLength(1_000);
+        expect(prepared.size).toBe(0);
+
+        const one = yield* tools.list(grants, { plugin: "test.p0500" });
+        expect(one.tools.map((listing) => listing.tool)).toEqual(["test.p0500/ping"]);
+        expect([...prepared]).toEqual(["test.p0500"]);
+
+        prepared.clear();
+        const first = yield* tools.list(grants);
+        const shown = first.tools.map((listing) => listing.plugin.id);
+        expect(first.nextCursor).toBe(shown.at(-1));
+        expect(shown.length).toBeLessThan(100);
+        // The page, and the one plugin after it that did not fit.
+        expect([...prepared].toSorted()).toEqual(
+          [...shown, `test.p${String(shown.length).padStart(4, "0")}`].toSorted(),
+        );
+
+        prepared.clear();
+        const second = yield* tools.list(grants, { cursor: first.nextCursor! });
+        expect(second.tools[0]?.plugin.id).toBe(`test.p${String(shown.length).padStart(4, "0")}`);
+        expect(prepared.size).toBe(second.tools.length);
+        expect(yield* tools.call(grants, { tool: "test.p0999/ping", input: {}, context })).toBe(
+          "pong",
+        );
+        // Requests read the catalogue only when its records changed.
+        expect(counts.lists).toBe(1);
+
+        rows[999] = { ...rows[999]!, enabled: false };
+        counts.revision++;
+        const refused = yield* tools
+          .call(grants, { tool: "test.p0999/ping", input: {}, context })
+          .pipe(Effect.flip);
+        expect(refused.reason).toBe("unavailable");
+        expect((yield* tools.list(grants, { plugin: "test.p0999" })).tools).toEqual([]);
+        expect(counts.lists).toBe(2);
+      }),
     );
   });
 });
