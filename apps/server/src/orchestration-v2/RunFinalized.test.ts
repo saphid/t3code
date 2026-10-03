@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
@@ -245,6 +246,38 @@ it.effect("finalizes a completed run once, after its checkpoint and workspace re
     assert.isTrue(stored!.sequence > completedAt!);
   }).pipe(Effect.provide(makeLayer(commitCapture("completed").pipe(Effect.orDie), () => probe)));
 });
+
+it.effect("recording the milestone leaves thread activity where the run left it", () =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    yield* seedThread;
+    const now = yield* DateTime.now;
+    yield* eventSink.writeWithEffects({
+      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
+      effects: [captureEffect],
+    });
+    yield* runCaptureEffect;
+
+    const events = yield* storedEvents;
+    const completed = events.find(
+      (event) => event.event.type === "run.updated" && event.event.payload.status === "completed",
+    );
+    const [milestone] = finalizedEvents(events);
+    assert.isDefined(completed);
+    assert.isDefined(milestone);
+    // The slow refresh put the milestone a minute after the run's last write.
+    assert.isTrue(DateTime.isGreaterThan(milestone.event.occurredAt, completed.event.occurredAt));
+    const shell = yield* projections.getThreadShell(threadId);
+    assert.deepEqual(shell?.updatedAt, completed.event.occurredAt);
+  }).pipe(
+    Effect.provide(
+      makeLayer(commitCapture("completed").pipe(Effect.orDie), () =>
+        TestClock.adjust("60 seconds"),
+      ),
+    ),
+  ),
+);
 
 it.effect("a retried finalization after a crash still records one milestone", () =>
   Effect.gen(function* () {
