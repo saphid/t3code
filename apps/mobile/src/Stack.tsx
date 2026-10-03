@@ -90,6 +90,11 @@ import {
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
 import {
+  SettingsPluginAddRouteScreen,
+  SettingsPluginRouteScreen,
+  SettingsPluginsRouteScreen,
+} from "./features/settings/SettingsPluginsRouteScreen";
+import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
 } from "./features/settings/ScheduledTaskPickerScreens";
@@ -316,6 +321,19 @@ const SettingsContentStack = createNativeStackNavigator({
         // Leave room to center UIKit's title beside the two trailing actions.
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
+    }),
+    SettingsPlugins: createNativeStackScreen({
+      screen: SettingsPluginsRouteScreen,
+      linking: "plugins",
+      options: { title: "Plugins" },
+    }),
+    SettingsPlugin: createNativeStackScreen({
+      screen: SettingsPluginRouteScreen,
+      options: { title: "Plugin" },
+    }),
+    SettingsPluginAdd: createNativeStackScreen({
+      screen: SettingsPluginAddRouteScreen,
+      options: { title: "Add plugin" },
     }),
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
