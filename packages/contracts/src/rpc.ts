@@ -325,6 +325,14 @@ import {
   PluginRemoveResult,
 } from "./pluginCatalog.ts";
 import {
+  PluginViewBundle,
+  PluginViewBundleInput,
+  PluginViewCallInput,
+  PluginViewCallResult,
+  PluginViewError,
+  PluginViewsSnapshot,
+} from "./pluginViews.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -494,6 +502,11 @@ export const WS_METHODS = {
   pluginsDisable: "plugins.disable",
   pluginsRemove: "plugins.remove",
   pluginsResume: "plugins.resume",
+
+  // Isolated plugin views (gated on the `pluginViews` environment capability)
+  pluginViewsSubscribe: "pluginViews.subscribe",
+  pluginViewsReadBundle: "pluginViews.readBundle",
+  pluginViewsCall: "pluginViews.call",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1744,6 +1757,30 @@ const WsPluginsResumeRpc = Rpc.make(WS_METHODS.pluginsResume, {
   error: pluginRpcError,
 });
 
+const pluginViewRpcError = Schema.Union([PluginViewError, EnvironmentAuthorizationError]);
+
+/** The views enabled plugins offer now, then a fresh snapshot after every change. */
+const WsPluginViewsSubscribeRpc = Rpc.make(WS_METHODS.pluginViewsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginViewsSnapshot,
+  error: pluginViewRpcError,
+  stream: true,
+});
+
+/** The consented bytes of one view of the given installation generation. */
+const WsPluginViewsReadBundleRpc = Rpc.make(WS_METHODS.pluginViewsReadBundle, {
+  payload: PluginViewBundleInput,
+  success: PluginViewBundle,
+  error: pluginViewRpcError,
+});
+
+/** A mounted view's call into its own plugin's `view:<viewId>:<handler>` handler. */
+const WsPluginViewsCallRpc = Rpc.make(WS_METHODS.pluginViewsCall, {
+  payload: PluginViewCallInput,
+  success: PluginViewCallResult,
+  error: pluginViewRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -1828,6 +1865,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPluginsDisableRpc,
   WsPluginsRemoveRpc,
   WsPluginsResumeRpc,
+  WsPluginViewsSubscribeRpc,
+  WsPluginViewsReadBundleRpc,
+  WsPluginViewsCallRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

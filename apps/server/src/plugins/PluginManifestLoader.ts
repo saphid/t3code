@@ -3,6 +3,7 @@ import {
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_VIEWS_CAPABILITY,
   PluginManifest,
   type PluginCapabilityName,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import { preparePluginTools } from "./pluginToolDeclarations.ts";
 export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
+  PLUGIN_VIEWS_CAPABILITY,
 ]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;

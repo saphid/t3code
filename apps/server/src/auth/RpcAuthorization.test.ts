@@ -54,6 +54,18 @@ describe("RPC authorization scopes", () => {
     expect(AuthStandardClientScopes).not.toContain(AuthAccessWriteScope);
   });
 
+  it("lets ordinary clients show plugin views and operate clients call into them", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginViewsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginViewsReadBundle)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginViewsCall)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,
