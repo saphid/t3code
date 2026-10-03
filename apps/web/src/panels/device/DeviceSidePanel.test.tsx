@@ -5,21 +5,32 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
-import { create } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
-import { PanelHostContext, type PanelHost } from "../panelHost";
+import { PanelHostContext } from "../panelHost";
 import DeviceSidePanel from "./DeviceSidePanel";
 
-type OpenResult =
+type CommandResult =
   | { _tag: "Success"; value: { hostId: string; deviceId: string } }
   | { _tag: "Failure"; cause: unknown };
 const mocks = vi.hoisted(() => ({
-  open: vi.fn<(request: unknown) => Promise<OpenResult>>(),
+  open: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
+  closeSurface: vi.fn(),
 }));
+const phone = {
+  hostId: "local",
+  id: "phone",
+  name: "Phone",
+  platform: "ios",
+  version: "iOS 19",
+  booted: false,
+  physical: false,
+} as const;
 const deviceState: DeviceServiceState = {
   hosts: [
     {
@@ -33,18 +44,16 @@ const deviceState: DeviceServiceState = {
   ],
   hostStatus: "ready",
   hostStatuses: { local: { status: "ready" } },
-  devices: [
+  devices: [phone],
+  sessions: [
     {
+      threadId: ThreadId.make("thread-1"),
       hostId: "local",
-      id: "phone",
-      name: "Phone",
+      deviceId: "phone",
       platform: "ios",
-      version: "iOS 19",
-      booted: false,
-      physical: false,
+      openedAt: "2026-01-01T00:00:00.000Z",
     },
   ],
-  sessions: [],
   onboardingCompleted: true,
   agentAccessEnabled: true,
   hubBasePath: "/api/device-hub",
@@ -56,10 +65,17 @@ vi.mock("~/state/device", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "open" ? mocks.open : () => Promise.resolve({ _tag: "Success", value: {} }),
+    command === "open"
+      ? mocks.open
+      : command === "close"
+        ? mocks.close
+        : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
+vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
-  useRightPanelStore: { getState: () => ({ openDevice: mocks.openDevice }) },
+  useRightPanelStore: {
+    getState: () => ({ openDevice: mocks.openDevice, closeSurface: mocks.closeSurface }),
+  },
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceLoadingView", () => ({ DeviceLoadingView: () => null }));
@@ -68,51 +84,136 @@ vi.mock("~/components/preview/PreviewPanelShell", () => ({
   PreviewPanelShell: ({ children }: { children: ReactNode }) => children,
 }));
 
-const hostFor = (threadRef: ScopedThreadRef): PanelHost => ({
-  threadRef,
-  surfaceId: "device",
-  visible: true,
-  composerDraftTarget: threadRef,
-  workspaceMutationId: null,
-  sendAnnotation: () => undefined,
+// Same thread id in another environment: the surface id collides, so the panel
+// stays mounted across the switch.
+const picking = {
+  environmentId: EnvironmentId.make("environment-a"),
+  threadId: ThreadId.make("thread-1"),
+};
+const next = { environmentId: EnvironmentId.make("environment-b"), threadId: picking.threadId };
+const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
+const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
+  id: "device:phone",
+  kind: "device",
+  target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
+};
+
+const render = (threadRef: ScopedThreadRef, surface = picker) => (
+  <PanelHostContext
+    value={{
+      threadRef,
+      surfaceId: surface.id,
+      visible: true,
+      composerDraftTarget: threadRef,
+      workspaceMutationId: null,
+      sendAnnotation: () => undefined,
+    }}
+  >
+    <DeviceSidePanel key={surface.id} surface={surface} onDismissSetup={() => undefined} />
+  </PanelHostContext>
+);
+const deferred = () => {
+  let settle!: (result: CommandResult) => void;
+  const promise = new Promise<CommandResult>((resolve) => (settle = resolve));
+  return { promise, settle };
+};
+const startPhone = (renderer: ReactTestRenderer) =>
+  act(async () => {
+    renderer.root.findByProps({ "aria-label": "Start Phone" }).props.onClick();
+  });
+const errors = (renderer: ReactTestRenderer) => renderer.root.findAllByProps({ role: "alert" });
+const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
+
+beforeEach(() => {
+  vi.clearAllMocks();
 });
-const surface: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
 
 describe("DeviceSidePanel", () => {
-  it("opens a picked device in the picking thread after the host moves on", async () => {
-    let settle!: (result: OpenResult) => void;
-    mocks.open.mockReturnValue(new Promise((resolve) => (settle = resolve)));
-    // Same thread id in another environment: the picker surface id collides,
-    // so the panel stays mounted across the switch.
-    const picking = {
-      environmentId: EnvironmentId.make("environment-a"),
-      threadId: ThreadId.make("thread-1"),
-    };
-    const next = { environmentId: EnvironmentId.make("environment-b"), threadId: picking.threadId };
-    const render = (threadRef: ScopedThreadRef) => (
-      <PanelHostContext value={hostFor(threadRef)}>
-        <DeviceSidePanel key={surface.id} surface={surface} onDismissSetup={() => undefined} />
-      </PanelHostContext>
-    );
+  it("opens a picked device when the pick settles in the same thread", async () => {
+    const pick = deferred();
+    mocks.open.mockReturnValue(pick.promise);
     const renderer = await act(async () => create(render(picking)));
 
-    await act(async () => {
-      renderer.root.findByProps({ "aria-label": "Start Phone" }).props.onClick();
-    });
+    await startPhone(renderer);
     expect(mocks.open).toHaveBeenCalledWith({
       environmentId: picking.environmentId,
       input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", platform: "ios" },
     });
+    await act(async () => pick.settle(opened));
 
-    await act(async () => renderer.update(render(next)));
-    await act(async () => {
-      settle({ _tag: "Success", value: { hostId: "local", deviceId: "phone" } });
-    });
     expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(picking, {
       hostId: "local",
       deviceId: "phone",
       platform: "ios",
       name: "Phone",
     });
+  });
+
+  it("drops a pick that settles after the host moved to a colliding thread", async () => {
+    const pick = deferred();
+    mocks.open.mockReturnValue(pick.promise);
+    const renderer = await act(async () => create(render(picking)));
+
+    await startPhone(renderer);
+    await act(async () => renderer.update(render(next)));
+    // The new thread's picker is usable while the old pick is still pending.
+    expect(renderer.root.findByProps({ "aria-label": "Start Phone" }).props.disabled).toBe(false);
+    await act(async () => pick.settle(opened));
+
+    expect(mocks.openDevice).not.toHaveBeenCalled();
+  });
+
+  it("drops a failed pick that settles after the host moved, even back again", async () => {
+    const pick = deferred();
+    mocks.open.mockReturnValue(pick.promise);
+    const renderer = await act(async () => create(render(picking)));
+
+    await startPhone(renderer);
+    await act(async () => renderer.update(render(next)));
+    await act(async () => renderer.update(render(picking)));
+    await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
+
+    expect(errors(renderer)).toHaveLength(0);
+    expect(mocks.openDevice).not.toHaveBeenCalled();
+  });
+
+  it("does not carry an operation error into another thread", async () => {
+    mocks.open.mockResolvedValue({ _tag: "Failure", cause: new Error("boom") });
+    const renderer = await act(async () => create(render(picking)));
+
+    await startPhone(renderer);
+    expect(errors(renderer)).toHaveLength(1);
+    await act(async () => renderer.update(render(next)));
+
+    expect(errors(renderer)).toHaveLength(0);
+  });
+
+  it("drops a power-off that settles after the host moved to a colliding thread", async () => {
+    const powerOff = deferred();
+    mocks.close.mockReturnValue(powerOff.promise);
+    const renderer = await act(async () => create(render(picking, streaming)));
+
+    await act(async () => {
+      renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
+    });
+    expect(mocks.close).toHaveBeenCalledWith({
+      environmentId: picking.environmentId,
+      input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", shutdown: true },
+    });
+    await act(async () => renderer.update(render(next, streaming)));
+    await act(async () => powerOff.settle(opened));
+
+    expect(mocks.closeSurface).not.toHaveBeenCalled();
+  });
+
+  it("closes the surface when a power-off settles in the same thread", async () => {
+    mocks.close.mockResolvedValue(opened);
+    const renderer = await act(async () => create(render(picking, streaming)));
+
+    await act(async () => {
+      renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
+    });
+
+    expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
   });
 });
