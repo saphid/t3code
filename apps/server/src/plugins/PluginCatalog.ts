@@ -496,11 +496,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
             Effect.logWarning("Could not re-enable a plugin at startup", {
               installationId: installation.record.installationId,
               detail: error.message,
-            }).pipe(
-              Effect.andThen(
-                disableInstallation(installation).pipe(Effect.catch(() => Effect.void)),
-              ),
-            ),
+            }).pipe(Effect.andThen(disableInstallation(installation).pipe(Effect.ignore))),
           ),
         ),
       { discard: true },
