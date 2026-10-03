@@ -2739,16 +2739,18 @@ export function makePiAdapterV2(
             }
             // Pi fork replaces the session file, including for rollback. Persist
             // its new identity before any later request can fail or restart.
+            // Without it the thread is unusable, so, like a failed registration,
+            // no thread shows this session's statuses until one registers.
+            const invalidateThread = Effect.suspend(() => {
+              threadState = null;
+              return queueStatusGeneration(null);
+            });
             const forkState = yield* request({ type: "get_state" }).pipe(
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  threadState = null;
-                }),
-              ),
+              Effect.tapError(() => invalidateThread),
             );
             const forkSessionFile = recordString(forkState, "sessionFile");
             if (forkSessionFile === undefined) {
-              threadState = null;
+              yield* invalidateThread;
               return yield* protocolError("Pi fork did not return a persisted session file");
             }
             lastNativeThreadId = forkSessionFile;

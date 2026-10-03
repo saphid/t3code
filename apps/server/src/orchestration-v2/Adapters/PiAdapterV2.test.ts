@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CheckpointId,
   EnvironmentId,
   NodeId,
   ProviderInstanceId,
@@ -743,6 +744,67 @@ describe("PiAdapterV2", () => {
       yield* emitStatus(fake, "orphan", "dropped");
       yield* gate.holdPump(fake);
       yield* gate.releasePump;
+
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "fresh");
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=fresh"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=fresh"] });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect.each([
+    { failure: "a rejected get_state", sessionFile: true },
+    { failure: "a missing sessionFile", sessionFile: false },
+  ])("keeps statuses off the thread after a rollback fork with $failure", ({ sessionFile }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      if (sessionFile) fake.failNextState();
+      else fake.queueState({ sessionFile: undefined });
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      const error = yield* runtime
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [turn],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      // The forked session's updates go nowhere until a thread registers.
+      yield* emitStatus(fake, "orphan", "after-failed-rollback");
+      yield* gate.holdPump(fake);
+      yield* gate.releasePump;
+      assert.deepStrictEqual(statusMap(yield* gate.store.snapshot), {});
 
       yield* runtime.ensureThread({
         threadId: THREAD_ID,
