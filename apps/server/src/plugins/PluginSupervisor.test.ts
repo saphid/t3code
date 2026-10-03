@@ -95,6 +95,18 @@ const awaitLog = Effect.fn("awaitLog")(function* (
   }
 });
 
+const awaitLogMatching = Effect.fn("awaitLogMatching")(function* (
+  subscription: Subscription,
+  pluginId: PluginId,
+  pattern: RegExp,
+) {
+  while (true) {
+    const event = yield* PubSub.take(subscription);
+    if (event._tag === "Log" && event.pluginId === pluginId && pattern.test(event.message))
+      return event.message;
+  }
+});
+
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const pidOf = (value: unknown) => (value as { readonly pid: number }).pid;
@@ -415,6 +427,33 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
           .invoke(oversized.manifest.id, "oversizedFrame", { bytes: 70_000 })
           .pipe(Effect.flip);
         expect(flood.message).toContain("sent an IPC message larger than 65536 bytes");
+      }),
+    );
+
+    it.effect("stops reading a plugin that floods logs and still delivers its result", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        const subscription = yield* supervisor.subscribe;
+        const flood = (yield* preparePlugin("test.flood")).registration;
+        const calm = (yield* preparePlugin("test.calm")).registration;
+        yield* supervisor.enable(flood);
+        yield* supervisor.enable(calm);
+        const floodPid = pidOf(yield* supervisor.invoke(flood.manifest.id, "ping", null));
+        const calmPid = pidOf(yield* supervisor.invoke(calm.manifest.id, "ping", null));
+
+        // About 2.4 MB of logs in one synchronous burst against a 64 KiB read budget.
+        const flooding = yield* supervisor
+          .invoke(flood.manifest.id, "flood", { count: 8000, size: 250 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(yield* supervisor.invoke(calm.manifest.id, "ping", "meanwhile")).toEqual({
+          pid: calmPid,
+          input: "meanwhile",
+        });
+        expect(yield* Fiber.join(flooding)).toEqual({ pid: floodPid, done: true });
+        // The child saw the server stop reading and dropped logs, not the result.
+        const notice = yield* awaitLogMatching(subscription, flood.manifest.id, /^Dropped \d+ /);
+        expect(notice).toMatch(/^Dropped \d+ log messages while the server was busy\.$/);
+        expect(pidOf(yield* supervisor.invoke(flood.manifest.id, "ping", null))).toBe(floodPid);
       }),
     );
 

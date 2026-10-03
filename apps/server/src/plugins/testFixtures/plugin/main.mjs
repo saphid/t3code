@@ -34,6 +34,10 @@ export function activate(context) {
         });
       }),
   );
+  handle("flood", (input) => {
+    for (let index = 0; index < input.count; index++) log.debug("x".repeat(input.size));
+    return { pid: process.pid, done: true };
+  });
   // Ignores cancellation and never answers.
   handle("stall", () => new Promise(() => {}));
   // Ignores cancellation and answers anyway, after the server stopped waiting.

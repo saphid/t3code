@@ -6,7 +6,10 @@
  * zero enabled (or zero used) plugins means zero processes. Each child gets a
  * V8 heap limit, a minimal environment, and a byte-bounded JSON line channel
  * on fd 3; the server decodes everything it reads and kills a child that
- * sends anything malformed or oversized.
+ * sends anything malformed or oversized. The server stops reading a child
+ * whose decoded-but-unhandled lines reach `maxMessageBytes`, so a chatty
+ * plugin is slowed down rather than buffered; the child then drops its logs,
+ * never its results.
  *
  * A call that outlives its deadline, or whose caller is interrupted, is
  * cancelled cooperatively: the plugin's handler signal aborts and the child
@@ -55,6 +58,7 @@ import {
   PLUGIN_IPC_FD,
   PLUGIN_IPC_MAX_BYTES_LIMIT,
   makeLineDecoder,
+  makeReadBudget,
 } from "./pluginIpcFraming.ts";
 import type { PluginRegistration } from "./PluginManifestLoader.ts";
 
@@ -203,7 +207,7 @@ interface PendingCall {
 }
 
 type ChildEvent =
-  | { readonly _tag: "Line"; readonly line: string }
+  | { readonly _tag: "Line"; readonly line: string; readonly bytes: number }
   | { readonly _tag: "Overflow" }
   | { readonly _tag: "Exited"; readonly code: number | null; readonly signal: string | null }
   /** fd 3 and stderr have closed, so every line and the stderr tail have been read. */
@@ -450,6 +454,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     code: number | null,
     signal: string | null,
   ) {
+    // Anything still unread from the dead process is discarded.
+    child.channel.destroy();
     const reason = child.killReason ?? describeExit(child, code, signal, options.heapLimitMb);
     const crashed = child.stopping
       ? new PluginStoppedError({ pluginId: entry.pluginId })
@@ -504,11 +510,19 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       child.outOfMemory ||= /heap limit|heap out of memory/i.test(text);
       child.stderrTail = text.slice(-STDERR_TAIL_BYTES);
     });
+    const budget = makeReadBudget({
+      maxBytes: maxMessageBytes,
+      pause: () => channel.pause(),
+      resume: () => channel.resume(),
+    });
     channel.on(
       "data",
       makeLineDecoder({
         maxBytes: maxMessageBytes,
-        onLine: (line) => Queue.offerUnsafe(queue, { _tag: "Line", line }),
+        onLine: (line, bytes) => {
+          budget.hold(bytes);
+          Queue.offerUnsafe(queue, { _tag: "Line", line, bytes });
+        },
         onOverflow: () => Queue.offerUnsafe(queue, { _tag: "Overflow" }),
       }),
     );
@@ -536,8 +550,10 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       let drained = false;
       while (true) {
         const event = yield* Queue.take(queue);
-        if (event._tag === "Line") yield* handleLine(entry, child, event.line);
-        else if (event._tag === "Overflow")
+        if (event._tag === "Line") {
+          yield* handleLine(entry, child, event.line);
+          budget.release(event.bytes);
+        } else if (event._tag === "Overflow")
           kill(child, `sent an IPC message larger than ${maxMessageBytes} bytes.`);
         else if (event._tag === "Drained") drained = true;
         else {

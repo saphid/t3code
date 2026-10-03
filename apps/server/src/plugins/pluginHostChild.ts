@@ -38,8 +38,19 @@ export const runPluginHostChild = (): void => {
     if (!channel.destroyed && channel.writable) channel.write(`${line}\n`);
   };
   const send = (message: PluginChildMessage) => write(JSON.stringify(message));
-  const log = (level: PluginLogLevel, message: unknown) =>
-    send({ _tag: "Log", level, message: String(message).slice(0, 4000) });
+  // Logs are lossy: while the server is not reading, they are counted and
+  // dropped instead of buffered. Results and lifecycle messages always queue.
+  let droppedLogs = 0;
+  const log = (level: PluginLogLevel, message: unknown) => {
+    if (channel.writableNeedDrain) droppedLogs++;
+    else send({ _tag: "Log", level, message: String(message).slice(0, 4000) });
+  };
+  channel.on("drain", () => {
+    if (droppedLogs === 0) return;
+    const message = `Dropped ${droppedLogs} log messages while the server was busy.`;
+    droppedLogs = 0;
+    send({ _tag: "Log", level: "warn", message });
+  });
 
   const settle = (requestId: number, outcome: PluginJson | Error) => {
     requests.delete(requestId);

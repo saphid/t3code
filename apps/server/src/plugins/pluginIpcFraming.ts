@@ -11,13 +11,45 @@ export const DEFAULT_PLUGIN_IPC_MAX_BYTES = 1024 * 1024;
 export const PLUGIN_IPC_MAX_BYTES_LIMIT = 16 * 1024 * 1024;
 
 /**
+ * Bounds the bytes of complete lines a reader holds before handling them.
+ * `hold` pauses the source once `maxBytes` are held; `release` resumes it
+ * when the backlog falls below half. The source may deliver one more chunk
+ * after pausing, so the backlog stays under `maxBytes` plus one chunk.
+ */
+export const makeReadBudget = (input: {
+  readonly maxBytes: number;
+  readonly pause: () => void;
+  readonly resume: () => void;
+}) => {
+  let held = 0;
+  let paused = false;
+  return {
+    hold: (bytes: number): void => {
+      held += bytes;
+      if (!paused && held >= input.maxBytes) {
+        paused = true;
+        input.pause();
+      }
+    },
+    release: (bytes: number): void => {
+      held -= bytes;
+      if (paused && held < input.maxBytes / 2) {
+        paused = false;
+        input.resume();
+      }
+    },
+  };
+};
+
+/**
  * Splits a byte stream into UTF-8 lines and refuses to buffer more than
  * `maxBytes` for one line, so a peer cannot make the reader hold an unbounded
  * message in memory. After an overflow it stops delivering lines.
  */
 export const makeLineDecoder = (input: {
   readonly maxBytes: number;
-  readonly onLine: (line: string) => void;
+  /** Receives each line with its size in bytes. */
+  readonly onLine: (line: string, bytes: number) => void;
   readonly onOverflow: () => void;
 }) => {
   let parts: Array<Buffer> = [];
@@ -41,11 +73,12 @@ export const makeLineDecoder = (input: {
         }
         return;
       }
+      const bytes = buffered + piece.length;
       const line = (parts.length === 0 ? piece : Buffer.concat([...parts, piece])).toString("utf8");
       parts = [];
       buffered = 0;
       start = newline + 1;
-      input.onLine(line);
+      input.onLine(line, bytes);
     }
   };
 };
