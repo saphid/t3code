@@ -94,6 +94,7 @@ import {
   SettingsPluginRouteScreen,
   SettingsPluginsRouteScreen,
 } from "./features/settings/SettingsPluginsRouteScreen";
+import { SettingsPluginViewRouteScreen } from "./features/plugins/views/PluginViewRouteScreen";
 import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
@@ -334,6 +335,11 @@ const SettingsContentStack = createNativeStackNavigator({
     SettingsPluginAdd: createNativeStackScreen({
       screen: SettingsPluginAddRouteScreen,
       options: { title: "Add plugin" },
+    }),
+    SettingsPluginView: createNativeStackScreen({
+      screen: SettingsPluginViewRouteScreen,
+      // The view fills the screen, so glass has nothing to sample.
+      options: { ...SHEET_SOLID_HEADER_OPTIONS, title: "Plugin view" },
     }),
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,

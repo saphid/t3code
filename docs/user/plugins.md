@@ -41,3 +41,13 @@ then choose **Resume**.
 
 Managing plugins needs administrative access to the environment. A device paired with a standard
 link can see the plugins but not change them; pair it with an administrative link to manage them.
+
+## Plugin views
+
+A plugin with the `views` capability can show its own panels. On the web and desktop app, open one
+from a thread's right panel, where each view is listed after the built-in panels. On iOS, open the
+plugin in **Settings** > **Server settings** > **Plugins** and choose the view under **Views**. Plugin
+views are not available on Android yet.
+
+A view runs isolated from T3 Code and can only call its own plugin. Disabling, removing, or changing
+the plugin closes its open views on every device.

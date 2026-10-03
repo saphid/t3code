@@ -45,6 +45,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { PluginViewsSection } from "../plugins/views/PluginViewsSection";
 import { pluginEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
 import { environmentSession } from "../../state/session";
@@ -528,6 +529,12 @@ function PluginDetail({
             <DetailField label="Problem" value={installation.problem} />
           ) : null}
         </SettingsSection>
+
+        <PluginViewsSection
+          environmentId={environmentId}
+          installationId={installationId}
+          capabilities={manifest?.capabilities ?? []}
+        />
 
         {view.canReview ? (
           <SettingsSection title="Trusted local code" trailing={<AccessStatus status={status} />}>

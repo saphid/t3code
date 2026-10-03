@@ -17,7 +17,7 @@ A plugin with the `views` capability ships UI as views: one script, and optional
 - A frame's own CSP cannot stop the frame navigating itself. Each host therefore needs an embedding-side policy:
   - Web: the wrapper's `default-src 'none'` refuses network and `data:` navigations.
   - Desktop: also veto view-frame navigations in the main process (`will-frame-navigate`).
-  - iOS: decide navigations natively from `WKFrameInfo`, and drop bridge messages that do not come from the main frame. The native message handler stays visible to subframes; the point is that it has no authority there.
+  - iOS: the host is a dedicated WebView whose main frame is a trusted host page ([pluginViewHostPage.ts](../../apps/mobile/src/features/plugins/views/pluginViewHostPage.ts)); the page creates the wrapper and relays the view's port to the bridge in React Native. The `react-native-webview` patch, enabled only on that WebView by `t3RestrictSubframes`, decides subframe navigations from `WKFrameInfo` and drops script messages that do not come from the main frame. The message handler stays visible to subframes; the point is that it has no authority there. The patch marks the main frame, and a build without it refuses to mount views.
 - Nothing on web or desktop stops a view replacing itself with an inert `about:blank`. Hosts must treat a missed ping as the view dying.
 - Views inherit the app document's CSP and can only narrow it. Never widen the app CSP for views; a host page that forbids inline script or `srcdoc` frames cannot show them.
 - Android is unsupported until its WebView passes the iOS-equivalent checks.
