@@ -36,6 +36,53 @@ button("navigate", "Navigate away", () => {
 button("blank", "Blank", () => {
   location.href = "about:blank";
 });
+
+// iOS: a frame inside the view can see the native message handlers. Each frame below posts a
+// call straight to them; the patched host drops all of them, so the plugin sees none.
+const nestedFrames = () => {
+  const blank = document.createElement("iframe");
+  const srcdoc = document.createElement("iframe");
+  srcdoc.srcdoc = "<p>nested</p>";
+  document.body.append(blank, srcdoc);
+  return [blank, srcdoc];
+};
+const forge = (target, id) => {
+  const handlers = target.webkit?.messageHandlers;
+  if (!handlers) return "no handlers";
+  const call = JSON.stringify({ _tag: "call", id, handler: "echo", input: { forged: id } });
+  handlers.ReactNativeWebView?.postMessage(
+    JSON.stringify({ type: "message", text: call, ports: 0 }),
+  );
+  handlers.ReactNativeWebView?.postMessage(JSON.stringify({ type: "connected", restricted: true }));
+  handlers.ReactNativeHistoryShim?.postMessage("other");
+  return "visible";
+};
+button("forge", "Forge", async () => {
+  const [blank, srcdoc] = nestedFrames();
+  await new Promise((resolve) => srcdoc.addEventListener("load", resolve, { once: true }));
+  const seen = [
+    forge(window, 1001),
+    forge(blank.contentWindow, 1002),
+    forge(srcdoc.contentWindow, 1003),
+  ];
+  const answer = await t3View.call("forged", null);
+  result.textContent = `handlers: ${seen.join(", ")}; forged calls reached the plugin: ${answer.forged}`;
+});
+// Nested frames try to leave the view; the patched iOS host refuses every such navigation.
+button("nested-navigate", "Nested navigate", () => {
+  const frames = nestedFrames();
+  for (const frame of frames) frame.contentWindow.location.href = "https://example.com/";
+  setTimeout(() => {
+    const states = frames.map((frame) => {
+      try {
+        return frame.contentWindow.location.href;
+      } catch {
+        return "navigated away";
+      }
+    });
+    result.textContent = `nested frames: ${states.join(", ")}`;
+  }, 2000);
+});
 document.body.append(result);
 
 t3View.ready.then((view) => {
