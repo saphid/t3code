@@ -5,6 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
+import { approvalResolutionDetail } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { pluginContextInspection } from "@t3tools/client-runtime/work-log/presentation";
 import { memo } from "react";
 
@@ -40,6 +41,7 @@ function StructuredValue({ value }: { readonly value: unknown }) {
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
   const { item } = props.projectedItem;
   const pluginContext = pluginContextInspection(item);
+  const approvalResolution = approvalResolutionDetail(item);
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -177,6 +179,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
+      {approvalResolution ? <p className="text-muted-foreground">{approvalResolution}</p> : null}
       {item.type === "user_input_request" ? (
         <StructuredValue value={item.questions.map((question) => question.question).join("\n\n")} />
       ) : null}

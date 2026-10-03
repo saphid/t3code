@@ -23,3 +23,10 @@ export function approvalRequestDetail(item: ApprovalRequestItem): string | undef
   );
   return parts.length === 0 ? undefined : parts.join(" · ");
 }
+
+/** The answering plugin and its reason as one line for inspectors, else undefined. */
+export function approvalResolutionDetail(item: OrchestrationV2TurnItem): string | undefined {
+  const label = approvalResolutionLabel(item);
+  const reason = item.type === "approval_request" ? item.resolvedBy?.reason?.trim() : undefined;
+  return label === undefined || !reason ? label : `${label}: ${reason}`;
+}

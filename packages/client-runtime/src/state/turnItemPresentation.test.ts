@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   approvalRequestDetail,
+  approvalResolutionDetail,
   approvalResolutionLabel,
   turnItemIsWorkspacePreparation,
 } from "./turnItemPresentation.ts";
@@ -83,6 +84,7 @@ describe("approval resolution", () => {
     });
     expect(approvalResolutionLabel(declined)).toBe("Declined by plugin Policy");
     expect(approvalRequestDetail(declined)).toBe("rm -rf build · Deletes files.");
+    expect(approvalResolutionDetail(declined)).toBe("Declined by plugin Policy: Deletes files.");
     const approved = approval({
       _tag: "plugin",
       pluginId: "acme.policy",
@@ -91,6 +93,8 @@ describe("approval resolution", () => {
     });
     expect(approvalResolutionLabel(approved)).toBe("Approved by plugin acme.policy");
     expect(approvalRequestDetail(approved)).toBe("rm -rf build");
+    expect(approvalResolutionDetail(approved)).toBe("Approved by plugin acme.policy");
+    expect(approvalResolutionDetail(approval())).toBeUndefined();
     expect(approvalResolutionLabel(approval())).toBeUndefined();
     expect(approvalResolutionLabel(command("ls"))).toBeUndefined();
   });

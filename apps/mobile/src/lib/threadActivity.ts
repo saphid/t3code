@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
   approvalRequestDetail,
+  approvalResolutionDetail,
   approvalResolutionLabel,
   turnItemIsWorkspacePreparation,
 } from "@t3tools/client-runtime/state/turn-item-presentation";
@@ -751,7 +752,7 @@ function toFeedActivity(
     if (readPaths) {
       return readPaths.join("\n") || null;
     }
-    return JSON.stringify(
+    const json = JSON.stringify(
       {
         visibility: row.visibility,
         sourceThreadId: row.sourceThreadId,
@@ -761,6 +762,8 @@ function toFeedActivity(
       null,
       2,
     );
+    const approvalResolution = approvalResolutionDetail(item);
+    return approvalResolution ? `${approvalResolution}\n\n${json}` : json;
   });
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]

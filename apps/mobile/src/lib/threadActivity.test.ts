@@ -142,6 +142,56 @@ it("titles plugin-answered approvals with the plugin and keeps the reason when e
   ]);
 });
 
+it("leads a plugin-answered approval's full detail with the plugin and its reason", () => {
+  const approval = (
+    id: string,
+    ordinal: number,
+    resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
+  ) =>
+    ({
+      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make(`request-${id}`),
+      requestKind: "command",
+      prompt: `Create ${id}.txt file`,
+      ...(resolvedBy
+        ? {
+            resolvedBy: {
+              _tag: "plugin" as const,
+              pluginId: "proof.policy",
+              pluginName: "Proof policy",
+              ...resolvedBy,
+            },
+          }
+        : {}),
+    }) satisfies OrchestrationV2TurnItem;
+  const [approved, declined, answered] = buildThreadFeed([
+    projected(
+      approval("approved", 1, {
+        decision: "accept",
+        reason: "The proof allows this exact command.",
+      }),
+      0,
+    ),
+    projected(
+      approval("declined", 2, {
+        decision: "decline",
+        reason: "The proof forbids this exact command.",
+      }),
+      1,
+    ),
+    projected(approval("answered", 3), 2),
+  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+
+  expect(approved?.getFullDetail()?.split("\n")[0]).toBe(
+    "Approved by plugin Proof policy: The proof allows this exact command.",
+  );
+  expect(declined?.getFullDetail()?.split("\n")[0]).toBe(
+    "Declined by plugin Proof policy: The proof forbids this exact command.",
+  );
+  expect(answered?.getFullDetail()?.split("\n")[0]).toBe("{");
+});
+
 it("keeps approval prompts rather than presenting them as tool work", () => {
   const approval = (
     id: string,
