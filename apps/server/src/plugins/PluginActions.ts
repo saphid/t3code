@@ -6,7 +6,9 @@
  * installation's registration (`<installationId>:<generation>:<name>`). An
  * invoke with an id from an earlier registration is refused as `stale`, and
  * the catalogue's own generation check refuses one that races a re-enable,
- * so a click never reaches a plugin the list did not show.
+ * so a click never reaches a plugin the list did not show. The list is
+ * bounded per environment (see `PluginActionsSnapshot`), and only listed
+ * actions run.
  *
  * Running an action calls the plugin's `action:<name>` handler with the
  * resolved target (see pluginApi.ts) under a deadline. Interrupting the
@@ -14,6 +16,9 @@
  */
 import {
   PLUGIN_ACTION_MESSAGE_MAX_LENGTH,
+  PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT,
+  PLUGIN_ACTIONS_MAX_PER_PLUGIN,
+  PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES,
   PluginActionError,
   PluginActionId,
   PluginInstallationId,
@@ -25,6 +30,7 @@ import {
   type PluginActionTarget,
   type PluginCatalogError,
   type PluginCatalogSnapshot,
+  type PluginInstallation,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -132,29 +138,64 @@ const parseActionId = (id: PluginActionId) => {
   return { installationId: installationId.value, generation, name };
 };
 
-/** The actions a catalogue snapshot offers: enabled installations that can run. */
+/** The actions one installation offers on its own: enabled and able to run now. */
+const installationActions = (installation: PluginInstallation): ReadonlyArray<PluginAction> => {
+  const { manifest } = installation;
+  if (manifest === null || pluginInstallationStatus(installation) !== "enabled") return [];
+  if (!manifest.capabilities.includes("actions")) return [];
+  // These wait for someone to resume them; an action could only fail.
+  const state = installation.hostState?._tag;
+  if (state === "quarantined" || state === "incompatible") return [];
+  return (manifest.actions ?? []).slice(0, PLUGIN_ACTIONS_MAX_PER_PLUGIN).map((declaration) => ({
+    id: actionId(installation.installationId, installation.generation, declaration.name),
+    pluginId: manifest.id,
+    pluginName: manifest.name,
+    name: declaration.name,
+    title: declaration.title,
+    ...(declaration.description === undefined ? {} : { description: declaration.description }),
+    target: declaration.target,
+    placements: declaration.placements,
+  }));
+};
+
+// Room for the frame around the actions: `{"actions":[`, `]`, and `omitted`.
+const SNAPSHOT_ENVELOPE_BYTES = 128;
+const ACTIONS_MAX_BYTES = PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES - SNAPSHOT_ENVELOPE_BYTES;
+
+/** Each action's JSON plus its separator. */
+const encodedBytes = (actions: ReadonlyArray<PluginAction>) =>
+  actions.reduce((total, action) => total + Buffer.byteLength(JSON.stringify(action)) + 1, 0);
+
+/**
+ * The actions a catalogue snapshot offers. Plugins are taken whole, in
+ * catalogue order, until one would pass the environment's action or byte
+ * bound; it and every later plugin are counted in `omitted` instead.
+ */
 export const pluginActionsFromCatalog = (
   snapshot: PluginCatalogSnapshot,
-): PluginActionsSnapshot => ({
-  actions: snapshot.installations.flatMap((installation): ReadonlyArray<PluginAction> => {
-    const { manifest } = installation;
-    if (manifest === null || pluginInstallationStatus(installation) !== "enabled") return [];
-    if (!manifest.capabilities.includes("actions")) return [];
-    // These wait for someone to resume them; an action could only fail.
-    const state = installation.hostState?._tag;
-    if (state === "quarantined" || state === "incompatible") return [];
-    return (manifest.actions ?? []).map((declaration) => ({
-      id: actionId(installation.installationId, installation.generation, declaration.name),
-      pluginId: manifest.id,
-      pluginName: manifest.name,
-      name: declaration.name,
-      title: declaration.title,
-      ...(declaration.description === undefined ? {} : { description: declaration.description }),
-      target: declaration.target,
-      placements: declaration.placements,
-    }));
-  }),
-});
+): PluginActionsSnapshot => {
+  const actions: Array<PluginAction> = [];
+  let bytes = 0;
+  const omitted = { plugins: 0, actions: 0 };
+  for (const installation of snapshot.installations) {
+    const offered = installationActions(installation);
+    if (offered.length === 0) continue;
+    if (omitted.plugins === 0) {
+      const size = encodedBytes(offered);
+      if (
+        actions.length + offered.length <= PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT &&
+        bytes + size <= ACTIONS_MAX_BYTES
+      ) {
+        actions.push(...offered);
+        bytes += size;
+        continue;
+      }
+    }
+    omitted.plugins += 1;
+    omitted.actions += offered.length;
+  }
+  return omitted.plugins === 0 ? { actions } : { actions, omitted };
+};
 
 const actionError = (reason: string, message: string) =>
   new PluginActionError({ reason, message: bound(message) });
@@ -220,11 +261,19 @@ export const makePluginActions = (options: {
         "stale",
         "The plugin was enabled again since this action was listed.",
       );
-    const action = pluginActionsFromCatalog({ installations: [installation] }).actions.find(
-      (candidate) => candidate.name === parsed.name,
+    // Only what the list offers runs, so an action left out by the bounds cannot.
+    const action = pluginActionsFromCatalog(snapshot).actions.find(
+      (candidate) => candidate.id === input.actionId,
     );
     if (action === undefined)
-      return yield* actionError("not-found", "That action is not available now.");
+      return yield* installationActions(installation).some(
+        (candidate) => candidate.name === parsed.name,
+      )
+        ? actionError(
+            "not-found",
+            "That action is not offered: this environment's plugins declare more actions than it shows.",
+          )
+        : actionError("not-found", "That action is not available now.");
     if (action.target !== input.target._tag)
       return yield* actionError("target-mismatch", `${action.title} runs on a ${action.target}.`);
     const target = yield* resolveTarget(input.target);

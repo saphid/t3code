@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT,
+  PLUGIN_ACTIONS_MAX_PER_PLUGIN,
+  PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES,
   PluginActionId,
   PluginActionInvokeInput,
   PluginId,
@@ -274,6 +277,58 @@ it.layer(NodeServices.layer)("PluginActions", (it) => {
     ),
   );
 
+  it.effect("offers plugins whole up to the environment bound and runs only those", () =>
+    withDatabase(
+      Effect.gen(function* () {
+        const { catalog, actions } = yield* startActions(yield* Scope.Scope);
+        const pluginCount = PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT / PLUGIN_ACTIONS_MAX_PER_PLUGIN + 1;
+        const installations = yield* Effect.forEach(
+          Array.from({ length: pluginCount }, (_, index) => index),
+          (index) =>
+            preparePlugin((manifest) => ({
+              ...manifest,
+              id: `test.actions-${index}`,
+              actions: Array.from({ length: PLUGIN_ACTIONS_MAX_PER_PLUGIN }, (_, action) => ({
+                name: `go-${action}`,
+                title: `Go ${action}`,
+                target: "environment",
+                placements: ["command-palette"],
+              })),
+            })).pipe(Effect.flatMap((directory) => enablePlugin(catalog, directory))),
+        );
+        const full = yield* actions.subscribe.pipe(
+          Stream.filter((snapshot) => snapshot.omitted !== undefined),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(full.actions).toHaveLength(PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT);
+        expect(full.omitted).toEqual({ plugins: 1, actions: PLUGIN_ACTIONS_MAX_PER_PLUGIN });
+        const listedIds = new Set(full.actions.map((action) => action.id.split(":")[0]));
+        const left = installations.find(
+          (installation) => !listedIds.has(installation.installationId),
+        )!;
+
+        const refused = yield* actions
+          .invoke({
+            actionId: PluginActionId.make(`${left.installationId}:${left.generation}:go-0`),
+            target: { _tag: "environment" },
+          })
+          .pipe(Effect.flip);
+        expect(refused.reason).toBe("not-found");
+        expect(refused.message).toContain("more actions than it shows");
+
+        // Disabling a listed plugin makes room, and the left-out one is offered whole.
+        const listed = installations.find((installation) => installation !== left)!;
+        yield* catalog.disable({ installationId: listed.installationId });
+        const after = yield* awaitActions(actions, (snapshot) => snapshot.omitted === undefined);
+        expect(after).toHaveLength(PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT);
+        expect(
+          after.filter((action) => action.id.startsWith(`${left.installationId}:`)),
+        ).toHaveLength(PLUGIN_ACTIONS_MAX_PER_PLUGIN);
+      }),
+    ),
+  );
+
   it.effect("refuses declarations the host cannot honour", () =>
     Effect.gen(function* () {
       const reasons = yield* Effect.forEach(
@@ -340,6 +395,59 @@ describe("pluginActionsFromCatalog", () => {
   };
   const names = (installations: ReadonlyArray<PluginInstallation>) =>
     PluginActions.pluginActionsFromCatalog({ installations }).actions.map((action) => action.id);
+
+  const many = (count: number, description?: string) =>
+    Array.from({ length: count }, (_, index): PluginInstallation => {
+      const installationId = PluginInstallationId.make(`installation-${index}`);
+      return {
+        ...installation,
+        installationId,
+        manifest: {
+          ...installation.manifest!,
+          id: PluginId.make(`test.actions-${index}`),
+          actions: Array.from({ length: PLUGIN_ACTIONS_MAX_PER_PLUGIN }, (_, action) => ({
+            name: `go-${action}`,
+            title: `Go ${action}`,
+            ...(description === undefined ? {} : { description }),
+            target: "environment" as const,
+            placements: ["command-palette" as const],
+          })),
+        },
+      };
+    });
+  const frameBytes = (snapshot: PluginActionsSnapshot) =>
+    Buffer.byteLength(JSON.stringify(snapshot));
+
+  it("bounds the actions and bytes one environment offers, counting what it leaves out", () => {
+    const byCount = PluginActions.pluginActionsFromCatalog({ installations: many(1000) });
+    expect(byCount.actions).toHaveLength(PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT);
+    const keptPlugins = PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT / PLUGIN_ACTIONS_MAX_PER_PLUGIN;
+    expect(byCount.omitted).toEqual({
+      plugins: 1000 - keptPlugins,
+      actions: (1000 - keptPlugins) * PLUGIN_ACTIONS_MAX_PER_PLUGIN,
+    });
+    // The first plugins in catalogue order are the ones kept.
+    expect(new Set(byCount.actions.map((action) => action.id.split(":")[0]))).toEqual(
+      new Set(Array.from({ length: keptPlugins }, (_, index) => `installation-${index}`)),
+    );
+    expect(frameBytes(byCount)).toBeLessThanOrEqual(PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES);
+
+    // Escaped control characters make each description six times its length on the wire.
+    const byBytes = PluginActions.pluginActionsFromCatalog({
+      installations: many(1000, "\u0001".repeat(240)),
+    });
+    expect(byBytes.actions.length).toBeLessThan(PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT);
+    expect(byBytes.actions.length % PLUGIN_ACTIONS_MAX_PER_PLUGIN).toBe(0);
+    expect(byBytes.omitted?.actions).toBe(
+      1000 * PLUGIN_ACTIONS_MAX_PER_PLUGIN - byBytes.actions.length,
+    );
+    expect(frameBytes(byBytes)).toBeLessThanOrEqual(PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES);
+
+    // Within the bounds nothing is left out and `omitted` is absent.
+    expect(
+      PluginActions.pluginActionsFromCatalog({ installations: many(keptPlugins) }),
+    ).not.toHaveProperty("omitted");
+  });
 
   it("offers only actions that can run now", () => {
     expect(names([installation])).toEqual(["installation-1:3:go"]);

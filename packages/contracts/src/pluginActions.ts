@@ -19,12 +19,17 @@ import * as Schema from "effect/Schema";
 
 import {
   ForwardCompatibleArray,
+  NonNegativeInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
 export const PLUGIN_ACTIONS_MAX_PER_PLUGIN = 16;
+/** The most actions one environment offers at once, across all its plugins. */
+export const PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT = 128;
+/** The most bytes a snapshot's UTF-8 JSON encoding takes. */
+export const PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES = 128 * 1024;
 const PLUGIN_ACTION_NAME_MAX_LENGTH = 48;
 const PLUGIN_ACTION_TITLE_MAX_LENGTH = 60;
 const PLUGIN_ACTION_DESCRIPTION_MAX_LENGTH = 240;
@@ -83,9 +88,18 @@ export const PluginAction = Schema.Struct({
 });
 export type PluginAction = typeof PluginAction.Type;
 
-/** Every action the environment offers now. Each frame replaces the previous one. */
+/**
+ * Every action the environment offers now. Each frame replaces the previous one.
+ *
+ * Plugins are offered whole, in catalogue order, until the next one would pass
+ * `PLUGIN_ACTIONS_MAX_PER_ENVIRONMENT` or `PLUGIN_ACTIONS_SNAPSHOT_MAX_BYTES`.
+ * That plugin and every later one are left out and counted in `omitted`, and
+ * their actions cannot be run.
+ */
 export const PluginActionsSnapshot = Schema.Struct({
   actions: ForwardCompatibleArray(PluginAction),
+  /** Present only when plugins were left out. */
+  omitted: Schema.optionalKey(Schema.Struct({ plugins: NonNegativeInt, actions: NonNegativeInt })),
 });
 export type PluginActionsSnapshot = typeof PluginActionsSnapshot.Type;
 

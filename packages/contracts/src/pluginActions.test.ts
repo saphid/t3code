@@ -30,6 +30,14 @@ describe("PluginActionsSnapshot from a newer server", () => {
     if (!Exit.isSuccess(decoded)) return;
     expect(decoded.value.actions).toEqual([{ ...action, placements: ["thread-menu"] }]);
   });
+
+  it("carries what the environment bound left out, and older frames without it", () => {
+    const omitted = { plugins: 2, actions: 20 };
+    const decoded = decodeSnapshot({ actions: [action], omitted });
+    expect(Exit.isSuccess(decoded) && decoded.value.omitted).toEqual(omitted);
+    const older = decodeSnapshot({ actions: [action] });
+    expect(Exit.isSuccess(older) && older.value).toEqual({ actions: [action] });
+  });
 });
 
 describe("PluginManifest actions", () => {
