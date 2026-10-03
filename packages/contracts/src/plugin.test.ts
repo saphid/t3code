@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { PluginManifest } from "./plugin.ts";
+import { ForwardCompatibleOptional } from "./baseSchemas.ts";
+import { PluginHostState, PluginManifest } from "./plugin.ts";
 
 const decode = Schema.decodeUnknownExit(PluginManifest);
 
@@ -38,5 +39,22 @@ describe("PluginManifest", () => {
     ["a malformed capability", { capabilities: ["Tools!"] }],
   ])("rejects %s", (_label, override) => {
     expect(Exit.isFailure(decode({ ...minimal, ...override }))).toBe(true);
+  });
+});
+
+describe("PluginHostState on the client wire", () => {
+  const decodeRow = Schema.decodeUnknownExit(
+    Schema.Struct({ id: Schema.String, state: ForwardCompatibleOptional(PluginHostState) }),
+  );
+
+  it("keeps a row whose state comes from a newer server, with the state unknown", () => {
+    const decoded = decodeRow({ id: "acme.notifier", state: { _tag: "hibernating", since: 1 } });
+    expect(Exit.isSuccess(decoded) && decoded.value).toEqual({ id: "acme.notifier" });
+  });
+
+  it("decodes the states this build knows", () => {
+    const state = { _tag: "incompatible", reason: "uses top-level await" };
+    const decoded = decodeRow({ id: "acme.notifier", state });
+    expect(Exit.isSuccess(decoded) && decoded.value).toEqual({ id: "acme.notifier", state });
   });
 });

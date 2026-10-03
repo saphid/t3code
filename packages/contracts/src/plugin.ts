@@ -70,7 +70,12 @@ const PluginFailureReason = Schema.String.check(Schema.isMaxLength(1000));
  * runs: either it has not been needed yet or it stopped cleanly. After a
  * crash the plugin waits in `backoff` and becomes `idle` again at `retryAt`;
  * too many consecutive failures park it in `quarantined` until someone resumes
- * it explicitly.
+ * it explicitly. `incompatible` means the plugin's code cannot run on any
+ * server of this version (for example it uses top-level await); it does not
+ * count as a failure and also waits for an explicit resume.
+ *
+ * Clients must decode this through `ForwardCompatibleOptional` and treat an
+ * absent value as unknown: never as idle, disabled, or safe to enable.
  */
 export const PluginHostState = Schema.Union([
   Schema.TaggedStruct("idle", {}),
@@ -85,5 +90,6 @@ export const PluginHostState = Schema.Union([
     failures: NonNegativeInt,
     reason: PluginFailureReason,
   }),
+  Schema.TaggedStruct("incompatible", { reason: PluginFailureReason }),
 ]);
 export type PluginHostState = typeof PluginHostState.Type;
