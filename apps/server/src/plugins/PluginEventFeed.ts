@@ -27,6 +27,8 @@ import {
   type EnvironmentId,
   type PluginEvent,
   type PluginInstallation,
+  type PluginRunFinalizationFailedEvent,
+  type PluginRunFinalizedEvent,
   type PluginInstallationId,
   EventId,
   ThreadId,
@@ -40,6 +42,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -86,6 +89,7 @@ export type PluginEventFeedState =
       readonly reason: string;
       readonly retryAt: string;
     }
+  /** `failures` is 0 when delivery stopped in front of an event it cannot read. */
   | { readonly _tag: "quarantined"; readonly failures: number; readonly reason: string }
   /** The registration it delivered to was revoked; the next catalogue change replaces it. */
   | { readonly _tag: "stopped" };
@@ -247,11 +251,37 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       LIMIT ${options.pageSize}
     `;
 
-  /** Projects one stored row; undefined for a row that cannot be read, which is skipped. */
+  /**
+   * Projects one stored row, or returns why its payload cannot be read. Such a
+   * row is never skipped: delivery stops in front of it until someone resumes.
+   */
   const project = Effect.fnUntraced(function* (row: EventRow) {
+    const decoding: Effect.Effect<
+      | Pick<PluginRunFinalizedEvent, "type" | "runId" | "outcome">
+      | Pick<PluginRunFinalizationFailedEvent, "type" | "runId" | "operation">,
+      Schema.SchemaError
+    > =
+      row.event_type === "run.finalized"
+        ? decodeFinalized(row.payload_json).pipe(
+            Effect.map((payload) => ({
+              type: "run.finalized" as const,
+              runId: payload.runId,
+              outcome: payload.outcome,
+            })),
+          )
+        : decodeFinalizationFailed(row.payload_json).pipe(
+            Effect.map((payload) => ({
+              type: "run.finalization-failed" as const,
+              runId: payload.runId,
+              operation: payload.operation,
+            })),
+          );
+    const decoded = yield* Effect.result(decoding);
+    if (Result.isFailure(decoded))
+      return { unreadable: `The stored event at sequence ${row.sequence} cannot be read.` };
     const threadId = ThreadId.make(row.stream_id);
     const shell = yield* projections.getThreadShell(threadId);
-    const base = {
+    const event: PluginEvent = {
       deliveryId: EventId.make(row.event_id),
       sequence: row.sequence,
       occurredAt: row.occurred_at,
@@ -264,32 +294,9 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               projectId: shell.projectId,
               title: truncate(shell.title, PLUGIN_EVENT_THREAD_TITLE_MAX_LENGTH),
             },
+      ...decoded.success,
     };
-    const event: Effect.Effect<PluginEvent, Schema.SchemaError> =
-      row.event_type === "run.finalized"
-        ? decodeFinalized(row.payload_json).pipe(
-            Effect.map((payload) => ({
-              ...base,
-              type: "run.finalized" as const,
-              runId: payload.runId,
-              outcome: payload.outcome,
-            })),
-          )
-        : decodeFinalizationFailed(row.payload_json).pipe(
-            Effect.map((payload) => ({
-              ...base,
-              type: "run.finalization-failed" as const,
-              runId: payload.runId,
-              operation: payload.operation,
-            })),
-          );
-    return yield* event.pipe(
-      Effect.catch(() =>
-        Effect.logWarning("Skipping an unreadable event for plugins", {
-          sequence: row.sequence,
-        }).pipe(Effect.as(undefined)),
-      ),
-    );
+    return { event };
   });
 
   const backoff = (failures: number) =>
@@ -304,6 +311,20 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       worker.cursor = cursor;
       yield* publish({ _tag: "Started", installationId, generation, cursor });
       let failures = 0;
+      /** Stops at the cursor until `resume`, a re-enable, or a restart. */
+      const quarantine = (attempts: number, reason: string) =>
+        Effect.gen(function* () {
+          worker.state = { _tag: "quarantined", failures: attempts, reason };
+          yield* publish({
+            _tag: "Quarantined",
+            installationId,
+            generation,
+            cursor,
+            failures: attempts,
+            reason,
+          });
+          return yield* Effect.never;
+        });
       while (true) {
         const head = yield* eventSink.latestSequence();
         if (cursor >= head) {
@@ -313,12 +334,31 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
         }
         const through = Math.min(head, cursor + options.scanWindow);
         const rows = yield* readRows(cursor, through);
-        // A full page covers the log only up to its last event.
+        const events: Array<PluginEvent> = [];
+        let unreadable: { readonly sequence: number; readonly reason: string } | undefined;
+        for (const row of rows) {
+          const projected = yield* project(row);
+          if ("unreadable" in projected) {
+            unreadable = { sequence: row.sequence, reason: projected.unreadable };
+            break;
+          }
+          events.push(projected.event);
+        }
+        // A full page covers the log only up to its last event, and an unreadable one up to
+        // just before it.
         const covered =
-          rows.length === options.pageSize ? (rows.at(-1)?.sequence ?? through) : through;
-        const events = (yield* Effect.forEach(rows, project)).filter(
-          (event): event is PluginEvent => event !== undefined,
-        );
+          unreadable !== undefined
+            ? unreadable.sequence - 1
+            : rows.length === options.pageSize
+              ? (rows.at(-1)?.sequence ?? through)
+              : through;
+        if (unreadable !== undefined && covered === cursor) {
+          yield* Effect.logWarning("Stopped a plugin's event delivery at an unreadable event", {
+            installationId,
+            sequence: unreadable.sequence,
+          });
+          return yield* quarantine(0, unreadable.reason);
+        }
         if (events.length > 0) {
           worker.state = { _tag: "delivering" };
           const input = yield* encodePage({ events }).pipe(Effect.orDie);
@@ -341,22 +381,13 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             failures++;
             const reason = (error?.message ?? Cause.pretty(exit.cause)).slice(0, 1000);
             if (failures >= options.maxFailures) {
-              worker.state = { _tag: "quarantined", failures, reason };
               yield* Effect.logWarning("Quarantined a plugin's event delivery", {
                 installationId,
                 cursor,
                 failures,
                 reason,
               });
-              yield* publish({
-                _tag: "Quarantined",
-                installationId,
-                generation,
-                cursor,
-                failures,
-                reason,
-              });
-              return yield* Effect.never;
+              return yield* quarantine(failures, reason);
             }
             const delay = backoff(failures);
             worker.state = {

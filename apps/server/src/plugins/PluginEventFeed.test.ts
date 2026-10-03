@@ -412,6 +412,51 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
         }),
       ),
     );
+    it.effect("stops in front of an unreadable event and delivers it once repaired", () =>
+      withStores(
+        Effect.gen(function* () {
+          yield* seedThread;
+          const sql = yield* SqlClient.SqlClient;
+          const plugin = yield* preparePlugin("test.unreadable");
+          const observed = yield* Deferred.make<void>();
+          const { catalog, feed, receipts } = yield* startServer(yield* Scope.Scope, {}, observed);
+          const installationId = yield* install(catalog, plugin.directory);
+          const [first, broken, last] = yield* Effect.forEach(["a", "b", "c"], (name) =>
+            finalizeRun(name),
+          );
+          const [stored] = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM orchestration_events WHERE sequence = ${broken}
+          `;
+          yield* sql`UPDATE orchestration_events SET payload_json = '{}' WHERE sequence = ${broken}`;
+          yield* Deferred.succeed(observed, undefined);
+
+          expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
+            delivered: 1,
+            throughSequence: broken! - 1,
+          });
+          const quarantined = yield* next(receipts, "Quarantined", installationId);
+          expect(quarantined).toMatchObject({ cursor: broken! - 1, failures: 0 });
+          expect(quarantined.reason).toContain(`sequence ${broken}`);
+          expect(yield* storedCursor(installationId)).toBe(broken! - 1);
+          expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([first]);
+
+          yield* sql`
+            UPDATE orchestration_events SET payload_json = ${stored!.payload_json}
+            WHERE sequence = ${broken}
+          `;
+          yield* feed.resume(installationId);
+          expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
+            delivered: 2,
+            throughSequence: last,
+          });
+          expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([
+            first,
+            broken,
+            last,
+          ]);
+        }),
+      ),
+    );
   });
 
   describe("plugin contract", () => {
