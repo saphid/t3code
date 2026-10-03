@@ -160,6 +160,18 @@ export class PluginCatalog extends Context.Service<
       },
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
     /**
+     * Settles a `replace` that was cut short, by a crash or a failed `restore`,
+     * as one management step. If the installation has consent to `digest`, the
+     * replacement committed and nothing changes. Otherwise `restore`, when
+     * given, puts the old files back: the installation is saved disabled and
+     * its process has exited before any file moves, and the files are
+     * inspected again afterwards. It stays disabled, and consent is never granted.
+     */
+    readonly settleReplace: (
+      input: PluginConsentInput,
+      restore?: Effect.Effect<void, PluginCatalogError>,
+    ) => Effect.Effect<"committed" | "rolled-back", PluginCatalogError>;
+    /**
      * Calls a handler of an enabled installation. A call that would start a
      * fresh process first checks the bytes still match the consent. Pass the
      * `generation` the caller saw to refuse a call that would reach a later
@@ -576,6 +588,20 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     return yield* result(installation);
   }, Effect.uninterruptible);
 
+  const settleReplace = Effect.fn("PluginCatalog.settleReplace")(function* (
+    input: PluginConsentInput,
+    restore: Effect.Effect<void, PluginCatalogError> | undefined,
+  ) {
+    const installation = yield* find(input.installationId);
+    if (installation.record.consent?.digest === input.digest) return "committed" as const;
+    if (restore !== undefined) {
+      yield* disableInstallation(installation);
+      yield* restore;
+      yield* reinspect(installation);
+    }
+    return "rolled-back" as const;
+  }, Effect.uninterruptible);
+
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
     if (installation.registered === undefined)
@@ -749,6 +775,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     remove: (input) => managed(remove(input)),
     resume: (input) => managed(resume(input)),
     replace: (input, files) => managed(replace(input, files)),
+    settleReplace: (input, restore) => managed(settleReplace(input, restore)),
     invoke,
   });
 });

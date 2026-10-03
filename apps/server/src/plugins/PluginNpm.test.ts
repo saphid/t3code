@@ -164,17 +164,17 @@ const entries = (directory: string) =>
     Effect.map((names) => [...names].sort()),
   );
 
-type Faulted = "rename" | "writeFileString" | "remove";
+type Faulted = "rename" | "writeFileString" | "remove" | "exists";
 
 /** The real file system, with failures and a hold that a test arms per call. */
 const makeFaults = (realFs: FileSystem.FileSystem) => {
   const armed: {
-    /** Fails every call it returns true for. */
-    fail: ((method: Faulted, target: string, to?: string) => boolean) | undefined;
-    /** Pauses the next matching rename until `release`. */
+    /** Fails every call it returns true for; `detail` is a rename's target or the data written. */
+    fail: ((method: Faulted, target: string, detail?: string) => boolean) | undefined;
+    /** Pauses the next matching call until `release`. */
     hold:
       | {
-          readonly matches: (from: string, to: string) => boolean;
+          readonly matches: (method: Faulted, target: string, to?: string) => boolean;
           readonly entered: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
         }
@@ -190,32 +190,141 @@ const makeFaults = (realFs: FileSystem.FileSystem) => {
         description: "Injected failure.",
       }),
     );
+  const held = <A, E>(
+    method: Faulted,
+    target: string,
+    to: string | undefined,
+    run: Effect.Effect<A, E>,
+  ) =>
+    Effect.suspend(() => {
+      const hold = armed.hold;
+      if (hold === undefined || !hold.matches(method, target, to)) return run;
+      armed.hold = undefined;
+      return Deferred.succeed(hold.entered, undefined).pipe(
+        Effect.andThen(Deferred.await(hold.release)),
+        Effect.andThen(run),
+      );
+    });
   const fileSystem: FileSystem.FileSystem = {
     ...realFs,
     rename: (from, to) =>
-      Effect.suspend(() => {
-        if (armed.fail?.("rename", from, to)) return failure("rename", from);
-        const hold = armed.hold;
-        if (hold === undefined || !hold.matches(from, to)) return realFs.rename(from, to);
-        armed.hold = undefined;
-        return Deferred.succeed(hold.entered, undefined).pipe(
-          Effect.andThen(Deferred.await(hold.release)),
-          Effect.andThen(realFs.rename(from, to)),
-        );
-      }),
+      Effect.suspend(() =>
+        armed.fail?.("rename", from, to)
+          ? failure("rename", from)
+          : held("rename", from, to, realFs.rename(from, to)),
+      ),
     writeFileString: (target, data, options) =>
       Effect.suspend(() =>
-        armed.fail?.("writeFileString", target)
+        armed.fail?.("writeFileString", target, data)
           ? failure("writeFileString", target)
           : realFs.writeFileString(target, data, options),
       ),
     remove: (target, options) =>
       Effect.suspend(() =>
-        armed.fail?.("remove", target) ? failure("remove", target) : realFs.remove(target, options),
+        armed.fail?.("remove", target)
+          ? failure("remove", target)
+          : held("remove", target, undefined, realFs.remove(target, options)),
       ),
+    exists: (target) => held("exists", target, undefined, realFs.exists(target)),
   };
   return { fileSystem, armed };
 };
+
+/** A plugin whose `files` handler reports the version it loaded and the one now in its directory. */
+const filesTarball = (name: string, version: string) =>
+  makeTarball([
+    { path: "package/package.json", data: toJson({ name, version }) },
+    {
+      path: "package/t3-plugin.json",
+      data: toJson({
+        id: `test.${name}`,
+        name,
+        version,
+        apiVersion: 1,
+        entry: "main.mjs",
+        proposedApi: true,
+      }),
+    },
+    { path: "package/version.txt", data: version },
+    {
+      path: "package/main.mjs",
+      data: [
+        `import * as NodeFS from "node:fs";`,
+        `export function activate(context) {`,
+        `  context.proposed.handle("files", () => ({`,
+        `    loaded: ${toJson(version)},`,
+        `    disk: NodeFS.readFileSync(new URL("./version.txt", import.meta.url), "utf8"),`,
+        `    pid: process.pid,`,
+        `  }));`,
+        `}`,
+        ``,
+      ].join("\n"),
+    },
+  ]);
+
+const callFiles = (catalog: Catalog, installationId: PluginInstallationId) =>
+  catalog
+    .invoke(installationId, "files", null)
+    .pipe(
+      Effect.map(
+        (value) =>
+          value as { readonly loaded: string; readonly disk: string; readonly pid: number },
+      ),
+    );
+
+/**
+ * Leaves what a server that stopped applying an update to 1.1.0 after both
+ * renames, before the consent, leaves behind: the journal, the 1.0.0 files in
+ * `.previous`, and the 1.1.0 files in `package/`. The journal names
+ * `journaled`, which a test may set to a version other than the files.
+ */
+const crashBeforeConsent = Effect.fn("crashBeforeConsent")(function* (
+  scope: Scope.Scope,
+  name: string,
+  journaled = "1.1.0",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const registry = makeRegistry();
+  const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-crash-" });
+  const root = path.join(base, "npm");
+  const catalog = yield* startCatalog(scope);
+  const firstScope = yield* Scope.make();
+  const first = yield* startNpm(firstScope, catalog, registry, root);
+  for (const version of ["1.0.0", "1.1.0", "1.2.0"])
+    registry.publish(name, version, { tarball: filesTarball(name, version) });
+  const added = yield* first.add({ name, version: "1.0.0" });
+  const installationId = added.installation.installationId;
+  const home = path.dirname(added.installation.directory);
+  const oldDigest = added.installation.source!.digest;
+  yield* catalog.consent({ installationId, digest: oldDigest });
+  const journal = (yield* first.stageUpdate({ installationId, version: journaled })).package
+    .stagedUpdate!;
+  const files =
+    journaled === "1.1.0"
+      ? journal
+      : (yield* first.stageUpdate({ installationId, version: "1.1.0" })).package.stagedUpdate!;
+  const next = { ...added.package.source, version: journaled, integrity: journal.integrity };
+  const stagingName = (yield* entries(home)).find((entry) => entry.startsWith(".staging-"))!;
+  yield* fs.writeFileString(
+    path.join(home, "npm.json"),
+    toJson({ source: added.package.source, swap: { source: next, digest: journal.source.digest } }),
+  );
+  yield* fs.rename(added.installation.directory, path.join(home, ".previous"));
+  yield* fs.rename(path.join(home, stagingName), added.installation.directory);
+  yield* Scope.close(firstScope, Exit.void);
+  return {
+    catalog,
+    registry,
+    root,
+    installationId,
+    home,
+    oldDigest,
+    next,
+    journalDigest: journal.source.digest,
+    filesDigest: files.source.digest,
+  };
+});
 
 const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistenceMemory));
@@ -721,8 +830,11 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             const entered = yield* Deferred.make<void>();
             const release = yield* Deferred.make<void>();
             faults.armed.hold = {
-              matches: (from, to) =>
-                path.basename(from).startsWith(".staging-") && path.basename(to) === "package",
+              matches: (method, from, to) =>
+                method === "rename" &&
+                path.basename(from).startsWith(".staging-") &&
+                to !== undefined &&
+                path.basename(to) === "package",
               entered,
               release,
             };
@@ -1045,6 +1157,121 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
               stage === "journaled" ? "enabled" : "disabled",
             );
           }
+        }),
+      ),
+    );
+  });
+
+  describe("recovery", () => {
+    it.effect("keeps an update whose consent another client finished before recovery decided", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const crashed = yield* crashBeforeConsent(scope, "kept");
+          const { catalog, installationId, home, next, journalDigest } = crashed;
+          const faults = makeFaults(fs);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          // Recovery has read its journal; the consent it settles by is not read yet.
+          faults.armed.hold = {
+            matches: (method, target) =>
+              method === "exists" && path.basename(target) === ".previous",
+            entered,
+            release,
+          };
+          const npm = yield* startNpm(
+            scope,
+            catalog,
+            crashed.registry,
+            crashed.root,
+            faults.fileSystem,
+          );
+          // A failed assertion must not leave recovery parked on the hold.
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+          yield* Deferred.await(entered);
+          // Another client approves the files now in place and runs them.
+          yield* catalog.consent({ installationId, digest: journalDigest });
+          yield* catalog.enable({ installationId });
+          const running = yield* callFiles(catalog, installationId);
+          expect(running).toMatchObject({ loaded: "1.1.0", disk: "1.1.0" });
+          yield* Deferred.succeed(release, undefined);
+
+          expect((yield* npm.list).packages[0]!.source).toEqual(next);
+          // The same process still finds its own files: recovery finished the update.
+          expect(yield* callFiles(catalog, installationId)).toEqual(running);
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect(fromJson(yield* fs.readFileString(path.join(home, "npm.json")))).toEqual({
+            source: next,
+          });
+          expect((yield* catalog.list).installations[0]).toMatchObject({
+            enabled: true,
+            consent: { digest: journalDigest },
+          });
+        }),
+      ),
+    );
+
+    it.effect("stops a running plugin before putting old files back, and other steps wait", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          // The journal expects 1.2.0, so the 1.1.0 files in place are rolled back even
+          // though they have consent and run.
+          const crashed = yield* crashBeforeConsent(scope, "stopped", "1.2.0");
+          const { catalog, installationId, home, oldDigest, filesDigest } = crashed;
+          yield* catalog.consent({ installationId, digest: filesDigest });
+          yield* catalog.enable({ installationId });
+          const running = yield* callFiles(catalog, installationId);
+          expect(running).toMatchObject({ loaded: "1.1.0", disk: "1.1.0" });
+
+          const faults = makeFaults(fs);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const directory = path.join(home, "package");
+          faults.armed.hold = {
+            matches: (method, target) => method === "remove" && target === directory,
+            entered,
+            release,
+          };
+          const npm = yield* startNpm(
+            scope,
+            catalog,
+            crashed.registry,
+            crashed.root,
+            faults.fileSystem,
+          );
+          // A failed assertion must not leave recovery parked on the hold.
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+          yield* Deferred.await(entered);
+          // About to remove the files: the registration is revoked and its process has exited.
+          const call = yield* callFiles(catalog, installationId).pipe(Effect.flip);
+          expect(call).toMatchObject({ reason: "unavailable" });
+          expect(isProcessAlive(running.pid)).toBe(false);
+          const racing = yield* catalog
+            .consent({ installationId, digest: filesDigest })
+            .pipe(
+              Effect.andThen(catalog.enable({ installationId })),
+              Effect.flip,
+              Effect.forkChild({ startImmediately: true }),
+            );
+          yield* Deferred.succeed(release, undefined);
+
+          expect((yield* npm.list).packages[0]!.source.version).toBe("1.0.0");
+          // Queued behind recovery, the consent finds the old files instead.
+          expect((yield* Fiber.join(racing)).reason).toBe("source-changed");
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          const row = (yield* catalog.list).installations[0]!;
+          // Disabled, and the consent it had is to the files that are gone.
+          expect(row).toMatchObject({
+            enabled: false,
+            source: { digest: oldDigest },
+            consent: { digest: filesDigest },
+          });
+          expect(pluginInstallationStatus(row)).toBe("needs-consent");
         }),
       ),
     );

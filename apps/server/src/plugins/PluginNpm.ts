@@ -22,10 +22,17 @@
  * (`PluginCatalog.replace`) that stops the installation, swaps the
  * directories, and consents to the staged digest; that consent is the commit
  * point, and a failure before it puts the old directory back. The journal is
- * then settled from what the catalogue holds: finished when it has consent to
- * the new digest, rolled back from `.previous` otherwise. Until settling
- * works, the journal and `.previous` stay, and it is retried before every npm
- * step, after every catalogue change, and at startup.
+ * then settled by another catalogue step (`PluginCatalog.settleReplace`),
+ * which decides from the consent it holds at that moment: finished when it
+ * has consent to the new digest, otherwise rolled back from `.previous` after
+ * the plugin has stopped. Until settling works, the journal and `.previous`
+ * stay, and it is retried before every npm step, after every catalogue
+ * change, and at startup.
+ *
+ * Files the catalogue may be running are only moved inside those two steps,
+ * which stop the plugin first. Everything else this module deletes is
+ * staging, a `.previous` no swap needs, or the home of an installation the
+ * catalogue has removed and revoked.
  *
  * Removing the installation from the catalogue deletes its `<key>` directory,
  * retried the same way if the deletion fails.
@@ -560,45 +567,44 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   });
 
   /**
-   * Finishes or rolls back a journaled swap from what is on disk and in the
-   * catalogue. Finished when the catalogue holds consent to the new digest
-   * and the new files are in place; otherwise `.previous` goes back. The
-   * journal and `.previous` stay until this has worked, so a failure is
-   * retried later and never loses a version.
+   * Finishes or rolls back a journaled swap. The catalogue decides under its
+   * management lock, so a consent or enable from another client lands wholly
+   * before or after: finished when it holds consent to the new digest,
+   * otherwise `.previous` goes back once the plugin has stopped. The journal
+   * and `.previous` stay until this has worked, so a failure is retried later
+   * and never loses a version.
    */
   const settle = Effect.fnUntraced(function* (entry: Installed) {
     const swap = entry.swap;
     if (swap === undefined) return;
-    const row = (yield* catalog.list).installations.find(
-      (item) => item.installationId === entry.installationId,
-    );
-    // Removed meanwhile: `collect` deletes the files.
-    if (row === undefined) return;
     const previous = path.join(entry.home, ".previous");
-    const exists = (target: string) => fs.exists(target).pipe(Effect.catch(storageError));
-    if (row.consent?.digest === swap.digest && (yield* exists(entry.directory))) {
-      yield* writeRecord(entry.home, { source: swap.next });
-      entry.source = swap.next;
-      entry.swap = undefined;
-      yield* removeTree(previous);
-      return;
-    }
-    if (yield* exists(previous)) {
-      yield* fs
-        .remove(entry.directory, { recursive: true, force: true })
-        .pipe(Effect.andThen(fs.rename(previous, entry.directory)), Effect.catch(storageError));
-      yield* catalog.refresh({ installationId: entry.installationId }).pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("Could not re-inspect a plugin after rolling back its update", {
-            installationId: entry.installationId,
-            detail: error.message,
-          }),
+    // Only npm steps, which hold the npm lock, move `.previous`.
+    const moved = yield* fs.exists(previous).pipe(Effect.catch(storageError));
+    const outcome = yield* catalog
+      .settleReplace(
+        { installationId: entry.installationId, digest: swap.digest },
+        moved
+          ? fs
+              .remove(entry.directory, { recursive: true, force: true })
+              .pipe(
+                Effect.andThen(fs.rename(previous, entry.directory)),
+                Effect.catch(storageError),
+              )
+          : undefined,
+      )
+      .pipe(
+        // Removed meanwhile: `collect` deletes the files.
+        Effect.catchIf(
+          (error) => error.reason === "not-found",
+          () => Effect.succeed("removed" as const),
         ),
       );
-    }
-    yield* writeRecord(entry.home, { source: swap.previous });
-    entry.source = swap.previous;
+    if (outcome === "removed") return;
+    const source = outcome === "committed" ? swap.next : swap.previous;
+    yield* writeRecord(entry.home, { source });
+    entry.source = source;
     entry.swap = undefined;
+    if (outcome === "committed") yield* removeTree(previous);
   });
 
   /** Retries every unsettled swap and every deletion that failed before. */
