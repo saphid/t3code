@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   EventId,
   NodeId,
+  PLUGIN_APPROVAL_LIMITS,
   PluginInstallation,
   ProjectId,
   ProviderDriverKind,
@@ -397,9 +398,16 @@ const startApprovals = Effect.fn("startApprovals")(function* (
 });
 
 const is =
-  <Tag extends Receipt["_tag"]>(tag: Tag, installationId: string) =>
+  <Tag extends Exclude<Receipt["_tag"], "Skipped">>(tag: Tag, installationId: string) =>
   (receipt: Receipt): receipt is Extract<Receipt, { _tag: Tag }> =>
     receipt._tag === tag && receipt.installationId === installationId;
+
+const skipped = (requestId: RuntimeRequestId) => (receipt: Receipt) =>
+  receipt._tag === "Skipped" && receipt.requestId === requestId;
+
+/** The first receipt that ends a request's offer for a plugin, or skips the request. */
+const settled = (requestId: RuntimeRequestId) => (receipt: Receipt) =>
+  receipt.requestId === requestId && receipt._tag !== "Asked";
 
 const answer = (value: Schema.Json): InvokeResult => Effect.succeed(value);
 
@@ -571,9 +579,12 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
               "test.disabled": "unavailable",
             });
             expect(timeouts.toSorted()).toEqual(["15 seconds", "7 seconds"]);
-            expect(seen.some((receipt) => receipt.installationId === "test.files-only")).toBe(
-              false,
-            );
+            expect(
+              seen.some(
+                (receipt) =>
+                  receipt._tag !== "Skipped" && receipt.installationId === "test.files-only",
+              ),
+            ).toBe(false);
             expect(yield* outcome(requestId)).toMatchObject({ status: "pending", item: "waiting" });
 
             // The user still decides, and the record shows no plugin.
@@ -720,6 +731,58 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           yield* until(is("Recorded", "test.policy"));
           expect(seen.map((receipt) => receipt.requestId)).toEqual([after, after]);
           expect(yield* outcome(before)).toMatchObject({ status: "pending" });
+        }),
+      ),
+    );
+  });
+
+  describe("limits", () => {
+    it.effect("asks no plugin about a request longer than a plugin may receive", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const allowed = `echo ${"a".repeat(PLUGIN_APPROVAL_LIMITS.maxPromptLength - 5)}`;
+          const subjects: Array<string | undefined> = [];
+          const { seen, until } = yield* startApprovals(
+            stubCatalog([
+              {
+                id: "test.exact",
+                decide: (input) => {
+                  const { subject } = input as { subject?: string };
+                  subjects.push(subject);
+                  return answer(subject === allowed ? { decision: "approve" } : null);
+                },
+              },
+            ]),
+          );
+
+          // The allowed command plus an operation past the limit: never cut down to the allowed one.
+          const suffixed = yield* raise(
+            "suffixed",
+            "Run a command",
+            "command",
+            `${allowed}; touch forbidden-proof-file`,
+          );
+          expect(yield* until(settled(suffixed))).toMatchObject({
+            _tag: "Skipped",
+            cause: "incomplete",
+          });
+          const longPrompt = yield* raise(
+            "long-prompt",
+            "x".repeat(PLUGIN_APPROVAL_LIMITS.maxPromptLength + 1),
+          );
+          expect(yield* until(settled(longPrompt))).toMatchObject({
+            _tag: "Skipped",
+            cause: "incomplete",
+          });
+
+          // Exactly at the limit it is whole, so the plugin decides.
+          const whole = yield* raise("whole", "Run a command", "command", allowed);
+          expect(yield* until(is("Recorded", "test.exact"))).toMatchObject({ requestId: whole });
+          expect(subjects).toEqual([allowed]);
+          expect(seen.filter((receipt) => receipt.requestId !== whole)).toHaveLength(2);
+          expect(yield* outcome(suffixed)).toMatchObject({ status: "pending", item: "waiting" });
+          expect(yield* outcome(longPrompt)).toMatchObject({ status: "pending", item: "waiting" });
         }),
       ),
     );

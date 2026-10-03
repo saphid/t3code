@@ -13,6 +13,9 @@
  * leave the request to the user. When the request stops being pending, calls
  * still running are cancelled.
  *
+ * Plugins decide on the whole request or not at all: when its prompt or subject
+ * is longer than a plugin may receive, no plugin is asked.
+ *
  * Only requests committed while this service runs are offered: after a
  * restart, an older pending request waits for the user. Plugin work never runs
  * on EventSink's commit path; the subscription is bounded and resumes from the
@@ -101,6 +104,13 @@ export type PluginApprovalReceipt =
       readonly installationId: PluginInstallationId;
       readonly decision: "accept" | "decline";
       readonly message: string;
+    }
+  /** No plugin was asked about the request; it waits for the user. */
+  | {
+      readonly _tag: "Skipped";
+      readonly requestId: RuntimeRequestId;
+      /** `incomplete`: its prompt or subject is longer than a plugin may receive. */
+      readonly cause: "incomplete";
     };
 
 export class PluginApprovals extends Context.Service<
@@ -123,13 +133,6 @@ const encodeRequest = Schema.encodeEffect(PluginApprovalRequest);
 const decodeAnswer = Schema.decodeUnknownResult(PluginApprovalAnswer);
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-/** Cuts `text` to `max` UTF-16 units without splitting a surrogate pair. */
-const truncate = (text: string, max: number) => {
-  if (text.length <= max) return text;
-  const end = /[\uD800-\uDBFF]/.test(text.charAt(max - 1)) ? max - 1 : max;
-  return text.slice(0, end);
-};
 
 /** True for an installation that is enabled, registered, consented to `approvals`, and declares `kind`. */
 const answers = (installation: PluginInstallation, kind: PluginApprovalKind) =>
@@ -263,15 +266,17 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
       if (thread === null) return;
       const prompt = context.item?.type === "approval_request" ? context.item.prompt : undefined;
       const subject = yield* subjectOf(threadId, context.node?.parentNodeId ?? null);
+      // An approve covers the whole request, so a plugin never decides on part of it.
+      if (
+        (prompt?.length ?? 0) > PLUGIN_APPROVAL_LIMITS.maxPromptLength ||
+        (subject?.length ?? 0) > PLUGIN_APPROVAL_LIMITS.maxPromptLength
+      )
+        return yield* publish({ _tag: "Skipped", requestId, cause: "incomplete" });
       const input = yield* encodeRequest({
         requestId,
         kind,
-        ...(prompt === undefined
-          ? {}
-          : { prompt: truncate(prompt, PLUGIN_APPROVAL_LIMITS.maxPromptLength) }),
-        ...(subject === undefined
-          ? {}
-          : { subject: truncate(subject, PLUGIN_APPROVAL_LIMITS.maxPromptLength) }),
+        ...(prompt === undefined ? {} : { prompt }),
+        ...(subject === undefined ? {} : { subject }),
         context: {
           environmentId,
           projectId: thread.projectId,

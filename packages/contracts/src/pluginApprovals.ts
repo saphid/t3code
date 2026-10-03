@@ -28,8 +28,10 @@
  *
  * `abstain`, `null`, an invalid answer, a failure, a crash, the deadline, and
  * disabling the plugin all leave the request pending for the user. A plugin
- * never approves anything by failing. Approvals only exist when a provider
- * asks for them: a thread in full-access mode asks for none.
+ * never approves anything by failing, and never decides on part of a request:
+ * when its prompt or subject is longer than `maxPromptLength`, no plugin is
+ * asked. Approvals only exist when a provider asks for them: a thread in
+ * full-access mode asks for none.
  *
  * @module PluginApprovals
  */
@@ -46,7 +48,10 @@ export const PLUGIN_APPROVAL_HANDLER = "t3.approval.decide";
 export const PLUGIN_APPROVAL_LIMITS = {
   defaultTimeoutSeconds: 15,
   maxTimeoutSeconds: 120,
-  /** Longest `prompt` or `subject` sent to a plugin, in UTF-16 code units. Longer ones are cut. */
+  /**
+   * Longest `prompt` or `subject` a plugin receives, in UTF-16 code units. A
+   * request with a longer one is not offered to plugins; it waits for the user.
+   */
   maxPromptLength: 8000,
   maxReasonLength: 500,
 } as const;
@@ -82,8 +87,10 @@ export type PluginApprovalDeclaration = typeof PluginApprovalDeclaration.Type;
  * provider's reason. `subject` is the tool call the approval is for, as the
  * thread shows it, when the provider reported one first: the command line, the
  * changed paths (one per line), or the tool name and its JSON input. Both are
- * user and agent content and may contain anything the agent wrote. Each is cut
- * to `maxPromptLength`.
+ * user and agent content and may contain anything the agent wrote. Both are
+ * sent whole, never cut. Without a `subject` the plugin has only the prompt,
+ * which may be a description rather than the operation; a policy that needs the
+ * operation should abstain then.
  */
 export const PluginApprovalRequest = Schema.Struct({
   requestId: RuntimeRequestId,
