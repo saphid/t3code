@@ -1,0 +1,70 @@
+{
+  "views": [
+    {
+      "id": "benign",
+      "file": "benign.js",
+      "sha256": "2IAUrHA5hNXEmjMiHAna/5N4Yb2LYjPhX2E4syV8a4E="
+    },
+    {
+      "id": "probe-storage",
+      "file": "probe-storage.js",
+      "sha256": "EbAGg719tnUONMNZDwfY3aEUTxMumVVL9dmFrw8xkEY="
+    },
+    {
+      "id": "probe-network",
+      "file": "probe-network.js",
+      "sha256": "UjAVHRHKI1HUAGjgh6cB0CuNZJuK2zeRhFdcqzk/TL0="
+    },
+    {
+      "id": "probe-navigation",
+      "file": "probe-navigation.js",
+      "sha256": "lHL8AR9DYwCSrsLvrlKwd//M+yzNbNrU+zVRuRug7Rs="
+    },
+    {
+      "id": "probe-scripts",
+      "file": "probe-scripts.js",
+      "sha256": "6pLvnCfXlPCdx+w7Px2D1jmpPl8G9LwFO0muZuKZGJY="
+    },
+    {
+      "id": "port-victim",
+      "file": "probe-port-victim.js",
+      "sha256": "UzqUm+AsOFe/XSd2jbG3MahTsP5xM9NwwDHI7nDdQpM="
+    },
+    {
+      "id": "port-attacker",
+      "file": "probe-port-attacker.js",
+      "sha256": "62Da722E24tMKDoUdli18w9JJaNo4BJwr5cjrR5V5WE="
+    },
+    {
+      "id": "probe-stale",
+      "file": "probe-stale.js",
+      "sha256": "5Uz+iBMsIC6/lZQGp/9bG3W0zchuMXA/Z2SeFgJhlI4="
+    },
+    {
+      "id": "probe-self-navigate",
+      "file": "probe-self-navigate.js",
+      "sha256": "P4O0SWwIEMUWcEXtX4sz7rx6P2NEuSGj7SQonZ8rKjs="
+    },
+    {
+      "id": "probe-navigate-api",
+      "file": "probe-navigate-api.js",
+      "sha256": "TGdmdbmswjzVJZkBxnQvji2KPoOuyvBNesSnjvkuq4w="
+    },
+    {
+      "id": "tampered",
+      "file": "tampered.js",
+      "sha256": "2IAUrHA5hNXEmjMiHAna/5N4Yb2LYjPhX2E4syV8a4E="
+    },
+    {
+      "id": "unsafe",
+      "file": "unsafe.js",
+      "sha256": "OyWsl7XQFCS3N0lGH8fQ0B4y92QNkT6+crqBdlc2i3I="
+    },
+    {
+      "id": "control-network-no-frame-csp",
+      "file": "probe-network.js",
+      "sha256": "UjAVHRHKI1HUAGjgh6cB0CuNZJuK2zeRhFdcqzk/TL0=",
+      "control": true
+    }
+  ]
+}
