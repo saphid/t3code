@@ -5,8 +5,8 @@
  *   node examples/list-threads-and-send.ts list <credential-file>...
  *   node examples/list-threads-and-send.ts send <credential-file> <thread-id> <text>
  *
- * Credential files hold a bearer token: they are written with mode 0600 and
- * never printed. Revoke one from Settings > Connections.
+ * Credential files hold a bearer token: `pair` creates them with mode 0600,
+ * refuses to overwrite an existing path, and never prints them. Revoke one from Settings > Connections.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +23,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
+import { writeCredentialFile } from "./credential-file.ts";
+
 const READY_TIMEOUT = "30 seconds";
 
 const readCredential = Effect.fn("example.readCredential")(function* (path: string) {
@@ -35,9 +37,7 @@ const pairCommand = Effect.fn("example.pair")(function* (path: string) {
   if (!pairingUrl) return yield* Effect.die(new Error("Set T3_PAIRING_URL to a pairing link."));
   const credential = yield* pair({ pairingUrl, label: "list-threads-and-send example" });
   const encoded = yield* encodeCredential(credential);
-  const fs = yield* FileSystem.FileSystem;
-  yield* fs.writeFileString(path, encoded, { mode: 0o600 });
-  yield* fs.chmod(path, 0o600);
+  yield* writeCredentialFile(path, encoded);
   yield* Console.log(`Paired with ${credential.label} (${credential.environmentId}).`);
 });
 
