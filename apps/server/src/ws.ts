@@ -84,7 +84,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
+  type EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -206,7 +206,12 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ContributionStatusStore from "./contributions/ContributionStatusStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
+import {
+  authorizeScopedStream,
+  environmentAuthorizationError,
+  requiredScopeForRpcMethod,
+  requiredScopeForDeviceList,
+} from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -1221,25 +1226,18 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
-      const authorizationError = (requiredScope: AuthEnvironmentScope) =>
-        new EnvironmentAuthorizationError({
-          message: `The authenticated token is missing required scope: ${requiredScope}.`,
-          requiredScope,
-        });
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
           ? effect
-          : Effect.fail(authorizationError(requiredScope));
+          : Effect.fail(environmentAuthorizationError(requiredScope));
       const authorizeStream = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? stream
-          : Stream.fail(authorizationError(requiredScope));
+        authorizeScopedStream(currentSession.scopes, requiredScope, stream);
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -3718,11 +3716,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.subscribeContributionStatus]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeContributionStatus,
-            Stream.unwrap(
-              Effect.map(contributionStatus.subscribe, ({ latest, changes }) =>
-                Stream.concat(Stream.make(latest), changes),
-              ),
-            ),
+            ContributionStatusStore.subscriptionStream(contributionStatus),
             { "rpc.aggregate": "server" },
           ),
       });

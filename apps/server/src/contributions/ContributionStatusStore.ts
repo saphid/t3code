@@ -325,3 +325,11 @@ export const make = Effect.fn("contributions.status.make")(function* () {
 });
 
 export const layer = Layer.effect(ContributionStatusStore, make());
+
+/** The `subscribeContributionStatus` stream: the current snapshot, then each replacement. */
+export const subscriptionStream = (store: ContributionStatusStoreShape) =>
+  Stream.unwrap(
+    Effect.map(store.subscribe, ({ latest, changes }) =>
+      Stream.concat(Stream.make(latest), changes),
+    ),
+  );
