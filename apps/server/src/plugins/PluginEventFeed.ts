@@ -346,15 +346,30 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
     );
 
   /** Delivers to one registration until interrupted. */
-  const run = (installationId: PluginInstallationId, worker: Worker) =>
-    Effect.gen(function* () {
-      const generation = worker.generation;
+  const run = (installationId: PluginInstallationId, worker: Worker) => {
+    const generation = worker.generation;
+    // Consecutive failures at the pending page: the plugin's, and those outside it. They outlive
+    // a storage retry, which starts the loop over from the stored cursor.
+    let failures = 0;
+    let transient = 0;
+    /**
+     * Every retry path shows `retrying` through here. It stays shown until the pending page is
+     * acknowledged, there is nothing left to deliver, or the worker is quarantined.
+     */
+    const retrying = (attempts: number, reason: string, delay: Duration.Duration) =>
+      Effect.flatMap(DateTime.now, (now) =>
+        setState(installationId, worker, {
+          _tag: "retrying",
+          failures: attempts,
+          reason,
+          retryAt: DateTime.formatIso(DateTime.addDuration(now, delay)),
+        }),
+      );
+    return Effect.gen(function* () {
       const wake = yield* PubSub.subscribe(wakes);
       let cursor = yield* loadCursor(installationId);
       worker.cursor = cursor;
       yield* publish({ _tag: "Started", installationId, generation, cursor });
-      let failures = 0;
-      let transient = 0;
       /** Stops at the cursor until `resume`, a re-enable, or a restart. */
       const quarantine = (attempts: number, reason: string) =>
         Effect.gen(function* () {
@@ -376,6 +391,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       while (true) {
         const head = yield* eventSink.latestSequence();
         if (cursor >= head) {
+          transient = 0;
           yield* setState(installationId, worker, { _tag: "waiting" });
           yield* PubSub.take(wake);
           continue;
@@ -408,8 +424,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
           return yield* quarantine(0, unreadable.reason);
         }
         if (events.length > 0) {
-          // A retry keeps showing `retrying` until the page succeeds.
-          if (failures === 0 && transient === 0)
+          if (worker.state._tag !== "retrying")
             yield* setState(installationId, worker, { _tag: "delivering" });
           const input = yield* encodePage({ events }).pipe(Effect.orDie);
           const exit = yield* catalog
@@ -431,12 +446,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               transient++;
               const delay = backoff(transient);
               const reason = error.message.slice(0, 1000);
-              yield* setState(installationId, worker, {
-                _tag: "retrying",
-                failures: transient,
-                reason,
-                retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, delay)),
-              });
+              yield* retrying(transient, reason, delay);
               yield* publish({ _tag: "Retrying", installationId, generation, cursor, reason });
               yield* Effect.sleep(delay);
               continue;
@@ -456,12 +466,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               return yield* quarantine(failures, reason);
             }
             const delay = backoff(failures);
-            yield* setState(installationId, worker, {
-              _tag: "retrying",
-              failures,
-              reason,
-              retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, delay)),
-            });
+            yield* retrying(failures, reason, delay);
             yield* publish({
               _tag: "Failed",
               installationId,
@@ -474,11 +479,13 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             continue;
           }
           failures = 0;
-          transient = 0;
         }
         yield* saveCursor(installationId, covered);
         cursor = covered;
         worker.cursor = cursor;
+        transient = 0;
+        if (worker.state._tag === "retrying")
+          yield* setState(installationId, worker, { _tag: "delivering" });
         yield* publish({
           _tag: "Acknowledged",
           installationId,
@@ -492,12 +499,12 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       // Storage trouble is not the plugin's failure: wait and start over from the stored cursor.
       Effect.tapError((error) =>
         Effect.gen(function* () {
-          yield* setState(installationId, worker, {
-            _tag: "retrying",
-            failures: 1,
-            reason: "Could not read or save event delivery progress.",
-            retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, maxRetryBackoff)),
-          });
+          transient++;
+          yield* retrying(
+            transient,
+            "Could not read or save event delivery progress.",
+            maxRetryBackoff,
+          );
           yield* Effect.logWarning("Plugin event delivery could not read or save its cursor", {
             installationId,
             error,
@@ -507,6 +514,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       Effect.retry(Schedule.spaced(maxRetryBackoff)),
       Effect.asVoid,
     );
+  };
 
   const start = Effect.fnUntraced(function* (
     installationId: PluginInstallationId,

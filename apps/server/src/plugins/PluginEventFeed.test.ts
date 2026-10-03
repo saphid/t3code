@@ -654,6 +654,74 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
         }),
       ),
     );
+    it.effect("keeps showing retrying after a cursor save fails until the page is saved", () =>
+      withStores(
+        Effect.gen(function* () {
+          yield* seedThread;
+          const sql = yield* SqlClient.SqlClient;
+          const plugin = yield* preparePlugin("test.cursor-save");
+          // The second call, the retry after the failed save, waits for `release`.
+          const retried = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let calls = 0;
+          const { catalog, feed, receipts } = yield* startServer(
+            yield* Scope.Scope,
+            {},
+            {
+              catalog: (catalog) => ({
+                ...catalog,
+                invoke: (installationId, handler, input, options) => {
+                  const held =
+                    ++calls === 2
+                      ? Deferred.succeed(retried, undefined).pipe(
+                          Effect.andThen(Deferred.await(release)),
+                        )
+                      : Effect.void;
+                  return held.pipe(
+                    Effect.andThen(catalog.invoke(installationId, handler, input, options)),
+                  );
+                },
+              }),
+            },
+          );
+          const shown = yield* deliveryStates(catalog);
+          const installationId = yield* install(catalog, plugin.directory);
+          const { cursor } = yield* next(receipts, "Started", installationId);
+          expect(yield* shown.next(installationId, "active")).toEqual({ _tag: "active" });
+
+          yield* sql`
+            CREATE TRIGGER refuse_cursor_save BEFORE UPDATE ON plugin_event_cursors
+            BEGIN SELECT RAISE(ABORT, 'disk trouble'); END
+          `;
+          const sequence = yield* finalizeRun("cursor-save-fails");
+          expect(yield* shown.next(installationId, "retrying")).toMatchObject({
+            failures: 1,
+            reason: "Could not read or save event delivery progress.",
+          });
+          yield* sql`DROP TRIGGER refuse_cursor_save`;
+          yield* TestClock.adjust("1 minute");
+
+          // The page is being delivered again but has not succeeded: still retrying, not active.
+          yield* Deferred.await(retried);
+          expect(Option.getOrThrow(yield* feed.status(installationId)).state._tag).toBe("retrying");
+          const [listed] = (yield* catalog.list).installations;
+          expect(listed?.eventDelivery?._tag).toBe("retrying");
+          expect(yield* storedCursor(installationId)).toBe(cursor);
+
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
+            delivered: 1,
+            throughSequence: sequence,
+          });
+          expect(yield* shown.next(installationId, "active")).toEqual({ _tag: "active" });
+          // At least once: the page answered before the failed save is delivered again.
+          expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([
+            sequence,
+            sequence,
+          ]);
+        }),
+      ),
+    );
   });
 
   describe("plugin contract", () => {
