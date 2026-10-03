@@ -168,6 +168,12 @@ const outcomeItem = (
  */
 export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")(function* (input: {
   readonly enricher: RunContextEnricherV2Shape;
+  /**
+   * Runs the first record's write under the thread's command lock, so a
+   * command that read the thread (such as Stop) commits before or after it,
+   * never around it. Plugin calls run outside the lock.
+   */
+  readonly withThreadLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly eventSink: EventSink.EventSinkV2Shape;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly threadId: ThreadId;
@@ -294,7 +300,8 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
           }),
         ];
   // The record that this run began enrichment, committed before any plugin runs.
-  if (!(yield* write([...started, ...overflow], now))) return { _tag: "stale" } as const;
+  if (!(yield* input.withThreadLock(write([...started, ...overflow], now))))
+    return { _tag: "stale" } as const;
 
   const truncated = input.userText.length > PLUGIN_ENRICH_LIMITS.maxMessageTextLength;
   const enrichInput = {

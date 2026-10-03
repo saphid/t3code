@@ -157,6 +157,8 @@ const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
       providerAuthServiceProvided,
       runExecutionServiceProvided,
       runtimePolicyProvided,
+      // The orchestrator's layer reference, so both share one thread lock.
+      ThreadCommandExecutor.layer,
     ),
   ),
 );

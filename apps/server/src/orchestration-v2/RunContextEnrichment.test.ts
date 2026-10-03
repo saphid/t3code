@@ -17,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 
 import type * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import {
   prepareRunContext,
   type RunContextEnricherV2Shape,
@@ -87,10 +88,13 @@ const enricherOf = (
 const prepare = Effect.fn("prepare")(function* (
   store: ReturnType<typeof makeStore>,
   enricher: RunContextEnricherV2Shape,
+  withThreadLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> = (effect) =>
+    effect,
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   return yield* prepareRunContext({
     enricher,
+    withThreadLock,
     eventSink: store.eventSink,
     idAllocator,
     threadId,
@@ -273,6 +277,51 @@ describe("prepareRunContext", () => {
         title: "Context from Plugin 2 not added",
         output: { reason: "Its context would pass the 8 KiB one run keeps." },
       });
+    }).pipe(Effect.provide(IdAllocator.layer)),
+  );
+
+  it.effect("records nothing for a run that Stop ends while it reads the thread", () =>
+    Effect.gen(function* () {
+      const store = makeStore();
+      const executor = yield* makeKeyedSerialExecutor<string>();
+      const withThreadLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        executor.withLock(threadId, effect);
+      const read = yield* Deferred.make<ReadonlyArray<OrchestrationV2TurnItem>>();
+      const commit = yield* Deferred.make<void>();
+      const sourcesRead = yield* Deferred.make<void>();
+
+      // Stop plans from the thread it read, then commits; the command holds the
+      // thread lock from its read to its commit.
+      const stop = yield* withThreadLock(
+        Effect.gen(function* () {
+          yield* Deferred.succeed(read, contextItems(store));
+          yield* Deferred.await(commit);
+          store.run.status = "interrupted";
+          return (yield* Deferred.await(read)).filter((item) => item.status === "running");
+        }),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      expect(yield* Deferred.await(read)).toEqual([]);
+
+      const { enricher, calls } = enricherOf([source(1)], () => Effect.succeed(added("late")));
+      const start = yield* prepare(
+        store,
+        {
+          ...enricher,
+          sources: Deferred.succeed(sourcesRead, undefined).pipe(Effect.as([source(1)])),
+        },
+        withThreadLock,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      // The start reaches its first write while Stop is between read and commit.
+      yield* Deferred.await(sourcesRead);
+      yield* Effect.yieldNow;
+      expect(store.writes).toEqual([]);
+      yield* Deferred.succeed(commit, undefined);
+
+      // Stop saw no record to close, and the start may not leave one running.
+      expect(yield* Fiber.join(stop)).toEqual([]);
+      expect(yield* Fiber.join(start)).toEqual({ _tag: "stale" });
+      expect(contextItems(store)).toEqual([]);
+      expect(calls).toEqual([]);
     }).pipe(Effect.provide(IdAllocator.layer)),
   );
 

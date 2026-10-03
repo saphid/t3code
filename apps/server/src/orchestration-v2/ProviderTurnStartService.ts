@@ -48,6 +48,7 @@ import { makeProviderFailure } from "./ProviderFailure.ts";
 import * as RunContextEnrichment from "./RunContextEnrichment.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -96,6 +97,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -111,6 +113,7 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const contextEnricher = yield* Effect.serviceOption(RunContextEnrichment.RunContextEnricherV2);
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -534,6 +537,7 @@ export const layer: Layer.Layer<
           ? { _tag: "ready" as const, entries: [] }
           : yield* RunContextEnrichment.prepareRunContext({
               enricher: contextEnricher.value,
+              withThreadLock: (effect) => threadCommands.withLock(projection.thread.id, effect),
               eventSink,
               idAllocator,
               threadId: projection.thread.id,
