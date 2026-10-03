@@ -10,6 +10,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
+  describePluginCapabilities,
   describePluginContributions,
   type PluginOfferedViews,
 } from "@t3tools/client-runtime/state/pluginContributions";
@@ -439,6 +440,16 @@ function PluginListRow({
   );
 }
 
+/** Each declared capability on its own line, with what it lets the plugin do. */
+function capabilityLines(capabilities: ReadonlyArray<string>): string {
+  if (capabilities.length === 0) return "None declared";
+  return describePluginCapabilities(capabilities)
+    .map((capability) =>
+      capability.meaning ? `${capability.name}: ${capability.meaning}` : capability.name,
+    )
+    .join("\n");
+}
+
 function DetailField({
   label,
   value,
@@ -687,9 +698,7 @@ function PluginDetail({
             <DetailField
               label="Capabilities"
               value={
-                (manifest.capabilities.length === 0
-                  ? "None declared"
-                  : manifest.capabilities.join(", ")) +
+                capabilityLines(manifest.capabilities) +
                 (manifest.proposedApi
                   ? "\nUses proposed APIs that may change between T3 Code versions."
                   : "")
@@ -1184,9 +1193,7 @@ function PluginNpmUpdateSection({
             <DetailField
               label="Capabilities"
               value={[
-                update.update.manifest.capabilities.length === 0
-                  ? "None declared"
-                  : update.update.manifest.capabilities.join(", "),
+                capabilityLines(update.update.manifest.capabilities),
                 update.addedCapabilities.length > 0
                   ? `New: ${update.addedCapabilities.join(", ")}`
                   : null,

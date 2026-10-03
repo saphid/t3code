@@ -37,6 +37,7 @@ import {
   type PluginNpmProvenance,
   type PluginNpmStepMarker,
 } from "@t3tools/client-runtime/state/pluginNpmPresentation";
+import { describePluginCapabilities } from "@t3tools/client-runtime/state/pluginContributions";
 import {
   canManagePlugins,
   createPluginActionGate,
@@ -967,6 +968,33 @@ export interface PluginNpmDetails {
   readonly refresh: () => void;
 }
 
+/** Each declared capability with what it lets the plugin do; `added` ones are highlighted. */
+function CapabilityList({
+  capabilities,
+  added,
+}: {
+  readonly capabilities: ReadonlyArray<string>;
+  readonly added: ReadonlyArray<string>;
+}) {
+  if (capabilities.length === 0) return "None declared";
+  return (
+    <span className="block space-y-1">
+      {describePluginCapabilities(capabilities).map((capability) => (
+        <span key={capability.name} className="flex items-baseline gap-2">
+          <span className="shrink-0">
+            <Badge variant={added.includes(capability.name) ? "warning" : "outline"}>
+              {capability.name}
+            </Badge>
+          </span>
+          {capability.meaning ? (
+            <span className="text-muted-foreground">{capability.meaning}</span>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** Details of one installation; for one that needs consent, the consent screen. */
 export function PluginReviewDialog({
   environment,
@@ -1168,17 +1196,7 @@ export function PluginReviewDialog({
                 ) : null}
                 {manifest ? (
                   <ReviewField label="Capabilities">
-                    {manifest.capabilities.length === 0 ? (
-                      "None declared"
-                    ) : (
-                      <span className="flex flex-wrap gap-1">
-                        {manifest.capabilities.map((capability) => (
-                          <Badge key={capability} variant="outline">
-                            {capability}
-                          </Badge>
-                        ))}
-                      </span>
-                    )}
+                    <CapabilityList capabilities={manifest.capabilities} added={[]} />
                     {manifest.proposedApi ? (
                       <span className="mt-1 block text-muted-foreground">
                         Uses proposed APIs that may change between T3 Code versions.
@@ -1478,22 +1496,10 @@ export function PluginNpmUpdateSection({
               <span className="font-mono text-xs break-all">{update.update.source.digest}</span>
             </ReviewField>
             <ReviewField label="Capabilities">
-              {update.update.manifest.capabilities.length === 0 ? (
-                "None declared"
-              ) : (
-                <span className="flex flex-wrap gap-1">
-                  {update.update.manifest.capabilities.map((capability) => (
-                    <Badge
-                      key={capability}
-                      variant={
-                        update.addedCapabilities.includes(capability) ? "warning" : "outline"
-                      }
-                    >
-                      {capability}
-                    </Badge>
-                  ))}
-                </span>
-              )}
+              <CapabilityList
+                capabilities={update.update.manifest.capabilities}
+                added={update.addedCapabilities}
+              />
               {update.addedCapabilities.length > 0 ? (
                 <span className="mt-1 block text-muted-foreground">
                   New: {update.addedCapabilities.join(", ")}

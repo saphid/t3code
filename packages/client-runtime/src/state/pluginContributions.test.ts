@@ -8,7 +8,7 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
-import { describePluginContributions } from "./pluginContributions.ts";
+import { describePluginCapabilities, describePluginContributions } from "./pluginContributions.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginInstallationManifest);
 
@@ -238,5 +238,38 @@ describe("describePluginContributions", () => {
         problems: [{ installationId, generation: 2, message: "board.js is too large." }],
       })?.notice,
     ).toBe("board.js is too large.");
+  });
+});
+
+describe("describePluginCapabilities", () => {
+  it("explains every capability a plugin declares, in its order, and shows unknown ones as named", () => {
+    const known = [
+      "views",
+      "settings",
+      "tools",
+      "events",
+      "actions",
+      "transforms",
+      "approvals",
+      "status",
+      "notifications",
+    ];
+    const described = describePluginCapabilities([...known, "telepathy"]);
+    expect(described.map((capability) => capability.name)).toEqual([...known, "telepathy"]);
+    for (const capability of described.slice(0, known.length))
+      expect(capability.meaning, capability.name).toMatch(/\S/);
+    expect(new Set(described.map((capability) => capability.meaning)).size).toBe(known.length + 1);
+    expect(described.at(-1)).toEqual({ name: "telepathy", meaning: null });
+    expect(describePluginCapabilities(["constructor"])).toEqual([
+      { name: "constructor", meaning: null },
+    ]);
+    expect(describePluginCapabilities([])).toEqual([]);
+  });
+
+  it("says what the riskier capabilities let a plugin do", () => {
+    const meaning = (name: string) => describePluginCapabilities([name])[0]?.meaning;
+    expect(meaning("approvals")).toContain("approve or decline");
+    expect(meaning("transforms")).toContain("context");
+    expect(meaning("events")).toContain("never message contents");
   });
 });

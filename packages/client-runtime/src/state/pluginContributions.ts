@@ -211,3 +211,31 @@ export function describePluginContributions(input: {
 
   return groups;
 }
+
+/** One declared capability with what it lets the plugin do; `meaning` is null for a name this client does not know. */
+export interface PluginCapabilityItem {
+  readonly name: string;
+  readonly meaning: string | null;
+}
+
+const CAPABILITY_MEANINGS = new Map([
+  ["actions", "Adds commands to menus and the composer that run when you choose them."],
+  ["tools", "Gives agents tools they can call during a run."],
+  ["views", "Shows its own panels in the app."],
+  ["settings", "Has settings you fill in; secrets stay on the server."],
+  ["events", "Hears when runs finish: the outcome and the thread's title, never message contents."],
+  ["transforms", "Adds its own context to each turn before it reaches the agent."],
+  ["approvals", "Can approve or decline an agent's permission requests for you."],
+  ["status", "Shows status on your threads."],
+  ["notifications", "Can show you notifications."],
+]);
+
+/** Every capability a manifest declares, in its order, with a plain meaning; unknown names show as they are. */
+export function describePluginCapabilities(
+  capabilities: ReadonlyArray<string>,
+): ReadonlyArray<PluginCapabilityItem> {
+  return capabilities.map((name) => ({
+    name,
+    meaning: CAPABILITY_MEANINGS.get(name) ?? null,
+  }));
+}
