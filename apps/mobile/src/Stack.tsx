@@ -92,6 +92,7 @@ import {
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
 import {
   SettingsPluginAddRouteScreen,
+  SettingsPluginNpmInstallRouteScreen,
   SettingsPluginRouteScreen,
   SettingsPluginsRouteScreen,
 } from "./features/settings/SettingsPluginsRouteScreen";
@@ -335,6 +336,10 @@ const SettingsContentStack = createNativeStackNavigator({
     SettingsPluginAdd: createNativeStackScreen({
       screen: SettingsPluginAddRouteScreen,
       options: { title: "Add plugin" },
+    }),
+    SettingsPluginNpmInstall: createNativeStackScreen({
+      screen: SettingsPluginNpmInstallRouteScreen,
+      options: { title: "Install from npm" },
     }),
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,

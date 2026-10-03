@@ -240,6 +240,14 @@ export function resolvePluginManageAccess(input: {
     : "denied";
 }
 
+/**
+ * Plugin settings save through an administrative RPC, so every session without
+ * proven access:write (denied, unreadable, or still checking) sees them read-only.
+ */
+export function pluginSettingsReadOnly(access: PluginManageAccess): boolean {
+  return access !== "granted";
+}
+
 /** One environment's catalogue subscription as a screen sees it. */
 export type PluginCatalogState =
   | { readonly _tag: "disconnected" }
@@ -397,6 +405,12 @@ export interface PluginActionSubject {
   readonly installation: PluginInstallation;
   /** The digest the user acknowledged on this screen, or null. */
   readonly acknowledgedDigest: string | null;
+  /** For an npm installation: the downloaded update's digest the screen shows, or null. */
+  readonly stagedUpdateDigest?: string | null;
+  /** The downloaded update's digest the user acknowledged on this screen, or null. */
+  readonly acknowledgedUpdateDigest?: string | null;
+  /** False while a server with npm installs has not said where the files came from; approval waits. */
+  readonly provenanceKnown?: boolean;
 }
 
 /** What an action was started on. An approval also binds the exact files the user reviewed. */
@@ -404,6 +418,8 @@ export interface PluginActionTarget {
   readonly environmentId: string;
   readonly installationId: PluginInstallationId;
   readonly approvedDigest?: string;
+  /** Applying a downloaded npm update binds the update's files the user reviewed. */
+  readonly approvedUpdateDigest?: string;
 }
 
 /** Whether an action started on `target` may still dispatch against what the screen shows now. */
@@ -418,9 +434,13 @@ export function pluginActionStillApplies(
   )
     return false;
   return (
-    target.approvedDigest === undefined ||
-    (current.installation.source?.digest === target.approvedDigest &&
-      current.acknowledgedDigest === target.approvedDigest)
+    (target.approvedDigest === undefined ||
+      (current.installation.source?.digest === target.approvedDigest &&
+        current.acknowledgedDigest === target.approvedDigest &&
+        current.provenanceKnown !== false)) &&
+    (target.approvedUpdateDigest === undefined ||
+      (current.stagedUpdateDigest === target.approvedUpdateDigest &&
+        current.acknowledgedUpdateDigest === target.approvedUpdateDigest))
   );
 }
 

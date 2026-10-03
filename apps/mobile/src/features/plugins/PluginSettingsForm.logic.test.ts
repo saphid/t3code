@@ -1,5 +1,10 @@
+import {
+  pluginSettingsReadOnly,
+  resolvePluginManageAccess,
+} from "@t3tools/client-runtime/state/pluginPresentation";
 import { pluginSettingRows } from "@t3tools/client-runtime/state/pluginSettings";
 import {
+  AuthStandardClientScopes,
   PluginInstallationId,
   type PluginSettingChange,
   type PluginSettingField,
@@ -147,6 +152,29 @@ describe("the save gate", () => {
     gate.set(true); // Access granted again.
     endEditing("new");
     expect(sent).toEqual([{ key: "endpoint", value: "new" }]);
+  });
+
+  it("sends nothing from a standard pairing's session, by any field", () => {
+    // The environment screen derives the form's read-only state from the session's scopes.
+    const readOnly = pluginSettingsReadOnly(
+      resolvePluginManageAccess({
+        session: { authenticated: true, scopes: [...AuthStandardClientScopes] },
+        isPending: false,
+        hasError: false,
+      }),
+    );
+    expect(readOnly).toBe(true);
+    const gate = createPluginSettingSaveGate();
+    const sent: Array<PluginSettingChange> = [];
+    const dispatch = (change: PluginSettingChange) => sent.push(change);
+    // The form commits with `!disabled`, where disabled includes read-only.
+    gate.set(!readOnly);
+    const outcome = endPluginSettingEdit(row(endpoint), "https://new.example.test");
+    expect(outcome._tag).toBe("save");
+    if (outcome._tag === "save") expect(gate.save(outcome.change, dispatch)).toBe(false);
+    expect(gate.save({ key: "endpoint", value: null }, dispatch)).toBe(false);
+    expect(gate.save({ key: "token", value: "secret" }, dispatch)).toBe(false);
+    expect(sent).toEqual([]);
   });
 
   it("sends one save until the form commits that it settled", () => {
