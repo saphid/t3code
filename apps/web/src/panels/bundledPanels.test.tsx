@@ -11,6 +11,7 @@ const loaded = vi.hoisted(() => ({
   pullRequest: 0,
   pullRequests: 0,
   files: 0,
+  pluginView: 0,
   previewRenders: [] as unknown[],
 }));
 vi.mock("./diff/DiffSidePanel", () => {
@@ -27,6 +28,10 @@ vi.mock("./device/DeviceSidePanel", () => {
 });
 vi.mock("./files/FilesSidePanel", () => {
   loaded.files += 1;
+  return { default: () => null };
+});
+vi.mock("./pluginView/PluginViewSidePanel", () => {
+  loaded.pluginView += 1;
   return { default: () => null };
 });
 vi.mock("./preview/PreviewSidePanel", () => {
@@ -76,6 +81,7 @@ describe("bundled side panels", () => {
       pullRequest: 0,
       pullRequests: 0,
       files: 0,
+      pluginView: 0,
     });
     await act(async () => {
       create(
@@ -94,6 +100,7 @@ describe("bundled side panels", () => {
       pullRequest: 0,
       pullRequests: 0,
       files: 0,
+      pluginView: 0,
     });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
@@ -116,6 +123,7 @@ export function typeFixtures(
   widenedId: "diff" | "preview",
   terminalSurface: Extract<RightPanelSurface, { kind: "terminal" }>,
   deviceSurface: Extract<RightPanelSurface, { kind: "device" }>,
+  pluginViewSurface: Extract<RightPanelSurface, { kind: "plugin-view" }>,
   dismiss: () => void,
 ) {
   const terminalProps = {
@@ -186,6 +194,11 @@ export function typeFixtures(
       <RegisteredSidePanel id="preview" threadRef={threadRef} />
       {/* @ts-expect-error Wrong input shape. */}
       <RegisteredSidePanel id="preview" configuredUrls="http://localhost:3000" />
+      <RegisteredSidePanel id="plugin-view" surface={pluginViewSurface} />
+      {/* @ts-expect-error A plugin view mounts only a plugin-view surface. */}
+      <RegisteredSidePanel id="plugin-view" surface={terminalSurface} />
+      {/* @ts-expect-error The host owns the environment; the view does not take it as a prop. */}
+      <RegisteredSidePanel id="plugin-view" surface={pluginViewSurface} threadRef={threadRef} />
       {/* @ts-expect-error Unknown id. */}
       <RegisteredSidePanel id="not-a-panel" />
       {/* @ts-expect-error A widened id cannot borrow one panel's props. */}
