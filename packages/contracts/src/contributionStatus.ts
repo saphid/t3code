@@ -58,17 +58,32 @@ export const ContributionStatusItem = Schema.Struct({
 export type ContributionStatusItem = typeof ContributionStatusItem.Type;
 
 /**
- * Who set an entry's items. A thread has at most one provider-session source:
- * a new provider session on the thread takes over the previous one's entry.
- * Plugin sources are reserved for a later `kind`; each plugin will own its own
- * entry beside the provider's.
+ * A provider session that set an entry's items. A thread has at most one: a
+ * new provider session on the thread takes over the previous one's entry.
  */
-export const ContributionStatusSource = Schema.Struct({
+export const ProviderSessionContributionStatusSource = Schema.Struct({
   kind: Schema.Literal("provider-session"),
   providerSessionId: ProviderSessionId,
   providerInstanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
 });
+
+/**
+ * An enabled plugin with the `status` capability. Each plugin owns its own
+ * entry on a thread, beside the provider's; `name` is the manifest's display
+ * name, never part of the identity.
+ */
+export const PluginContributionStatusSource = Schema.Struct({
+  kind: Schema.Literal("plugin"),
+  pluginId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  name: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(100)),
+});
+
+/** Who set an entry's items. Clients drop entries of a kind they do not know. */
+export const ContributionStatusSource = Schema.Union([
+  ProviderSessionContributionStatusSource,
+  PluginContributionStatusSource,
+]);
 export type ContributionStatusSource = typeof ContributionStatusSource.Type;
 
 /**
@@ -76,7 +91,9 @@ export type ContributionStatusSource = typeof ContributionStatusSource.Type;
  * Renderers key an entry by it and an item by it plus the item key.
  */
 export const contributionStatusSourceKey = (source: ContributionStatusSource): string =>
-  JSON.stringify([source.kind, source.providerInstanceId, source.providerSessionId]);
+  source.kind === "plugin"
+    ? JSON.stringify([source.kind, source.pluginId])
+    : JSON.stringify([source.kind, source.providerInstanceId, source.providerSessionId]);
 
 /** One source's items on one thread. Entry identity is the thread plus the source. */
 export const ContributionStatusEntry = Schema.Struct({

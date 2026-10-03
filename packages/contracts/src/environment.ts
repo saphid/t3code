@@ -207,6 +207,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server serves subscribeContributionStatus. Absent on older servers, which
       lack the method, so clients must not subscribe and show no statuses. */
   contributionStatus: Schema.optionalKey(Schema.Boolean),
+  /** Server streams plugin notifications (`plugins.notifications.subscribe`). Absent on
+      older servers, so clients must not subscribe and show no plugin toasts. */
+  pluginNotifications: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
