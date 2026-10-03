@@ -5,14 +5,20 @@
  * the request kinds it wants in its manifest, and registers one handler:
  *
  * ```js
+ * // Exactly these complete command lines; anything else, including
+ * // `git status && rm -rf build`, is left to the user.
+ * const READ_ONLY = new Set(["git status", "git diff"]);
  * export function activate(context) {
  *   context.proposed.handle("t3.approval.decide", ({ kind, subject }) =>
- *     kind === "command" && subject?.startsWith("git status")
+ *     kind === "command" && READ_ONLY.has(subject)
  *       ? { decision: "approve", reason: "Read-only git command." }
  *       : { decision: "abstain" },
  *   );
  * }
  * ```
+ *
+ * Match a whole, narrowly defined request and abstain from everything else: a
+ * prefix of a shell command says nothing about the rest of it.
  *
  * When a provider asks to approve a request of a declared kind, the server
  * calls the handler of every enabled plugin that declares it, all at once. The

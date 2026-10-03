@@ -843,7 +843,15 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
         yield* catalog.enable({ installationId });
         const { until } = yield* startApprovals(catalog);
 
-        const approved = yield* raise("real-approve", "git status --short");
+        // A command that only starts with an allowed one is not that command.
+        const compound = yield* raise("real-compound", "git status && touch changed-file");
+        expect(yield* until(is("Abstained", installationId))).toMatchObject({
+          requestId: compound,
+          cause: "abstained",
+        });
+        expect(yield* outcome(compound)).toMatchObject({ status: "pending", item: "waiting" });
+
+        const approved = yield* raise("real-approve", "git status");
         yield* until(is("Recorded", installationId));
         expect(yield* outcome(approved)).toMatchObject({
           status: "resolved",
