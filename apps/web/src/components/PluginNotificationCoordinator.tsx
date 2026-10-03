@@ -15,7 +15,8 @@ import { toastManager } from "./ui/toast";
  * Shows plugin notifications as toasts, for every environment whose server
  * supports them. Only notifications that arrive while the app is open are
  * shown; a toast closes once the server no longer retains its notification
- * (its plugin stopped, it expired or was evicted, or the server restarted).
+ * (its plugin stopped, it expired or was evicted, or the server restarted)
+ * or its environment is removed.
  */
 export function PluginNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
@@ -30,6 +31,15 @@ function EnvironmentPluginNotifications({ environmentId }: { environmentId: Envi
   // All this keeps: the newest notification seen, and the toasts still open.
   const mark = useRef<PluginNotificationMark | undefined>(undefined);
   const toasts = useRef(new Map<string, ReturnType<typeof toastManager.add>>());
+
+  // Unmounting means the environment was removed, so no later frame will close its toasts.
+  useEffect(() => {
+    const open = toasts.current;
+    return () => {
+      for (const toastId of open.values()) toastManager.close(toastId);
+      open.clear();
+    };
+  }, []);
 
   useEffect(() => {
     const changes = pluginNotificationChanges(mark.current, frame);
