@@ -44,17 +44,20 @@ class SchemaProblem {
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 export const jsonBytes = (value: unknown) => Buffer.byteLength(encodeJson(value), "utf8");
 
+const isString = (value: unknown) => typeof value === "string";
+const isBoolean = (value: unknown) => typeof value === "boolean";
 const TYPES = new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
-const ANNOTATIONS = new Set([
-  "title",
-  "description",
-  "default",
-  "examples",
-  "deprecated",
-  "readOnly",
-  "writeOnly",
-  "format",
-  "$comment",
+/** Annotations and the shape each must have; `default` may be any JSON value. */
+const ANNOTATIONS = new Map<string, (value: unknown) => boolean>([
+  ["title", isString],
+  ["description", isString],
+  ["default", () => true],
+  ["examples", Array.isArray],
+  ["deprecated", isBoolean],
+  ["readOnly", isBoolean],
+  ["writeOnly", isBoolean],
+  ["format", isString],
+  ["$comment", isString],
 ]);
 const KEYWORDS_BY_TYPE: Record<string, ReadonlyArray<string>> = {
   object: ["properties", "required", "additionalProperties"],
@@ -104,10 +107,27 @@ const matchesType = (value: unknown, type: string) =>
  * path; `compileInputSchema` turns it into a result.
  */
 const compile = (root: JsonObject): Compiled => {
-  const definitions = root.$defs ?? {};
-  if (!isObject(definitions)) throw new SchemaProblem("$defs must be an object.");
+  const definitions = root.$defs === undefined ? {} : root.$defs;
+  if (!isObject(definitions)) throw new SchemaProblem("#/$defs: must be an object.");
+  for (const name of Object.keys(definitions))
+    if (!DEFINITION_NAME.test(name))
+      throw new SchemaProblem(
+        `#/$defs/${name}: definition names are 1 to 64 letters, digits, "_", "." or "-".`,
+      );
   const done = new Map<string, Compiled>();
   const inProgress = new Set<string>();
+
+  /** The compiled definition `name`, refusing a cycle that consumes no input. */
+  const definition = (name: string, depth: number, unguarded: ReadonlySet<string>): Compiled => {
+    const compiled = done.get(name);
+    if (compiled !== undefined) return compiled;
+    if (inProgress.has(name)) return Schema.suspend((): Compiled => done.get(name)!);
+    inProgress.add(name);
+    const result = node(definitions[name], `#/$defs/${name}`, depth, new Set([...unguarded, name]));
+    inProgress.delete(name);
+    done.set(name, result);
+    return result;
+  };
 
   const node = (
     schema: unknown,
@@ -122,6 +142,9 @@ const compile = (root: JsonObject): Compiled => {
         `${path}: schemas nest deeper than ${PLUGIN_TOOL_LIMITS.maxInputSchemaDepth}.`,
       );
     if (!isObject(schema)) throw new SchemaProblem(`${path}: a schema must be an object.`);
+    for (const [key, valid] of ANNOTATIONS)
+      if (Object.hasOwn(schema, key) && !valid(schema[key]))
+        throw new SchemaProblem(`${path}/${key}: not a valid ${key} annotation.`);
     const keywords = Object.keys(schema).filter(
       (key) => !ANNOTATIONS.has(key) && !(path === "#" && key === "$defs"),
     );
@@ -137,7 +160,7 @@ const compile = (root: JsonObject): Compiled => {
       only("$ref");
       const ref = schema.$ref;
       const name = typeof ref === "string" && ref.startsWith("#/$defs/") ? ref.slice(8) : "";
-      if (!DEFINITION_NAME.test(name) || !(name in definitions))
+      if (!Object.hasOwn(definitions, name))
         throw new SchemaProblem(
           `${path}/$ref: only "#/$defs/<name>" references to root definitions are supported.`,
         );
@@ -145,19 +168,7 @@ const compile = (root: JsonObject): Compiled => {
         throw new SchemaProblem(
           `${path}/$ref: a reference cycle must pass through properties or items.`,
         );
-      const compiled = done.get(name);
-      if (compiled !== undefined) return compiled;
-      if (inProgress.has(name)) return Schema.suspend((): Compiled => done.get(name)!);
-      inProgress.add(name);
-      const definition = node(
-        definitions[name],
-        `#/$defs/${name}`,
-        depth + 1,
-        new Set([...unguarded, name]),
-      );
-      inProgress.delete(name);
-      done.set(name, definition);
-      return definition;
+      return definition(name, depth + 1, unguarded);
     }
 
     if ("anyOf" in schema) {
@@ -243,16 +254,18 @@ const compile = (root: JsonObject): Compiled => {
   };
 
   const objectSchema = (schema: JsonObject, path: string, depth: number): Compiled => {
-    const properties = schema.properties ?? {};
+    // Only an absent keyword takes its default; `null` is not a valid value for any of them.
+    const properties = schema.properties === undefined ? {} : schema.properties;
     if (!isObject(properties)) throw new SchemaProblem(`${path}/properties: must be an object.`);
-    const required = schema.required ?? [];
+    const required = schema.required === undefined ? [] : schema.required;
     if (
       !Array.isArray(required) ||
-      !required.every((name) => typeof name === "string" && name in properties) ||
+      !required.every((name) => typeof name === "string" && Object.hasOwn(properties, name)) ||
       new Set(required).size !== required.length
     )
       throw new SchemaProblem(`${path}/required: must list distinct names from properties.`);
-    const additional = schema.additionalProperties ?? true;
+    const additional =
+      schema.additionalProperties === undefined ? true : schema.additionalProperties;
     if (typeof additional !== "boolean")
       throw new SchemaProblem(`${path}/additionalProperties: must be true or false.`);
     const fields: Record<string, Schema.Top> = {};
@@ -274,7 +287,10 @@ const compile = (root: JsonObject): Compiled => {
   };
 
   if (root.type !== "object") throw new SchemaProblem(`#/type: the root must be "object".`);
-  return node(root, "#", 0, new Set());
+  const compiled = node(root, "#", 0, new Set());
+  // A definition nothing references is still part of the declaration, so it is held to the subset too.
+  for (const name of Object.keys(definitions)) definition(name, 1, new Set());
+  return compiled;
 };
 
 const count = (schema: JsonObject, keyword: string, path: string) => {

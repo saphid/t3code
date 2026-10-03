@@ -57,7 +57,9 @@
  *   The host never fills in a `default`.
  *
  * Type-specific keywords need their `type`; `$ref` and `anyOf` take only
- * annotations beside them. A plugin written with Effect Schema can generate the
+ * annotations beside them. Every keyword must have its JSON Schema shape (a
+ * `null` is refused, never read as absent), and every `$defs` entry is held to
+ * the subset whether or not it is referenced. A plugin written with Effect Schema can generate the
  * schema at build time:
  *
  * ```ts

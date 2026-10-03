@@ -188,6 +188,138 @@ describe("compileInputSchema", () => {
     ).toContain("exceeds 16384 bytes");
   });
 
+  describe("the subset boundary", () => {
+    const object = (properties: Record<string, unknown>) => ({ type: "object", properties });
+    const property = (schema: unknown) => object({ x: schema });
+
+    it.each<Record<string, unknown>>([
+      { type: "object" },
+      { type: "object", properties: {}, required: [], additionalProperties: true },
+      { type: "object", $defs: {} },
+      { type: "object", $defs: { Unused: { type: "string", minLength: 1 } } },
+      {
+        ...property({ $ref: "#/$defs/Used", description: "Annotations may sit beside $ref." }),
+        $defs: { Used: { type: "string" } },
+      },
+      property({ anyOf: [{ type: "string" }, { type: "null" }], title: "Beside anyOf too." }),
+      property({
+        type: "string",
+        title: "t",
+        description: "d",
+        $comment: "c",
+        format: "uri",
+        examples: [],
+        deprecated: false,
+        readOnly: true,
+        writeOnly: false,
+        default: null,
+      }),
+      property({ type: ["string", "null"], maxLength: 0 }),
+      property({ enum: [1, "a", true, null] }),
+      property({ const: null }),
+      property({ type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1.5 }),
+      property({ type: "array", minItems: 0 }),
+    ])("accepts %j", (schema) => expect(problemOf(schema)).toBeUndefined());
+
+    it.each<readonly [string, Record<string, unknown>, string]>([
+      // A default only replaces an absent keyword; null is a wrong shape.
+      ["null properties", { type: "object", properties: null }, "#/properties: must be an object"],
+      ["null required", { type: "object", required: null }, "#/required"],
+      [
+        "null additionalProperties",
+        { type: "object", additionalProperties: null },
+        "#/additionalProperties: must be true or false",
+      ],
+      ["null $defs", { type: "object", $defs: null }, "#/$defs: must be an object"],
+      ["array $defs", { type: "object", $defs: [] }, "#/$defs: must be an object"],
+      // Names are own properties, never inherited ones.
+      [
+        "an inherited required name",
+        { ...object({}), required: ["toString"], additionalProperties: false },
+        "#/required",
+      ],
+      ["an inherited definition", property({ $ref: "#/$defs/toString" }), "#/properties/x/$ref"],
+      // Every definition is checked, referenced or not.
+      [
+        "an unused definition outside the subset",
+        { type: "object", $defs: { Unused: { type: "string", pattern: "x" } } },
+        "#/$defs/Unused/pattern",
+      ],
+      [
+        "an unused definition with an unguarded cycle",
+        { type: "object", $defs: { A: { anyOf: [{ $ref: "#/$defs/A" }] } } },
+        "reference cycle",
+      ],
+      ["a bad definition name", { type: "object", $defs: { "a b": {} } }, "#/$defs/a b"],
+      ["nested $defs", property({ $defs: {} }), "only supported at the root"],
+      ["a draft-7 ref", property({ $ref: "#/definitions/X" }), "#/properties/x/$ref"],
+      // Annotations are shown, so they must have their shape.
+      ["a numeric title", property({ type: "string", title: 1 }), "#/properties/x/title"],
+      ["a null description", property({ description: null }), "#/properties/x/description"],
+      ["object examples", property({ examples: {} }), "#/properties/x/examples"],
+      ["a string deprecated", property({ deprecated: "yes" }), "#/properties/x/deprecated"],
+      ["a null readOnly", property({ readOnly: null }), "#/properties/x/readOnly"],
+      ["a numeric writeOnly", property({ writeOnly: 0 }), "#/properties/x/writeOnly"],
+      ["a numeric format", property({ type: "string", format: 1 }), "#/properties/x/format"],
+      ["an array $comment", property({ $comment: [] }), "#/properties/x/$comment"],
+      // Supported keywords with the wrong shape.
+      ["an empty type list", property({ type: [] }), "#/properties/x/type"],
+      ["a repeated type", property({ type: ["string", "string"] }), "#/properties/x/type"],
+      ["an unknown type", property({ type: "date" }), "#/properties/x/type"],
+      ["a null type", property({ type: null }), "#/properties/x/type"],
+      ["a negative minLength", property({ type: "string", minLength: -1 }), "minLength"],
+      ["a fractional minLength", property({ type: "string", minLength: 1.5 }), "minLength"],
+      ["a null maxLength", property({ type: "string", maxLength: null }), "maxLength"],
+      ["a string maxItems", property({ type: "array", maxItems: "2" }), "maxItems"],
+      ["a null minimum", property({ type: "number", minimum: null }), "minimum"],
+      [
+        "a draft-4 exclusiveMinimum",
+        property({ type: "number", exclusiveMinimum: true }),
+        "exclusiveMinimum",
+      ],
+      ["null items", property({ type: "array", items: null }), "#/properties/x/items"],
+      ["boolean items", property({ type: "array", items: true }), "#/properties/x/items"],
+      ["a boolean schema", object({ x: true }), "#/properties/x: a schema must be an object"],
+      ["a null schema", object({ x: null }), "#/properties/x: a schema must be an object"],
+      ["an empty anyOf", property({ anyOf: [] }), "#/properties/x/anyOf"],
+      ["an object anyOf", property({ anyOf: {} }), "#/properties/x/anyOf"],
+      ["an empty enum", property({ enum: [] }), "enum and const take"],
+      ["a null enum", property({ enum: null }), "enum and const take"],
+      ["an object const", property({ const: {} }), "enum and const take"],
+      ["enum and const", property({ enum: [1], const: 1 }), "use enum or const"],
+      // Keywords outside the subset, named.
+      ...[
+        "$schema",
+        "$id",
+        "$anchor",
+        "$dynamicRef",
+        "definitions",
+        "patternProperties",
+        "propertyNames",
+        "minProperties",
+        "maxProperties",
+        "dependentRequired",
+        "dependentSchemas",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+        "prefixItems",
+        "contains",
+        "uniqueItems",
+        "if",
+        "not",
+        "nullable",
+        "contentMediaType",
+      ].map(
+        (keyword) =>
+          [
+            keyword,
+            property({ type: "object", [keyword]: {} }),
+            `#/properties/x/${keyword}: this keyword is not supported`,
+          ] as const,
+      ),
+    ])("refuses %s", (_, schema, expected) => expect(problemOf(schema)).toContain(expected));
+  });
+
   it("shows defaults and formats without applying or asserting them", () => {
     const accepts = validator({
       type: "object",
