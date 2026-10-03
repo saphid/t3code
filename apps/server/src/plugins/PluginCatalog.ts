@@ -144,6 +144,22 @@ export class PluginCatalog extends Context.Service<
       input: PluginInstallationInput,
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
     /**
+     * Replaces the files in an installation's directory and consents to
+     * `digest`, as one management step: no other step, such as a disable from
+     * another client, runs in between, and the installation stays revoked
+     * throughout. `swap` puts the new files in place. If it fails, or the
+     * directory then does not hold `digest`, `restore` puts the old files back.
+     * Afterwards the installation is enabled again only if it was enabled and
+     * the bytes on disk have consent: the new ones, or the old ones still.
+     */
+    readonly replace: (
+      input: PluginConsentInput,
+      files: {
+        readonly swap: Effect.Effect<void, PluginCatalogError>;
+        readonly restore: Effect.Effect<void, PluginCatalogError>;
+      },
+    ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
+    /**
      * Calls a handler of an enabled installation. A call that would start a
      * fresh process first checks the bytes still match the consent. Pass the
      * `generation` the caller saw to refuse a call that would reach a later
@@ -508,6 +524,58 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     return { installationId: input.installationId };
   });
 
+  const replace = Effect.fn("PluginCatalog.replace")(function* (
+    input: PluginConsentInput,
+    files: Parameters<PluginCatalog["Service"]["replace"]>[1],
+  ) {
+    const installation = yield* find(input.installationId);
+    const wasEnabled = installation.record.enabled;
+    yield* disableInstallation(installation);
+    const enableAgain = (inspection: Inspection) =>
+      wasEnabled && inspection._tag === "ok" && isReady(installation.record)
+        ? register(installation, inspection.registration)
+        : Effect.void;
+    const inspection = yield* files.swap.pipe(
+      Effect.andThen(reinspect(installation)),
+      Effect.filterOrFail(
+        (inspection): inspection is Extract<Inspection, { readonly _tag: "ok" }> =>
+          inspection._tag === "ok" && inspection.source.digest === input.digest,
+        () =>
+          catalogError(
+            "source-changed",
+            "The new files changed after they were reviewed, so the old ones were put back.",
+            input.installationId,
+          ),
+      ),
+      Effect.tap((inspection) =>
+        Effect.gen(function* () {
+          yield* commit(installation, {
+            ...installation.record,
+            consent: {
+              digest: inspection.source.digest,
+              capabilities: inspection.registration.manifest.capabilities,
+              grantedAt: yield* now,
+            },
+          });
+        }),
+      ),
+      Effect.tapError(() =>
+        files.restore.pipe(
+          Effect.andThen(reinspect(installation)),
+          Effect.flatMap(enableAgain),
+          Effect.catch((error) =>
+            Effect.logWarning("Could not put a plugin's old files back", {
+              installationId: input.installationId,
+              detail: error.message,
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* enableAgain(inspection);
+    return yield* result(installation);
+  }, Effect.uninterruptible);
+
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
     if (installation.registered === undefined)
@@ -680,6 +748,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     disable: (input) => managed(disable(input)),
     remove: (input) => managed(remove(input)),
     resume: (input) => managed(resume(input)),
+    replace: (input, files) => managed(replace(input, files)),
     invoke,
   });
 });
