@@ -1,5 +1,11 @@
 import type { ReactElement } from "react";
-import { EnvironmentId, type PluginInstallation, PluginInstallationId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import {
+  EnvironmentId,
+  type PluginInstallation,
+  PluginInstallationId,
+  type PluginNpmPackage,
+} from "@t3tools/contracts";
 import {
   PLUGIN_MANAGE_ACCESS_REQUIRED,
   type PluginManageAccess,
@@ -14,6 +20,11 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 const add = vi.hoisted(() => vi.fn());
 const consent = vi.hoisted(() => vi.fn());
 const enable = vi.hoisted(() => vi.fn());
+const remove = vi.hoisted(() => vi.fn());
+const npmAdd = vi.hoisted(() => vi.fn());
+const stageUpdate = vi.hoisted(() => vi.fn());
+const applyUpdate = vi.hoisted(() => vi.fn());
+const discardUpdate = vi.hoisted(() => vi.fn());
 const catalogQuery = vi.hoisted(() => ({
   data: null as unknown,
   error: null as string | null,
@@ -21,6 +32,15 @@ const catalogQuery = vi.hoisted(() => ({
   isSuccess: true,
   refresh: vi.fn(),
 }));
+const npmQuery = vi.hoisted(() => ({
+  data: null as unknown,
+  error: null as string | null,
+  isPending: false,
+  isSuccess: true,
+  refresh: vi.fn(),
+}));
+/** Every query atom a render asked for; null means it asked for none. */
+const queried = vi.hoisted(() => [] as Array<unknown>);
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -46,14 +66,29 @@ vi.mock("../../state/plugins", () => ({
     add: "add",
     consent: "consent",
     enable: "enable",
-    catalog: () => Symbol("catalog"),
+    remove: "remove",
+    catalog: () => "catalog",
+  },
+  pluginNpmEnvironment: {
+    packages: () => "npm-packages",
+    add: "npmAdd",
+    stageUpdate: "stageUpdate",
+    applyUpdate: "applyUpdate",
+    discardUpdate: "discardUpdate",
   },
 }));
-vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => catalogQuery }));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (atom: unknown) => {
+    queried.push(atom);
+    return atom === "npm-packages" ? npmQuery : catalogQuery;
+  },
+}));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "consent" ? consent : command === "enable" ? enable : add,
+    ({ add, consent, enable, remove, npmAdd, stageUpdate, applyUpdate, discardUpdate })[command] ??
+    add,
 }));
+vi.mock("./PluginContributions", () => ({ PluginContributionsList: () => null }));
 vi.mock("../../state/session", () => ({
   environmentSession: { sessionStateAtom: () => null },
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
@@ -62,7 +97,13 @@ vi.mock("../../environments/primary", () => ({
   usePrimarySessionState: () => ({ data: null, error: null, isPending: true, refresh: vi.fn() }),
 }));
 
-import { AddPluginDialog, PluginEnvironmentCatalog, PluginReviewDialog } from "./PluginsSettings";
+import {
+  AddPluginDialog,
+  InstallFromNpmDialog,
+  PluginEnvironmentCatalog,
+  PluginNpmUpdateSection,
+  PluginReviewDialog,
+} from "./PluginsSettings";
 
 const environment = {
   environmentId: EnvironmentId.make("remote"),
@@ -256,6 +297,7 @@ describe("PluginReviewDialog", () => {
       canManage,
       status: canManage ? null : CHECKING,
       notice: null,
+      npm: null,
       onRetry: () => undefined,
       onClose: () => undefined,
     }) as ReactElement;
@@ -318,5 +360,293 @@ describe("PluginReviewDialog", () => {
     expect(find(checking, isApprove).disabled).toBe(true);
     expect(find(granted, isCheckbox).disabled).toBe(false);
     expect(accessStatus(granted)).toBeNull();
+  });
+});
+
+const NPM_INTEGRITY = `sha512-${"A".repeat(86)}==`;
+const npmPackage = (
+  installationId: PluginInstallationId,
+  staged: string | null = null,
+): PluginNpmPackage => ({
+  installationId,
+  source: {
+    registry: "https://registry.npmjs.org",
+    name: "t3-notifier",
+    version: "1.0.0",
+    integrity: NPM_INTEGRITY,
+    installedAt: "2026-10-04T00:00:00.000Z",
+  },
+  stagedUpdate:
+    staged === null
+      ? null
+      : {
+          version: "1.1.0",
+          integrity: NPM_INTEGRITY,
+          manifest: {
+            id: "acme.notifier",
+            name: "Notifier",
+            version: "1.1.0",
+            capabilities: [],
+            proposedApi: false,
+          } as unknown as NonNullable<PluginNpmPackage["stagedUpdate"]>["manifest"],
+          source: { digest: staged, files: 4, bytes: 4096 },
+          stagedAt: "2026-10-04T01:00:00.000Z",
+        },
+});
+const settleMicrotasks = async () => {
+  for (let index = 0; index < 5; index += 1) await Promise.resolve();
+};
+
+describe("InstallFromNpmDialog", () => {
+  const renderInstall = (canManage: boolean) => {
+    hooks.beginRender();
+    return InstallFromNpmDialog({
+      environment,
+      canManage,
+      status: null,
+      notice: null,
+      onClose: () => undefined,
+      onInstalled: () => undefined,
+    }) as ReactElement;
+  };
+  const type = (tree: ReactElement, id: string, value: string) =>
+    (
+      find(tree, (props) => props.id === id).onChange as (event: {
+        target: { value: string };
+      }) => void
+    )({ target: { value } });
+  /** Types a package and version into an open dialog, then submits by keyboard. */
+  async function install(version: string, canManageAtSubmit = true) {
+    type(renderInstall(true), "plugin-directory-name", " @acme/t3-notifier ");
+    type(renderInstall(true), "plugin-directory-version", version);
+    (find(renderInstall(canManageAtSubmit), isForm).onSubmit as (event: object) => void)({
+      preventDefault: () => undefined,
+    });
+    await settleMicrotasks();
+  }
+
+  beforeEach(() => {
+    hooks.reset();
+    npmAdd.mockReset().mockReturnValue(new Promise(() => undefined));
+  });
+
+  it("downloads the exact version typed, and latest when none is", async () => {
+    await install("1.2.3");
+    expect(npmAdd).toHaveBeenCalledWith({
+      environmentId: environment.environmentId,
+      input: { name: "@acme/t3-notifier", version: "1.2.3" },
+    });
+    hooks.reset();
+    npmAdd.mockClear();
+    await install("");
+    expect(npmAdd).toHaveBeenCalledWith({
+      environmentId: environment.environmentId,
+      input: { name: "@acme/t3-notifier", version: "latest" },
+    });
+  });
+
+  it("sends nothing for a range or once the open dialog loses management authority", async () => {
+    await install("^1.0.0");
+    expect(npmAdd).not.toHaveBeenCalled();
+    hooks.reset();
+    await install("1.2.3", false);
+    expect(npmAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("PluginEnvironmentCatalog npm installs", () => {
+  const installationId = PluginInstallationId.make("installation-npm");
+  const installed = {
+    installationId,
+    directory: "/state/plugins/npm/pkg-1/package",
+    manifest: null,
+    source: { digest: `sha256:${"a".repeat(64)}`, files: 3, bytes: 2048 },
+    problem: null,
+    consent: null,
+    enabled: false,
+  } as unknown as PluginInstallation;
+  const serverWith = (capabilities: Record<string, boolean>) =>
+    ({
+      ...environment,
+      connection: { phase: "connected" },
+      serverConfig: { environment: { platform: { machine: "server" }, capabilities } },
+    }) as unknown as EnvironmentPresentation;
+  const renderCatalog = (target: EnvironmentPresentation) => {
+    hooks.beginRender();
+    return PluginEnvironmentCatalog({
+      environment: target,
+      access: "granted",
+      onRetryAccess: null,
+    }) as ReactElement;
+  };
+  const isInstallFromNpm = (props: Record<string, unknown>) =>
+    typeof props.onClick === "function" &&
+    Array.isArray(props.children) &&
+    props.children.includes("Install from npm");
+
+  beforeEach(() => {
+    hooks.reset();
+    queried.length = 0;
+    catalogQuery.data = deliverPluginCatalog([]);
+    npmQuery.data = { packages: [] };
+    npmQuery.refresh.mockReset();
+    catalogQuery.refresh.mockReset();
+  });
+
+  it("offers no npm install and lists nothing from npm on a server without it", () => {
+    const tree = renderCatalog(serverWith({ plugins: true }));
+    expect(visitElements(tree, (candidate) => isInstallFromNpm(candidate.props))).toBeFalsy();
+    expect(queried).not.toContain("npm-packages");
+  });
+
+  it("opens the review of an install with its reply and reads the list again", () => {
+    const target = serverWith({ plugins: true, pluginNpm: true });
+    expect(queried).toEqual([]);
+    (find(renderCatalog(target), isInstallFromNpm).onClick as () => void)();
+    const dialog = visitElements(
+      renderCatalog(target),
+      (candidate) =>
+        typeof candidate.type === "function" && candidate.type.name === "InstallFromNpmDialog",
+    )!;
+    const reply = npmPackage(installationId);
+    (dialog.props.onInstalled as (result: object) => void)({
+      installation: installed,
+      package: reply,
+    });
+    expect(npmQuery.refresh).toHaveBeenCalledTimes(1);
+    const review = visitElements(
+      renderCatalog(target),
+      (candidate) =>
+        typeof candidate.type === "function" && candidate.type.name === "PluginReviewDialog",
+    )!;
+    expect(review.props.npm).toMatchObject({
+      installed: { list: npmQuery.data, reply },
+    });
+  });
+});
+
+describe("PluginReviewDialog npm download", () => {
+  const installationId = PluginInstallationId.make("installation-npm");
+  const unapproved = {
+    installationId,
+    directory: "/state/plugins/npm/pkg-1/package",
+    manifest: null,
+    source: { digest: `sha256:${"a".repeat(64)}`, files: 3, bytes: 2048 },
+    problem: null,
+    consent: null,
+    enabled: false,
+  } as unknown as PluginInstallation;
+  const renderReview = (canManage: boolean) => {
+    hooks.beginRender();
+    return PluginReviewDialog({
+      environment,
+      detail: { _tag: "found", installation: unapproved },
+      canManage,
+      status: null,
+      notice: null,
+      npm: {
+        state: { _tag: "available", list: { packages: [npmPackage(installationId)] } },
+        installed: null,
+        refresh: () => undefined,
+      },
+      onRetry: () => undefined,
+      onClose: () => undefined,
+    }) as ReactElement;
+  };
+  const isDiscard = (props: Record<string, unknown>) => props.children === "Discard";
+
+  beforeEach(() => {
+    hooks.reset();
+    remove.mockReset().mockResolvedValue({ _tag: "Success", value: { installationId } });
+  });
+
+  it("discards an unapproved download by removing it, once", async () => {
+    (find(renderReview(true), isDiscard).onClick as () => void)();
+    await settleMicrotasks();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith({
+      environmentId: environment.environmentId,
+      input: { installationId },
+    });
+  });
+
+  it("sends nothing from a Discard whose dialog lost management authority", async () => {
+    const opened = renderReview(true);
+    renderReview(false);
+    (find(opened, isDiscard).onClick as () => void)();
+    await settleMicrotasks();
+    expect(remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("PluginNpmUpdateSection", () => {
+  const installationId = PluginInstallationId.make("installation-npm");
+  const DIGEST_1 = `sha256:${"1".repeat(64)}`;
+  const DIGEST_2 = `sha256:${"2".repeat(64)}`;
+  const installation = {
+    installationId,
+    directory: "/state/plugins/npm/pkg-1/package",
+    manifest: null,
+    source: { digest: `sha256:${"a".repeat(64)}`, files: 3, bytes: 2048 },
+    problem: null,
+    consent: null,
+    enabled: true,
+  } as unknown as PluginInstallation;
+  const settled: Array<PluginNpmPackage | null> = [];
+  const renderSection = (pkg: PluginNpmPackage | null, canManage = true) => {
+    hooks.beginRender();
+    return PluginNpmUpdateSection({
+      environment,
+      installation,
+      pkg,
+      canManage,
+      onSettled: (reply) => settled.push(reply),
+    }) as ReactElement;
+  };
+  const isCheckbox = (props: Record<string, unknown>) =>
+    typeof props.onCheckedChange === "function";
+  const isApply = (props: Record<string, unknown>) => props.children === "Apply update";
+
+  beforeEach(() => {
+    hooks.reset();
+    settled.length = 0;
+    applyUpdate.mockReset();
+    stageUpdate.mockReset();
+  });
+
+  it("applies only the acknowledged download, and reports a failure for a fresh read", async () => {
+    applyUpdate.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("Could not write the plugin's files.")),
+    });
+    (
+      find(renderSection(npmPackage(installationId, DIGEST_1)), isCheckbox).onCheckedChange as (
+        checked: boolean,
+      ) => void
+    )(true);
+    // Another client downloaded a different version before Apply was pressed.
+    (find(renderSection(npmPackage(installationId, DIGEST_2)), isApply).onClick as () => void)();
+    await settleMicrotasks();
+    expect(applyUpdate).not.toHaveBeenCalled();
+
+    (find(renderSection(npmPackage(installationId, DIGEST_1)), isApply).onClick as () => void)();
+    await settleMicrotasks();
+    expect(applyUpdate).toHaveBeenCalledWith({
+      environmentId: environment.environmentId,
+      input: { installationId, digest: DIGEST_1 },
+    });
+    // A failed apply claims nothing; the screen reads what is installed again.
+    expect(settled).toEqual([null]);
+  });
+
+  it("downloads nothing without management", async () => {
+    const isForm = (props: Record<string, unknown>) => typeof props.onSubmit === "function";
+    (
+      find(renderSection(npmPackage(installationId), false), isForm).onSubmit as (
+        event: object,
+      ) => void
+    )({ preventDefault: () => undefined });
+    await settleMicrotasks();
+    expect(stageUpdate).not.toHaveBeenCalled();
   });
 });
