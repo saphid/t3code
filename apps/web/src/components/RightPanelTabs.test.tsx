@@ -33,15 +33,14 @@ describe("right panel surface actions", () => {
       preview: { available: true, onOpen: openPreview },
       diff: { available: true, onOpen: () => undefined },
       terminal: { available: true, onOpen: () => undefined },
+      device: { available: true, onOpen: () => undefined },
     },
     onAddFiles: () => undefined,
     onAddPullRequest: () => undefined,
     onAddPullRequests: () => undefined,
-    onAddDevice: () => undefined,
     filesAvailable: true,
     pullRequestAvailable: true,
     pullRequestsAvailable: true,
-    deviceAvailable: true,
   });
 
   it("describes registered panels from their definitions in launcher order", () => {
@@ -174,16 +173,15 @@ function renderTabs(
         preview: { available: true, onOpen: () => undefined },
         diff: { available: false, onOpen: () => undefined },
         terminal: { available: false, onOpen: () => undefined },
+        device: { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={() => undefined}
       onAddPullRequest={() => undefined}
       onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
-      onAddDevice={() => undefined}
       filesAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
-      deviceAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
-  Smartphone,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -115,11 +114,9 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
-  onAddDevice: () => void;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
-  deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -160,7 +157,6 @@ export interface SidePanelLauncher {
 interface SurfaceAction {
   id: string;
   label: string;
-  description?: string;
   icon: ComponentType<{ className?: string }>;
   shortcut: string;
   available: boolean;
@@ -177,11 +173,9 @@ type SurfaceActionInputs = Pick<
   | "onAddFiles"
   | "onAddPullRequest"
   | "onAddPullRequests"
-  | "onAddDevice"
   | "filesAvailable"
   | "pullRequestAvailable"
   | "pullRequestsAvailable"
-  | "deviceAvailable"
 >;
 
 /**
@@ -239,17 +233,7 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
       unavailableReason: "No linked pull requests are available for this thread.",
       onClick: props.onAddPullRequests,
     },
-    {
-      id: "device",
-      label: "Device",
-      description: "Watch an iOS Simulator or Android Emulator.",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      unavailableHint: "Available from a thread.",
-      unavailableReason: "Devices are only available from a thread.",
-      onClick: props.onAddDevice,
-    },
+    registered("device"),
   ];
 }
 
@@ -593,7 +577,7 @@ function surfaceTitle(
     case "pull-requests":
       return "Pull requests";
     case "device":
-      return surface.title ?? surface.target?.name ?? "Device";
+      return surface.title ?? surface.target?.name ?? getSidePanelMetadata("device").title;
     case "preview": {
       const fallback = getSidePanelMetadata("preview").title;
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
@@ -681,14 +665,16 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
-    case "device":
+    case "device": {
+      const DeviceIcon = getSidePanelMetadata("device").icon;
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
       ) : surface.target?.platform === "android" ? (
         <AndroidIcon className="size-3 shrink-0" />
       ) : (
-        <Smartphone className="size-3 shrink-0" />
+        <DeviceIcon className="size-3 shrink-0" />
       );
+    }
   }
 }
 
