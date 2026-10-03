@@ -1,19 +1,19 @@
 import {
   type EnvironmentId,
-  PLUGIN_NOTIFICATION_MAX_RETAINED,
   type PluginNotification,
-  type PluginNotificationCursor,
   type PluginNotificationFrame,
   type ServerConfig,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export interface ReceivedPluginNotification {
@@ -22,20 +22,11 @@ export interface ReceivedPluginNotification {
   readonly notification: PluginNotification;
 }
 
-/**
- * What one environment's plugins sent while this client was subscribed. A
- * renderer shows each `received` key once and closes any shown key that
- * appears in `withdrawn`. Both keep only the newest entries.
- */
-export interface PluginNotificationFeed {
-  readonly received: ReadonlyArray<ReceivedPluginNotification>;
-  readonly withdrawn: ReadonlyArray<string>;
+/** The newest notification a renderer has seen from one environment's server. */
+export interface PluginNotificationMark {
+  readonly epoch: string;
+  readonly sequence: number;
 }
-
-export const EMPTY_PLUGIN_NOTIFICATION_FEED: PluginNotificationFeed = {
-  received: [],
-  withdrawn: [],
-};
 
 const notificationKey = (epoch: string, sequence: number) => JSON.stringify([epoch, sequence]);
 
@@ -43,47 +34,40 @@ export function supportsPluginNotifications(config: ServerConfig | null): boolea
   return config?.environment.capabilities.pluginNotifications === true;
 }
 
-/** Adds a frame's new notifications and withdrawals; a repeated notification is ignored. */
-export function applyPluginNotificationFrame(
-  feed: PluginNotificationFeed,
-  frame: PluginNotificationFrame,
-): PluginNotificationFeed {
-  const known = new Set(feed.received.map((entry) => entry.key));
-  const received = frame.notifications
-    .map((notification) => ({
-      key: notificationKey(frame.epoch, notification.sequence),
-      notification,
-    }))
-    .filter((entry) => !known.has(entry.key));
-  const withdrawn = frame.withdrawn.map((sequence) => notificationKey(frame.epoch, sequence));
-  if (received.length === 0 && withdrawn.length === 0) return feed;
-  return {
-    received: [...feed.received, ...received].slice(-PLUGIN_NOTIFICATION_MAX_RETAINED),
-    withdrawn: [...feed.withdrawn, ...withdrawn].slice(-PLUGIN_NOTIFICATION_MAX_RETAINED),
-  };
-}
-
 /**
- * What to do for a feed change: toast every received notification not handled
- * yet, and close every handled one the server withdrew. Marks what it returns
- * as handled, so each notification is toasted once per client lifetime.
+ * What a renderer does with the latest frame: toast each `show` entry, close
+ * every visible toast whose key is not in `keep`, and remember `mark`. That
+ * mark and the visible toasts are all a renderer keeps.
+ *
+ * Without a mark (the first frame a renderer sees, such as on app launch)
+ * nothing is shown: what the server already held is history. After that,
+ * only notifications above the mark are shown, so a reconnect's frame
+ * repeats nothing; a new epoch (the server restarted) shows what it holds.
+ * A `null` frame (no supporting server) closes everything and keeps the mark.
  */
 export function pluginNotificationChanges(
-  feed: PluginNotificationFeed,
-  handled: Set<string>,
+  mark: PluginNotificationMark | undefined,
+  frame: PluginNotificationFrame | null,
 ): {
   readonly show: ReadonlyArray<ReceivedPluginNotification>;
-  readonly close: ReadonlyArray<string>;
+  readonly keep: ReadonlySet<string>;
+  readonly mark: PluginNotificationMark | undefined;
 } {
-  const withdrawn = new Set(feed.withdrawn);
-  const show = feed.received.filter(
-    (entry) => !handled.has(entry.key) && !withdrawn.has(entry.key),
+  if (frame === null) return { show: [], keep: new Set(), mark };
+  const received = frame.notifications.map((notification) => ({
+    key: notificationKey(frame.epoch, notification.sequence),
+    notification,
+  }));
+  const seen = mark === undefined ? Infinity : mark.epoch === frame.epoch ? mark.sequence : 0;
+  const newest = Math.max(
+    mark?.epoch === frame.epoch ? mark.sequence : 0,
+    ...frame.notifications.map((notification) => notification.sequence),
   );
-  for (const entry of show) handled.add(entry.key);
-  const close = feed.withdrawn.filter((key) => handled.has(key));
-  // A withdrawal arriving before its notification still stops a later toast.
-  for (const key of feed.withdrawn) handled.add(key);
-  return { show, close };
+  return {
+    show: received.filter((entry) => entry.notification.sequence > seen),
+    keep: new Set(received.map((entry) => entry.key)),
+    mark: { epoch: frame.epoch, sequence: newest },
+  };
 }
 
 /** Says who sent it: plugins share the toast surface with the app itself. */
@@ -93,11 +77,50 @@ export function pluginNotificationDescription(entry: ReceivedPluginNotification)
 }
 
 /**
- * Plugin notifications per environment, for toasts on web and mobile. Only
- * servers that advertise the capability are subscribed. The first
- * subscription in a client's life starts live; every resubscription (a
- * reconnect, or a new connection to the same environment) sends the last
- * frame's cursor, so the server replays exactly what was missed.
+ * Follows the environment's sessions and subscribes only on a session whose
+ * own server advertises the capability, so an older server never receives the
+ * call even while a cached config still says otherwise. Emits each frame, or
+ * `null` for a session without the capability. A lost connection keeps the
+ * last frame until the next session sends the current one.
+ */
+export const pluginNotificationsStream = Stream.unwrap(
+  EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+    Effect.map((supervisor) =>
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.switchMap(
+          Option.match({
+            onNone: () => Stream.empty,
+            onSome: (session) =>
+              Stream.unwrap(
+                session.initialConfig.pipe(
+                  Effect.map((config): Stream.Stream<PluginNotificationFrame | null> =>
+                    supportsPluginNotifications(config)
+                      ? session.client[WS_METHODS.pluginsNotificationsSubscribe]({}).pipe(
+                          Stream.catchCause((cause) =>
+                            Stream.fromEffect(
+                              Effect.logWarning(
+                                "Plugin notifications stopped; waiting for the next session.",
+                                { cause: Cause.pretty(cause) },
+                              ),
+                            ).pipe(Stream.drain),
+                          ),
+                        )
+                      : Stream.succeed(null),
+                  ),
+                  // A session that never delivered its config subscribes to nothing.
+                  Effect.orElseSucceed(() => Stream.empty),
+                ),
+              ),
+          }),
+        ),
+      ),
+    ),
+  ),
+);
+
+/**
+ * The latest plugin notification frame per environment, for toasts on web
+ * and mobile; `null` when the environment's server lacks the capability.
  */
 export function createPluginNotificationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -105,41 +128,18 @@ export function createPluginNotificationEnvironmentAtoms<R, E>(
     readonly configValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
   },
 ) {
-  // Outlives the atoms, so a feed rebuilt after going idle still resumes.
-  const cursors = new Map<EnvironmentId, PluginNotificationCursor>();
   const subscription = Atom.family((environmentId: EnvironmentId) =>
     runtime
-      .atom(
-        followStreamInEnvironment(
-          environmentId,
-          subscribeDynamic(WS_METHODS.pluginsNotificationsSubscribe, () =>
-            Effect.sync(() => {
-              const after = cursors.get(environmentId);
-              return after === undefined ? {} : { after };
-            }),
-          ).pipe(
-            Stream.tap((frame) =>
-              Effect.sync(() =>
-                cursors.set(environmentId, { epoch: frame.epoch, sequence: frame.sequence }),
-              ),
-            ),
-            Stream.scan(EMPTY_PLUGIN_NOTIFICATION_FEED, applyPluginNotificationFrame),
-          ),
-        ),
-        { initialValue: EMPTY_PLUGIN_NOTIFICATION_FEED },
-      )
+      .atom(followStreamInEnvironment(environmentId, pluginNotificationsStream), {
+        initialValue: null,
+      })
       .pipe(Atom.withLabel(`environment-data:plugin-notifications:subscription:${environmentId}`)),
   );
-  const feed = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): PluginNotificationFeed => {
-      if (!supportsPluginNotifications(get(options.configValueAtom(environmentId)))) {
-        return EMPTY_PLUGIN_NOTIFICATION_FEED;
-      }
-      return Option.getOrElse(
-        AsyncResult.value(get(subscription(environmentId))),
-        () => EMPTY_PLUGIN_NOTIFICATION_FEED,
-      );
-    }).pipe(Atom.withLabel(`environment-data:plugin-notifications:feed:${environmentId}`)),
+  const frame = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): PluginNotificationFrame | null => {
+      if (!supportsPluginNotifications(get(options.configValueAtom(environmentId)))) return null;
+      return Option.getOrNull(AsyncResult.value(get(subscription(environmentId))));
+    }).pipe(Atom.withLabel(`environment-data:plugin-notifications:frame:${environmentId}`)),
   );
-  return { feed };
+  return { frame };
 }
