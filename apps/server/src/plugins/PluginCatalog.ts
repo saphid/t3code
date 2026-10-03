@@ -147,14 +147,17 @@ export class PluginCatalog extends Context.Service<
      * Replaces the files in an installation's directory and consents to
      * `digest`, as one management step: no other step, such as a disable from
      * another client, runs in between, and the installation stays revoked
-     * throughout. `swap` puts the new files in place. If it fails, or the
-     * directory then does not hold `digest`, `restore` puts the old files back.
-     * Afterwards the installation is enabled again only if it was enabled and
-     * the bytes on disk have consent: the new ones, or the old ones still.
+     * throughout. The files are claimed first (see `changeFiles`), with
+     * `paths` naming everywhere `swap` and `restore` move files. `swap` puts
+     * the new files in place. If it fails, or the directory then does not hold
+     * `digest`, `restore` puts the old files back. Afterwards the installation
+     * is enabled again only if it was enabled and the bytes on disk have
+     * consent: the new ones, or the old ones still.
      */
     readonly replace: (
       input: PluginConsentInput,
       files: {
+        readonly paths: ReadonlyArray<string>;
         readonly swap: Effect.Effect<void, PluginCatalogError>;
         readonly restore: Effect.Effect<void, PluginCatalogError>;
       },
@@ -162,15 +165,29 @@ export class PluginCatalog extends Context.Service<
     /**
      * Settles a `replace` that was cut short, by a crash or a failed `restore`,
      * as one management step. If the installation has consent to `digest`, the
-     * replacement committed and nothing changes. Otherwise `restore`, when
-     * given, puts the old files back: the installation is saved disabled and
-     * its process has exited before any file moves, and the files are
-     * inspected again afterwards. It stays disabled, and consent is never granted.
+     * replacement committed and nothing changes. Otherwise `files.restore`,
+     * when given, puts the old files back after claiming `files.paths` (see
+     * `changeFiles`), and the files are inspected again. The installation
+     * stays disabled, and consent is never granted.
      */
     readonly settleReplace: (
       input: PluginConsentInput,
-      restore?: Effect.Effect<void, PluginCatalogError>,
+      files?: {
+        readonly paths: ReadonlyArray<string>;
+        readonly restore: Effect.Effect<void, PluginCatalogError>;
+      },
     ) => Effect.Effect<"committed" | "rolled-back", PluginCatalogError>;
+    /**
+     * Runs `effect`, which moves or deletes files under `paths`, as one
+     * management step. It fails `already-added`, and touches nothing, if any
+     * installation is rooted in or around one of the paths. Otherwise every
+     * process that ran from files there has exited before `effect` starts,
+     * including one whose disable or remove was cut short.
+     */
+    readonly changeFiles: <A, E>(
+      paths: ReadonlyArray<string>,
+      effect: Effect.Effect<A, E>,
+    ) => Effect.Effect<A, E | PluginCatalogError>;
     /**
      * Calls a handler of an enabled installation. A call that would start a
      * fresh process first checks the bytes still match the consent. Pass the
@@ -202,6 +219,12 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   // Management is rare and each step may wait for a process to exit; one at a time keeps the
   // catalogue, the table, and the supervisor in step.
   const lock = yield* Semaphore.make(1);
+  /**
+   * Processes still exiting after their registration was revoked, by the
+   * directory they ran from. Kept apart from `registered`, since a disable
+   * or remove whose caller went away no longer waits for its process.
+   */
+  const exiting = new Map<Fiber.Fiber<void>, string>();
   const changes = yield* PubSub.sliding<void>(1);
   const notify = PubSub.publish(changes, undefined).pipe(Effect.asVoid);
   // Counts changes a snapshot can show, so a step that changed nothing tells no one.
@@ -261,9 +284,12 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     if (registered === undefined) return undefined;
     installation.registered = undefined;
     revision++;
-    return yield* supervisor
+    const stopping = yield* supervisor
       .disable(registered.pluginId)
       .pipe(Effect.forkIn(scope, { startImmediately: true }));
+    exiting.set(stopping, installation.record.directory);
+    stopping.addObserver(() => exiting.delete(stopping));
+    return stopping;
   });
 
   /**
@@ -513,6 +539,38 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         : installation.record,
     );
 
+  const overlaps = (a: string, b: string) =>
+    a === b || a.startsWith(`${b}${path.sep}`) || b.startsWith(`${a}${path.sep}`);
+
+  /**
+   * The one rule for moving or deleting files under `paths`, run inside a
+   * management step: no installation but `owner` may be rooted in or around
+   * them, `owner` is disabled, and every process that ran from files there
+   * has exited before this returns.
+   */
+  const claimFiles = Effect.fnUntraced(function* (
+    paths: ReadonlyArray<string>,
+    owner?: Installation,
+  ) {
+    const other = [...installations.values()].find(
+      (installation) =>
+        installation !== owner &&
+        paths.some((target) => overlaps(target, installation.record.directory)),
+    );
+    if (other)
+      return yield* catalogError(
+        "already-added",
+        `${other.record.directory} is installed as a plugin, so its files were left in place.`,
+        other.record.installationId,
+      );
+    if (owner) yield* disableInstallation(owner);
+    yield* Effect.forEach(
+      [...exiting].filter(([, directory]) => paths.some((target) => overlaps(target, directory))),
+      ([stopping]) => Fiber.await(stopping),
+      { discard: true },
+    );
+  });
+
   const disable = Effect.fn("PluginCatalog.disable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
     yield* disableInstallation(installation);
@@ -542,7 +600,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   ) {
     const installation = yield* find(input.installationId);
     const wasEnabled = installation.record.enabled;
-    yield* disableInstallation(installation);
+    yield* claimFiles([installation.record.directory, ...files.paths], installation);
     const enableAgain = (inspection: Inspection) =>
       wasEnabled && inspection._tag === "ok" && isReady(installation.record)
         ? register(installation, inspection.registration)
@@ -590,17 +648,20 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const settleReplace = Effect.fn("PluginCatalog.settleReplace")(function* (
     input: PluginConsentInput,
-    restore: Effect.Effect<void, PluginCatalogError> | undefined,
+    files: Parameters<PluginCatalog["Service"]["settleReplace"]>[1],
   ) {
     const installation = yield* find(input.installationId);
     if (installation.record.consent?.digest === input.digest) return "committed" as const;
-    if (restore !== undefined) {
-      yield* disableInstallation(installation);
-      yield* restore;
+    if (files !== undefined) {
+      yield* claimFiles([installation.record.directory, ...files.paths], installation);
+      yield* files.restore;
       yield* reinspect(installation);
     }
     return "rolled-back" as const;
   }, Effect.uninterruptible);
+
+  const changeFiles = <A, E>(paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+    claimFiles(paths).pipe(Effect.andThen(effect), Effect.uninterruptible);
 
   const resume = Effect.fn("PluginCatalog.resume")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
@@ -775,7 +836,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     remove: (input) => managed(remove(input)),
     resume: (input) => managed(resume(input)),
     replace: (input, files) => managed(replace(input, files)),
-    settleReplace: (input, restore) => managed(settleReplace(input, restore)),
+    settleReplace: (input, files) => managed(settleReplace(input, files)),
+    changeFiles: (paths, effect) => managed(changeFiles(paths, effect)),
     invoke,
   });
 });

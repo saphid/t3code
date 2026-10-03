@@ -29,13 +29,13 @@
  * stay, and it is retried before every npm step, after every catalogue
  * change, and at startup.
  *
- * Files the catalogue may be running are only moved inside those two steps,
- * which stop the plugin first. Everything else this module deletes is
- * staging, a `.previous` no swap needs, or the home of an installation the
- * catalogue has removed and revoked.
+ * Every file move or deletion under the root is one catalogue step that
+ * claims the paths first (`replace`, `settleReplace`, `changeFiles`): it is
+ * refused while any installation is rooted there, whatever its id, and waits
+ * until every process that ran from those files has exited. A deletion that
+ * is refused or fails stays queued and is retried the same way.
  *
- * Removing the installation from the catalogue deletes its `<key>` directory,
- * retried the same way if the deletion fails.
+ * Removing the installation from the catalogue deletes its `<key>` directory.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -375,8 +375,24 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   const recovered = yield* Deferred.make<void>();
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-  const removeTree = (target: string) =>
-    fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
+  /** Paths under the root still to delete: removed homes, leftovers, discarded staging. */
+  const doomed = new Set<string>();
+
+  /** Deletes `target` as one catalogue step; otherwise keeps it queued. Succeeds with whether it is gone. */
+  const release = (target: string) =>
+    catalog.changeFiles([target], fs.remove(target, { recursive: true, force: true })).pipe(
+      Effect.as(true),
+      Effect.catch((cause) =>
+        (cause._tag === "PluginCatalogError" && cause.reason === "already-added"
+          ? Effect.logDebug("Keeping npm plugin files another installation uses", { target })
+          : Effect.logWarning("Could not delete npm plugin files; retrying later", {
+              target,
+              cause,
+            })
+        ).pipe(Effect.as(false)),
+      ),
+      Effect.tap((gone) => Effect.sync(() => (gone ? doomed.delete(target) : doomed.add(target)))),
+    );
 
   const writeRecord = (home: string, record: NpmRecord) =>
     encodeRecord(record).pipe(
@@ -507,7 +523,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       { discard: true },
     ).pipe(
       Effect.catch(storageError),
-      Effect.onError(() => removeTree(staging)),
+      Effect.onError(() => release(staging)),
     );
     return staging;
   });
@@ -542,28 +558,16 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       }),
     );
 
-  /** Homes of removed installations whose files could not be deleted yet. */
-  const orphans = new Set<string>();
-
-  /** Forgets every installation the catalogue no longer has and deletes its files. */
+  /** Forgets every installation the catalogue no longer has, then deletes what is queued. */
   const collect = Effect.gen(function* () {
     const snapshot = yield* catalog.list;
     const present = new Set(snapshot.installations.map((row) => row.installationId));
     for (const entry of installed.values()) {
       if (present.has(entry.installationId)) continue;
       installed.delete(entry.installationId);
-      orphans.add(entry.home);
+      doomed.add(entry.home);
     }
-    for (const home of orphans)
-      yield* fs.remove(home, { recursive: true, force: true }).pipe(
-        Effect.andThen(Effect.sync(() => orphans.delete(home))),
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not delete a removed npm plugin's files; retrying later", {
-            home,
-            cause,
-          }),
-        ),
-      );
+    for (const target of doomed) yield* release(target);
   });
 
   /**
@@ -584,12 +588,15 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       .settleReplace(
         { installationId: entry.installationId, digest: swap.digest },
         moved
-          ? fs
-              .remove(entry.directory, { recursive: true, force: true })
-              .pipe(
-                Effect.andThen(fs.rename(previous, entry.directory)),
-                Effect.catch(storageError),
-              )
+          ? {
+              paths: [entry.home],
+              restore: fs
+                .remove(entry.directory, { recursive: true, force: true })
+                .pipe(
+                  Effect.andThen(fs.rename(previous, entry.directory)),
+                  Effect.catch(storageError),
+                ),
+            }
           : undefined,
       )
       .pipe(
@@ -605,7 +612,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     entry.source = outcome === "committed" ? swap.next : swap.previous;
     yield* writeRecord(entry.home, { source: entry.source });
     entry.swap = undefined;
-    if (outcome === "committed") yield* removeTree(previous);
+    if (outcome === "committed") yield* release(previous);
   });
 
   /** Retries every unsettled swap and every deletion that failed before. */
@@ -665,7 +672,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       const directory = path.join(home, "package");
       return yield* Effect.gen(function* () {
         yield* writeRecord(home, { source });
-        yield* fs.rename(staging, directory).pipe(Effect.catch(storageError));
+        yield* catalog.changeFiles(
+          [home],
+          fs.rename(staging, directory).pipe(Effect.catch(storageError)),
+        );
         // The catalogue reads the manifest and digests the files; nothing runs.
         const { installation } = yield* catalog.add({ directory });
         const entry: Installed = {
@@ -681,7 +691,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       }).pipe(Effect.uninterruptible);
       // Nothing in the catalogue points here; deleted now, or by a later collection.
     }).pipe(
-      Effect.onError(() => Effect.sync(() => orphans.add(home)).pipe(Effect.andThen(collect))),
+      Effect.onError(() => Effect.sync(() => doomed.add(home)).pipe(Effect.andThen(collect))),
     );
   });
 
@@ -689,7 +699,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     Effect.suspend(() => {
       const staged = entry.staged;
       entry.staged = undefined;
-      return staged === undefined ? Effect.void : removeTree(staged.directory);
+      return staged === undefined ? Effect.void : release(staged.directory);
     });
 
   const stageUpdate = Effect.fn("PluginNpm.stageUpdate")(function* (
@@ -721,7 +731,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         source,
         stagedAt: yield* now,
       } satisfies PluginNpmStagedUpdate;
-    }).pipe(Effect.onError(() => removeTree(staging)));
+    }).pipe(Effect.onError(() => release(staging)));
     yield* discardStaged(entry);
     entry.staged = { update, directory: staging };
     return { package: toPackage(entry) };
@@ -763,7 +773,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
 
     // Nothing is stopped or moved before the journal is written, so a failure up to here
     // leaves the installed version running and the staged one ready to apply again.
-    yield* fs.remove(previous, { recursive: true, force: true }).pipe(Effect.catch(storageError));
+    if (!(yield* release(previous)))
+      return yield* npmError(
+        "storage",
+        "Could not delete the files an earlier update left behind.",
+        input.installationId,
+      );
     yield* writeRecord(entry.home, {
       source: entry.source,
       swap: { source: next, digest: input.digest },
@@ -776,6 +791,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       .replace(
         { installationId: input.installationId, digest: input.digest },
         {
+          paths: [entry.home],
           swap: fs.rename(entry.directory, previous).pipe(
             Effect.andThen(
               Effect.sync(() => {
@@ -839,7 +855,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       const row = byDirectory.get(directory);
       if (row === undefined) {
         // Removed from the catalogue, or interrupted before it was added.
-        orphans.add(home);
+        doomed.add(home);
         continue;
       }
       const record = yield* readRecord(home);
@@ -858,7 +874,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           // Left by a finished update; an unfinished one still needs it.
           (child === ".previous" && swap === undefined)
         )
-          yield* removeTree(path.join(home, child));
+          doomed.add(path.join(home, child));
       installed.set(row.installationId, {
         home,
         directory,

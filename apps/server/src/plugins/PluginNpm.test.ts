@@ -35,17 +35,43 @@ type Catalog = PluginCatalog.PluginCatalog["Service"];
 type Npm = PluginNpm.PluginNpm["Service"];
 type Registry = ReturnType<typeof makeRegistry>;
 
-const startCatalog = Effect.fn("startCatalog")(function* (scope: Scope.Scope) {
+interface CatalogOptions {
+  readonly stopGrace?: `${number} seconds`;
+  /** Completed when the supervisor starts disabling a plugin. */
+  readonly disableStarted?: Deferred.Deferred<void>;
+  readonly fileSystem?: FileSystem.FileSystem;
+}
+
+const startCatalog = Effect.fn("startCatalog")(function* (
+  scope: Scope.Scope,
+  options: CatalogOptions = {},
+) {
   const supervisor = yield* PluginSupervisor.make({
     heapLimitMb: 64,
     activationTimeout: "10 seconds",
-    stopGrace: "1 second",
+    stopGrace: options.stopGrace ?? "1 second",
   }).pipe(
     Effect.provideService(HostProcessArguments, [process.execPath, BIN_PATH]),
     Effect.provideService(Scope.Scope, scope),
   );
+  const started = options.disableStarted;
   return yield* PluginCatalog.make().pipe(
-    Effect.provideService(PluginSupervisor.PluginSupervisor, supervisor),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      options.fileSystem ?? (yield* FileSystem.FileSystem),
+    ),
+    Effect.provideService(
+      PluginSupervisor.PluginSupervisor,
+      started === undefined
+        ? supervisor
+        : {
+            ...supervisor,
+            disable: (pluginId) =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(supervisor.disable(pluginId)),
+              ),
+          },
+    ),
     Effect.provideService(Scope.Scope, scope),
   );
 });
@@ -86,7 +112,10 @@ interface Fixture {
   ) => Uint8Array;
 }
 
-const setup = Effect.fn("setup")(function* (fileSystem?: FileSystem.FileSystem) {
+const setup = Effect.fn("setup")(function* (
+  fileSystem?: FileSystem.FileSystem,
+  catalogOptions?: CatalogOptions,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scope = yield* Scope.Scope;
@@ -95,7 +124,7 @@ const setup = Effect.fn("setup")(function* (fileSystem?: FileSystem.FileSystem) 
   const marker = path.join(base, "activated");
   const scriptMarker = path.join(base, "script-ran");
   const registry = makeRegistry();
-  const catalog = yield* startCatalog(scope);
+  const catalog = yield* startCatalog(scope, catalogOptions);
   const npm = yield* startNpm(scope, catalog, registry, root, fileSystem);
   const plugin: Fixture["plugin"] = (name, version, options = {}) =>
     makeTarball([
@@ -164,7 +193,7 @@ const entries = (directory: string) =>
     Effect.map((names) => [...names].sort()),
   );
 
-type Faulted = "rename" | "writeFileString" | "remove" | "exists";
+type Faulted = "rename" | "writeFileString" | "remove" | "exists" | "readDirectory";
 
 /** The real file system, with failures and a hold that a test arms per call. */
 const makeFaults = (realFs: FileSystem.FileSystem) => {
@@ -225,13 +254,24 @@ const makeFaults = (realFs: FileSystem.FileSystem) => {
           ? failure("remove", target)
           : held("remove", target, undefined, realFs.remove(target, options)),
       ),
-    exists: (target) => held("exists", target, undefined, realFs.exists(target)),
+    exists: (target) =>
+      Effect.suspend(() =>
+        armed.fail?.("exists", target)
+          ? failure("exists", target)
+          : held("exists", target, undefined, realFs.exists(target)),
+      ),
+    readDirectory: (target, options) =>
+      held("readDirectory", target, undefined, realFs.readDirectory(target, options)),
   };
   return { fileSystem, armed };
 };
 
-/** A plugin whose `files` handler reports the version it loaded and the one now in its directory. */
-const filesTarball = (name: string, version: string) =>
+/**
+ * A plugin whose `files` handler reports the version it loaded and the one now
+ * in its directory. With a `gate` directory, deactivating waits until
+ * `<gate>/release` exists, then writes the same report to `<gate>/deactivated.json`.
+ */
+const filesTarball = (name: string, version: string, gate?: string) =>
   makeTarball([
     { path: "package/package.json", data: toJson({ name, version }) },
     {
@@ -250,13 +290,34 @@ const filesTarball = (name: string, version: string) =>
       path: "package/main.mjs",
       data: [
         `import * as NodeFS from "node:fs";`,
+        `const disk = () => {`,
+        `  try {`,
+        `    return NodeFS.readFileSync(new URL("./version.txt", import.meta.url), "utf8");`,
+        `  } catch {`,
+        `    return "MISSING";`,
+        `  }`,
+        `};`,
         `export function activate(context) {`,
         `  context.proposed.handle("files", () => ({`,
         `    loaded: ${toJson(version)},`,
-        `    disk: NodeFS.readFileSync(new URL("./version.txt", import.meta.url), "utf8"),`,
+        `    disk: disk(),`,
         `    pid: process.pid,`,
         `  }));`,
         `}`,
+        ...(gate === undefined
+          ? []
+          : [
+              `export async function deactivate() {`,
+              `  const gate = ${toJson(gate)};`,
+              `  const open = () => NodeFS.existsSync(gate + "/release");`,
+              `  await new Promise((resolve) => {`,
+              `    const watcher = NodeFS.watch(gate, () => open() && (watcher.close(), resolve()));`,
+              `    if (open()) (watcher.close(), resolve());`,
+              `  });`,
+              `  NodeFS.writeFileSync(gate + "/deactivated.json",`,
+              `    JSON.stringify({ loaded: ${toJson(version)}, disk: disk() }));`,
+              `}`,
+            ]),
         ``,
       ].join("\n"),
     },
@@ -282,17 +343,18 @@ const crashBeforeConsent = Effect.fn("crashBeforeConsent")(function* (
   scope: Scope.Scope,
   name: string,
   journaled = "1.1.0",
+  options: CatalogOptions & { readonly gate?: string } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const registry = makeRegistry();
   const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-crash-" });
   const root = path.join(base, "npm");
-  const catalog = yield* startCatalog(scope);
+  const catalog = yield* startCatalog(scope, options);
   const firstScope = yield* Scope.make();
   const first = yield* startNpm(firstScope, catalog, registry, root);
   for (const version of ["1.0.0", "1.1.0", "1.2.0"])
-    registry.publish(name, version, { tarball: filesTarball(name, version) });
+    registry.publish(name, version, { tarball: filesTarball(name, version, options.gate) });
   const added = yield* first.add({ name, version: "1.0.0" });
   const installationId = added.installation.installationId;
   const home = path.dirname(added.installation.directory);
@@ -1157,6 +1219,288 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
               stage === "journaled" ? "enabled" : "disabled",
             );
           }
+        }),
+      ),
+    );
+  });
+
+  describe("file moves", () => {
+    /** A gate directory for `filesTarball`, opened when the test ends so no deactivation waits. */
+    const makeGate = Effect.fn("makeGate")(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const gate = path.join(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-gate-" }),
+        "gate",
+      );
+      yield* fs.makeDirectory(gate);
+      const open = fs.writeFileString(path.join(gate, "release"), "").pipe(Effect.ignore);
+      const deactivated = fs
+        .readFileString(path.join(gate, "deactivated.json"))
+        .pipe(Effect.map(fromJson));
+      return { gate, open, deactivated };
+    });
+
+    /** Disables the installation and interrupts the caller once the supervisor has started stopping it. */
+    const cutShortDisable = Effect.fn("cutShortDisable")(function* (
+      catalog: Catalog,
+      installationId: PluginInstallationId,
+      disableStarted: Deferred.Deferred<void>,
+    ) {
+      const disabling = yield* catalog
+        .disable({ installationId })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(disableStarted);
+      yield* Fiber.interrupt(disabling);
+    });
+
+    it.effect("waits for a plugin whose disable was cut short before swapping its files", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const { gate, open, deactivated } = yield* makeGate();
+          const disableStarted = yield* Deferred.make<void>();
+          const catalog = yield* startCatalog(scope, { stopGrace: "30 seconds", disableStarted });
+          // Added after the catalogue, so it runs before the supervisor stops what is left.
+          yield* Effect.addFinalizer(() => open);
+          const faults = makeFaults(fs);
+          const registry = makeRegistry();
+          const root = path.join(path.dirname(gate), "npm");
+          const npm = yield* startNpm(scope, catalog, registry, root, faults.fileSystem);
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("gated", version, { tarball: filesTarball("gated", version, gate) });
+          const added = yield* npm.add({ name: "gated", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const directory = added.installation.directory;
+          yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
+          yield* catalog.enable({ installationId });
+          const running = yield* callFiles(catalog, installationId);
+          const { package: staged } = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const digest = staged.stagedUpdate!.source.digest;
+
+          yield* cutShortDisable(catalog, installationId, disableStarted);
+          // Disabled, and the process is still deactivating.
+          expect((yield* catalog.list).installations[0]!.enabled).toBe(false);
+          expect(isProcessAlive(running.pid)).toBe(true);
+
+          const journaled = yield* Deferred.make<void>();
+          let aliveAtSwap: boolean | undefined;
+          faults.armed.fail = (method, target, detail) => {
+            if (method === "writeFileString" && detail?.includes('"swap"'))
+              Deferred.doneUnsafe(journaled, Exit.void);
+            if (method === "rename" && target === directory)
+              aliveAtSwap ??= isProcessAlive(running.pid);
+            return false;
+          };
+          const applying = yield* npm
+            .applyUpdate({ installationId, digest })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(journaled);
+          yield* open;
+          const applied = yield* Fiber.join(applying);
+
+          expect(aliveAtSwap).toBe(false);
+          // Deactivating, the old version still read its own files.
+          expect(yield* deactivated).toEqual({ loaded: "1.0.0", disk: "1.0.0" });
+          expect(applied.package.source.version).toBe("1.1.0");
+          expect(applied.installation).toMatchObject({ enabled: false, consent: { digest } });
+        }),
+      ),
+    );
+
+    it.effect("waits for a plugin whose disable was cut short before rolling its files back", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const { gate, open, deactivated } = yield* makeGate();
+          const disableStarted = yield* Deferred.make<void>();
+          // The journal expects 1.2.0, so the consented 1.1.0 files in place are rolled back.
+          const crashed = yield* crashBeforeConsent(scope, "rolled", "1.2.0", {
+            gate,
+            stopGrace: "30 seconds",
+            disableStarted,
+          });
+          yield* Effect.addFinalizer(() => open);
+          const { catalog, installationId, home, oldDigest, filesDigest } = crashed;
+          yield* catalog.consent({ installationId, digest: filesDigest });
+          yield* catalog.enable({ installationId });
+          const running = yield* callFiles(catalog, installationId);
+          expect(running).toMatchObject({ loaded: "1.1.0", disk: "1.1.0" });
+
+          yield* cutShortDisable(catalog, installationId, disableStarted);
+          expect(isProcessAlive(running.pid)).toBe(true);
+
+          const faults = makeFaults(fs);
+          let aliveAtMove: boolean | undefined;
+          faults.armed.fail = (method, target) => {
+            if (method === "remove" && target === path.join(home, "package"))
+              aliveAtMove ??= isProcessAlive(running.pid);
+            return false;
+          };
+          const npm = yield* startNpm(
+            scope,
+            catalog,
+            crashed.registry,
+            crashed.root,
+            faults.fileSystem,
+          );
+          yield* open;
+          expect((yield* npm.list).packages[0]!.source.version).toBe("1.0.0");
+
+          expect(aliveAtMove).toBe(false);
+          expect(yield* deactivated).toEqual({ loaded: "1.1.0", disk: "1.1.0" });
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect((yield* catalog.list).installations[0]).toMatchObject({
+            enabled: false,
+            source: { digest: oldDigest },
+          });
+        }),
+      ),
+    );
+
+    it.effect("keeps a removed package's files while another installation runs from them", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const faults = makeFaults(fs);
+          const { catalog, npm, registry, root } = yield* setup(faults.fileSystem);
+          registry.publish("readded", "1.0.0", { tarball: filesTarball("readded", "1.0.0") });
+          registry.publish("other", "1.0.0", { tarball: filesTarball("other", "1.0.0") });
+          const other = yield* npm.add({ name: "other", version: "1.0.0" });
+          const added = yield* npm.add({ name: "readded", version: "1.0.0" });
+          const directory = added.installation.directory;
+          const home = path.dirname(directory);
+          faults.armed.fail = (method, target) => method === "remove" && target === home;
+          yield* catalog.remove({ installationId: added.installation.installationId });
+          yield* npm.discardUpdate({ installationId: other.installation.installationId });
+          expect(yield* fs.exists(directory)).toBe(true);
+
+          // Another client adds the same directory back, approves it, and runs it.
+          const readded = (yield* catalog.add({ directory })).installation;
+          yield* catalog.consent({
+            installationId: readded.installationId,
+            digest: readded.source!.digest,
+          });
+          yield* catalog.enable({ installationId: readded.installationId });
+          const running = yield* callFiles(catalog, readded.installationId);
+          expect(running).toMatchObject({ loaded: "1.0.0", disk: "1.0.0" });
+
+          // The retried deletion finds the directory in use and leaves it.
+          faults.armed.fail = undefined;
+          yield* npm.discardUpdate({ installationId: other.installation.installationId });
+          expect(yield* callFiles(catalog, readded.installationId)).toEqual(running);
+          expect(
+            (yield* catalog.list).installations.find(
+              (row) => row.installationId === readded.installationId,
+            ),
+          ).toMatchObject({ enabled: true });
+
+          // Once nothing uses it, the next retry deletes it.
+          yield* catalog.remove({ installationId: readded.installationId });
+          yield* npm.discardUpdate({ installationId: other.installation.installationId });
+          expect(yield* entries(root)).toEqual([
+            path.basename(path.dirname(other.installation.directory)),
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("decides who owns a directory in the same step that deletes it", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const faults = makeFaults(fs);
+          const events: Array<string> = [];
+          let directory = "";
+          const { catalog, npm, registry } = yield* setup(faults.fileSystem, {
+            fileSystem: {
+              ...fs,
+              realPath: (target) =>
+                Effect.suspend(() => {
+                  if (target === directory) events.push("inspected");
+                  return fs.realPath(target);
+                }),
+            },
+          });
+          registry.publish("deleted", "1.0.0", { tarball: filesTarball("deleted", "1.0.0") });
+          const added = yield* npm.add({ name: "deleted", version: "1.0.0" });
+          directory = added.installation.directory;
+          const home = path.dirname(directory);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          faults.armed.hold = {
+            matches: (method, target) => method === "remove" && target === home,
+            entered,
+            release,
+          };
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+          // The removal reaches npm through the catalogue's change notification.
+          yield* catalog.remove({ installationId: added.installation.installationId });
+          yield* Deferred.await(entered);
+          // Adding the directory back waits for the deletion, then finds nothing to add.
+          const adding = yield* catalog
+            .add({ directory })
+            .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          events.push("released");
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* Fiber.join(adding)).reason).toBe("invalid-directory");
+          expect(events[0]).toBe("released");
+          expect(yield* fs.exists(home)).toBe(false);
+          expect((yield* catalog.list).installations).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("keeps a home that is added back while startup is deciding what to delete", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const registry = makeRegistry();
+          const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-startup-" });
+          const root = path.join(base, "npm");
+          const catalog = yield* startCatalog(scope);
+          const firstScope = yield* Scope.make();
+          const first = yield* startNpm(firstScope, catalog, registry, root);
+          registry.publish("startup", "1.0.0", { tarball: filesTarball("startup", "1.0.0") });
+          const added = yield* first.add({ name: "startup", version: "1.0.0" });
+          const directory = added.installation.directory;
+          yield* Scope.close(firstScope, Exit.void);
+          // Removed while no npm service ran, so its home is left for startup.
+          yield* catalog.remove({ installationId: added.installation.installationId });
+
+          const faults = makeFaults(fs);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const realRoot = yield* fs.realPath(root);
+          // Startup has read the catalogue, which no longer has the home.
+          faults.armed.hold = {
+            matches: (method, target) => method === "readDirectory" && target === realRoot,
+            entered,
+            release,
+          };
+          const second = yield* startNpm(scope, catalog, registry, root, faults.fileSystem);
+          yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+          yield* Deferred.await(entered);
+          const readded = (yield* catalog.add({ directory })).installation;
+          yield* catalog.consent({
+            installationId: readded.installationId,
+            digest: readded.source!.digest,
+          });
+          yield* catalog.enable({ installationId: readded.installationId });
+          const running = yield* callFiles(catalog, readded.installationId);
+          yield* Deferred.succeed(release, undefined);
+
+          expect((yield* second.list).packages).toEqual([]);
+          expect(yield* callFiles(catalog, readded.installationId)).toEqual(running);
+          expect(running).toMatchObject({ disk: "1.0.0" });
         }),
       ),
     );
