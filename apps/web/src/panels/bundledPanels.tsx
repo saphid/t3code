@@ -1,4 +1,4 @@
-import { FileDiff, Globe2 } from "lucide-react";
+import { FileDiff, Globe2, Smartphone } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
@@ -28,6 +28,16 @@ const bundledPanels = createPanelRegistry([
     unavailableHint: "Only available in the desktop app.",
     unavailableReason: "Browser previews are only available in the T3 Code desktop app.",
     load: () => import("./preview/PreviewSidePanel"),
+  },
+  {
+    id: "device",
+    title: "Device",
+    icon: Smartphone,
+    placement: "side-panel",
+    launcherKey: "M",
+    unavailableHint: "Available from a thread.",
+    unavailableReason: "Devices are only available from a thread.",
+    load: () => import("./device/DeviceSidePanel"),
   },
 ]);
 

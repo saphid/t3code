@@ -270,6 +270,7 @@ const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const UNAVAILABLE_SIDE_PANELS = {
   preview: { available: false, onOpen: () => undefined },
   diff: { available: false, onOpen: () => undefined },
+  device: { available: false, onOpen: () => undefined },
 };
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
@@ -2121,12 +2122,10 @@ function PullRequestsRouteView() {
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
-            onAddDevice={() => undefined}
             terminalAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
-            deviceAvailable={false}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
