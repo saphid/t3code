@@ -130,8 +130,10 @@ export function pluginNpmListKey(installations: ReadonlyArray<PluginInstallation
 }
 
 export type PluginNpmProvenance =
-  /** Not installed from npm, or the server has no npm support. */
+  /** Known not to be from npm, or the server has no npm support. */
   | { readonly _tag: "none" }
+  /** The list is loading or did not load, so where the files came from is not known. */
+  | { readonly _tag: "unknown" }
   /** Waiting for a list read after a step whose outcome is unknown. */
   | { readonly _tag: "checking" }
   | { readonly _tag: "found"; readonly package: PluginNpmPackage };
@@ -143,15 +145,41 @@ export function resolvePluginNpmProvenance(input: {
   readonly step: PluginNpmStepMarker | null;
 }): PluginNpmProvenance {
   const { state, step } = input;
+  if (state._tag === "unsupported") return { _tag: "none" };
   const list = state._tag === "available" ? state.list : null;
   // The same object means no list was read since the step settled.
-  if (step !== null && state._tag !== "unsupported" && step.list === list) {
+  if (step !== null && step.list === list) {
     if (step.reply === null) return { _tag: "checking" };
     if (step.reply.installationId === input.installationId)
       return { _tag: "found", package: step.reply };
   }
-  const found = list?.packages.find((entry) => entry.installationId === input.installationId);
+  if (list === null) return { _tag: "unknown" };
+  const found = list.packages.find((entry) => entry.installationId === input.installationId);
   return found ? { _tag: "found", package: found } : { _tag: "none" };
+}
+
+/**
+ * Whether a screen knows, and so shows, where an installation's files came
+ * from. Approving waits for it: an npm download's package, checksum, and
+ * scripts policy belong on the consent screen.
+ */
+export const pluginNpmProvenanceKnown = (provenance: PluginNpmProvenance) =>
+  provenance._tag === "none" || provenance._tag === "found";
+
+/** Shown in place of Approve's disclosure while provenance is not known. */
+export const PLUGIN_NPM_PROVENANCE_PENDING =
+  "You can approve once T3 Code shows whether these files were downloaded from npm.";
+
+/** What removing an installation does to its files, as far as the screen knows where they came from. */
+export function pluginRemoveDescription(provenance: PluginNpmProvenance, label: string): string {
+  switch (provenance._tag) {
+    case "found":
+      return `T3 Code stops the plugin, forgets your approval, and deletes the copy of ${provenance.package.source.name} it downloaded to ${label}'s machine.`;
+    case "none":
+      return `T3 Code stops the plugin and forgets your approval. Its directory stays on ${label}'s machine.`;
+    default:
+      return `T3 Code stops the plugin and forgets your approval. A plugin added from a directory keeps it; one downloaded from npm has its copy deleted from ${label}'s machine.`;
+  }
 }
 
 function displayRegistry(registry: string): string | null {

@@ -9,9 +9,12 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
+import { createPluginActionGate } from "./pluginPresentation.ts";
 import {
   pluginNpmInstallRequest,
   pluginNpmListKey,
+  pluginNpmProvenanceKnown,
+  pluginRemoveDescription,
   pluginNpmRowLabel,
   pluginNpmUpdateRequest,
   presentPluginNpmUpdate,
@@ -214,6 +217,111 @@ describe("resolvePluginNpmProvenance", () => {
     expect(
       resolvePluginNpmPackagesState({ supported: true, data: list(), error: "offline" }),
     ).toEqual({ _tag: "failed", message: "offline" });
+  });
+});
+
+describe("unknown npm provenance", () => {
+  const loading = resolvePluginNpmPackagesState({ supported: true, data: null, error: null });
+  const failed = resolvePluginNpmPackagesState({ supported: true, data: null, error: "offline" });
+
+  it("is not known while the list loads or after it failed, unlike a list without it", () => {
+    for (const state of [loading, failed]) {
+      const provenance = resolvePluginNpmProvenance({ state, installationId: ID, step: null });
+      expect(provenance).toEqual({ _tag: "unknown" });
+      expect(pluginNpmProvenanceKnown(provenance)).toBe(false);
+    }
+    const directory = resolvePluginNpmProvenance({
+      state: available(list()),
+      installationId: ID,
+      step: null,
+    });
+    expect(directory).toEqual({ _tag: "none" });
+    expect(pluginNpmProvenanceKnown(directory)).toBe(true);
+    expect(
+      pluginNpmProvenanceKnown(
+        resolvePluginNpmProvenance({
+          state: resolvePluginNpmPackagesState({ supported: false, data: null, error: null }),
+          installationId: ID,
+          step: null,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("approves a reopened download only once its package is known, as both clients gate it", async () => {
+    // A download nobody approved, reopened without the install reply.
+    const unapproved = installation();
+    const gate = createPluginActionGate();
+    const sent: Array<string> = [];
+    const step = (name: string) => () => {
+      sent.push(name);
+      return Promise.resolve({ value: name });
+    };
+    const show = (state: typeof loading) =>
+      gate.set({
+        environmentId: "environment-1",
+        installation: unapproved,
+        acknowledgedDigest: DIGEST,
+        provenanceKnown: pluginNpmProvenanceKnown(
+          resolvePluginNpmProvenance({ state, installationId: ID, step: null }),
+        ),
+      });
+    const approve = () =>
+      gate.run({ environmentId: "environment-1", installationId: ID, approvedDigest: DIGEST }, [
+        step("consent"),
+        step("enable"),
+      ]);
+    for (const state of [loading, failed]) {
+      show(state);
+      expect(await approve()).toEqual({ _tag: "refused" });
+    }
+    expect(sent).toEqual([]);
+    // Retry read the list: the package, checksum, and scripts policy are on screen now.
+    show(available(list(pkg("1.0.0"))));
+    expect(await approve()).toEqual({ _tag: "done" });
+    expect(sent).toEqual(["consent", "enable"]);
+  });
+
+  it("stops before enable when the screen loses the package between steps", async () => {
+    const gate = createPluginActionGate();
+    const sent: Array<string> = [];
+    const subject = (provenanceKnown: boolean) => ({
+      environmentId: "environment-1",
+      installation: installation(),
+      acknowledgedDigest: DIGEST,
+      provenanceKnown,
+    });
+    gate.set(subject(true));
+    const outcome = await gate.run(
+      { environmentId: "environment-1", installationId: ID, approvedDigest: DIGEST },
+      [
+        () => {
+          sent.push("consent");
+          gate.set(subject(false));
+          return Promise.resolve({ value: "consent" });
+        },
+        () => {
+          sent.push("enable");
+          return Promise.resolve({ value: "enable" });
+        },
+      ],
+    );
+    expect(outcome).toEqual({ _tag: "refused" });
+    expect(sent).toEqual(["consent"]);
+  });
+
+  it("promises nothing about the files on removal until it knows where they came from", () => {
+    expect(pluginRemoveDescription({ _tag: "none" }, "Build box")).toContain(
+      "Its directory stays on Build box's machine.",
+    );
+    expect(
+      pluginRemoveDescription({ _tag: "found", package: pkg("1.0.0") }, "Build box"),
+    ).toContain("deletes the copy of t3-notifier it downloaded");
+    for (const provenance of [{ _tag: "unknown" }, { _tag: "checking" }] as const) {
+      const text = pluginRemoveDescription(provenance, "Build box");
+      expect(text).not.toContain("Its directory stays");
+      expect(text).toContain("one downloaded from npm has its copy deleted");
+    }
   });
 });
 

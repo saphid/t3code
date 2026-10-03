@@ -409,6 +409,8 @@ export interface PluginActionSubject {
   readonly stagedUpdateDigest?: string | null;
   /** The downloaded update's digest the user acknowledged on this screen, or null. */
   readonly acknowledgedUpdateDigest?: string | null;
+  /** False while a server with npm installs has not said where the files came from; approval waits. */
+  readonly provenanceKnown?: boolean;
 }
 
 /** What an action was started on. An approval also binds the exact files the user reviewed. */
@@ -434,7 +436,8 @@ export function pluginActionStillApplies(
   return (
     (target.approvedDigest === undefined ||
       (current.installation.source?.digest === target.approvedDigest &&
-        current.acknowledgedDigest === target.approvedDigest)) &&
+        current.acknowledgedDigest === target.approvedDigest &&
+        current.provenanceKnown !== false)) &&
     (target.approvedUpdateDigest === undefined ||
       (current.stagedUpdateDigest === target.approvedUpdateDigest &&
         current.acknowledgedUpdateDigest === target.approvedUpdateDigest))

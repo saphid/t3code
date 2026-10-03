@@ -21,16 +21,20 @@ import {
 import {
   describePluginNpmSource,
   PLUGIN_NPM_INTEGRITY_STATEMENT,
+  PLUGIN_NPM_PROVENANCE_PENDING,
   PLUGIN_NPM_SCRIPTS_STATEMENT,
   pluginNpmInstallRequest,
   pluginNpmListKey,
+  pluginNpmProvenanceKnown,
   pluginNpmRowLabel,
   pluginNpmUpdateRequest,
   presentPluginNpmUpdate,
   resolvePluginNpmPackagesState,
+  pluginRemoveDescription,
   resolvePluginNpmProvenance,
   supportsPluginNpm,
   type PluginNpmPackagesState,
+  type PluginNpmProvenance,
   type PluginNpmStepMarker,
 } from "@t3tools/client-runtime/state/pluginNpmPresentation";
 import {
@@ -433,7 +437,7 @@ export function PluginEnvironmentCatalog({
                     key={installation.installationId}
                     environment={environment}
                     installation={installation}
-                    npmPackage={provenance._tag === "found" ? provenance.package : null}
+                    provenance={provenance}
                     canManage={canManage}
                     onReview={() =>
                       setReviewing({
@@ -517,17 +521,18 @@ export function PluginEnvironmentCatalog({
 function PluginRow({
   environment,
   installation,
-  npmPackage,
+  provenance,
   canManage,
   onReview,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly installation: PluginInstallation;
-  readonly npmPackage: PluginNpmPackage | null;
+  readonly provenance: PluginNpmProvenance;
   readonly canManage: boolean;
   readonly onReview: () => void;
 }) {
   const view = presentPluginInstallation(installation);
+  const npmPackage = provenance._tag === "found" ? provenance.package : null;
   const [busy, setBusy] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const enable = useAtomCommand(pluginEnvironment.enable, "plugin enable");
@@ -682,9 +687,7 @@ function PluginRow({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {view.title}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {npmPackage
-                ? `T3 Code stops the plugin, forgets your approval, and deletes the copy of ${npmPackage.source.name} it downloaded to ${environment.label}'s machine.`
-                : `T3 Code stops the plugin and forgets your approval. Its directory stays on ${environment.label}'s machine.`}
+              {pluginRemoveDescription(provenance, environment.label)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1008,6 +1011,8 @@ export function PluginReviewDialog({
         })
       : ({ _tag: "none" } as const);
   const npmPackage = provenance._tag === "found" ? provenance.package : null;
+  // An npm download's package, checksum, and scripts policy must be on screen before approval.
+  const provenanceKnown = pluginNpmProvenanceKnown(provenance);
   const settleNpmStep = (reply: PluginNpmPackage | null) => {
     if (npm === null) return;
     setNpmStep({ list: npm.state._tag === "available" ? npm.state.list : null, reply });
@@ -1020,12 +1025,13 @@ export function PluginReviewDialog({
           environmentId: environment.environmentId,
           installation,
           acknowledgedDigest: acknowledged ? digest : null,
+          provenanceKnown,
         }
       : null,
   );
 
   const approve = async () => {
-    if (!installation || digest === null || !acknowledged) return;
+    if (!installation || digest === null || !acknowledged || !provenanceKnown) return;
     const target = {
       environmentId: environment.environmentId,
       input: { installationId: installation.installationId },
@@ -1142,6 +1148,12 @@ export function PluginReviewDialog({
                   </>
                 ) : provenance._tag === "checking" ? (
                   <ReviewField label="Package">Checking what is installed…</ReviewField>
+                ) : provenance._tag === "unknown" ? (
+                  <ReviewField label="Package">
+                    {npm?.state._tag === "failed"
+                      ? "Not known: where it came from did not load"
+                      : "Checking where it came from…"}
+                  </ReviewField>
                 ) : null}
                 <ReviewField label="Directory">
                   <span className="font-mono text-xs break-all">{installation.directory}</span>
@@ -1214,6 +1226,7 @@ export function PluginReviewDialog({
                       <p>{pluginTrustStatement(environment.label)}</p>
                       <p>{PLUGIN_DIGEST_STATEMENT}</p>
                       {npmPackage ? <p>{PLUGIN_NPM_SCRIPTS_STATEMENT}</p> : null}
+                      {provenanceKnown ? null : <p>{PLUGIN_NPM_PROVENANCE_PENDING}</p>}
                     </AlertDescription>
                   </Alert>
                   {/* Always laid out, so an access check while reviewing moves nothing. */}
@@ -1247,7 +1260,8 @@ export function PluginReviewDialog({
                   </Button>
                 </div>
               ) : null}
-              {!view.canReview && provenance._tag !== "none" ? (
+              {!view.canReview &&
+              (provenance._tag === "found" || provenance._tag === "checking") ? (
                 <PluginNpmUpdateSection
                   environment={environment}
                   installation={installation}
@@ -1287,7 +1301,7 @@ export function PluginReviewDialog({
               ) : null}
               <Button
                 size="sm"
-                disabled={!canManage || !acknowledged || busy}
+                disabled={!canManage || !acknowledged || !provenanceKnown || busy}
                 onClick={() => void approve()}
               >
                 Approve and enable

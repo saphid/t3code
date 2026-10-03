@@ -16,12 +16,15 @@ import {
 import {
   describePluginNpmSource,
   PLUGIN_NPM_INTEGRITY_STATEMENT,
+  PLUGIN_NPM_PROVENANCE_PENDING,
   PLUGIN_NPM_SCRIPTS_STATEMENT,
   pluginNpmInstallRequest,
   pluginNpmListKey,
+  pluginNpmProvenanceKnown,
   pluginNpmRowLabel,
   pluginNpmUpdateRequest,
   presentPluginNpmUpdate,
+  pluginRemoveDescription,
   resolvePluginNpmPackagesState,
   resolvePluginNpmProvenance,
   supportsPluginNpm,
@@ -520,6 +523,8 @@ function PluginDetail({
     step: npmStep,
   });
   const npmPackage = provenance._tag === "found" ? provenance.package : null;
+  // An npm download's package, checksum, and scripts policy must be on screen before approval.
+  const provenanceKnown = pluginNpmProvenanceKnown(provenance);
   const settleNpmStep = (reply: PluginNpmPackage | null) => {
     setNpmStep({ list: npmList, reply });
     npm.refresh();
@@ -530,7 +535,12 @@ function PluginDetail({
   const acknowledged = digest !== null && trustedDigest === digest;
   const gate = usePluginActionGate(
     canManage && installation !== null
-      ? { environmentId, installation, acknowledgedDigest: acknowledged ? digest : null }
+      ? {
+          environmentId,
+          installation,
+          acknowledgedDigest: acknowledged ? digest : null,
+          provenanceKnown,
+        }
       : null,
   );
   const [pending, setPending] = useState<string | null>(null);
@@ -651,6 +661,16 @@ function PluginDetail({
               label="Package"
               value="Checking what is installed…"
             />
+          ) : provenance._tag === "unknown" ? (
+            <DetailField
+              first={manifest === null}
+              label="Package"
+              value={
+                npm.state._tag === "failed"
+                  ? "Not known: where it came from did not load"
+                  : "Checking where it came from…"
+              }
+            />
           ) : null}
           <DetailField
             first={manifest === null}
@@ -701,6 +721,11 @@ function PluginDetail({
                   {PLUGIN_NPM_SCRIPTS_STATEMENT}
                 </Text>
               ) : null}
+              {provenanceKnown ? null : (
+                <Text className="text-sm text-foreground-muted">
+                  {PLUGIN_NPM_PROVENANCE_PENDING}
+                </Text>
+              )}
             </View>
             <View className="flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
               <Text className="min-w-0 flex-1 text-base text-foreground">
@@ -717,10 +742,10 @@ function PluginDetail({
               <SettingsActionRow
                 icon="checkmark.circle"
                 label="Approve and enable"
-                disabled={disabled || !acknowledged}
+                disabled={disabled || !acknowledged || !provenanceKnown}
                 loading={pending === "approve"}
                 onPress={() => {
-                  if (digest === null || !acknowledged) return;
+                  if (digest === null || !acknowledged || !provenanceKnown) return;
                   // Bound to these exact files: new bytes stop it before enable.
                   void run(
                     "approve",
@@ -760,7 +785,7 @@ function PluginDetail({
               <SettingsActionRow icon="arrow.clockwise" label="Retry" onPress={npm.refresh} />
             </View>
           </SettingsSection>
-        ) : !view.canReview && provenance._tag !== "none" ? (
+        ) : !view.canReview && (provenance._tag === "found" || provenance._tag === "checking") ? (
           <PluginNpmUpdateSection
             environmentId={environmentId}
             environment={environment}
@@ -815,23 +840,17 @@ function PluginDetail({
             disabled={disabled}
             loading={pending === "remove"}
             onPress={() =>
-              Alert.alert(
-                `Remove ${view.title}?`,
-                npmPackage
-                  ? `T3 Code stops the plugin, forgets your approval, and deletes the copy of ${npmPackage.source.name} it downloaded to ${label}'s machine.`
-                  : `T3 Code stops the plugin and forgets your approval. Its directory stays on ${label}'s machine.`,
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Remove",
-                    style: "destructive",
-                    onPress: () =>
-                      void run("remove", [() => settle(remove(target))]).then((removed) => {
-                        if (removed) navigation.goBack();
-                      }),
-                  },
-                ],
-              )
+              Alert.alert(`Remove ${view.title}?`, pluginRemoveDescription(provenance, label), [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Remove",
+                  style: "destructive",
+                  onPress: () =>
+                    void run("remove", [() => settle(remove(target))]).then((removed) => {
+                      if (removed) navigation.goBack();
+                    }),
+                },
+              ])
             }
           />
         </SettingsSection>

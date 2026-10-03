@@ -6,6 +6,7 @@ import {
   PluginInstallationId,
   type PluginNpmPackage,
 } from "@t3tools/contracts";
+import type { PluginNpmPackagesState } from "@t3tools/client-runtime/state/pluginNpmPresentation";
 import {
   PLUGIN_MANAGE_ACCESS_REQUIRED,
   type PluginManageAccess,
@@ -576,6 +577,60 @@ describe("PluginReviewDialog npm download", () => {
     (find(opened, isDiscard).onClick as () => void)();
     await settleMicrotasks();
     expect(remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("PluginReviewDialog reopened npm download", () => {
+  const installationId = PluginInstallationId.make("installation-npm");
+  const DIGEST = `sha256:${"a".repeat(64)}`;
+  const unapproved = {
+    installationId,
+    directory: "/state/plugins/npm/pkg-1/package",
+    manifest: null,
+    source: { digest: DIGEST, files: 3, bytes: 2048 },
+    problem: null,
+    consent: null,
+    enabled: false,
+  } as unknown as PluginInstallation;
+  // Opened from the list, not from an install reply.
+  const renderReview = (state: PluginNpmPackagesState) => {
+    hooks.beginRender();
+    return PluginReviewDialog({
+      environment,
+      detail: { _tag: "found", installation: unapproved },
+      canManage: true,
+      status: null,
+      notice: null,
+      npm: { state, installed: null, refresh: () => undefined },
+      onRetry: () => undefined,
+      onClose: () => undefined,
+    }) as ReactElement;
+  };
+  const isCheckbox = (props: Record<string, unknown>) =>
+    typeof props.onCheckedChange === "function";
+  const isApprove = (props: Record<string, unknown>) => props.children === "Approve and enable";
+  const approve = async (state: PluginNpmPackagesState) => {
+    (find(renderReview(state), isCheckbox).onCheckedChange as (checked: boolean) => void)(true);
+    (find(renderReview(state), isApprove).onClick as () => void)();
+    await settleMicrotasks();
+  };
+
+  beforeEach(() => {
+    hooks.reset();
+    const success = { _tag: "Success", value: { installation: unapproved } };
+    consent.mockReset().mockResolvedValue(success);
+    enable.mockReset().mockResolvedValue(success);
+  });
+
+  it("approves nothing while the npm list is held or failed, then approves once it shows the package", async () => {
+    await approve({ _tag: "loading" });
+    await approve({ _tag: "failed", message: "offline" });
+    expect(consent).not.toHaveBeenCalled();
+    expect(enable).not.toHaveBeenCalled();
+
+    await approve({ _tag: "available", list: { packages: [npmPackage(installationId)] } });
+    expect(consent).toHaveBeenCalledTimes(1);
+    expect(enable).toHaveBeenCalledTimes(1);
   });
 });
 
