@@ -139,9 +139,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
 import {
   Fragment,
-  lazy,
   type SetStateAction,
-  Suspense,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -665,7 +663,6 @@ function useDraftHeroLayoutTransition(
 
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
-const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -4526,13 +4523,6 @@ export default function ChatView(props: ChatViewProps) {
     );
     if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
   }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
-  const openFileSurface = useCallback(
-    (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
-    },
-    [activeProject, activeThreadRef],
-  );
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const persistedLinkedThreadPullRequest = isServerThread
@@ -9753,47 +9743,36 @@ export default function ChatView(props: ChatViewProps) {
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
         (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
-      <Suspense fallback={null}>
-        <FilePreviewPanel
-          key={`${activeThread.environmentId}:${
-            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? `attachment:${renderedRightPanelSurface.attachment.id}`
-              : activeWorkspaceRoot
-          }`}
-          environmentId={activeThread.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
-          projectName={activeProject?.title ?? ""}
-          threadRef={activeThreadRef}
-          composerDraftTarget={composerDraftTarget}
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          relativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.relativePath
-              : null
-          }
-          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-            ? { attachment: renderedRightPanelSurface.attachment }
-            : {})}
-          revealLine={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.revealLine ?? null)
-              : null
-          }
-          revealRequestId={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.revealRequestId
-              : 0
-          }
-          onOpenFile={openFileSurface}
-          onPendingChange={handleFilePendingChange}
-          selectedFilePending={
-            renderedRightPanelSurface.kind === "file" &&
-            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
-          }
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        key={`${activeThread.environmentId}:${
+          renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+            ? `attachment:${renderedRightPanelSurface.attachment.id}`
+            : activeWorkspaceRoot
+        }`}
+        id="files"
+        cwd={activeWorkspaceRoot ?? ""}
+        projectName={activeProject?.title ?? ""}
+        availableEditors={availableEditors}
+        relativePath={
+          renderedRightPanelSurface.kind === "file" ? renderedRightPanelSurface.relativePath : null
+        }
+        {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
+          ? { attachment: renderedRightPanelSurface.attachment }
+          : {})}
+        revealLine={
+          renderedRightPanelSurface.kind === "file"
+            ? (renderedRightPanelSurface.revealLine ?? null)
+            : null
+        }
+        revealRequestId={
+          renderedRightPanelSurface.kind === "file" ? renderedRightPanelSurface.revealRequestId : 0
+        }
+        onPendingChange={handleFilePendingChange}
+        selectedFilePending={
+          renderedRightPanelSurface.kind === "file" &&
+          pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
+        }
+      />
     ) : null
   ) : null;
   const rightPanelContent = (
@@ -9803,6 +9782,7 @@ export default function ChatView(props: ChatViewProps) {
     preview: { available: true, onOpen: createBrowserSurface },
     diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurface },
     terminal: { available: activeProject !== null, onOpen: addTerminalSurface },
+    files: { available: activeProject !== null, onOpen: addFilesSurface },
     device: { available: activeThreadRef !== null, onOpen: addDeviceSurface },
     "pull-request": { available: pullRequestSurfaceAvailable, onOpen: addPullRequestSurface },
     "pull-requests": { available: pullRequestsSurfaceAvailable, onOpen: addPullRequestsSurface },
@@ -10605,8 +10585,6 @@ export default function ChatView(props: ChatViewProps) {
           onCopyFilePath={copyRightPanelFilePath}
           panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
-          onAddFiles={addFilesSurface}
-          filesAvailable={activeProject !== null}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -10649,8 +10627,6 @@ export default function ChatView(props: ChatViewProps) {
             onCopyFilePath={copyRightPanelFilePath}
             panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
-            onAddFiles={addFilesSurface}
-            filesAvailable={activeProject !== null}
           >
             {rightPanelContent}
           </RightPanelTabs>
