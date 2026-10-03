@@ -33,6 +33,11 @@ export const PLUGIN_VIEW_SCRIPT_MAX_BYTES = 1024 * 1024;
 export const PLUGIN_VIEW_STYLE_MAX_BYTES = 256 * 1024;
 /** Script plus style of one view. */
 export const PLUGIN_VIEW_BUNDLE_MAX_BYTES = 1024 * 1024;
+/**
+ * Script plus style of one view as JSON strings, the form the RPC delivers.
+ * Escaping can grow text up to sixfold, so this bounds the wire separately.
+ */
+export const PLUGIN_VIEW_BUNDLE_MAX_ENCODED_BYTES = 2 * 1024 * 1024;
 
 /** Encoded UTF-8 bytes of one bridge message, in either direction. */
 export const PLUGIN_VIEW_MESSAGE_MAX_BYTES = 64 * 1024;

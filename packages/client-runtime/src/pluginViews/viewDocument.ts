@@ -120,7 +120,8 @@ export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocume
   { message: Schema.String },
 ) {}
 
-// What the server also refuses: the parsed text would differ from the hashed bytes.
+// The server's inline-safety rules, checked again here (the size limits are the server's alone):
+// the parsed text would differ from the hashed bytes.
 const UNSAFE_SCRIPT = /<\/script|<!--|<script|[\r\0]/i;
 const UNSAFE_STYLE = /<\/style|[\r\0]/i;
 
@@ -136,7 +137,10 @@ export const buildPluginViewDocument = (
     return Result.fail(
       new PluginViewDocumentError({ message: "The view script cannot be inlined exactly." }),
     );
-  if (bundle.style !== null && UNSAFE_STYLE.test(bundle.style.text))
+  if (
+    bundle.style !== null &&
+    (UNSAFE_STYLE.test(bundle.style.text) || bundle.style.text.charCodeAt(0) === 0xfeff)
+  )
     return Result.fail(
       new PluginViewDocumentError({ message: "The view style cannot be inlined exactly." }),
     );

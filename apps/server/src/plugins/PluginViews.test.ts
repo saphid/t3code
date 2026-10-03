@@ -294,6 +294,18 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
             snapshot.problems.some((problem) => problem.installationId === second.installationId),
           );
           expect(invalid.problems[0]?.message).toContain("The views in t3-plugin.json are invalid");
+          yield* catalog.disable({ installationId: second.installationId });
+          yield* awaitViews(views, (snapshot) => snapshot.problems.length === 0);
+
+          // Under the raw size limit, but each control character escapes to six bytes of JSON.
+          const escaped = yield* preparePlugin({
+            script: `//${"\u0001".repeat(400 * 1024)}\n`,
+          });
+          const third = yield* install(catalog, escaped.directory);
+          const oversized = yield* awaitViews(views, (snapshot) =>
+            snapshot.problems.some((problem) => problem.installationId === third.installationId),
+          );
+          expect(oversized.problems[0]?.message).toContain("once encoded for delivery");
         }),
       ),
     );

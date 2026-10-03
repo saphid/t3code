@@ -17,6 +17,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   PLUGIN_MANIFEST_FILE,
   PLUGIN_VIEW_BUNDLE_MAX_BYTES,
+  PLUGIN_VIEW_BUNDLE_MAX_ENCODED_BYTES,
   PLUGIN_VIEW_CALL_TIMEOUT_MS,
   PLUGIN_VIEW_MESSAGE_MAX_BYTES,
   PLUGIN_VIEW_SCRIPT_MAX_BYTES,
@@ -186,6 +187,15 @@ export const make = Effect.fn("PluginViews.make")(function* () {
         return yield* viewError(
           "invalid-view",
           `The view ${declaration.id} is larger than ${PLUGIN_VIEW_BUNDLE_MAX_BYTES} bytes.`,
+        );
+      // JSON escaping can grow text sixfold; this bounds what the RPC actually sends.
+      if (
+        jsonBytes(script.asset.text) + (style === null ? 0 : jsonBytes(style.asset.text)) >
+        PLUGIN_VIEW_BUNDLE_MAX_ENCODED_BYTES
+      )
+        return yield* viewError(
+          "invalid-view",
+          `The view ${declaration.id} is larger than ${PLUGIN_VIEW_BUNDLE_MAX_ENCODED_BYTES} bytes once encoded for delivery.`,
         );
       views.set(declaration.id, {
         declaration,

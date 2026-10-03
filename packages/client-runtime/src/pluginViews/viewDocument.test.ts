@@ -71,10 +71,12 @@ describe("buildPluginViewDocument", () => {
         );
         expect(Result.isFailure(built)).toBe(true);
       }
-      const unsafe = { text: "a</STYLE>b", sha256: bundle.style.sha256 };
-      expect(
-        Result.isFailure(buildPluginViewDocument({ script: bundle.script, style: unsafe }, "View")),
-      ).toBe(true);
+      for (const text of ["a</STYLE>b", "\uFEFFa"]) {
+        const style = { text, sha256: bundle.style.sha256 };
+        expect(
+          Result.isFailure(buildPluginViewDocument({ script: bundle.script, style }, "View")),
+        ).toBe(true);
+      }
     }),
   );
 });
