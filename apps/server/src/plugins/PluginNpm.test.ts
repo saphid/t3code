@@ -2,10 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { pluginInstallationStatus, type PluginInstallationId } from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { HttpClient } from "effect/unstable/http";
@@ -160,6 +163,59 @@ const entries = (directory: string) =>
     Effect.orElseSucceed((): ReadonlyArray<string> => []),
     Effect.map((names) => [...names].sort()),
   );
+
+type Faulted = "rename" | "writeFileString" | "remove";
+
+/** The real file system, with failures and a hold that a test arms per call. */
+const makeFaults = (realFs: FileSystem.FileSystem) => {
+  const armed: {
+    /** Fails every call it returns true for. */
+    fail: ((method: Faulted, target: string, to?: string) => boolean) | undefined;
+    /** Pauses the next matching rename until `release`. */
+    hold:
+      | {
+          readonly matches: (from: string, to: string) => boolean;
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        }
+      | undefined;
+  } = { fail: undefined, hold: undefined };
+  const failure = (method: Faulted, target: string) =>
+    Effect.fail(
+      PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method,
+        pathOrDescriptor: target,
+        description: "Injected failure.",
+      }),
+    );
+  const fileSystem: FileSystem.FileSystem = {
+    ...realFs,
+    rename: (from, to) =>
+      Effect.suspend(() => {
+        if (armed.fail?.("rename", from, to)) return failure("rename", from);
+        const hold = armed.hold;
+        if (hold === undefined || !hold.matches(from, to)) return realFs.rename(from, to);
+        armed.hold = undefined;
+        return Deferred.succeed(hold.entered, undefined).pipe(
+          Effect.andThen(Deferred.await(hold.release)),
+          Effect.andThen(realFs.rename(from, to)),
+        );
+      }),
+    writeFileString: (target, data, options) =>
+      Effect.suspend(() =>
+        armed.fail?.("writeFileString", target)
+          ? failure("writeFileString", target)
+          : realFs.writeFileString(target, data, options),
+      ),
+    remove: (target, options) =>
+      Effect.suspend(() =>
+        armed.fail?.("remove", target) ? failure("remove", target) : realFs.remove(target, options),
+      ),
+  };
+  return { fileSystem, armed };
+};
 
 const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistenceMemory));
@@ -609,6 +665,248 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
       ),
     );
 
+    it.effect("applies an update as one catalogue step that other management waits behind", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const faults = makeFaults(yield* FileSystem.FileSystem);
+          const { catalog, npm, registry, plugin } = yield* setup(faults.fileSystem);
+          const versions = ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"];
+          for (const version of versions)
+            registry.publish("raced", version, { tarball: plugin("raced", version) });
+          const added = yield* npm.add({ name: "raced", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
+          yield* catalog.enable({ installationId });
+          expect((yield* callVersion(catalog, installationId)).version).toBe("1.0.0");
+          const row = Effect.map(catalog.list, (snapshot) =>
+            snapshot.installations.find((item) => item.installationId === installationId)!,
+          );
+
+          /** Applies `version` while another client runs `other` during the directory swap. */
+          const applyWhile = Effect.fnUntraced(function* <A, E>(
+            version: string,
+            other: Effect.Effect<A, E>,
+          ) {
+            const { package: staged } = yield* npm.stageUpdate({ installationId, version });
+            const digest = staged.stagedUpdate!.source.digest;
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            faults.armed.hold = {
+              matches: (from, to) =>
+                path.basename(from).startsWith(".staging-") && path.basename(to) === "package",
+              entered,
+              release,
+            };
+            const applying = yield* npm
+              .applyUpdate({ installationId, digest })
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Deferred.await(entered);
+            // The old registration is revoked for the whole step: no call reaches either version.
+            const call = yield* callVersion(catalog, installationId).pipe(Effect.flip);
+            expect(call).toMatchObject({ reason: "unavailable" });
+            const racing = yield* other.pipe(
+              Effect.exit,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.succeed(release, undefined);
+            const applied = yield* Fiber.join(applying);
+            return { applied, other: yield* Fiber.join(racing), digest };
+          });
+
+          // A disable from another client lands after the update and stays.
+          const disabled = yield* applyWhile("1.1.0", catalog.disable({ installationId }));
+          expect(disabled.applied.installation.enabled).toBe(true);
+          expect(Exit.isSuccess(disabled.other)).toBe(true);
+          expect(yield* row).toMatchObject({
+            enabled: false,
+            consent: { digest: disabled.digest },
+          });
+
+          // An enable waits for the new consent, then runs the new version.
+          const enabled = yield* applyWhile("1.2.0", catalog.enable({ installationId }));
+          expect(enabled.applied.installation.enabled).toBe(false);
+          expect(Exit.isSuccess(enabled.other)).toBe(true);
+          expect((yield* callVersion(catalog, installationId)).version).toBe("1.2.0");
+
+          // Consent to the replaced bytes is refused once the new ones are in place.
+          const consented = yield* applyWhile(
+            "1.3.0",
+            catalog.consent({ installationId, digest: enabled.digest }),
+          );
+          expect(Exit.isFailure(consented.other)).toBe(true);
+          expect(yield* row).toMatchObject({
+            enabled: true,
+            consent: { digest: consented.digest },
+          });
+          expect((yield* callVersion(catalog, installationId)).version).toBe("1.3.0");
+
+          const refreshed = yield* applyWhile("1.4.0", catalog.refresh({ installationId }));
+          expect(Exit.isSuccess(refreshed.other)).toBe(true);
+          expect(yield* row).toMatchObject({
+            enabled: true,
+            source: { digest: refreshed.digest },
+            consent: { digest: refreshed.digest },
+          });
+
+          const removed = yield* applyWhile("1.5.0", catalog.remove({ installationId }));
+          expect(Exit.isSuccess(removed.other)).toBe(true);
+          expect((yield* catalog.list).installations).toEqual([]);
+          expect((yield* npm.list).packages).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("keeps the installed version running when the update cannot be journaled", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const faults = makeFaults(fs);
+          const { catalog, npm, registry, plugin } = yield* setup(faults.fileSystem);
+          registry.publish("journal", "1.0.0", { tarball: plugin("journal", "1.0.0") });
+          registry.publish("journal", "1.1.0", { tarball: plugin("journal", "1.1.0") });
+          const added = yield* npm.add({ name: "journal", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const home = path.dirname(added.installation.directory);
+          const oldDigest = added.installation.source!.digest;
+          yield* catalog.consent({ installationId, digest: oldDigest });
+          yield* catalog.enable({ installationId });
+          const before = yield* callVersion(catalog, installationId);
+          const { package: staged } = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const digest = staged.stagedUpdate!.source.digest;
+
+          const failures: ReadonlyArray<
+            readonly [string, (method: Faulted, target: string, to?: string) => boolean]
+          > = [
+            [
+              "journal write",
+              (method, target) =>
+                method === "writeFileString" && path.basename(target) === ".npm.json.tmp",
+            ],
+            [
+              "journal rename",
+              (method, _target, to) =>
+                method === "rename" && to !== undefined && path.basename(to) === "npm.json",
+            ],
+            [
+              "old .previous cleanup",
+              (method, target) => method === "remove" && path.basename(target) === ".previous",
+            ],
+          ];
+          for (const [what, matches] of failures) {
+            faults.armed.fail = (method, target, to) => {
+              if (!matches(method, target, to)) return false;
+              faults.armed.fail = undefined;
+              return true;
+            };
+            const error = yield* npm.applyUpdate({ installationId, digest }).pipe(Effect.flip);
+            expect(error.reason, what).toBe("storage");
+            expect(faults.armed.fail, what).toBeUndefined();
+            // Never stopped: the same process answers, and the update can be applied again.
+            expect(yield* callVersion(catalog, installationId), what).toEqual(before);
+            expect((yield* catalog.list).installations[0], what).toMatchObject({
+              enabled: true,
+              consent: { digest: oldDigest },
+            });
+            expect((yield* npm.list).packages[0]!.stagedUpdate?.source.digest, what).toBe(digest);
+            const record = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+            expect(record, what).toEqual({ source: added.package.source });
+          }
+
+          const applied = yield* npm.applyUpdate({ installationId, digest });
+          expect(applied.package.source.version).toBe("1.1.0");
+          expect((yield* callVersion(catalog, installationId)).version).toBe("1.1.0");
+        }),
+      ),
+    );
+
+    it.effect("keeps an interrupted update it cannot undo yet, and undoes it on a later try", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const registry = makeRegistry();
+          const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-retry-" });
+          const root = path.join(base, "npm");
+          const catalog = yield* startCatalog(scope);
+          const firstScope = yield* Scope.make();
+          const first = yield* startNpm(firstScope, catalog, registry, root);
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("retried", version, {
+              tarball: makeTarball([
+                { path: "package/package.json", data: toJson({ name: "retried", version }) },
+                {
+                  path: "package/t3-plugin.json",
+                  data: toJson({
+                    id: "test.retried",
+                    name: "retried",
+                    version,
+                    apiVersion: 1,
+                    entry: "main.mjs",
+                  }),
+                },
+                { path: "package/main.mjs", data: `export function activate() {} // ${version}` },
+              ]),
+            });
+          const added = yield* first.add({ name: "retried", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const home = path.dirname(added.installation.directory);
+          const oldDigest = added.installation.source!.digest;
+          yield* catalog.consent({ installationId, digest: oldDigest });
+          const { package: staged } = yield* first.stageUpdate({
+            installationId,
+            version: "1.1.0",
+          });
+          const stagingName = (yield* entries(home)).find((name) => name.startsWith(".staging-"))!;
+          const journal = toJson({
+            source: added.package.source,
+            swap: {
+              source: { ...added.package.source, version: "1.1.0" },
+              digest: staged.stagedUpdate!.source.digest,
+            },
+          });
+          // The server stopped after the swap, before the consent.
+          yield* fs.writeFileString(path.join(home, "npm.json"), journal);
+          yield* fs.rename(added.installation.directory, path.join(home, ".previous"));
+          yield* fs.rename(path.join(home, stagingName), added.installation.directory);
+          yield* Scope.close(firstScope, Exit.void);
+
+          const faults = makeFaults(fs);
+          faults.armed.fail = (method, target) =>
+            method === "rename" && path.basename(target) === ".previous";
+          const second = yield* startNpm(scope, catalog, registry, root, faults.fileSystem);
+          yield* second.list;
+          // Putting the old files back failed: the journal and the only old copy are kept.
+          expect(yield* entries(home)).toEqual([".previous", "npm.json"]);
+          expect(yield* fs.readFileString(path.join(home, "npm.json"))).toBe(journal);
+          const blocked = yield* second
+            .stageUpdate({ installationId, version: "1.1.0" })
+            .pipe(Effect.flip);
+          expect(blocked.reason).toBe("storage");
+
+          // The next try moves the files back, but cannot write the record: still retried.
+          faults.armed.fail = (method, target) =>
+            method === "writeFileString" && path.basename(target) === ".npm.json.tmp";
+          const stillBlocked = yield* second.discardUpdate({ installationId }).pipe(Effect.flip);
+          expect(stillBlocked.reason).toBe("storage");
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect(yield* fs.readFileString(path.join(home, "npm.json"))).toBe(journal);
+
+          faults.armed.fail = undefined;
+          yield* second.discardUpdate({ installationId });
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          const record = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+          expect(record).toEqual({ source: added.package.source });
+          expect((yield* second.list).packages[0]!.source.version).toBe("1.0.0");
+          const row = (yield* catalog.list).installations[0]!;
+          expect(row.source?.digest).toBe(oldDigest);
+          expect(pluginInstallationStatus(row)).toBe("disabled");
+        }),
+      ),
+    );
+
     it.effect("finishes or rolls back an update a restart interrupted, and deletes leftovers", () =>
       withDatabase(
         Effect.gen(function* () {
@@ -636,16 +934,28 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
               },
               { path: "package/main.mjs", data: `export function activate() {} // ${version}` },
             ]);
-          for (const name of ["rolled", "finished"])
+          // Every point an apply can stop at, in order: each step includes the ones before it.
+          const stages = [
+            "journaled",
+            "stopped",
+            "moved-old",
+            "moved-new",
+            "consented",
+            "recorded",
+          ] as const;
+          for (const name of stages)
             for (const version of ["1.0.0", "1.1.0"])
               registry.publish(name, version, { tarball: tarballFor(name, version) });
 
-          /** Leaves the state an update had when the server stopped after the swap. */
-          const interrupt = Effect.fn("interrupt")(function* (name: string, consented: boolean) {
-            const added = yield* first.add({ name, version: "1.0.0" });
+          /** Leaves the state an enabled installation's update had when the server stopped. */
+          const interrupt = Effect.fn("interrupt")(function* (stage: (typeof stages)[number]) {
+            const reached = (step: (typeof stages)[number]) =>
+              stages.indexOf(stage) >= stages.indexOf(step);
+            const added = yield* first.add({ name: stage, version: "1.0.0" });
             const installationId = added.installation.installationId;
             const home = path.dirname(added.installation.directory);
             yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
+            yield* catalog.enable({ installationId });
             const { package: staged } = yield* first.stageUpdate({
               installationId,
               version: "1.1.0",
@@ -654,57 +964,59 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             const stagingName = (yield* entries(home)).find((entry) =>
               entry.startsWith(".staging-"),
             )!;
+            const next = { ...added.package.source, version: "1.1.0", integrity: update.integrity };
             yield* fs.writeFileString(
               path.join(home, "npm.json"),
               toJson({
                 source: added.package.source,
-                swap: {
-                  source: {
-                    ...added.package.source,
-                    version: "1.1.0",
-                    integrity: update.integrity,
-                  },
-                  digest: update.source.digest,
-                },
+                swap: { source: next, digest: update.source.digest },
               }),
             );
-            yield* fs.rename(added.installation.directory, path.join(home, ".previous"));
-            yield* fs.rename(path.join(home, stagingName), added.installation.directory);
-            if (consented) yield* catalog.consent({ installationId, digest: update.source.digest });
-            return { installationId, home, oldDigest: added.installation.source!.digest, update };
+            if (reached("stopped")) yield* catalog.disable({ installationId });
+            if (reached("moved-old"))
+              yield* fs.rename(added.installation.directory, path.join(home, ".previous"));
+            if (reached("moved-new"))
+              yield* fs.rename(path.join(home, stagingName), added.installation.directory);
+            if (reached("consented"))
+              yield* catalog.consent({ installationId, digest: update.source.digest });
+            if (reached("recorded"))
+              yield* fs.writeFileString(path.join(home, "npm.json"), toJson({ source: next }));
+            return {
+              stage,
+              installationId,
+              home,
+              oldDigest: added.installation.source!.digest,
+              update,
+            };
           });
-          const rolled = yield* interrupt("rolled", false);
-          const finished = yield* interrupt("finished", true);
-          yield* fs.makeDirectory(path.join(rolled.home, ".staging-left"));
+          const interrupted = yield* Effect.forEach(stages, interrupt);
+          yield* fs.makeDirectory(path.join(interrupted[3]!.home, ".staging-left"));
           yield* fs.makeDirectory(path.join(root, "pkg-orphan", "package"), { recursive: true });
           yield* Scope.close(firstScope, Exit.void);
 
           const second = yield* startNpm(scope, catalog, registry, root);
           const packages = (yield* second.list).packages;
-          expect(packages.map((item) => [item.installationId, item.source.version])).toEqual(
-            [
-              [rolled.installationId, "1.0.0"],
-              [finished.installationId, "1.1.0"],
-            ].sort(([a], [b]) => a!.localeCompare(b!)),
-          );
-          expect(yield* entries(rolled.home)).toEqual(["npm.json", "package"]);
-          expect(yield* entries(finished.home)).toEqual(["npm.json", "package"]);
-          expect((yield* entries(root)).length).toBe(2);
           const rows = (yield* catalog.list).installations;
-          const rolledRow = rows.find((row) => row.installationId === rolled.installationId)!;
-          const finishedRow = rows.find((row) => row.installationId === finished.installationId)!;
-          // Rolled back: the old bytes and their consent again. Finished: the consented new bytes.
-          expect(rolledRow.source?.digest).toBe(rolled.oldDigest);
-          expect(pluginInstallationStatus(rolledRow)).toBe("disabled");
-          expect(finishedRow.source?.digest).toBe(finished.update.source.digest);
-          expect(pluginInstallationStatus(finishedRow)).toBe("disabled");
-          const record = fromJson(yield* fs.readFileString(path.join(finished.home, "npm.json")));
-          expect(record).toEqual({
-            source: expect.objectContaining({
-              version: "1.1.0",
-              integrity: finished.update.integrity,
-            }),
-          });
+          expect((yield* entries(root)).length).toBe(stages.length);
+          for (const { stage, installationId, home, oldDigest, update } of interrupted) {
+            // Rolled back before the consent: the old bytes, under the consent they kept.
+            // Finished after it: the consented new bytes. Only a swap that never stopped the
+            // plugin leaves it enabled.
+            const finished = stage === "consented" || stage === "recorded";
+            const version = finished ? "1.1.0" : "1.0.0";
+            const row = rows.find((item) => item.installationId === installationId)!;
+            expect(yield* entries(home), stage).toEqual(["npm.json", "package"]);
+            expect(
+              packages.find((item) => item.installationId === installationId)?.source,
+              stage,
+            ).toMatchObject({ version, ...(finished ? { integrity: update.integrity } : {}) });
+            const record = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+            expect(record, stage).toEqual({ source: expect.objectContaining({ version }) });
+            expect(row.source?.digest, stage).toBe(finished ? update.source.digest : oldDigest);
+            expect(pluginInstallationStatus(row), stage).toBe(
+              stage === "journaled" ? "enabled" : "disabled",
+            );
+          }
         }),
       ),
     );

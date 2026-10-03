@@ -18,10 +18,14 @@
  * - `.previous` the replaced version, only while an update is being applied.
  *
  * An update unpacks next to `package/` and leaves it running. Applying it
- * disables the installation, swaps the directories, and records consent to
- * the staged digest; that consent is the commit point. A failure before it
- * puts the old directory back. At startup a swap marker is finished when
- * the catalogue holds consent to the new digest and rolled back otherwise.
+ * first journals the swap in `npm.json`, then hands the catalogue one step
+ * (`PluginCatalog.replace`) that stops the installation, swaps the
+ * directories, and consents to the staged digest; that consent is the commit
+ * point, and a failure before it puts the old directory back. The journal is
+ * then settled from what the catalogue holds: finished when it has consent to
+ * the new digest, rolled back from `.previous` otherwise. Until settling
+ * works, the journal and `.previous` stay, and it is retried before every npm
+ * step, after every catalogue change, and at startup.
  *
  * Removing the installation from the catalogue deletes its `<key>` directory.
  */
@@ -33,7 +37,6 @@ import {
   PluginNpmSource,
   PluginNpmVersion,
   PluginSourceDigest,
-  type PluginInstallation,
   type PluginInstallationId,
   type PluginInstallationInput,
   type PluginInstallationManifest,
@@ -51,6 +54,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -163,6 +167,14 @@ interface Installed {
   readonly installationId: PluginInstallationId;
   source: PluginNpmSource;
   staged: { readonly update: PluginNpmStagedUpdate; readonly directory: string } | undefined;
+  /** A swap journaled in `npm.json` and not yet finished or rolled back. */
+  swap:
+    | {
+        readonly previous: PluginNpmSource;
+        readonly next: PluginNpmSource;
+        readonly digest: string;
+      }
+    | undefined;
 }
 
 const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
@@ -495,11 +507,19 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   const findInstalled = (installationId: PluginInstallationId) =>
     Effect.suspend(() => {
       const entry = installed.get(installationId);
-      return entry
-        ? Effect.succeed(entry)
-        : Effect.fail(
-            npmError("not-found", "That plugin was not installed from npm here.", installationId),
-          );
+      if (entry === undefined)
+        return Effect.fail(
+          npmError("not-found", "That plugin was not installed from npm here.", installationId),
+        );
+      if (entry.swap !== undefined)
+        return Effect.fail(
+          npmError(
+            "storage",
+            "An earlier update of this plugin could not be finished or undone yet. It is retried before each plugin change and when the server starts.",
+            installationId,
+          ),
+        );
+      return Effect.succeed(entry);
     });
 
   const catalogRow = (installationId: PluginInstallationId) =>
@@ -525,6 +545,63 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     }
   });
 
+  /**
+   * Finishes or rolls back a journaled swap from what is on disk and in the
+   * catalogue. Finished when the catalogue holds consent to the new digest
+   * and the new files are in place; otherwise `.previous` goes back. The
+   * journal and `.previous` stay until this has worked, so a failure is
+   * retried later and never loses a version.
+   */
+  const settle = Effect.fnUntraced(function* (entry: Installed) {
+    const swap = entry.swap;
+    if (swap === undefined) return;
+    const row = (yield* catalog.list).installations.find(
+      (item) => item.installationId === entry.installationId,
+    );
+    // Removed meanwhile: `collect` deletes the files.
+    if (row === undefined) return;
+    const previous = path.join(entry.home, ".previous");
+    const exists = (target: string) => fs.exists(target).pipe(Effect.catch(storageError));
+    if (row.consent?.digest === swap.digest && (yield* exists(entry.directory))) {
+      yield* writeRecord(entry.home, { source: swap.next });
+      entry.source = swap.next;
+      entry.swap = undefined;
+      yield* removeTree(previous);
+      return;
+    }
+    if (yield* exists(previous)) {
+      yield* fs
+        .remove(entry.directory, { recursive: true, force: true })
+        .pipe(Effect.andThen(fs.rename(previous, entry.directory)), Effect.catch(storageError));
+      yield* catalog.refresh({ installationId: entry.installationId }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not re-inspect a plugin after rolling back its update", {
+            installationId: entry.installationId,
+            detail: error.message,
+          }),
+        ),
+      );
+    }
+    yield* writeRecord(entry.home, { source: swap.previous });
+    entry.source = swap.previous;
+    entry.swap = undefined;
+  });
+
+  /** Retries every unsettled swap and every deletion that failed before. */
+  const tidy = Effect.gen(function* () {
+    for (const entry of installed.values())
+      if (entry.swap !== undefined)
+        yield* settle(entry).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not settle an interrupted plugin update; retrying later", {
+              installationId: entry.installationId,
+              detail: error.message,
+            }),
+          ),
+        );
+    yield* collect;
+  });
+
   /** Never waits for an install in progress; a package the catalogue no longer has is left out. */
   const list = Deferred.await(recovered).pipe(
     Effect.andThen(catalog.list),
@@ -542,7 +619,6 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
 
   const add = Effect.fn("PluginNpm.add")(function* (input: PluginNpmAddInput) {
     const registry = yield* normalizeRegistry(input.registry ?? defaultRegistry);
-    yield* collect;
     const existing = [...installed.values()].find(
       (entry) => entry.source.registry === registry && entry.source.name === input.name,
     );
@@ -577,6 +653,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           installationId: installation.installationId,
           source,
           staged: undefined,
+          swap: undefined,
         };
         installed.set(entry.installationId, entry);
         return { installation, package: toPackage(entry) };
@@ -626,17 +703,6 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     return { package: toPackage(entry) };
   });
 
-  /** Puts `.previous` back as the installed directory and lets the catalogue see it again. */
-  const rollBack = Effect.fnUntraced(function* (entry: Installed, wasEnabled: boolean) {
-    const previous = path.join(entry.home, ".previous");
-    yield* removeTree(entry.directory);
-    yield* fs.rename(previous, entry.directory).pipe(Effect.catch(storageError));
-    yield* writeRecord(entry.home, { source: entry.source });
-    yield* catalog.refresh({ installationId: entry.installationId });
-    // The old consent was never replaced, so the old bytes may run again as before.
-    if (wasEnabled) yield* catalog.enable({ installationId: entry.installationId });
-  });
-
   const applyUpdate = Effect.fn("PluginNpm.applyUpdate")(function* (
     input: PluginNpmApplyUpdateInput,
   ) {
@@ -663,8 +729,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         input.installationId,
       );
     }
-    const wasEnabled = (yield* catalogRow(input.installationId)).enabled;
-    const source: PluginNpmSource = {
+    const next: PluginNpmSource = {
       ...entry.source,
       version: staged.update.version,
       integrity: staged.update.integrity,
@@ -672,50 +737,56 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     };
     const previous = path.join(entry.home, ".previous");
 
-    if (wasEnabled) yield* catalog.disable({ installationId: input.installationId });
-    yield* removeTree(previous);
+    // Nothing is stopped or moved before the journal is written, so a failure up to here
+    // leaves the installed version running and the staged one ready to apply again.
+    yield* fs.remove(previous, { recursive: true, force: true }).pipe(Effect.catch(storageError));
     yield* writeRecord(entry.home, {
       source: entry.source,
-      swap: { source, digest: input.digest },
+      swap: { source: next, digest: input.digest },
     });
-    yield* fs.rename(entry.directory, previous).pipe(
-      Effect.catch(storageError),
-      // Nothing moved: only the marker and the disable need undoing.
-      Effect.tapError(() =>
-        writeRecord(entry.home, { source: entry.source }).pipe(
-          Effect.andThen(
-            wasEnabled ? catalog.enable({ installationId: input.installationId }) : Effect.void,
+    entry.swap = { previous: entry.source, next, digest: input.digest };
+
+    let movedOld = false;
+    let movedNew = false;
+    const replaced = yield* catalog
+      .replace(
+        { installationId: input.installationId, digest: input.digest },
+        {
+          swap: fs.rename(entry.directory, previous).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                movedOld = true;
+              }),
+            ),
+            Effect.andThen(fs.rename(staged.directory, entry.directory)),
+            Effect.andThen(
+              Effect.sync(() => {
+                movedNew = true;
+              }),
+            ),
+            Effect.catch(storageError),
           ),
-          Effect.ignore,
-        ),
+          restore: Effect.suspend(() =>
+            movedOld
+              ? fs
+                  .remove(entry.directory, { recursive: true, force: true })
+                  .pipe(Effect.andThen(fs.rename(previous, entry.directory)))
+              : Effect.void,
+          ).pipe(Effect.catch(storageError)),
+        },
+      )
+      .pipe(Effect.exit);
+    // Staged files that never moved can be applied again.
+    if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
+    yield* settle(entry).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not settle a plugin update; retrying later", {
+          installationId: entry.installationId,
+          detail: error.message,
+        }),
       ),
     );
-    entry.staged = undefined;
-    const swapped = yield* fs.rename(staged.directory, entry.directory).pipe(
-      Effect.catch(storageError),
-      // Consent to the staged digest is the commit point: before it, any failure restores the old version.
-      Effect.andThen(
-        catalog.consent({ installationId: input.installationId, digest: input.digest }),
-      ),
-      Effect.tapError(() =>
-        rollBack(entry, wasEnabled).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not restore a plugin after a failed update", {
-              installationId: entry.installationId,
-              detail: error.message,
-            }),
-          ),
-        ),
-      ),
-      Effect.onError(() => removeTree(staged.directory)),
-    );
-    entry.source = source;
-    // A failed write leaves the swap marker, which startup finishes because the consent matches.
-    yield* writeRecord(entry.home, { source }).pipe(Effect.ignore);
-    yield* removeTree(previous);
-    const installation: PluginInstallation = wasEnabled
-      ? (yield* catalog.enable({ installationId: input.installationId })).installation
-      : swapped.installation;
+    const { installation } = yield* replaced;
     return { installation, package: toPackage(entry) };
   });
 
@@ -729,61 +800,52 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
 
   /**
    * Reads what was installed before this start: staging directories are
-   * deleted, an interrupted update swap is finished or rolled back, and a
-   * directory the catalogue no longer has is deleted.
+   * deleted, an interrupted update swap is settled, and a directory the
+   * catalogue no longer has is deleted.
    */
   const recover = Effect.gen(function* () {
     const snapshot = yield* catalog.list;
     const byDirectory = new Map(snapshot.installations.map((row) => [row.directory, row]));
-    const refreshed: Array<PluginInstallationId> = [];
     const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
     for (const name of names) {
       const home = path.join(root, name);
       const directory = path.join(home, "package");
-      const inside = yield* fs.readDirectory(home).pipe(Effect.orElseSucceed(() => []));
-      for (const child of inside)
-        if (child.startsWith(".staging-") || child.startsWith(".npm.json.tmp"))
-          yield* removeTree(path.join(home, child));
-      const record = yield* readRecord(home);
       const row = byDirectory.get(directory);
       if (row === undefined) {
         // Removed from the catalogue, or interrupted before it was added.
         yield* removeTree(home);
         continue;
       }
+      const record = yield* readRecord(home);
       if (Option.isNone(record)) {
         yield* Effect.logWarning("Leaving an npm plugin directory whose npm.json is unreadable", {
           directory,
         });
         continue;
       }
-      let source = record.value.source;
-      const swap = record.value.swap;
-      if (swap !== undefined) {
-        const previous = path.join(home, ".previous");
+      const { source, swap } = record.value;
+      const inside = yield* fs.readDirectory(home).pipe(Effect.orElseSucceed(() => []));
+      for (const child of inside)
         if (
-          row.consent?.digest === swap.digest &&
-          (yield* fs.exists(directory).pipe(Effect.orElseSucceed(() => false)))
-        ) {
-          source = swap.source;
-        } else if (yield* fs.exists(previous).pipe(Effect.orElseSucceed(() => false))) {
-          yield* removeTree(directory);
-          yield* fs.rename(previous, directory).pipe(Effect.ignore);
-          refreshed.push(row.installationId);
-        }
-        yield* writeRecord(home, { source }).pipe(Effect.ignore);
-        yield* removeTree(previous);
-      }
+          child.startsWith(".staging-") ||
+          child.startsWith(".npm.json.tmp") ||
+          // Left by a finished update; an unfinished one still needs it.
+          (child === ".previous" && swap === undefined)
+        )
+          yield* removeTree(path.join(home, child));
       installed.set(row.installationId, {
         home,
         directory,
         installationId: row.installationId,
         source,
         staged: undefined,
+        swap:
+          swap === undefined
+            ? undefined
+            : { previous: source, next: swap.source, digest: swap.digest },
       });
     }
-    for (const installationId of refreshed)
-      yield* catalog.refresh({ installationId }).pipe(Effect.ignore);
+    yield* tidy;
   });
 
   // Taken before any request can be, so requests wait for recovery.
@@ -792,11 +854,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     .pipe(Effect.forkIn(scope, { startImmediately: true }));
   // A removal through `plugins.remove` deletes the package's files.
   yield* catalog.subscribe.pipe(
-    Stream.runForEach(() => lock.withPermit(collect)),
+    Stream.runForEach(() => lock.withPermit(tidy)),
     Effect.forkIn(scope, { startImmediately: true }),
   );
 
-  const managed = <A, E>(effect: Effect.Effect<A, E>) => lock.withPermit(effect);
+  const managed = <A, E>(effect: Effect.Effect<A, E>) =>
+    lock.withPermit(tidy.pipe(Effect.andThen(effect)));
 
   return PluginNpm.of({
     list,
