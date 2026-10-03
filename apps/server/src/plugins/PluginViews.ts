@@ -142,7 +142,7 @@ export const make = Effect.fn("PluginViews.make")(function* () {
       try: () => utf8.decode(bytes),
       catch: () => fail("is not valid UTF-8."),
     });
-    if (text.startsWith("﻿")) return yield* fail("starts with a byte order mark.");
+    if (text.charCodeAt(0) === 0xfeff) return yield* fail("starts with a byte order mark.");
     if ((kind === "script" ? UNSAFE_SCRIPT : UNSAFE_STYLE).test(text))
       return yield* fail(
         kind === "script"
