@@ -8,22 +8,31 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { useAtomRefresh } from "@effect/atom-react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   type PluginInstallation,
   type PluginInstallationId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
+  canManagePlugins,
   describePluginSource,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
   PLUGIN_MANAGE_ACCESS_REQUIRED,
+  PLUGIN_MANAGE_ACCESS_UNREADABLE,
+  pluginAddDirectory,
   pluginCommandErrorMessage,
   pluginDirectoryLocation,
+  pluginManagementNotice,
   pluginTrustStatement,
   presentPluginInstallation,
+  resolvePluginCatalogState,
+  resolvePluginDetail,
   resolvePluginManageAccess,
+  type PluginAddedMarker,
+  type PluginDetailState,
   type PluginManageAccess,
   type PluginStateTone,
 } from "@t3tools/client-runtime/state/pluginPresentation";
@@ -39,7 +48,7 @@ import { usePrimarySessionState } from "../../environments/primary";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { pluginEnvironment } from "../../state/plugins";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentSessionState } from "../../state/session";
+import { environmentSession, useEnvironmentSessionState } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -142,7 +151,7 @@ function PluginEnvironmentSection({
   if (environment.entry.target._tag === "PrimaryConnectionTarget") {
     // The desktop app owns its primary server outright; a browser checks its cookie session.
     return isElectron ? (
-      <PluginEnvironmentCatalog environment={environment} access="granted" />
+      <PluginEnvironmentCatalog environment={environment} access="granted" onRetryAccess={null} />
     ) : (
       <PrimaryPluginEnvironmentSection environment={environment} />
     );
@@ -161,7 +170,13 @@ function PrimaryPluginEnvironmentSection({
     isPending: session.isPending,
     hasError: session.error !== null,
   });
-  return <PluginEnvironmentCatalog environment={environment} access={access} />;
+  return (
+    <PluginEnvironmentCatalog
+      environment={environment}
+      access={access}
+      onRetryAccess={session.refresh}
+    />
+  );
 }
 
 function RemotePluginEnvironmentSection({
@@ -170,20 +185,31 @@ function RemotePluginEnvironmentSection({
   readonly environment: EnvironmentPresentation;
 }) {
   const session = useEnvironmentSessionState(environment.environmentId);
+  const refreshSession = useAtomRefresh(
+    environmentSession.sessionStateAtom(environment.environmentId),
+  );
   const access = resolvePluginManageAccess({
     session: session.data,
     isPending: session.isPending,
     hasError: session.hasError,
   });
-  return <PluginEnvironmentCatalog environment={environment} access={access} />;
+  return (
+    <PluginEnvironmentCatalog
+      environment={environment}
+      access={access}
+      onRetryAccess={refreshSession}
+    />
+  );
 }
 
 function PluginEnvironmentCatalog({
   environment,
   access,
+  onRetryAccess,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly access: PluginManageAccess;
+  readonly onRetryAccess: (() => void) | null;
 }) {
   const connected =
     environment.connection.phase === "connected" && environment.serverConfig !== null;
@@ -192,20 +218,25 @@ function PluginEnvironmentCatalog({
       ? pluginEnvironment.catalog({ environmentId: environment.environmentId, input: {} })
       : null,
   );
+  // The add reply resolves after the render that sent it; read the newest snapshot then.
+  const latestCatalog = useRef(catalog.data);
+  useEffect(() => {
+    latestCatalog.current = catalog.data;
+  });
   const [adding, setAdding] = useState(false);
-  // `added` covers the moment between the add reply and the snapshot that lists it.
   const [reviewing, setReviewing] = useState<{
     readonly installationId: PluginInstallationId;
-    readonly added: PluginInstallation | null;
+    readonly added: PluginAddedMarker | null;
   } | null>(null);
-  const view = catalog.data;
-  const installations = view?._tag === "available" ? view.installations : null;
-  const reviewed = reviewing
-    ? (installations?.find((entry) => entry.installationId === reviewing.installationId) ?? null)
-    : null;
-  if (reviewing?.added && reviewed) setReviewing({ ...reviewing, added: null });
-  if (view?._tag === "unsupported") return null;
-  const canManage = access === "granted";
+  const catalogState = resolvePluginCatalogState({
+    connected,
+    data: catalog.data,
+    error: catalog.error,
+  });
+  if (catalogState._tag === "unsupported") return null;
+  const installations = catalogState._tag === "available" ? catalogState.view.installations : null;
+  const canManage = canManagePlugins(access, catalogState);
+  const notice = pluginManagementNotice(access, catalogState, environment.label);
   return (
     <>
       <SettingsSection
@@ -220,7 +251,7 @@ function PluginEnvironmentCatalog({
           <Button
             size="xs"
             variant="ghost-muted"
-            disabled={!canManage || installations === null}
+            disabled={!canManage}
             onClick={() => setAdding(true)}
           >
             <PlusIcon className="size-3" />
@@ -228,19 +259,39 @@ function PluginEnvironmentCatalog({
           </Button>
         }
       >
-        {!connected ? (
+        {catalogState._tag === "disconnected" ? (
           <SettingsRow
             title="Environment disconnected"
             description={`Reconnect ${environment.label} to manage its plugins.`}
           />
-        ) : catalog.error ? (
-          <SettingsRow title="Could not load plugins" description={catalog.error} />
+        ) : catalogState._tag === "failed" ? (
+          <SettingsRow
+            title="Could not load plugins"
+            description={catalogState.message}
+            control={
+              <Button size="sm" variant="outline" onClick={catalog.refresh}>
+                Retry
+              </Button>
+            }
+          />
         ) : installations === null ? (
           <SettingsRow title="Loading plugins…" role="status" />
         ) : (
           <>
             {access === "denied" ? (
               <SettingsRow title="View only" description={PLUGIN_MANAGE_ACCESS_REQUIRED} />
+            ) : access === "unreadable" ? (
+              <SettingsRow
+                title="View only"
+                description={PLUGIN_MANAGE_ACCESS_UNREADABLE}
+                control={
+                  onRetryAccess ? (
+                    <Button size="sm" variant="outline" onClick={onRetryAccess}>
+                      Retry
+                    </Button>
+                  ) : null
+                }
+              />
             ) : null}
             {installations.length === 0 ? (
               <SettingsRow
@@ -266,18 +317,29 @@ function PluginEnvironmentCatalog({
       {adding ? (
         <AddPluginDialog
           environment={environment}
+          canManage={canManage}
+          notice={notice}
           onClose={() => setAdding(false)}
           onAdded={(installation) => {
             setAdding(false);
-            setReviewing({ installationId: installation.installationId, added: installation });
+            setReviewing({
+              installationId: installation.installationId,
+              added: { snapshot: latestCatalog.current, installation },
+            });
           }}
         />
       ) : null}
       {reviewing !== null ? (
         <PluginReviewDialog
           environment={environment}
-          installation={reviewed ?? reviewing.added}
+          detail={resolvePluginDetail({
+            catalog: catalogState,
+            installationId: reviewing.installationId,
+            added: reviewing.added,
+          })}
           canManage={canManage}
+          notice={notice}
+          onRetry={catalog.refresh}
           onClose={() => setReviewing(null)}
         />
       ) : null}
@@ -454,12 +516,17 @@ function PluginRow({
   );
 }
 
-function AddPluginDialog({
+export function AddPluginDialog({
   environment,
+  canManage,
+  notice,
   onClose,
   onAdded,
 }: {
   readonly environment: EnvironmentPresentation;
+  /** Read at submit time, so a dialog that lost authority while open sends nothing. */
+  readonly canManage: boolean;
+  readonly notice: string | null;
   readonly onClose: () => void;
   readonly onAdded: (installation: PluginInstallation) => void;
 }) {
@@ -475,8 +542,8 @@ function AddPluginDialog({
       ? "this-device"
       : "unknown";
   const submit = async () => {
-    const trimmed = directory.trim();
-    if (busy || trimmed.length === 0) return;
+    const trimmed = pluginAddDirectory({ canManage, busy, directory });
+    if (trimmed === null) return;
     setBusy(true);
     setError(null);
     const outcome = await settle(
@@ -516,13 +583,14 @@ function AddPluginDialog({
               placeholder="/path/to/plugin"
               maxLength={4096}
               value={directory}
-              disabled={busy}
+              disabled={busy || !canManage}
               onChange={(event) => setDirectory(event.target.value)}
             />
             <p className="text-sm text-muted-foreground">
               {pluginDirectoryLocation(environment.label, device)}
             </p>
             <p className="text-sm text-muted-foreground">{PLUGIN_DIRECTORY_GUIDANCE}</p>
+            {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
             {error ? (
               <p role="alert" className="text-sm text-destructive">
                 {error}
@@ -536,7 +604,7 @@ function AddPluginDialog({
           </DialogClose>
           <Button
             size="sm"
-            disabled={busy || directory.trim().length === 0}
+            disabled={pluginAddDirectory({ canManage, busy, directory }) === null}
             onClick={() => void submit()}
           >
             Add and review
@@ -565,16 +633,21 @@ function ReviewField({
 /** Details of one installation; for one that needs consent, the consent screen. */
 function PluginReviewDialog({
   environment,
-  installation,
+  detail,
   canManage,
+  notice,
+  onRetry,
   onClose,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly installation: PluginInstallation | null;
+  readonly detail: PluginDetailState;
   readonly canManage: boolean;
+  readonly notice: string | null;
+  readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
   const checkboxId = useId();
+  const installation = detail._tag === "found" ? detail.installation : null;
   // The digest the user acknowledged; new bytes need a new acknowledgement.
   const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -586,7 +659,7 @@ function PluginReviewDialog({
   const acknowledged = digest !== null && trustedDigest === digest;
 
   const approve = async () => {
-    if (!installation || digest === null || !acknowledged || busy) return;
+    if (!installation || digest === null || !acknowledged || busy || !canManage) return;
     const target = {
       environmentId: environment.environmentId,
       input: { installationId: installation.installationId },
@@ -616,20 +689,28 @@ function PluginReviewDialog({
       <DialogPopup className="max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {view === null
-              ? "Plugin removed"
-              : view.canReview
+            {view !== null
+              ? view.canReview
                 ? `Review ${view.title}`
-                : view.title}
+                : view.title
+              : detail._tag === "missing"
+                ? "Plugin removed"
+                : "Plugin"}
           </DialogTitle>
           <DialogDescription>
-            {installation === null || view === null
-              ? `This plugin is no longer installed on ${environment.label}.`
-              : !view.canReview
+            {installation !== null && view !== null
+              ? !view.canReview
                 ? `${view.stateLabel} on ${environment.label}.`
                 : installation.consent === null
                   ? `Approve these exact files to run this plugin on ${environment.label}.`
-                  : "Its files changed since you approved it. Approve the new files to run it again."}
+                  : "Its files changed since you approved it. Approve the new files to run it again."
+              : detail._tag === "missing"
+                ? `This plugin is no longer installed on ${environment.label}.`
+                : detail._tag === "failed"
+                  ? `Could not load the current plugins from ${environment.label}: ${detail.message}`
+                  : detail._tag === "loading"
+                    ? "Loading plugin…"
+                    : notice}
           </DialogDescription>
         </DialogHeader>
         {installation !== null && view !== null ? (
@@ -697,20 +778,19 @@ function PluginReviewDialog({
                       <p>{PLUGIN_DIGEST_STATEMENT}</p>
                     </AlertDescription>
                   </Alert>
-                  {canManage ? (
+                  {canManage || acknowledged ? (
                     <label htmlFor={checkboxId} className="flex items-start gap-2 text-sm">
                       <Checkbox
                         id={checkboxId}
                         className="mt-0.5"
                         checked={acknowledged}
-                        disabled={busy || digest === null}
+                        disabled={busy || digest === null || !canManage}
                         onCheckedChange={(checked) => setTrustedDigest(checked ? digest : null)}
                       />
                       I trust this code to run as my user on {environment.label}
                     </label>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">{PLUGIN_MANAGE_ACCESS_REQUIRED}</p>
-                  )}
+                  ) : null}
+                  {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
                 </>
               ) : (
                 <p className="text-sm text-muted-foreground">
@@ -726,6 +806,11 @@ function PluginReviewDialog({
           </DialogPanel>
         ) : null}
         <DialogFooter>
+          {detail._tag === "failed" ? (
+            <Button size="sm" variant="outline" onClick={onRetry}>
+              Retry
+            </Button>
+          ) : null}
           {view?.canReview ? (
             <>
               <DialogClose render={<Button variant="outline" size="sm" disabled={busy} />}>
