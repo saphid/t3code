@@ -311,10 +311,16 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
             changes: [
               { key: "token", value: null },
               { key: "retries", value: null },
+              { key: "verbose", value: null },
             ],
           });
           expect(cleared.secrets).toEqual([]);
           expect(valueOf(cleared, "retries")).toBeUndefined();
+          // A reset boolean keeps no override, so the plugin reads whatever its default is.
+          expect(valueOf(cleared, "verbose")).toBeUndefined();
+          expect(yield* catalog.invoke(installationId, "read", { key: "verbose" })).toEqual({
+            value: false,
+          });
           expect(secrets.entries.size).toBe(0);
           expect(yield* catalog.invoke(installationId, "read", { key: "token" })).toEqual({
             unset: true,
