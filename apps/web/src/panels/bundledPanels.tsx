@@ -1,25 +1,46 @@
+import { FileDiff, Globe2 } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
+
+import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { usePanelHost } from "./panelHost";
-import { createPanelRegistry, type PanelProps } from "./panelRegistry";
+import { createPanelRegistry, type PanelMetadata, type PanelProps } from "./panelRegistry";
 
 const bundledPanels = createPanelRegistry([
   {
     id: "diff",
     title: "Diff",
+    icon: FileDiff,
     placement: "side-panel",
+    launcherKey: "D",
+    toggleCommand: "diff.toggle",
+    unavailableHint: "Available for Git repositories.",
+    unavailableReason: "Diff is only available for server threads in Git repositories.",
     load: () => import("./diff/DiffSidePanel"),
   },
   {
     id: "preview",
     title: "Browser",
+    icon: Globe2,
     placement: "side-panel",
+    launcherKey: "B",
+    toggleCommand: "preview.toggle",
+    isSupported: isPreviewSupportedInRuntime,
+    unavailableHint: "Only available in the desktop app.",
+    unavailableReason: "Browser previews are only available in the T3 Code desktop app.",
     load: () => import("./preview/PreviewSidePanel"),
   },
 ]);
 
-type SidePanel = NonNullable<ReturnType<typeof bundledPanels.get>>;
+export type SidePanelId = (typeof bundledPanels.definitions)[number]["id"];
+
+/** Metadata for launchers and tabs; reading it never loads a panel body. */
+export function getSidePanelMetadata(id: SidePanelId): PanelMetadata {
+  return bundledPanels.get(id);
+}
+
+type SidePanel = ReturnType<typeof bundledPanels.get>;
 type SidePanelPropKey = SidePanel extends infer Panel
   ? Panel extends SidePanel
     ? keyof PanelProps<Panel>
@@ -41,7 +62,6 @@ export type RegisteredSidePanelProps = SidePanel extends infer Panel
 export function RegisteredSidePanel({ id, ...props }: RegisteredSidePanelProps) {
   const { threadRef, surfaceId } = usePanelHost();
   const panel = bundledPanels.get(id);
-  if (!panel) throw new Error(`Unknown panel id: ${id}`);
   // The union caller already paired id with its props; destructuring loses that correlation.
   const Component = panel.Component as ComponentType<typeof props>;
   return (

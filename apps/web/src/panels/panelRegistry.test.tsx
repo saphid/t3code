@@ -4,12 +4,35 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createPanelRegistry } from "./panelRegistry";
 
+const metadata = {
+  icon: () => null,
+  placement: "side-panel",
+  launcherKey: "X",
+  toggleCommand: "diff.toggle",
+  unavailableHint: "Unavailable.",
+  unavailableReason: "Unavailable here.",
+} as const;
+
 // These exercise lazy evaluation and actual mount/disposal, without inspecting markup.
 describe("panel registry", () => {
   it("rejects duplicate ids without loading either panel", () => {
     const load = vi.fn();
-    const definition = { id: "diff", title: "Diff", placement: "side-panel", load } as const;
+    const definition = { ...metadata, id: "diff", title: "Diff", load } as const;
     expect(() => createPanelRegistry([definition, definition])).toThrow("Duplicate panel id: diff");
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("refuses reserved placements", () => {
+    const load = vi.fn();
+    const dock = {
+      ...metadata,
+      id: "dock",
+      title: "Dock",
+      placement: "bottom-dock",
+      load,
+    } as const;
+    // @ts-expect-error Only side panels have a host today.
+    expect(() => createPanelRegistry([dock])).toThrow("unsupported placement: bottom-dock");
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -28,11 +51,9 @@ describe("panel registry", () => {
       return null;
     }
     const load = vi.fn(() => loaded);
-    const registry = createPanelRegistry([
-      { id: "diff", title: "Diff", placement: "side-panel", load },
-    ]);
+    const registry = createPanelRegistry([{ ...metadata, id: "diff", title: "Diff", load }]);
     expect(load).not.toHaveBeenCalled();
-    const Component = registry.get("diff")!.Component;
+    const Component = registry.get("diff").Component;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
@@ -74,10 +95,10 @@ describe("panel registry", () => {
     const loadNotes = vi.fn(async () => ({ default: Notes }));
     const loadCounter = vi.fn(async () => ({ default: Counter }));
     const registry = createPanelRegistry([
-      { id: "notes", title: "Notes", placement: "side-panel", load: loadNotes },
-      { id: "counter", title: "Counter", placement: "side-panel", load: loadCounter },
+      { ...metadata, id: "notes", title: "Notes", load: loadNotes },
+      { ...metadata, id: "counter", title: "Counter", load: loadCounter },
     ]);
-    const NotesPanel = registry.get("notes")!.Component;
+    const NotesPanel = registry.get("notes").Component;
     // Compile-only: the project typecheck rejects these pairings.
     const compileOnly = () => [
       // @ts-expect-error Missing required text.
@@ -88,7 +109,7 @@ describe("panel registry", () => {
       registry.get("missing"),
     ];
     expect(compileOnly).toBeTypeOf("function");
-    expect(registry.get("notes")!.Component).toBe(NotesPanel);
+    expect(registry.get("notes").Component).toBe(NotesPanel);
     expect(loadNotes).not.toHaveBeenCalled();
     expect(loadCounter).not.toHaveBeenCalled();
 
@@ -111,7 +132,7 @@ describe("panel registry", () => {
     expect(loadCounter).not.toHaveBeenCalled();
     expect(events).toEqual(["mount notes:a"]);
 
-    const CounterPanel = registry.get("counter")!.Component;
+    const CounterPanel = registry.get("counter").Component;
     await act(async () => {
       renderer.update(
         <Suspense fallback={null}>
@@ -121,6 +142,6 @@ describe("panel registry", () => {
     });
     expect(loadCounter).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["mount notes:a", "dispose notes", "mount counter:2"]);
-    expect(registry.get("counter")!.Component).toBe(CounterPanel);
+    expect(registry.get("counter").Component).toBe(CounterPanel);
   });
 });
