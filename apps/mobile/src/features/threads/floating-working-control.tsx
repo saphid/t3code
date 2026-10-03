@@ -390,8 +390,10 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="waiting"
         accessibilityLabel={props.status.accessibilityLabel}
+        accessibilityRole="button"
         className="gap-2"
         onLayout={props.onLayout}
+        onPress={props.status.onPress}
       >
         <SymbolView
           name={{ ios: "bolt", android: "bolt" }}

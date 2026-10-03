@@ -298,6 +298,11 @@ export interface PendingBackgroundWorkItem {
   readonly label: string;
   /** A subagent's own thread, when it has one. */
   readonly childThreadId: ThreadId | undefined;
+  /** "Monitor", "Command": what the work is, for its details line. */
+  readonly kindLabel: string;
+  /** The shell command it runs, when that adds to the label. */
+  readonly command: string | undefined;
+  readonly startedAt: string | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
@@ -332,14 +337,17 @@ export function presentPendingBackgroundWork(
         task.kind === "subagent" && description !== undefined
           ? formatSubagentDisplayTitle(description).trim()
           : description;
+      const { singular } = BACKGROUND_WORK_KINDS[task.kind];
+      const name = label === undefined || label.length === 0 ? singular : label;
       return {
         taskId: task.taskId,
         kind: task.kind,
-        label:
-          label === undefined || label.length === 0
-            ? BACKGROUND_WORK_KINDS[task.kind].singular
-            : label,
+        label: name,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
+        kindLabel: `${singular.charAt(0).toUpperCase()}${singular.slice(1)}`,
+        // A command named by its own text needs no second copy.
+        command: task.command === name ? undefined : task.command,
+        startedAt: task.startedAt,
       };
     })
     // `map` returned a new array; Hermes has no `toSorted`.
@@ -367,6 +375,20 @@ export function presentPendingBackgroundWork(
     return `${count} ${count === 1 ? singular : plural}`;
   });
   return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+}
+
+/** "Monitor · running 2h 14m": one item's details line, read at `nowMs`. */
+export function formatPendingBackgroundWorkStatus(
+  item: Pick<PendingBackgroundWorkItem, "kindLabel" | "startedAt">,
+  nowMs: number,
+): string {
+  const startedMs = item.startedAt === undefined ? Number.NaN : Date.parse(item.startedAt);
+  if (!Number.isFinite(startedMs)) return `${item.kindLabel} · running`;
+  // Whole minutes past the first: a details line is read, not watched.
+  const elapsedMs = Math.max(0, nowMs - startedMs);
+  const unitMs = elapsedMs < 60_000 ? 1_000 : 60_000;
+  const rounded = Math.floor(elapsedMs / unitMs) * unitMs;
+  return `${item.kindLabel} · running ${formatDuration(Math.max(1_000, rounded))}`;
 }
 
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */

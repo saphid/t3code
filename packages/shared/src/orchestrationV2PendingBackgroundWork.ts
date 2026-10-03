@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -47,6 +48,18 @@ const SETTLED_FOR_BACKGROUND_WAIT_RUN_STATUSES = new Set<OrchestrationV2Run["sta
 void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
+
+// Rosters ride along on every thread shell, so a long script must not.
+const MAX_BACKGROUND_COMMAND_LENGTH = 500;
+
+/** A command as a roster carries it: trimmed and capped, or undefined when empty. */
+export function backgroundWorkCommand(command: string | undefined): string | undefined {
+  const trimmed = command?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return undefined;
+  return trimmed.length <= MAX_BACKGROUND_COMMAND_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, MAX_BACKGROUND_COMMAND_LENGTH - 1).trimEnd()}…`;
+}
 
 /**
  * Whether a turn-item update can end background work that a settled run is
@@ -102,6 +115,7 @@ type PendingBackgroundWorkTurnItem = {
     readonly nativeId: string | null;
   } | null;
   readonly input?: unknown;
+  readonly startedAt?: OrchestrationV2TurnItem["startedAt"];
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
 };
@@ -143,12 +157,30 @@ function descriptionFromTurnItem(item: PendingBackgroundWorkTurnItem): string | 
   return undefined;
 }
 
+function commandFromTurnItem(item: PendingBackgroundWorkTurnItem): string | undefined {
+  if (item.type === "command_execution" && typeof item.input === "string") {
+    return backgroundWorkCommand(item.input);
+  }
+  if (item.type === "dynamic_tool" && item.input !== null && typeof item.input === "object") {
+    const command = Reflect.get(item.input, "command");
+    return typeof command === "string" ? backgroundWorkCommand(command) : undefined;
+  }
+  return undefined;
+}
+
 function pendingTaskFromTurnItem(
   taskId: string,
   item: PendingBackgroundWorkTurnItem,
 ): PendingBackgroundWorkTask {
   const description = descriptionFromTurnItem(item);
-  const named = { taskId, ...(description === undefined ? {} : { description }) };
+  const command = commandFromTurnItem(item);
+  const named = {
+    taskId,
+    ...(description === undefined ? {} : { description }),
+    // An untitled command is already named by its own text.
+    ...(command === undefined || command === description ? {} : { command }),
+    ...(item.startedAt == null ? {} : { startedAt: DateTime.formatIso(item.startedAt) }),
+  };
   switch (item.type) {
     case "subagent":
       return {

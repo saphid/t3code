@@ -30,7 +30,10 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
-import { presentPendingBackgroundWork } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  formatPendingBackgroundWorkStatus,
+  presentPendingBackgroundWork,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import {
   formatModelSelectionEffort,
@@ -479,6 +482,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         accessibilityLabel: `${pendingBackgroundWork.title}: ${pendingBackgroundWork.items
           .map((item) => item.label)
           .join(", ")}`,
+        onPress: () => {
+          const nowMs = Date.now();
+          Alert.alert(
+            pendingBackgroundWork.title,
+            pendingBackgroundWork.items
+              .map((item) =>
+                [item.label, formatPendingBackgroundWorkStatus(item, nowMs), item.command]
+                  .filter((line) => line !== undefined)
+                  .join("\n"),
+              )
+              .join("\n\n"),
+          );
+        },
       };
     }
     return null;

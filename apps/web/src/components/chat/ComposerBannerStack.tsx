@@ -17,6 +17,8 @@ export interface ComposerBannerStackItem {
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
+  /** Shown in the details popup in place of the description, which keeps the popup reachable. */
+  readonly details?: ReactNode;
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
   readonly dismissLabel?: string;
@@ -242,8 +244,16 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   );
 }
 
-/** Keep full descriptions reachable only when their inline copy is clipped. */
-function NoticeDescription({ children, compact }: { children: ReactNode; compact?: boolean }) {
+/** Keep full descriptions reachable when their inline copy is clipped, or details always. */
+function NoticeDescription({
+  children,
+  details,
+  compact,
+}: {
+  children: ReactNode;
+  details?: ReactNode;
+  compact?: boolean;
+}) {
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -286,7 +296,7 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
       >
         {children}
       </span>
-      {showDetails ? (
+      {showDetails || details !== undefined ? (
         <Popover>
           <PopoverTrigger
             openOnHover
@@ -309,7 +319,7 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
             className="max-w-80 whitespace-normal wrap-anywhere"
           >
             <ComposerBanner.Scroll className="max-h-[min(var(--available-height),24rem,40dvh)]">
-              {children}
+              {details ?? children}
             </ComposerBanner.Scroll>
           </PopoverPopup>
         </Popover>
@@ -353,8 +363,8 @@ function ComposerBannerStackAlert({
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
           <span className="min-w-0 truncate font-medium leading-7 sm:leading-6">{item.title}</span>
-          {item.description ? (
-            <NoticeDescription compact={item.compact ?? false}>
+          {item.description || item.details !== undefined ? (
+            <NoticeDescription compact={item.compact ?? false} details={item.details}>
               {item.description}
             </NoticeDescription>
           ) : null}
