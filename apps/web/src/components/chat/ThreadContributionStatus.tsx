@@ -48,7 +48,7 @@ export function ContributionStatusChips(props: {
         render={
           <button
             type="button"
-            aria-label={`Provider status: ${chips.map((chip) => chip.text).join(", ")}`}
+            aria-label={`Thread status: ${chips.map((chip) => chip.text).join(", ")}`}
             data-thread-contribution-status
             className="relative flex min-w-0 max-w-[45%] shrink cursor-pointer items-center gap-1 rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11"
           />
@@ -94,7 +94,7 @@ export function ContributionStatusChips(props: {
 }
 
 /**
- * Advisory statuses a provider (today, Pi extensions) set on the open thread.
+ * Advisory statuses a provider (today, Pi extensions) or a plugin set on the open thread.
  * Renders nothing when there are none or the server predates the channel.
  */
 export const ThreadContributionStatus = memo(function ThreadContributionStatus(props: {
