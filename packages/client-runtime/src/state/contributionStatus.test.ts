@@ -1,5 +1,6 @@
 import {
   type ContributionStatusSnapshot,
+  contributionStatusSourceKey,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -31,20 +32,20 @@ import { createContributionStatusEnvironmentAtoms } from "./contributionStatus.t
 
 const THREAD = ThreadId.make("thread-1");
 
-const snapshot = (text: string): ContributionStatusSnapshot => ({
-  threads: [
-    {
-      threadId: THREAD,
-      source: {
-        kind: "provider-session",
-        providerSessionId: ProviderSessionId.make(`session-${text}`),
-        providerInstanceId: ProviderInstanceId.make("pi"),
-        driver: ProviderDriverKind.make("pi"),
-      },
-      items: [{ key: "mode", text }],
-    },
-  ],
+const OTHER_THREAD = ThreadId.make("thread-2");
+
+const entry = (text: string, session = `session-${text}`, threadId = THREAD) => ({
+  threadId,
+  source: {
+    kind: "provider-session" as const,
+    providerSessionId: ProviderSessionId.make(session),
+    providerInstanceId: ProviderInstanceId.make("pi"),
+    driver: ProviderDriverKind.make("pi"),
+  },
+  items: [{ key: "mode", text }],
 });
+
+const snapshot = (text: string): ContributionStatusSnapshot => ({ entries: [entry(text)] });
 
 const config = (contributionStatus: boolean) =>
   ({
@@ -141,25 +142,27 @@ const makeHarness = Effect.fn("makeHarness")(function* () {
   const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
     Effect.sync(() => registry.dispose()),
   );
+  const texts = (environmentId: EnvironmentId) =>
+    registry
+      .get(atoms.threadStatus(environmentId, THREAD))
+      .flatMap((entry) => entry.items.map((item) => item.text));
   /** Waits until a thread's rendered texts match, the client-side receipt for a frame. */
-  const waitForTexts = (environmentId: EnvironmentId, texts: ReadonlyArray<string>) =>
-    AtomRegistry.toStream(registry, atoms.threadItems(environmentId, THREAD)).pipe(
-      Stream.filter(
-        (items) =>
-          items.length === texts.length && items.every((item, index) => item.text === texts[index]),
-      ),
+  const waitForTexts = (environmentId: EnvironmentId, expected: ReadonlyArray<string>) =>
+    AtomRegistry.toStream(registry, atoms.threadStatus(environmentId, THREAD)).pipe(
+      Stream.map((entries) => entries.flatMap((entry) => entry.items.map((item) => item.text))),
+      Stream.filter((actual) => actual.join("\n") === expected.join("\n")),
       Stream.runHead,
     );
-  return { environments, atoms, registry, waitForTexts };
+  return { environments, atoms, registry, texts, waitForTexts };
 });
 
 it.effect("keeps each environment's statuses apart and replaces them on reconnect", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { environments, atoms, registry, waitForTexts } = yield* makeHarness();
+      const { environments, atoms, registry, texts, waitForTexts } = yield* makeHarness();
       const [a, b] = environments;
-      const unmountA = registry.mount(atoms.threadItems(a.environmentId, THREAD));
-      const unmountB = registry.mount(atoms.threadItems(b.environmentId, THREAD));
+      const unmountA = registry.mount(atoms.threadStatus(a.environmentId, THREAD));
+      const unmountB = registry.mount(atoms.threadStatus(b.environmentId, THREAD));
 
       yield* a.push(snapshot("plan"));
       yield* b.push(snapshot("build"));
@@ -168,13 +171,10 @@ it.effect("keeps each environment's statuses apart and replaces them on reconnec
 
       // The status ended while disconnected; the new connection's first frame drops it.
       const pushAfterReconnect = yield* a.reconnect;
-      yield* pushAfterReconnect({ threads: [] });
+      yield* pushAfterReconnect({ entries: [] });
       yield* waitForTexts(a.environmentId, []);
       assert.strictEqual(a.subscriptions(), 2);
-      assert.deepStrictEqual(
-        registry.get(atoms.threadItems(b.environmentId, THREAD)).map((item) => item.text),
-        ["build"],
-      );
+      assert.deepStrictEqual(texts(b.environmentId), ["build"]);
       unmountA();
       unmountB();
     }),
@@ -186,16 +186,56 @@ it.effect("never subscribes to a server without the capability", () =>
     Effect.gen(function* () {
       const { environments, atoms, registry, waitForTexts } = yield* makeHarness();
       const [current, , old] = environments;
-      const unmountOld = registry.mount(atoms.threadItems(old.environmentId, THREAD));
-      const unmountCurrent = registry.mount(atoms.threadItems(current.environmentId, THREAD));
+      const unmountOld = registry.mount(atoms.threadStatus(old.environmentId, THREAD));
+      const unmountCurrent = registry.mount(atoms.threadStatus(current.environmentId, THREAD));
 
       // Once a supported environment has delivered, any subscription would have started.
       yield* current.push(snapshot("plan"));
       yield* waitForTexts(current.environmentId, ["plan"]);
       assert.strictEqual(old.subscriptions(), 0);
-      assert.deepStrictEqual(registry.get(atoms.threadItems(old.environmentId, THREAD)), []);
+      assert.deepStrictEqual(registry.get(atoms.threadStatus(old.environmentId, THREAD)), []);
       unmountOld();
       unmountCurrent();
+    }),
+  ),
+);
+
+it.effect("keeps each entry's source so a takeover with the same text re-keys the row", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { environments, atoms, registry } = yield* makeHarness();
+      const [a] = environments;
+      const status = atoms.threadStatus(a.environmentId, THREAD);
+      const unmount = registry.mount(status);
+      const waitForSession = (session: string) =>
+        AtomRegistry.toStream(registry, status).pipe(
+          Stream.filter((entries) => entries[0]?.source.providerSessionId === session),
+          Stream.runHead,
+        );
+
+      yield* a.push({ entries: [entry("plan", "session-old")] });
+      yield* waitForSession("session-old");
+      const before = registry.get(status);
+
+      // Another thread changing keeps this thread's array, so its row does not re-render.
+      yield* a.push({
+        entries: [entry("plan", "session-old"), entry("x", "session-x", OTHER_THREAD)],
+      });
+      yield* AtomRegistry.toStream(registry, atoms.snapshot(a.environmentId)).pipe(
+        Stream.filter((snapshot) => snapshot.entries.length === 2),
+        Stream.runHead,
+      );
+      assert.strictEqual(registry.get(status), before);
+
+      yield* a.push({ entries: [entry("plan", "session-new")] });
+      yield* waitForSession("session-new");
+      const after = registry.get(status);
+      assert.notStrictEqual(after, before);
+      assert.notStrictEqual(
+        contributionStatusSourceKey(after[0]!.source),
+        contributionStatusSourceKey(before[0]!.source),
+      );
+      unmount();
     }),
   ),
 );

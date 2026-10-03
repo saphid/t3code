@@ -534,9 +534,9 @@ describe("PiAdapterV2", () => {
               onNone: () => ({}),
               onSome: (value) =>
                 Object.fromEntries(
-                  value.threads.map((thread) => [
-                    thread.threadId,
-                    thread.items.map((item) => `${item.key}=${item.text}`),
+                  value.entries.map((entry) => [
+                    entry.threadId,
+                    entry.items.map((item) => `${item.key}=${item.text}`),
                   ]),
                 ),
             }),

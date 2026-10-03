@@ -5,7 +5,7 @@ import { ContributionStatusSnapshot } from "./contributionStatus.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(ContributionStatusSnapshot);
 
-const piThread = (items: ReadonlyArray<unknown>) => ({
+const piEntry = (items: ReadonlyArray<unknown>) => ({
   threadId: "thread-1",
   source: {
     kind: "provider-session",
@@ -19,31 +19,29 @@ const piThread = (items: ReadonlyArray<unknown>) => ({
 describe("ContributionStatusSnapshot", () => {
   it("decodes a tone from a newer server as neutral instead of dropping the item", () => {
     const snapshot = decodeSnapshot({
-      threads: [piThread([{ key: "build", text: "Building", tone: "celebrate" }])],
+      entries: [piEntry([{ key: "build", text: "Building", tone: "celebrate" }])],
     });
-    expect(snapshot.threads[0]?.items).toEqual([
+    expect(snapshot.entries[0]?.items).toEqual([
       { key: "build", text: "Building", tone: "neutral" },
     ]);
   });
 
   it("drops entries an older client cannot decode and keeps the rest", () => {
     const snapshot = decodeSnapshot({
-      threads: [
+      entries: [
         {
-          ...piThread([{ key: "a", text: "From a plugin" }]),
+          ...piEntry([{ key: "a", text: "From a plugin" }]),
           source: { kind: "plugin", pluginId: "x" },
         },
-        piThread([{ key: "a", text: "x".repeat(81) }]),
-        piThread([{ key: "mode", text: "plan" }]),
+        piEntry([{ key: "a", text: "x".repeat(81) }]),
+        piEntry([{ key: "mode", text: "plan" }]),
       ],
     });
-    expect(snapshot.threads.map((thread) => thread.items)).toEqual([
-      [{ key: "mode", text: "plan" }],
-    ]);
+    expect(snapshot.entries.map((entry) => entry.items)).toEqual([[{ key: "mode", text: "plan" }]]);
   });
 
-  it("rejects a thread with more items than one source may set", () => {
+  it("rejects an entry with more items than one source may set", () => {
     const items = Array.from({ length: 9 }, (_, index) => ({ key: `k${index}`, text: "on" }));
-    expect(decodeSnapshot({ threads: [piThread(items)] }).threads).toEqual([]);
+    expect(decodeSnapshot({ entries: [piEntry(items)] }).entries).toEqual([]);
   });
 });

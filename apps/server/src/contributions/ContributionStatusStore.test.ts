@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CONTRIBUTION_STATUS_MAX_ITEMS,
+  CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE,
+  CONTRIBUTION_STATUS_MAX_THREADS,
   type ContributionStatusSource,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -38,9 +41,9 @@ const openHandle = Effect.fn("openHandle")(function* (
 const itemsByThread = (store: ContributionStatusStore.ContributionStatusStoreShape) =>
   Effect.map(store.snapshot, (snapshot) =>
     Object.fromEntries(
-      snapshot.threads.map((thread) => [
-        thread.threadId,
-        thread.items.map((item) => `${item.key}=${item.text}`),
+      snapshot.entries.map((entry) => [
+        entry.threadId,
+        entry.items.map((item) => `${item.key}=${item.text}`),
       ]),
     ),
   );
@@ -76,11 +79,11 @@ describe("ContributionStatusStore", () => {
       }
       yield* handle.set({ key: "k0", text: `${"a".repeat(78)}😀tail` });
 
-      const [thread] = (yield* store.snapshot).threads;
-      assert.strictEqual(thread?.items.length, 8);
-      assert.isFalse(thread?.items.some((item) => item.key === "k8"));
+      const [entry] = (yield* store.snapshot).entries;
+      assert.strictEqual(entry?.items.length, 8);
+      assert.isFalse(entry?.items.some((item) => item.key === "k8"));
       // The emoji would straddle the limit, so it is dropped rather than split.
-      assert.strictEqual(thread?.items[0]?.text, `${"a".repeat(78)}…`);
+      assert.strictEqual(entry?.items[0]?.text, `${"a".repeat(78)}…`);
     }),
   );
 
@@ -159,7 +162,7 @@ describe("ContributionStatusStore", () => {
       const snapshot = yield* store.snapshot;
       assert.deepStrictEqual(yield* itemsByThread(store), { [THREAD_A]: ["mode=new"] });
       assert.strictEqual(
-        snapshot.threads[0]?.source.providerSessionId,
+        snapshot.entries[0]?.source.providerSessionId,
         ProviderSessionId.make("session-new"),
       );
     }),
@@ -174,7 +177,7 @@ describe("ContributionStatusStore", () => {
 
         const subscription = yield* store.subscribe;
         assert.deepStrictEqual(
-          subscription.latest.threads.map((thread) => thread.threadId),
+          subscription.latest.entries.map((entry) => entry.threadId),
           [THREAD_A],
         );
 
@@ -183,7 +186,7 @@ describe("ContributionStatusStore", () => {
         yield* handle.set({ key: "turn", text: "3" });
         const next = yield* Stream.runHead(subscription.changes);
         assert.deepStrictEqual(
-          next._tag === "Some" ? next.value.threads[0]?.items.map((item) => item.text) : [],
+          next._tag === "Some" ? next.value.entries[0]?.items.map((item) => item.text) : [],
           ["review", "3"],
         );
 
@@ -197,7 +200,7 @@ describe("ContributionStatusStore", () => {
   it.effect("caps threads showing a status without counting silent producers", () =>
     Effect.gen(function* () {
       const store = yield* ContributionStatusStore.make();
-      const max = ContributionStatusStore.CONTRIBUTION_STATUS_MAX_THREADS;
+      const max = CONTRIBUTION_STATUS_MAX_THREADS;
       // More bound producers than the cap that never set anything take no capacity.
       for (let index = 0; index <= max; index += 1) {
         yield* openHandle(store, `silent-${index}`, ThreadId.make(`silent-${index}`));
@@ -208,27 +211,61 @@ describe("ContributionStatusStore", () => {
         yield* opened.handle.set({ key: "mode", text: "on" });
         visible.push(opened.handle);
       }
-      assert.strictEqual((yield* store.snapshot).threads.length, max);
+      assert.strictEqual((yield* store.snapshot).entries.length, max);
 
       const late = yield* openHandle(store, "late", ThreadId.make("late"));
       yield* late.handle.set({ key: "mode", text: "rejected" });
       assert.isUndefined(
-        (yield* store.snapshot).threads.find((thread) => thread.threadId === "late"),
+        (yield* store.snapshot).entries.find((entry) => entry.threadId === "late"),
       );
 
       // Clearing a thread's last item returns its capacity, and the rejected producer's next set lands.
       yield* visible[0]!.clear("mode");
       yield* late.handle.set({ key: "mode", text: "admitted" });
       const snapshot = yield* store.snapshot;
-      assert.strictEqual(snapshot.threads.length, max);
-      assert.deepStrictEqual(snapshot.threads.find((thread) => thread.threadId === "late")?.items, [
+      assert.strictEqual(snapshot.entries.length, max);
+      assert.deepStrictEqual(snapshot.entries.find((entry) => entry.threadId === "late")?.items, [
         { key: "mode", text: "admitted" },
       ]);
       // A thread already showing a status can still replace it at the cap.
       yield* visible[1]!.set({ key: "mode", text: "replaced" });
       assert.strictEqual(
-        (yield* store.snapshot).threads.find((thread) => thread.threadId === "t-1")?.items[0]?.text,
+        (yield* store.snapshot).entries.find((entry) => entry.threadId === "t-1")?.items[0]?.text,
         "replaced",
+      );
+    }),
+  );
+
+  it.effect("orders entries by thread and caps the items in one snapshot", () =>
+    Effect.gen(function* () {
+      const store = yield* ContributionStatusStore.make();
+      const fullThreads = CONTRIBUTION_STATUS_MAX_ITEMS / CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE;
+      const handles = [];
+      // Bind in reverse so the snapshot order cannot come from insertion order.
+      for (let index = fullThreads; index >= 0; index -= 1) {
+        const opened = yield* openHandle(store, `s-${index}`, ThreadId.make(`t-${index}`));
+        handles[index] = opened.handle;
+      }
+      for (let index = 0; index <= fullThreads; index += 1) {
+        for (let item = 0; item < CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE; item += 1) {
+          yield* handles[index]!.set({ key: `k${item}`, text: "on" });
+        }
+      }
+      const snapshot = yield* store.snapshot;
+      const threadIds = snapshot.entries.map((entry) => entry.threadId);
+      assert.deepStrictEqual(threadIds, threadIds.toSorted());
+      assert.strictEqual(threadIds.length, fullThreads);
+      assert.notInclude(threadIds, ThreadId.make(`t-${fullThreads}`));
+      assert.strictEqual(
+        snapshot.entries.reduce((total, entry) => total + entry.items.length, 0),
+        CONTRIBUTION_STATUS_MAX_ITEMS,
+      );
+
+      yield* handles[0]!.clear("k0");
+      yield* handles[fullThreads]!.set({ key: "k0", text: "admitted" });
+      assert.include(
+        (yield* store.snapshot).entries.map((entry) => entry.threadId),
+        ThreadId.make(`t-${fullThreads}`),
       );
     }),
   );

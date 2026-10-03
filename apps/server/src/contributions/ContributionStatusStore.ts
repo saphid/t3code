@@ -2,13 +2,17 @@ import * as NodeUtil from "node:util";
 
 import {
   CONTRIBUTION_STATUS_KEY_MAX_LENGTH,
+  CONTRIBUTION_STATUS_MAX_ITEMS,
   CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE,
+  CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD,
+  CONTRIBUTION_STATUS_MAX_THREADS,
   CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
   CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH,
   type ContributionStatusItem,
   type ContributionStatusSnapshot,
   type ContributionStatusSource,
   type ContributionStatusTone,
+  contributionStatusSourceKey,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -24,21 +28,19 @@ import {
   subscribeBeforeSnapshot,
 } from "../utils/subscribeBeforeSnapshot.ts";
 
-/** Upper bound on threads showing a status, independent of how many producers are bound. */
-export const CONTRIBUTION_STATUS_MAX_THREADS = 256;
-
 /**
  * One producer's statuses. A handle writes to at most one thread at a time and
  * is retired when the scope that opened it closes, clearing what it set. After
- * another handle binds the same thread, this one is stale: its writes are
- * ignored until it binds again, so a late update from a replaced session never
- * reaches the replacement's statuses.
+ * another handle with the same kind of source binds the same thread, this one
+ * is stale: its writes are ignored until it binds again, so a late update from
+ * a replaced provider session never reaches the replacement's statuses.
  */
 export interface ContributionStatusSourceHandle {
   /**
    * Moves this handle to `threadId`, clearing what it set on its previous
    * thread. Rebinding the thread it still owns keeps its items; binding a
-   * thread another handle owns takes it over and clears that handle's items.
+   * thread where another provider session owns the provider entry takes that
+   * entry over and clears its items.
    */
   readonly bindThread: (threadId: ThreadId | null) => Effect.Effect<void>;
   /** Sets or replaces `key`. Text that is empty after normalization clears the key. */
@@ -65,7 +67,7 @@ export interface ContributionStatusStoreShape {
   >;
 }
 
-const emptySnapshot: ContributionStatusSnapshot = { threads: [] };
+const emptySnapshot: ContributionStatusSnapshot = { entries: [] };
 
 const noopHandle: ContributionStatusSourceHandle = {
   bindThread: () => Effect.void,
@@ -127,11 +129,18 @@ function normalizeContributionStatusText(raw: string, maxLength: number): string
   return `${truncated.trimEnd()}…`;
 }
 
-interface ThreadSlot {
-  readonly owner: number;
+interface SourceSlot {
+  readonly generation: number;
   readonly source: ContributionStatusSource;
   readonly items: Map<string, ContributionStatusItem>;
 }
+
+/**
+ * Which handles compete for one entry on a thread. A thread hosts one provider
+ * session at a time, so every provider-session source shares a slot and a new
+ * session takes the old one over; plugins will each get their own slot.
+ */
+const slotKey = (source: ContributionStatusSource) => source.kind;
 
 const sameItem = (left: ContributionStatusItem | undefined, right: ContributionStatusItem) =>
   left !== undefined &&
@@ -139,9 +148,14 @@ const sameItem = (left: ContributionStatusItem | undefined, right: ContributionS
   left.tone === right.tone &&
   left.tooltip === right.tooltip;
 
+const compareStrings = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+
+const sourceRank = (source: ContributionStatusSource) =>
+  source.kind === "provider-session" ? 0 : 1;
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("contributions.status.make")(function* () {
-  const slots = new Map<ThreadId, ThreadSlot>();
+  const threads = new Map<ThreadId, Map<string, SourceSlot>>();
   const changes = yield* PubSub.sliding<ContributionStatusSnapshot>(1);
   const mutex = yield* Semaphore.make(1);
   let nextGeneration = 0;
@@ -152,22 +166,50 @@ export const make = Effect.fn("contributions.status.make")(function* () {
    * crowd out ones that show something, and a rejected producer's later set
    * is admitted once capacity frees up.
    */
-  const admitsNewItem = (slot: ThreadSlot) => {
+  const admitsNewItem = (threadId: ThreadId, slot: SourceSlot) => {
     if (slot.items.size >= CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE) return false;
-    if (slot.items.size > 0) return true;
+    let items = 0;
     let visibleThreads = 0;
-    for (const other of slots.values()) if (other.items.size > 0) visibleThreads += 1;
-    return visibleThreads < CONTRIBUTION_STATUS_MAX_THREADS;
+    for (const slots of threads.values()) {
+      let visible = false;
+      for (const other of slots.values()) {
+        items += other.items.size;
+        visible ||= other.items.size > 0;
+      }
+      if (visible) visibleThreads += 1;
+    }
+    if (items >= CONTRIBUTION_STATUS_MAX_ITEMS) return false;
+    if (slot.items.size > 0) return true;
+    let visibleSources = 0;
+    for (const other of threads.get(threadId)?.values() ?? []) {
+      if (other.items.size > 0) visibleSources += 1;
+    }
+    if (visibleSources >= CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD) return false;
+    return visibleSources > 0 || visibleThreads < CONTRIBUTION_STATUS_MAX_THREADS;
   };
 
   const currentSnapshot = (): ContributionStatusSnapshot => ({
-    threads: Array.from(slots, ([threadId, slot]) => ({
-      threadId,
-      source: slot.source,
-      items: Array.from(slot.items.values()).toSorted((left, right) =>
-        left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+    entries: Array.from(threads.keys())
+      .toSorted(compareStrings)
+      .flatMap((threadId) =>
+        Array.from(threads.get(threadId)?.values() ?? [])
+          .filter((slot) => slot.items.size > 0)
+          .toSorted(
+            (left, right) =>
+              sourceRank(left.source) - sourceRank(right.source) ||
+              compareStrings(
+                contributionStatusSourceKey(left.source),
+                contributionStatusSourceKey(right.source),
+              ),
+          )
+          .map((slot) => ({
+            threadId,
+            source: slot.source,
+            items: Array.from(slot.items.values()).toSorted((left, right) =>
+              compareStrings(left.key, right.key),
+            ),
+          })),
       ),
-    })).filter((thread) => thread.items.length > 0),
   });
 
   /** Runs `mutate` under the store lock and publishes once when it reports a visible change. */
@@ -184,17 +226,21 @@ export const make = Effect.fn("contributions.status.make")(function* () {
       let generation = 0;
       let retired = false;
 
+      const slotId = slotKey(source);
+
       /** The slot this handle still owns, or undefined when it is unbound, replaced, or retired. */
       const ownedSlot = () => {
         if (retired || threadId === null) return undefined;
-        const slot = slots.get(threadId);
-        return slot?.owner === generation ? slot : undefined;
+        const slot = threads.get(threadId)?.get(slotId);
+        return slot?.generation === generation ? slot : undefined;
       };
 
       const release = () => {
         const slot = ownedSlot();
         if (slot === undefined || threadId === null) return false;
-        slots.delete(threadId);
+        const slots = threads.get(threadId);
+        slots?.delete(slotId);
+        if (slots?.size === 0) threads.delete(threadId);
         return slot.items.size > 0;
       };
 
@@ -208,24 +254,28 @@ export const make = Effect.fn("contributions.status.make")(function* () {
             const released = release();
             threadId = nextThreadId;
             if (nextThreadId === null) return released;
-            const replaced = slots.get(nextThreadId);
+            let slots = threads.get(nextThreadId);
+            if (slots === undefined) {
+              slots = new Map();
+              threads.set(nextThreadId, slots);
+            }
+            const replaced = slots.get(slotId);
             generation = ++nextGeneration;
-            slots.set(nextThreadId, { owner: generation, source, items: new Map() });
+            slots.set(slotId, { generation, source, items: new Map() });
             return released || (replaced !== undefined && replaced.items.size > 0);
           }),
         set: (input) =>
           update(() => {
             const slot = ownedSlot();
-            if (slot === undefined) return false;
             const key = input.key;
-            if (!isValidKey(key)) return false;
+            if (slot === undefined || threadId === null || !isValidKey(key)) return false;
             const text = normalizeContributionStatusText(
               input.text,
               CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
             );
             if (text.length === 0) return slot.items.delete(key);
             const previous = slot.items.get(key);
-            if (previous === undefined && !admitsNewItem(slot)) return false;
+            if (previous === undefined && !admitsNewItem(threadId, slot)) return false;
             const tooltip =
               input.tooltip === undefined
                 ? ""

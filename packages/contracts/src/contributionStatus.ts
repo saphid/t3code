@@ -13,6 +13,14 @@ export const CONTRIBUTION_STATUS_KEY_MAX_LENGTH = 64;
 export const CONTRIBUTION_STATUS_TEXT_MAX_LENGTH = 80;
 export const CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH = 240;
 export const CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE = 8;
+/**
+ * Server-owned limits on a whole snapshot. They keep a worst-case full
+ * replacement frame under 170 KB of JSON and a typical one under 1 KB. Clients never
+ * enforce them; raising one needs a new capability.
+ */
+export const CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD = 4;
+export const CONTRIBUTION_STATUS_MAX_THREADS = 64;
+export const CONTRIBUTION_STATUS_MAX_ITEMS = 128;
 
 const CONTRIBUTION_STATUS_TONES = ["neutral", "info", "success", "warning", "error"] as const;
 const ContributionStatusToneLiteral = Schema.Literals(CONTRIBUTION_STATUS_TONES);
@@ -49,7 +57,12 @@ export const ContributionStatusItem = Schema.Struct({
 });
 export type ContributionStatusItem = typeof ContributionStatusItem.Type;
 
-/** Who set a thread's items. Plugin sources are reserved for a later `kind`. */
+/**
+ * Who set an entry's items. A thread has at most one provider-session source:
+ * a new provider session on the thread takes over the previous one's entry.
+ * Plugin sources are reserved for a later `kind`; each plugin will own its own
+ * entry beside the provider's.
+ */
 export const ContributionStatusSource = Schema.Struct({
   kind: Schema.Literal("provider-session"),
   providerSessionId: ProviderSessionId,
@@ -58,7 +71,15 @@ export const ContributionStatusSource = Schema.Struct({
 });
 export type ContributionStatusSource = typeof ContributionStatusSource.Type;
 
-export const ThreadContributionStatus = Schema.Struct({
+/**
+ * Identity of a source, stable for its lifetime and distinct across a takeover.
+ * Renderers key an entry by it and an item by it plus the item key.
+ */
+export const contributionStatusSourceKey = (source: ContributionStatusSource): string =>
+  JSON.stringify([source.kind, source.providerInstanceId, source.providerSessionId]);
+
+/** One source's items on one thread. Entry identity is the thread plus the source. */
+export const ContributionStatusEntry = Schema.Struct({
   threadId: ThreadId,
   source: ContributionStatusSource,
   /** Sorted by key, at most CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE, never empty. */
@@ -67,15 +88,17 @@ export const ThreadContributionStatus = Schema.Struct({
     Schema.isMaxLength(CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE),
   ),
 });
-export type ThreadContributionStatus = typeof ThreadContributionStatus.Type;
+export type ContributionStatusEntry = typeof ContributionStatusEntry.Type;
 
 /**
- * Every live status in one environment. `subscribeContributionStatus` sends
- * one on subscribe and a full replacement after each change, so a client
- * replaces its copy and never merges. Entries an older client cannot decode,
- * such as a future source kind, are dropped rather than failing the stream.
+ * Every live status in one environment, ordered by thread id, then provider
+ * sources before any other kind, then source key. `subscribeContributionStatus`
+ * sends one on subscribe and a full replacement after each change, so a
+ * client replaces its copy and never merges. Entries an older client cannot
+ * decode, such as a future source kind, are dropped rather than failing the
+ * stream.
  */
 export const ContributionStatusSnapshot = Schema.Struct({
-  threads: ForwardCompatibleArray(ThreadContributionStatus),
+  entries: ForwardCompatibleArray(ContributionStatusEntry),
 });
 export type ContributionStatusSnapshot = typeof ContributionStatusSnapshot.Type;
