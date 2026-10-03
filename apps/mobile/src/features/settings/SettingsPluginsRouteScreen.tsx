@@ -292,6 +292,9 @@ function PluginDetail({
       ? (catalog.data.installations.find((entry) => entry.installationId === installationId) ??
         null)
       : null;
+  // Right after adding, the snapshot that lists the new plugin may still be on its way.
+  const [seen, setSeen] = useState(false);
+  if (installation !== null && !seen) setSeen(true);
   // The digest the user acknowledged; new bytes need a new acknowledgement.
   const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -335,9 +338,7 @@ function PluginDetail({
         <ScrollView {...SCROLL_PROPS}>
           <Text className="px-2 text-base text-foreground-muted">
             {catalog.error ??
-              (catalog.data === null
-                ? "Loading plugin…"
-                : `This plugin is no longer installed on ${label}.`)}
+              (seen ? `This plugin is no longer installed on ${label}.` : "Loading plugin…")}
           </Text>
         </ScrollView>
       </SettingsScreen>

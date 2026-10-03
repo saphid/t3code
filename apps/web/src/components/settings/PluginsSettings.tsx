@@ -193,10 +193,18 @@ function PluginEnvironmentCatalog({
       : null,
   );
   const [adding, setAdding] = useState(false);
-  const [reviewingId, setReviewingId] = useState<PluginInstallationId | null>(null);
+  // `added` covers the moment between the add reply and the snapshot that lists it.
+  const [reviewing, setReviewing] = useState<{
+    readonly installationId: PluginInstallationId;
+    readonly added: PluginInstallation | null;
+  } | null>(null);
   const view = catalog.data;
+  const installations = view?._tag === "available" ? view.installations : null;
+  const reviewed = reviewing
+    ? (installations?.find((entry) => entry.installationId === reviewing.installationId) ?? null)
+    : null;
+  if (reviewing?.added && reviewed) setReviewing({ ...reviewing, added: null });
   if (view?._tag === "unsupported") return null;
-  const installations = view?.installations ?? null;
   const canManage = access === "granted";
   return (
     <>
@@ -246,7 +254,9 @@ function PluginEnvironmentCatalog({
                   environment={environment}
                   installation={installation}
                   canManage={canManage}
-                  onReview={() => setReviewingId(installation.installationId)}
+                  onReview={() =>
+                    setReviewing({ installationId: installation.installationId, added: null })
+                  }
                 />
               ))
             )}
@@ -257,20 +267,18 @@ function PluginEnvironmentCatalog({
         <AddPluginDialog
           environment={environment}
           onClose={() => setAdding(false)}
-          onAdded={(installationId) => {
+          onAdded={(installation) => {
             setAdding(false);
-            setReviewingId(installationId);
+            setReviewing({ installationId: installation.installationId, added: installation });
           }}
         />
       ) : null}
-      {reviewingId !== null ? (
+      {reviewing !== null ? (
         <PluginReviewDialog
           environment={environment}
-          installation={
-            installations?.find((entry) => entry.installationId === reviewingId) ?? null
-          }
+          installation={reviewed ?? reviewing.added}
           canManage={canManage}
-          onClose={() => setReviewingId(null)}
+          onClose={() => setReviewing(null)}
         />
       ) : null}
     </>
@@ -453,7 +461,7 @@ function AddPluginDialog({
 }: {
   readonly environment: EnvironmentPresentation;
   readonly onClose: () => void;
-  readonly onAdded: (installationId: PluginInstallationId) => void;
+  readonly onAdded: (installation: PluginInstallation) => void;
 }) {
   const inputId = useId();
   const [directory, setDirectory] = useState("");
@@ -475,7 +483,7 @@ function AddPluginDialog({
       add({ environmentId: environment.environmentId, input: { directory: trimmed } }),
     );
     setBusy(false);
-    if ("value" in outcome) onAdded(outcome.value.installation.installationId);
+    if ("value" in outcome) onAdded(outcome.value.installation);
     else setError(outcome.error);
   };
   return (
