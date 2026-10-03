@@ -23,10 +23,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -104,10 +106,15 @@ const cryptoLayer = Layer.succeed(
   }),
 );
 
+/** An attempt that runs in the attempt's scope, for gating setup and cleanup. */
+interface ScriptedAttempt {
+  readonly run: Effect.Effect<FakeServer, ConnectionAttemptError, Scope.Scope>;
+}
+
 /** A connection driver that hands out one scripted session per attempt. */
 const environmentWith = Effect.fn("TestEnvironment.make")(function* (
   credential: T3Credential,
-  attempts: ReadonlyArray<FakeServer | ConnectionAttemptError>,
+  attempts: ReadonlyArray<FakeServer | ConnectionAttemptError | ScriptedAttempt>,
   scopes?: ReadonlyArray<string>,
 ) {
   const count = yield* SubscriptionRef.make(0);
@@ -118,6 +125,7 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
         const next = attempts[Math.min(attempt, attempts.length - 1)];
         if (next === undefined) return yield* Effect.die(new Error("No scripted attempt."));
         if ("_tag" in next) return yield* next;
+        const server = "run" in next ? yield* next.run : next;
         return {
           prepared: {
             environmentId: credential.environmentId,
@@ -127,7 +135,7 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
             httpAuthorization: { _tag: "Bearer" as const, token: "token" },
             target: entry.target,
           },
-          session: fakeSession(credential, next),
+          session: fakeSession(credential, server),
         };
       }),
   });
@@ -143,6 +151,28 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
     ),
   );
   return { environment, attempts: count };
+});
+
+/**
+ * A first attempt that is blocked and whose cleanup waits for a release, then
+ * a second attempt that waits for its own release before connecting.
+ */
+const blockedWithSlowCleanup = Effect.gen(function* () {
+  const cleanupStarted = yield* Deferred.make<void>();
+  const releaseCleanup = yield* Deferred.make<void>();
+  const releaseSecond = yield* Deferred.make<void>();
+  const first = new ConnectionBlockedError({ reason: "permission", detail: "first" });
+  const attempts: ReadonlyArray<ScriptedAttempt> = [
+    {
+      run: Effect.addFinalizer(() =>
+        Deferred.succeed(cleanupStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCleanup)),
+        ),
+      ).pipe(Effect.andThen(Effect.fail(first))),
+    },
+    { run: Deferred.await(releaseSecond).pipe(Effect.as({ client: {} })) },
+  ];
+  return { attempts, cleanupStarted, releaseCleanup, releaseSecond };
 });
 
 const awaitPhase = (
@@ -417,6 +447,129 @@ describe("external environment client", () => {
       expect(yield* Effect.flip(environment.ready)).toMatchObject({
         _tag: "EnvironmentRpcUnavailableError",
       });
+      expect(yield* SubscriptionRef.get(attempts)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("runs a request after disconnect and reconnect on the new session", () =>
+    Effect.gen(function* () {
+      const served: Array<string> = [];
+      const projectionFrom = (session: string) => () =>
+        Effect.sync(() => {
+          served.push(session);
+          return { session } as never;
+        });
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        { client: { [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: projectionFrom("first") } },
+        { client: { [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: projectionFrom("second") } },
+      ]);
+      yield* environment.ready;
+
+      yield* environment.disconnect;
+      yield* environment.reconnect;
+      yield* environment.request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+        threadId: ThreadId.make("thread-1"),
+      });
+
+      expect(served).toEqual(["second"]);
+      expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails a request made right after disconnect instead of using the old session", () =>
+    Effect.gen(function* () {
+      const served: Array<string> = [];
+      const { environment } = yield* environmentWith(credentialFor("one"), [
+        {
+          client: {
+            [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: () =>
+              Effect.sync(() => {
+                served.push("first");
+                return {} as never;
+              }),
+          },
+        },
+      ]);
+      yield* environment.ready;
+
+      yield* environment.disconnect;
+
+      expect(
+        yield* Effect.flip(
+          environment.request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+            threadId: ThreadId.make("thread-1"),
+          }),
+        ),
+      ).toMatchObject({ _tag: "EnvironmentRpcUnavailableError" });
+      expect(served).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reports the retried attempt when retry arrives during a failed attempt's cleanup",
+    () =>
+      Effect.gen(function* () {
+        const script = yield* blockedWithSlowCleanup;
+        const { environment, attempts } = yield* environmentWith(
+          credentialFor("one"),
+          script.attempts,
+        );
+        // A reader from before the retry gets the first attempt's outcome.
+        const earlier = yield* Effect.forkChild(environment.ready, { startImmediately: true });
+        yield* Deferred.await(script.cleanupStarted);
+        expect((yield* SubscriptionRef.get(environment.state)).phase).toBe("connecting");
+        // Requests the retry now, while the first attempt is still cleaning up.
+        const retried = yield* Effect.forkChild(
+          environment.retryNow.pipe(
+            // Readers after the retry all wait for the retried attempt.
+            Effect.andThen(
+              Effect.all([environment.ready, environment.ready], { concurrency: "unbounded" }),
+            ),
+          ),
+          { startImmediately: true },
+        );
+
+        yield* Deferred.succeed(script.releaseCleanup, undefined);
+        expect(yield* Effect.flip(Fiber.join(earlier))).toMatchObject({ detail: "first" });
+        yield* Deferred.succeed(script.releaseSecond, undefined);
+        yield* Fiber.join(retried);
+
+        expect((yield* SubscriptionRef.get(environment.state)).phase).toBe("connected");
+        expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("ends a pending retry when the environment's scope closes", () =>
+    Effect.gen(function* () {
+      const script = yield* blockedWithSlowCleanup;
+      const scope = yield* Scope.make();
+      const { environment, attempts } = yield* environmentWith(
+        credentialFor("one"),
+        script.attempts,
+      ).pipe(Scope.provide(scope));
+      yield* Deferred.await(script.cleanupStarted);
+      const retried = yield* Effect.forkChild(environment.retryNow, { startImmediately: true });
+      expect(retried.pollUnsafe()).toBeUndefined();
+
+      const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+      expect(Exit.hasInterrupts(yield* Fiber.await(retried))).toBe(true);
+      yield* Deferred.succeed(script.releaseCleanup, undefined);
+      yield* Fiber.join(closing);
+
+      expect(yield* SubscriptionRef.get(attempts)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not wait when a retry finds a healthy session", () =>
+    Effect.gen(function* () {
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        { client: {} },
+      ]);
+      yield* environment.ready;
+
+      yield* environment.retryNow;
+      yield* environment.ready;
+
       expect(yield* SubscriptionRef.get(attempts)).toBe(1);
     }).pipe(Effect.scoped),
   );

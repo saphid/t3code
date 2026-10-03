@@ -224,19 +224,12 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
     supervisor,
   );
 
-  // The disconnected or blocked state that a reconnect or retry replaces. The
-  // supervisor answers every request with a new state, so `ready` skips this
-  // exact state and reports the requested attempt, not the outcome before it.
-  const superseded = yield* Ref.make<SupervisorConnectionState | undefined>(undefined);
-  const recover = (request: Effect.Effect<void>) =>
-    SubscriptionRef.get(supervisor.state).pipe(
-      Effect.flatMap((current) =>
-        current.phase === "available" || current.phase === "blocked"
-          ? Ref.set(superseded, current)
-          : Effect.void,
-      ),
-      Effect.andThen(request),
-    );
+  // The state the latest lifecycle request replaced, as the supervisor
+  // acknowledged it. Every later state reflects that request, so `ready`
+  // skips this one and never reports a lease or outcome from before it.
+  const superseded = yield* Ref.make(Option.none<SupervisorConnectionState>());
+  const control = (request: EnvironmentSupervisor.SupervisorControl) =>
+    supervisor.control(request).pipe(Effect.flatMap((replaced) => Ref.set(superseded, replaced)));
 
   /**
    * Waits for a live session. Transient failures keep retrying with backoff,
@@ -244,7 +237,7 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
    * failures fail at once.
    */
   const ready = Effect.gen(function* () {
-    const stale = yield* Ref.get(superseded);
+    const stale = Option.getOrUndefined(yield* Ref.get(superseded));
     const state = yield* SubscriptionRef.changes(supervisor.state).pipe(
       Stream.filter(
         (state) =>
@@ -327,10 +320,12 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
     subscribe: watch,
     shell,
     sendMessage,
+    // These return once the supervisor has taken the request, so a later
+    // `ready` or `request` sees its outcome, never the state it replaced.
     /** Skips any pending backoff and reconnects now. */
-    retryNow: recover(supervisor.retryNow),
-    disconnect: supervisor.disconnect,
-    reconnect: recover(supervisor.connect),
+    retryNow: control("retry"),
+    disconnect: control("disconnect"),
+    reconnect: control("connect"),
   };
 });
 
