@@ -1,4 +1,11 @@
-import { CheckpointScopeId, CommandId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointScopeId,
+  CommandId,
+  OrchestrationV2RunFinalizationOperation,
+  ProjectId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,7 +26,7 @@ export class RunFinalizationError extends Schema.TaggedError<RunFinalizationErro
     threadId: ThreadId,
     runId: RunId,
     scopeId: CheckpointScopeId,
-    operation: Schema.Literals(["capture-checkpoint", "refresh-workspace", "record-finalized"]),
+    operation: OrchestrationV2RunFinalizationOperation,
     cause: Schema.Defect(),
   },
 ) {}
@@ -45,12 +52,15 @@ export class RunFinalizationService extends Context.Service<
   {
     /**
      * Captures the run's checkpoint, refreshes its workspace, then records
-     * `run.finalized`. At-least-once: every step is safe to repeat.
+     * `run.finalized`. At-least-once: every step is safe to repeat. When the
+     * last attempt (`willRetry: false`) fails, it records
+     * `run.finalization-failed` before failing.
      */
     readonly finalize: (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
+      readonly willRetry: boolean;
     }) => Effect.Effect<void, RunFinalizationError>;
   }
 >()("t3/orchestration-v2/RunFinalizationService") {}
@@ -61,9 +71,37 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const observer = yield* RunFinalizationObserver;
 
-  const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
-    "RunFinalizationService.finalize",
-  )(function* (input) {
+  const recordFailure = (error: RunFinalizationError) =>
+    Effect.gen(function* () {
+      const { run } = yield* projections.getCheckpointCaptureContext(error.threadId, error);
+      // A rolled-back run was discarded; there is nothing to report.
+      if (run === undefined || run.status === "rolled_back") return;
+      // EventSink drops the event when this run already recorded its finalization.
+      yield* eventSink.write({
+        commandId: CommandId.make(`command:effect:run.finalization-failed:${run.id}`),
+        events: [
+          RunFinalized.makeRunFinalizationFailedEvent({
+            run,
+            operation: error.operation,
+            occurredAt: yield* DateTime.now,
+          }),
+        ],
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to record run finalization failure", {
+          threadId: error.threadId,
+          runId: error.runId,
+          cause,
+        }),
+      ),
+    );
+
+  const runSteps = Effect.fn("RunFinalizationService.finalize")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly scopeId: CheckpointScopeId;
+  }) {
     yield* checkpointCapture
       .execute(input)
       .pipe(
@@ -94,7 +132,7 @@ const make = Effect.gen(function* () {
       // A rolled-back run was discarded before its capture ran.
       const outcome = run === undefined ? null : RunFinalized.runFinalizedOutcome(run.status);
       if (run === undefined || outcome === null) return;
-      // EventSink drops the event when this run already finalized.
+      // EventSink drops the event when this run already recorded its finalization.
       yield* eventSink.write({
         commandId: CommandId.make(`command:effect:run.finalized:${run.id}`),
         events: [
@@ -107,6 +145,11 @@ const make = Effect.gen(function* () {
       ),
     );
   });
+
+  const finalize: RunFinalizationService["Service"]["finalize"] = ({ willRetry, ...input }) =>
+    runSteps(input).pipe(
+      Effect.tapError((error) => (willRetry ? Effect.void : recordFailure(error))),
+    );
   return RunFinalizationService.of({ finalize });
 });
 

@@ -23,13 +23,24 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 import { checkpointCaptureEffectId } from "./RunFinalized.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 const threadId = ThreadId.make("thread:run-finalized");
 const runId = RunId.make("run:run-finalized");
@@ -39,9 +50,22 @@ const providerThreadId = ProviderThreadId.make("provider-thread:run-finalized");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const checkpointId = CheckpointId.make("checkpoint:run-finalized");
 
+const maxAttempts = 2;
+/** The worker's backoff after a capture's first failed attempt. */
+const firstRetryDelay = "100 millis";
+
+/**
+ * Real stores, outbox, worker, finalization and restart recovery. Checkpoint
+ * capture and workspace refresh are stubs.
+ */
 const makeLayer = (
-  capture: Effect.Effect<void, never, EventSink.EventSinkV2>,
-  refresh: () => Effect.Effect<void> = () => Effect.void,
+  capture: Effect.Effect<
+    void,
+    CheckpointCapture.CheckpointCaptureExecutionError,
+    EventSink.EventSinkV2
+  >,
+  refresh: () => Effect.Effect<void, RunFinalization.RunFinalizationRefreshError> = () =>
+    Effect.void,
 ) => {
   const stores = Layer.mergeAll(
     SqlitePersistenceMemory,
@@ -69,7 +93,38 @@ const makeLayer = (
       ),
     ),
   );
-  return Layer.mergeAll(stores, eventSink, outbox, finalization);
+  const executor = EffectWorker.executorLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        finalization,
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+        Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+        Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+        Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+        Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        ServerSettings.layerTest(),
+      ),
+    ),
+  );
+  const worker = EffectWorker.layerWithOptions({
+    workerId: "worker:run-finalized",
+    maxAttempts,
+  }).pipe(Layer.provide(Layer.merge(outbox, executor)));
+  const recovery = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        stores,
+        eventSink,
+        outbox,
+        worker,
+        IdAllocator.layer,
+        ServerSettings.layerTest(),
+      ),
+    ),
+  );
+  return Layer.mergeAll(stores, eventSink, outbox, finalization, worker, recovery);
 };
 
 const makeRun = (
@@ -184,15 +239,38 @@ const storedEvents = Effect.gen(function* () {
 const finalizedEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
   events.flatMap((stored) => (stored.event.type === "run.finalized" ? [stored] : []));
 
-/** Runs the capture effect the way the worker does: claim, finalize, succeed. */
-const runCaptureEffect = Effect.gen(function* () {
-  const outbox = yield* EffectOutbox.EffectOutboxV2;
-  const finalization = yield* RunFinalization.RunFinalizationService;
-  const claimed = yield* outbox.claimNext({ workerId: "test", leaseDurationMs: 60_000 });
-  assert.isTrue(Option.isSome(claimed));
-  yield* finalization.finalize({ threadId, runId, scopeId });
-  yield* outbox.succeed({ effectId: captureEffect.id, workerId: "test" });
-});
+/** Every finalization record for the thread, success or failure. */
+const finalizationRecords = storedEvents.pipe(
+  Effect.map((events) =>
+    events.flatMap((stored) =>
+      stored.event.type === "run.finalized" || stored.event.type === "run.finalization-failed"
+        ? [{ type: stored.event.type, payload: stored.event.payload }]
+        : [],
+    ),
+  ),
+);
+
+/** Runs every claimable effect on the real worker. */
+const drainWorker = EffectWorker.OrchestrationEffectWorkerV2.pipe(
+  Effect.flatMap((worker) => worker.drain()),
+);
+
+const captureStatus = EffectOutbox.EffectOutboxV2.pipe(
+  Effect.flatMap((outbox) => outbox.get(captureEffect.id)),
+  Effect.map(Option.map((effect) => effect.status)),
+);
+
+const runStatus = ProjectionStore.ProjectionStoreV2.pipe(
+  Effect.flatMap((projections) =>
+    projections.getCheckpointCaptureContext(threadId, { runId, scopeId }),
+  ),
+  Effect.map(({ run }) => run?.status),
+);
+
+/** The startup recovery a restarted server runs before its worker resumes. */
+const restartServer = ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
+  Effect.flatMap((recovery) => recovery.recover),
+);
 
 /** Stands in for CheckpointCaptureService: commits the checkpoint once, like the real one. */
 const commitCapture = (status: "completed" | "interrupted" | "cancelled") =>
@@ -209,6 +287,40 @@ const commitCapture = (status: "completed" | "interrupted" | "cancelled") =>
         runEvent("run.updated", makeRun(now, status, { checkpointId, completedAt: now }), now),
       ],
     });
+  }).pipe(Effect.orDie);
+
+const failCapture = Effect.fail(
+  new CheckpointCapture.CheckpointCaptureExecutionError({
+    threadId,
+    runId,
+    scopeId,
+    cause: "simulated capture failure",
+  }),
+);
+
+const failRefresh = () =>
+  Effect.fail(
+    new RunFinalization.RunFinalizationRefreshError({
+      cwd: "/repo",
+      cause: "simulated refresh failure",
+    }),
+  );
+
+/** Ends the run waiting on its capture, as RunExecutionService does. */
+const finishProviderTurn = (status: "waiting" | "interrupted" | "cancelled") =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    yield* eventSink.writeWithEffects({
+      events: [
+        runEvent(
+          "run.updated",
+          makeRun(now, status, status === "waiting" ? {} : { completedAt: now }),
+          now,
+        ),
+      ],
+      effects: [captureEffect],
+    });
   });
 
 it.effect("finalizes a completed run once, after its checkpoint and workspace refresh", () => {
@@ -217,12 +329,8 @@ it.effect("finalizes a completed run once, after its checkpoint and workspace re
   return Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
     yield* seedThread;
-    const now = yield* DateTime.now;
-    yield* eventSink.writeWithEffects({
-      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
-      effects: [captureEffect],
-    });
-    assert.lengthOf(finalizedEvents(yield* storedEvents), 0);
+    yield* finishProviderTurn("waiting");
+    assert.lengthOf(yield* finalizationRecords, 0);
 
     probe = eventSink.latestSequence({ threadId }).pipe(
       Effect.map((sequence) => {
@@ -230,7 +338,7 @@ it.effect("finalizes a completed run once, after its checkpoint and workspace re
       }),
       Effect.orDie,
     );
-    yield* runCaptureEffect;
+    yield* drainWorker;
 
     const events = yield* storedEvents;
     const finalized = finalizedEvents(events);
@@ -244,20 +352,16 @@ it.effect("finalizes a completed run once, after its checkpoint and workspace re
     assert.isDefined(completedAt);
     assert.deepEqual(refreshedAtSequence, [completedAt!]);
     assert.isTrue(stored!.sequence > completedAt!);
-  }).pipe(Effect.provide(makeLayer(commitCapture("completed").pipe(Effect.orDie), () => probe)));
+    assert.deepEqual(yield* captureStatus, Option.some("succeeded"));
+  }).pipe(Effect.provide(makeLayer(commitCapture("completed"), () => probe)));
 });
 
 it.effect("recording the milestone leaves thread activity where the run left it", () =>
   Effect.gen(function* () {
-    const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     yield* seedThread;
-    const now = yield* DateTime.now;
-    yield* eventSink.writeWithEffects({
-      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
-      effects: [captureEffect],
-    });
-    yield* runCaptureEffect;
+    yield* finishProviderTurn("waiting");
+    yield* drainWorker;
 
     const events = yield* storedEvents;
     const completed = events.find(
@@ -271,61 +375,52 @@ it.effect("recording the milestone leaves thread activity where the run left it"
     const shell = yield* projections.getThreadShell(threadId);
     assert.deepEqual(shell?.updatedAt, completed.event.occurredAt);
   }).pipe(
-    Effect.provide(
-      makeLayer(commitCapture("completed").pipe(Effect.orDie), () =>
-        TestClock.adjust("60 seconds"),
-      ),
-    ),
+    Effect.provide(makeLayer(commitCapture("completed"), () => TestClock.adjust("60 seconds"))),
   ),
 );
 
-it.effect("a retried finalization after a crash still records one milestone", () =>
+it.effect("a restart after finalizing but before settling records one milestone", () =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
     const finalization = yield* RunFinalization.RunFinalizationService;
     yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    // A worker finalized, then its process died before settling the effect.
+    yield* outbox.claimNext({ workerId: "worker:crashed", leaseDurationMs: 60_000 });
+    yield* finalization.finalize({ threadId, runId, scopeId, willRetry: true });
+    assert.lengthOf(finalizedEvents(yield* storedEvents), 1);
+
+    // Restart requeues the capture and the worker runs the whole step again.
+    const summary = yield* restartServer;
+    assert.equal(summary.requeuedEffects, 1);
+    yield* drainWorker;
+    assert.deepEqual(yield* captureStatus, Option.some("succeeded"));
+    // A later write of the finished run adds nothing either.
     const now = yield* DateTime.now;
-    yield* eventSink.writeWithEffects({
-      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
-      effects: [captureEffect],
-    });
-    // The worker crashed after finalizing but before settling the effect, so
-    // a restarted worker runs the whole step again.
-    yield* runCaptureEffect;
-    yield* finalization.finalize({ threadId, runId, scopeId });
     yield* eventSink.write({
       events: [
         runEvent("run.updated", makeRun(now, "completed", { checkpointId, completedAt: now }), now),
       ],
     });
-    assert.lengthOf(finalizedEvents(yield* storedEvents), 1);
-  }).pipe(
-    Effect.provide(
-      // The commit command id makes a repeated capture a no-op, as in production.
-      makeLayer(commitCapture("completed").pipe(Effect.orDie)),
-    ),
-  ),
+    assert.deepEqual(yield* finalizationRecords, [
+      { type: "run.finalized", payload: { runId, outcome: "completed", checkpointId } },
+    ]);
+  }).pipe(Effect.provide(makeLayer(commitCapture("completed")))),
 );
 
 it.effect.each(["interrupted", "cancelled"] as const)(
   "a stopped run with a capture finalizes as %s after the capture",
   (status) =>
     Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
       yield* seedThread;
-      const now = yield* DateTime.now;
-      yield* eventSink.writeWithEffects({
-        events: [runEvent("run.updated", makeRun(now, status, { completedAt: now }), now)],
-        effects: [captureEffect],
-      });
-      assert.lengthOf(finalizedEvents(yield* storedEvents), 0);
-      yield* runCaptureEffect;
-      const finalized = finalizedEvents(yield* storedEvents);
-      assert.deepEqual(
-        finalized.map((stored) => stored.event.payload),
-        [{ runId, outcome: status, checkpointId }],
-      );
-    }).pipe(Effect.provide(makeLayer(commitCapture(status).pipe(Effect.orDie)))),
+      yield* finishProviderTurn(status);
+      assert.lengthOf(yield* finalizationRecords, 0);
+      yield* drainWorker;
+      assert.deepEqual(yield* finalizationRecords, [
+        { type: "run.finalized", payload: { runId, outcome: status, checkpointId } },
+      ]);
+    }).pipe(Effect.provide(makeLayer(commitCapture(status)))),
 );
 
 it.effect("a run that ends without a capture finalizes in its terminal commit", () =>
@@ -359,17 +454,14 @@ it.effect("unfinished, discarded, and previously finished runs never finalize", 
     yield* seedThread;
     const now = yield* DateTime.now;
     // Waiting on a capture that never ran.
-    yield* eventSink.writeWithEffects({
-      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
-      effects: [captureEffect],
-    });
-    assert.lengthOf(finalizedEvents(yield* storedEvents), 0);
+    yield* finishProviderTurn("waiting");
+    assert.lengthOf(yield* finalizationRecords, 0);
     // Rolled back before the capture ran: discarded, and the capture skips it.
     yield* eventSink.write({
       events: [runEvent("run.updated", makeRun(now, "rolled_back", { completedAt: now }), now)],
     });
-    yield* finalization.finalize({ threadId, runId, scopeId });
-    assert.lengthOf(finalizedEvents(yield* storedEvents), 0);
+    yield* finalization.finalize({ threadId, runId, scopeId, willRetry: false });
+    assert.lengthOf(yield* finalizationRecords, 0);
 
     // A run that finished before this milestone existed has no event. A later
     // update to it must not invent one.
@@ -380,36 +472,104 @@ it.effect("unfinished, discarded, and previously finished runs never finalize", 
     });
     yield* eventSink.write({ events: [runEvent("run.created", historical, now)] });
     yield* eventSink.write({ events: [runEvent("run.updated", historical, now)] });
-    assert.lengthOf(finalizedEvents(yield* storedEvents), 0);
+    assert.lengthOf(yield* finalizationRecords, 0);
   }).pipe(Effect.provide(makeLayer(Effect.void))),
 );
 
-it.effect("a waiting run whose capture gave up finalizes when it is later cancelled", () =>
+it.effect.each(["waiting", "interrupted"] as const)(
+  "a capture that gives up after a %s turn records the failure, never run.finalized",
+  (status) =>
+    Effect.gen(function* () {
+      yield* seedThread;
+      yield* finishProviderTurn(status);
+      // The first failure will be retried, so nothing is recorded yet.
+      yield* drainWorker;
+      assert.deepEqual(yield* captureStatus, Option.some("pending"));
+      assert.lengthOf(yield* finalizationRecords, 0);
+
+      yield* TestClock.adjust(firstRetryDelay);
+      yield* drainWorker;
+      assert.deepEqual(yield* captureStatus, Option.some("failed"));
+      const failure = [
+        {
+          type: "run.finalization-failed" as const,
+          payload: { runId, operation: "capture-checkpoint" as const },
+        },
+      ];
+      assert.deepEqual(yield* finalizationRecords, failure);
+
+      // A restart cancels a run still waiting on the failed capture. That is
+      // not a finalization either.
+      yield* restartServer;
+      assert.equal(yield* runStatus, status === "waiting" ? "cancelled" : "interrupted");
+      assert.deepEqual(yield* finalizationRecords, failure);
+    }).pipe(Effect.provide(makeLayer(failCapture))),
+);
+
+it.effect("a refresh that gives up after the checkpoint commit records the failure", () =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
-    const outbox = yield* EffectOutbox.EffectOutboxV2;
     yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    yield* drainWorker;
+    yield* TestClock.adjust(firstRetryDelay);
+    yield* drainWorker;
+
+    assert.deepEqual(yield* captureStatus, Option.some("failed"));
+    assert.equal(yield* runStatus, "completed");
+    const failure = [
+      {
+        type: "run.finalization-failed" as const,
+        payload: { runId, operation: "refresh-workspace" as const },
+      },
+    ];
+    assert.deepEqual(yield* finalizationRecords, failure);
+    // Neither a restart nor a later write of the completed run finalizes it.
+    yield* restartServer;
     const now = yield* DateTime.now;
-    yield* eventSink.writeWithEffects({
-      events: [runEvent("run.updated", makeRun(now, "waiting"), now)],
-      effects: [captureEffect],
-    });
-    yield* outbox.claimNext({ workerId: "test", leaseDurationMs: 60_000 });
-    yield* outbox.fail({ effectId: captureEffect.id, workerId: "test", error: "capture failed" });
-    // Restart recovery cancels a waiting run with no replayable capture.
     yield* eventSink.write({
-      commandId: CommandId.make("command:runtime-reconcile:startup:test"),
       events: [
-        runEvent(
-          "run.updated",
-          makeRun(now, "cancelled", { queuePosition: null, completedAt: now }),
-          now,
-        ),
+        runEvent("run.updated", makeRun(now, "completed", { checkpointId, completedAt: now }), now),
       ],
     });
-    assert.deepEqual(
-      finalizedEvents(yield* storedEvents).map((stored) => stored.event.payload),
-      [{ runId, outcome: "cancelled", checkpointId: null }],
-    );
+    assert.deepEqual(yield* finalizationRecords, failure);
+  }).pipe(Effect.provide(makeLayer(commitCapture("completed"), failRefresh))),
+);
+
+it.effect("a refresh that fails once and then succeeds records only run.finalized", () => {
+  let refreshes = 0;
+  return Effect.gen(function* () {
+    yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    yield* drainWorker;
+    yield* TestClock.adjust(firstRetryDelay);
+    yield* drainWorker;
+    assert.equal(refreshes, 2);
+    assert.deepEqual(yield* finalizationRecords, [
+      { type: "run.finalized", payload: { runId, outcome: "completed", checkpointId } },
+    ]);
+  }).pipe(
+    Effect.provide(
+      makeLayer(commitCapture("completed"), () =>
+        Effect.suspend(() => ((refreshes += 1) === 1 ? failRefresh() : Effect.void)),
+      ),
+    ),
+  );
+});
+
+it.effect("a run whose capture was cancelled records nothing when it later ends", () =>
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    yield* seedThread;
+    yield* finishProviderTurn("waiting");
+    yield* outbox.cancelUnsettled({
+      threadId,
+      effectTypes: ["checkpoint.capture"],
+      reason: "test",
+    });
+    assert.deepEqual(yield* captureStatus, Option.some("cancelled"));
+    yield* restartServer;
+    assert.equal(yield* runStatus, "cancelled");
+    assert.lengthOf(yield* finalizationRecords, 0);
   }).pipe(Effect.provide(makeLayer(Effect.void))),
 );

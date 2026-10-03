@@ -2,21 +2,23 @@ import {
   EventId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2RunFinalizationOperation,
   type OrchestrationV2RunFinalizedOutcome,
   type RunId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 
 /**
- * Each run has one `run.finalized` id. The event log's unique event id keeps
- * the milestone once per run, and consumers can deduplicate deliveries by it.
+ * The id of a run's one finalization record, `run.finalized` or
+ * `run.finalization-failed`. The event log's unique event id keeps a run to
+ * one of them, and consumers can deduplicate deliveries by it.
  */
 export const runFinalizedEventId = (runId: RunId) => EventId.make(`event:run-finalized:${runId}`);
 
 /**
- * The checkpoint capture a terminal run enqueues. While it is unsettled, the
- * run finalizes when RunFinalizationService finishes it, not at the terminal
- * write.
+ * The checkpoint capture a finished run enqueues. A run that has one only
+ * finalizes through RunFinalizationService, which records `run.finalized` once
+ * capture and refresh succeed or `run.finalization-failed` when they give up.
  */
 export const checkpointCaptureEffectId = (runId: RunId) => `effect:checkpoint.capture:${runId}`;
 
@@ -42,21 +44,35 @@ export const runFinalizedOutcome = (
     ? status
     : null;
 
+const recordEnvelope = (run: OrchestrationV2Run, occurredAt: DateTime.Utc) => ({
+  id: runFinalizedEventId(run.id),
+  threadId: run.threadId,
+  runId: run.id,
+  ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+  providerInstanceId: run.providerInstanceId,
+  occurredAt,
+});
+
 export const makeRunFinalizedEvent = (input: {
   readonly run: OrchestrationV2Run;
   readonly outcome: OrchestrationV2RunFinalizedOutcome;
   readonly occurredAt: DateTime.Utc;
 }): Extract<OrchestrationV2DomainEvent, { readonly type: "run.finalized" }> => ({
-  id: runFinalizedEventId(input.run.id),
+  ...recordEnvelope(input.run, input.occurredAt),
   type: "run.finalized",
-  threadId: input.run.threadId,
-  runId: input.run.id,
-  ...(input.run.rootNodeId === null ? {} : { nodeId: input.run.rootNodeId }),
-  providerInstanceId: input.run.providerInstanceId,
-  occurredAt: input.occurredAt,
   payload: {
     runId: input.run.id,
     outcome: input.outcome,
     checkpointId: input.run.checkpointId,
   },
+});
+
+export const makeRunFinalizationFailedEvent = (input: {
+  readonly run: OrchestrationV2Run;
+  readonly operation: OrchestrationV2RunFinalizationOperation;
+  readonly occurredAt: DateTime.Utc;
+}): Extract<OrchestrationV2DomainEvent, { readonly type: "run.finalization-failed" }> => ({
+  ...recordEnvelope(input.run, input.occurredAt),
+  type: "run.finalization-failed",
+  payload: { runId: input.run.id, operation: input.operation },
 });

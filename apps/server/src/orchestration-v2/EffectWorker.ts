@@ -402,6 +402,7 @@ export const executorLayer: Layer.Layer<
                 threadId: effect.threadId,
                 runId: effect.request.runId,
                 scopeId: effect.request.scopeId,
+                willRetry,
               })
               .pipe(
                 Effect.mapError(

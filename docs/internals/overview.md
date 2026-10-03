@@ -79,10 +79,12 @@ checkpoint or diff must not extend the recorded provider duration or keep the cl
 provider work as active. PR discovery after completion also checks that the checkout still matches
 the thread's non-default branch and that a newer run is not active.
 
-`run.finalized` marks both milestones done, once per run. RunFinalizationService records it after
-checkpoint capture and workspace refresh; [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts)
-adds it to the commit that ends any run without an unsettled capture, so new terminal paths need no
-extra work. It is not `thread.settled`, which is the sidebar's parking state.
+`run.finalized` marks both milestones done, once per run. A run that enqueued a checkpoint capture
+finalizes only through RunFinalizationService: `run.finalized` after capture and workspace refresh
+succeed, or `run.finalization-failed` when the last attempt fails. A cancelled capture records
+neither. [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) adds `run.finalized` to the
+commit that ends any run that never enqueued a capture, so new terminal paths need no extra work.
+Neither is `thread.settled`, which is the sidebar's parking state.
 
 [Checkpoints](../../apps/server/src/checkpointing/CheckpointStore.ts) use hidden Git refs to
 capture workspace state without adding commits to the user's branch. A revert must coordinate

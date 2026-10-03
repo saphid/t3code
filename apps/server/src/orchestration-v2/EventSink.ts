@@ -306,18 +306,19 @@ const baseLayer: Layer.Layer<
         });
       });
 
-    // A run finalizes once. A run whose checkpoint capture is still unsettled
-    // finalizes when RunFinalizationService finishes it; any other run that
-    // ends finalizes in the commit that writes its terminal status. Events are
-    // checked against stored state so a repeated write cannot finalize twice.
+    // A run records one finalization. A run with a checkpoint capture, in any
+    // state, finalizes only through RunFinalizationService; a run that never
+    // enqueued one finalizes in the commit that writes its terminal status.
+    // Events are checked against stored state so a repeated write cannot
+    // record twice.
     const withRunFinalizedEvents = (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
       effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
     ) =>
       Effect.gen(function* () {
-        if (
-          !events.some((event) => event.type === "run.updated" || event.type === "run.finalized")
-        ) {
+        const isFinalizationRecord = (event: OrchestrationV2DomainEvent) =>
+          event.type === "run.finalized" || event.type === "run.finalization-failed";
+        if (!events.some((event) => event.type === "run.updated" || isFinalizationRecord(event))) {
           return events;
         }
         const isRecorded = (runId: RunId) =>
@@ -327,7 +328,8 @@ const baseLayer: Layer.Layer<
             WHERE event_id = ${RunFinalized.runFinalizedEventId(runId)}
             LIMIT 1
           `.pipe(Effect.map((rows) => rows.length > 0));
-        const hasUnsettledCapture = (runId: RunId) =>
+        // A failed or cancelled capture still counts: its run did not finalize.
+        const hasCapture = (runId: RunId) =>
           effects.some(
             (effect) =>
               effect.request.type === "checkpoint.capture" && effect.request.runId === runId,
@@ -335,13 +337,7 @@ const baseLayer: Layer.Layer<
             ? Effect.succeed(true)
             : effectOutbox
                 .get(RunFinalized.checkpointCaptureEffectId(runId))
-                .pipe(
-                  Effect.map(
-                    Option.exists(
-                      (effect) => effect.status === "pending" || effect.status === "running",
-                    ),
-                  ),
-                );
+                .pipe(Effect.map(Option.isSome));
         const statuses = new Map<RunId, string | undefined>();
         const previousStatus = (runId: RunId) =>
           statuses.has(runId)
@@ -357,7 +353,7 @@ const baseLayer: Layer.Layer<
         // Appended last so the milestone follows every write in its commit.
         const milestones: Array<OrchestrationV2DomainEvent> = [];
         for (const event of events) {
-          if (event.type === "run.finalized") {
+          if (event.type === "run.finalized" || event.type === "run.finalization-failed") {
             const runId = event.payload.runId;
             if (!finalized.has(runId) && !(yield* isRecorded(runId))) {
               finalized.add(runId);
@@ -382,7 +378,7 @@ const baseLayer: Layer.Layer<
             finalized.has(run.id) ||
             (previous !== undefined && RunFinalized.isSettledRunStatus(previous)) ||
             (yield* isRecorded(run.id)) ||
-            (yield* hasUnsettledCapture(run.id))
+            (yield* hasCapture(run.id))
           ) {
             continue;
           }
