@@ -27,9 +27,15 @@ export function activate(context) {
     "cooperative",
     (_input, { signal }) =>
       new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(new Error("cancelled")));
+        signal.addEventListener("abort", () => {
+          reject(new Error("cancelled"));
+          // Logged after the cancel's answer is written, so it arrives after it.
+          setImmediate(() => log.info("cooperative-settled"));
+        });
       }),
   );
+  // Ignores cancellation and never answers.
+  handle("stall", () => new Promise(() => {}));
   // Ignores cancellation and answers anyway, after the server stopped waiting.
   handle(
     "late",

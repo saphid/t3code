@@ -277,6 +277,45 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
     );
   });
 
+  describe("concurrency", () => {
+    it.effect("counts cancelled calls against the cap until the plugin answers them", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor({ maxConcurrentCalls: 1 });
+        const subscription = yield* supervisor.subscribe;
+        const stalled = (yield* preparePlugin("test.stalled")).registration;
+        const polite = (yield* preparePlugin("test.polite")).registration;
+        yield* supervisor.enable(stalled);
+        yield* supervisor.enable(polite);
+        const stalledPid = pidOf(yield* supervisor.invoke(stalled.manifest.id, "ping", null));
+
+        const stalling = yield* supervisor
+          .invoke(stalled.manifest.id, "stall", null, { timeout: "1 second" })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second");
+        expect((yield* Fiber.join(stalling))._tag).toBe("PluginTimeoutError");
+        // Retries after the timeout are refused while the plugin still holds the call.
+        const retries = yield* Effect.forEach(Array.from({ length: 4 }), () =>
+          supervisor.invoke(stalled.manifest.id, "ping", null).pipe(Effect.flip),
+        );
+        expect(retries.map((error) => error._tag)).toEqual(Array(4).fill("PluginBusyError"));
+        // The slot comes back only when the unanswered process is killed.
+        yield* TestClock.adjust("1 second");
+        yield* awaitState(supervisor, subscription, stalled.manifest.id, "backoff");
+        expect(isProcessAlive(stalledPid)).toBe(false);
+
+        // A plugin that answers the cancel frees its slot without a kill.
+        const politePid = pidOf(yield* supervisor.invoke(polite.manifest.id, "ping", null));
+        const cooperative = yield* supervisor
+          .invoke(polite.manifest.id, "cooperative", null, { timeout: "1 second" })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second");
+        expect((yield* Fiber.join(cooperative))._tag).toBe("PluginTimeoutError");
+        yield* awaitLog(subscription, polite.manifest.id, "cooperative-settled");
+        expect(pidOf(yield* supervisor.invoke(polite.manifest.id, "ping", null))).toBe(politePid);
+      }),
+    );
+  });
+
   describe("disable", () => {
     it.effect("keeps stopping a plugin after the disabling caller is interrupted", () =>
       Effect.gen(function* () {

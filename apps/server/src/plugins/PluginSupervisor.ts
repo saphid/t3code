@@ -68,7 +68,7 @@ export interface PluginSupervisorOptions {
   readonly callTimeout: Duration.Input;
   readonly cancelGrace: Duration.Input;
   readonly stopGrace: Duration.Input;
-  /** In-flight calls per plugin. */
+  /** In-flight calls per plugin, counting cancelled calls the plugin has not answered yet. */
   readonly maxConcurrentCalls: number;
   /** Plugin processes alive at once across the environment. */
   readonly maxRunningPlugins: number;
@@ -685,7 +685,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         if (entry.removed || child.stopping) return new PluginStoppedError({ pluginId });
         if (Deferred.isDoneUnsafe(child.exited))
           return new PluginUnavailableError({ pluginId, reason: "its process just stopped." });
-        if (child.pending.size >= options.maxConcurrentCalls)
+        // A cancelled call holds its slot until the plugin answers it or exits.
+        if (child.pending.size + child.settling.size >= options.maxConcurrentCalls)
           return new PluginBusyError({ pluginId, limit: options.maxConcurrentCalls });
         const requestId = ++child.nextRequestId;
         const deferred = Deferred.makeUnsafe<Schema.Json, PluginInvokeError>();
