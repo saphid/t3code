@@ -59,6 +59,9 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         }),
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
+        hasPluginEnvironment: environments.some(
+          (environment) => environment.serverConfig?.environment.capabilities.plugins === true,
+        ),
       }),
     [
       canManageLocalBackend,
