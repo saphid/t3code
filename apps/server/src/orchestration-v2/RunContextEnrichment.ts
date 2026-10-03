@@ -75,24 +75,19 @@ export class RunContextEnricherV2 extends Context.Service<
 type DynamicToolItem = Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>;
 
 /**
- * Whether plugins add context to a run's message. Only a message the provider
- * receives as a prompt is enriched: not a command typed with `/`, not an
- * adapter-buffered wake (`creationSource: "provider"`, which drains output the
- * provider already produced), and not a restart continuation that resumes the
- * cancelled turn natively.
+ * Whether plugins add context to a run's message. Only a turn the user wrote is
+ * enriched, and not a command typed with `/`. Wakes the agent, server or app
+ * prompts (notifications, delegated completions, restart continuations) are
+ * never enriched, so the history page's human-turn limit also bounds how much
+ * plugin context a snapshot or older page carries.
  */
-export const enrichesRunMessage = (input: {
-  readonly message: {
-    readonly text: string;
-    readonly attachments: ReadonlyArray<unknown>;
-    readonly createdBy: string;
-    readonly creationSource: string;
-  };
-  readonly resumesTurnNatively: boolean;
+export const enrichesRunMessage = (message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<unknown>;
+  readonly createdBy: string;
 }) =>
-  !(input.message.attachments.length === 0 && input.message.text.trimStart().startsWith("/")) &&
-  !(input.message.createdBy === "agent" && input.message.creationSource === "provider") &&
-  !input.resumesTurnNatively;
+  message.createdBy === "user" &&
+  !(message.attachments.length === 0 && message.text.trimStart().startsWith("/"));
 
 const decodeAdded = Schema.decodeUnknownOption(
   Schema.Struct({ context: Schema.Array(PluginContextItemSchema) }),

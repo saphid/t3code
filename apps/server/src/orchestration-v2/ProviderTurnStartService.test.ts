@@ -988,11 +988,11 @@ effectIt.effect("does not enrich a wake that drains output the adapter buffered"
   }),
 );
 
-effectIt.effect("enriches a wake whose text is the prompt", () =>
+effectIt.effect("does not enrich a wake the server prompts", () =>
   Effect.gen(function* () {
     const { enricher, calls } = codenameEnricher();
     const harness = makeLocalCommandHarness({
-      text: "What is the codename?",
+      text: "Delegated task finished. What is the codename?",
       opensSession: true,
       contextEnricher: enricher,
       messageOrigin: { createdBy: "agent", creationSource: "server" },
@@ -1000,8 +1000,13 @@ effectIt.effect("enriches a wake whose text is the prompt", () =>
 
     yield* harness.start;
 
-    expect(calls()).toBe(1);
-    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(providerContext);
+    // Notifications and delegated completions are not turns the user wrote, so
+    // they never consume the history page's human-turn limit and carry no context.
+    expect(calls()).toBe(0);
+    expect(harness.projection().turnItems.filter(isPluginContextTurnItem)).toEqual([]);
+    expect(harness.startRootRun.mock.calls[0]![0].message.text).toBe(
+      "Delegated task finished. What is the codename?",
+    );
   }),
 );
 

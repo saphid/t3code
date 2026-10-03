@@ -528,21 +528,10 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
-      // Delivered once: this run's provider turn marks the work as told. A
-      // restart continuation is prompted by its own text or resumes natively.
-      const noteContinuation = isRestartNoteContinuation(
-        run,
-        projection.runs,
-        projection.providerTurns,
-      );
       // Saved before the session opens, so a retried or replayed start reuses
       // the plugins' answers instead of calling them again.
       const pluginContext =
-        Option.isNone(contextEnricher) ||
-        !RunContextEnrichment.enrichesRunMessage({
-          message,
-          resumesTurnNatively: run.restartContinuationOfRunId !== undefined && !noteContinuation,
-        })
+        Option.isNone(contextEnricher) || !RunContextEnrichment.enrichesRunMessage(message)
           ? { _tag: "ready" as const, entries: [] }
           : yield* RunContextEnrichment.prepareRunContext({
               enricher: contextEnricher.value,
@@ -988,6 +977,13 @@ export const layer: Layer.Layer<
       const userText = RunContextEnrichment.withPluginContext(
         providerUserText,
         pluginContext.entries,
+      );
+      // Delivered once: this run's provider turn marks the work as told. A
+      // restart continuation is prompted by its own text or resumes natively.
+      const noteContinuation = isRestartNoteContinuation(
+        run,
+        projection.runs,
+        projection.providerTurns,
       );
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,

@@ -280,6 +280,30 @@ describe("prepareRunContext", () => {
     }).pipe(Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("counts the run's context budget in UTF-8 bytes, not characters", () =>
+    Effect.gen(function* () {
+      const store = makeStore();
+      // 3,000 characters in all, but 9,000 bytes: the second answer passes the budget.
+      const { enricher } = enricherOf([source(1), source(2), source(3)], (called) =>
+        Effect.succeed(
+          called.pluginId === "test.p1"
+            ? added("字".repeat(2_000))
+            : called.pluginId === "test.p2"
+              ? added("字".repeat(1_000))
+              : added("small"),
+        ),
+      );
+      const prepared = yield* prepare(store, enricher);
+      expect(
+        prepared._tag === "ready" ? prepared.entries.map((entry) => entry.pluginId) : [],
+      ).toEqual(["test.p1", "test.p3"]);
+      expect(contextItems(store)[1]).toMatchObject({
+        status: "failed",
+        output: { reason: "Its context would pass the 8 KiB one run keeps." },
+      });
+    }).pipe(Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect("records nothing for a run that Stop ends while it reads the thread", () =>
     Effect.gen(function* () {
       const store = makeStore();
