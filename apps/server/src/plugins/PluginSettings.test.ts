@@ -4,8 +4,10 @@ import type { PluginInstallationId, PluginSettingsValues } from "@t3tools/contra
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -23,6 +25,8 @@ import * as PluginSupervisor from "./PluginSupervisor.ts";
 const FIXTURE_DIR = `${import.meta.dirname}/testFixtures/settingsPlugin`;
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
+// Or a stand-in that speaks the IPC directly, as a plugin writing raw lines to fd 3 could.
+const RAW_CHILD_PATH = `${import.meta.dirname}/testFixtures/rawHostCallChild.mjs`;
 const SECRET = "s3cret-token-value";
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -30,12 +34,16 @@ const parseManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-/** A secret store in memory, so a test can see exactly what was saved and deleted. */
+/** A secret store in memory, so a test can see exactly what was saved and deleted; `beforeSet` holds writes. */
 const makeSecretStore = () => {
   const entries = new Map<string, Uint8Array>();
+  const hooks: { beforeSet: Effect.Effect<void> } = { beforeSet: Effect.void };
   const service = ServerSecretStore.of({
     get: (name) => Effect.sync(() => Option.fromUndefinedOr(entries.get(name))),
-    set: (name, value) => Effect.sync(() => void entries.set(name, value)),
+    set: (name, value) =>
+      Effect.suspend(() => hooks.beforeSet).pipe(
+        Effect.andThen(Effect.sync(() => void entries.set(name, value))),
+      ),
     create: (name, value) => Effect.sync(() => void entries.set(name, value)),
     getOrCreateRandom: (name, bytes) =>
       Effect.sync(() => {
@@ -45,7 +53,7 @@ const makeSecretStore = () => {
       }),
     remove: (name) => Effect.sync(() => void entries.delete(name)),
   });
-  return { entries, service };
+  return { entries, hooks, service };
 };
 
 /** Starts a supervisor, catalogue and settings in `scope`, as one server start would. */
@@ -53,6 +61,8 @@ const startPlugins = Effect.fn("startPlugins")(function* (
   scope: Scope.Scope,
   secretStore: ServerSecretStore["Service"],
   limits?: PluginSettings.PluginStorageLimits,
+  /** Runs as each settings host call starts, so a test can see that one arrived. */
+  onHostCall: (method: string) => Effect.Effect<void> = () => Effect.void,
 ) {
   const supervisor = yield* PluginSupervisor.make({
     heapLimitMb: 64,
@@ -67,12 +77,32 @@ const startPlugins = Effect.fn("startPlugins")(function* (
     Effect.provideService(Scope.Scope, scope),
   );
   const settings = yield* PluginSettings.make(limits).pipe(
-    Effect.provideService(PluginSupervisor.PluginSupervisor, supervisor),
+    Effect.provideService(PluginSupervisor.PluginSupervisor, {
+      ...supervisor,
+      serveHostMethod: (method, handler) =>
+        supervisor.serveHostMethod(method, (call) =>
+          onHostCall(method).pipe(Effect.andThen(handler(call))),
+        ),
+    }),
     Effect.provideService(PluginCatalog.PluginCatalog, catalog),
     Effect.provideService(ServerSecretStore, secretStore),
     Effect.provideService(Scope.Scope, scope),
   );
   return { supervisor, catalog, settings };
+});
+
+/** Writes the fixture's manifest into `directory`, with `manifest` overriding its keys. */
+const writeManifest = Effect.fn("writeManifest")(function* (
+  directory: string,
+  manifest: Record<string, unknown> = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const fixture = parseManifest(yield* fs.readFileString(path.join(FIXTURE_DIR, "t3-plugin.json")));
+  yield* fs.writeFileString(
+    path.join(directory, "t3-plugin.json"),
+    toJson({ ...fixture, ...manifest }),
+  );
 });
 
 /** Copies the fixture into a scoped temp directory, optionally under a changed manifest. */
@@ -83,13 +113,51 @@ const preparePlugin = Effect.fn("preparePlugin")(function* (
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-settings-" });
   yield* fs.copyFile(path.join(FIXTURE_DIR, "main.mjs"), path.join(directory, "main.mjs"));
-  const fixture = parseManifest(yield* fs.readFileString(path.join(FIXTURE_DIR, "t3-plugin.json")));
-  yield* fs.writeFileString(
-    path.join(directory, "t3-plugin.json"),
-    toJson({ ...fixture, ...manifest }),
-  );
+  yield* writeManifest(directory, manifest);
   return directory;
 });
+
+/** A plugin directory for the raw IPC child, which reads `config` from `raw-child.json`. */
+const prepareRawPlugin = Effect.fn("prepareRawPlugin")(function* (
+  id: string,
+  config: Record<string, unknown>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* preparePlugin({ id });
+  yield* fs.writeFileString(path.join(directory, "raw-child.json"), toJson(config));
+  return { directory, registration: yield* loadPluginDirectory(directory) };
+});
+
+/** A supervisor whose children run `childPath`. */
+const makeSupervisor = (
+  scope: Scope.Scope,
+  childPath: string,
+  options: Partial<PluginSupervisor.PluginSupervisorOptions> = {},
+) =>
+  PluginSupervisor.make({ heapLimitMb: 64, stopGrace: "1 second", ...options }).pipe(
+    Effect.provideService(HostProcessArguments, [process.execPath, childPath]),
+    Effect.provideService(Scope.Scope, scope),
+  );
+
+/** Starts waiting for the first log line of `pluginId` that satisfies `predicate`. */
+const awaitLog = (
+  supervisor: PluginSupervisor.PluginSupervisor["Service"],
+  pluginId: string,
+  predicate: (message: string) => boolean,
+) =>
+  supervisor.subscribe.pipe(
+    Effect.flatMap((subscription) =>
+      Stream.fromSubscription(subscription).pipe(
+        Stream.filter((event) => event._tag === "Log" && event.pluginId === pluginId),
+        Stream.map((event) => (event._tag === "Log" ? event.message : "")),
+        Stream.filter(predicate),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+        Effect.forkChild({ startImmediately: true }),
+      ),
+    ),
+  );
 
 /** Adds, approves and enables the plugin in `directory`. */
 const install = Effect.fn("install")(function* (
@@ -112,6 +180,8 @@ const awaitValues = (
   settings
     .subscribe(installationId)
     .pipe(Stream.filter(predicate), Stream.runHead, Effect.map(Option.getOrThrow));
+
+const parseRefusals = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const valueOf = (values: PluginSettingsValues, key: string) =>
   values.values.find((entry) => entry.key === key)?.value;
@@ -358,7 +428,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
       ),
     );
 
-    it.effect("answers at most 16 host calls of one plugin at a time", () =>
+    it.effect("lets a plugin wait for at most 16 host calls at a time", () =>
       Effect.gen(function* () {
         const scope = yield* Scope.Scope;
         const supervisor = yield* PluginSupervisor.make({ heapLimitMb: 64 }).pipe(
@@ -515,9 +585,242 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
           const error = yield* methods.get(method)!({
             registration: { ...registration, installationId: "x" as PluginInstallationId },
             input: { key: "a", value: 1 },
+            admitted: Effect.void,
           }).pipe(Effect.flip);
           expect(error.message).toBe('The plugin did not declare the "settings" capability.');
         }
+      }),
+    );
+  });
+
+  describe("host calls", () => {
+    /** Serves `storage.get` with a call held until `release`, recording how it ended. */
+    const holdStorageGet = Effect.fn("holdStorageGet")(function* (
+      supervisor: PluginSupervisor.PluginSupervisor["Service"],
+    ) {
+      const scope = yield* Scope.Scope;
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<Exit.Exit<unknown, unknown>>();
+      const counts = { reads: 0, writes: 0 };
+      yield* supervisor
+        .serveHostMethod("settings.get", () =>
+          Effect.sync(() => {
+            counts.reads++;
+            return { value: null };
+          }),
+        )
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      yield* supervisor
+        .serveHostMethod("storage.get", () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            // Stands for a side effect after an awaited host operation.
+            Effect.andThen(Effect.sync(() => counts.writes++)),
+            Effect.as({ found: false, value: null }),
+            Effect.onExit((exit) => Deferred.succeed(ended, exit)),
+          ),
+        )
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      return { started, release, ended, counts };
+    });
+
+    it.effect("ends a disabled generation's host work and refuses its later calls", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor(yield* Scope.Scope, BIN_PATH);
+        const held = yield* holdStorageGet(supervisor);
+        const registration = yield* loadPluginDirectory(yield* preparePlugin());
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const load = yield* supervisor
+          .invoke(pluginId, "load", { key: "a" })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(held.started);
+        const deactivated = yield* awaitLog(supervisor, pluginId, (message) =>
+          message.startsWith("deactivate:"),
+        );
+        const readsBefore = held.counts.reads;
+
+        yield* supervisor.disable(pluginId);
+        // The held call ended with its generation, before disable returned.
+        expect(yield* Deferred.isDone(held.ended)).toBe(true);
+        expect(Exit.hasInterrupts(yield* Deferred.await(held.ended))).toBe(true);
+        expect((yield* Fiber.join(load))._tag).toBe("PluginStoppedError");
+        // deactivate() asked for a setting after the revocation: refused, never served.
+        expect(yield* Fiber.join(deactivated)).toBe("deactivate: The plugin was stopped.");
+        expect(held.counts.reads).toBe(readsBefore);
+        yield* Deferred.succeed(held.release, undefined);
+        expect(held.counts.writes).toBe(0);
+      }),
+    );
+
+    it.effect("ends host work of a process that exits", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor(yield* Scope.Scope, BIN_PATH);
+        const held = yield* holdStorageGet(supervisor);
+        const registration = yield* loadPluginDirectory(yield* preparePlugin());
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const load = yield* supervisor
+          .invoke(pluginId, "load", { key: "a" })
+          .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(held.started);
+
+        const crashed = yield* supervisor.invoke(pluginId, "exit", null).pipe(Effect.flip);
+        expect(crashed._tag).toBe("PluginCrashedError");
+        expect(Exit.hasInterrupts(yield* Deferred.await(held.ended))).toBe(true);
+        expect((yield* Fiber.join(load))._tag).toBe("PluginCrashedError");
+        yield* Deferred.succeed(held.release, undefined);
+        expect(held.counts.writes).toBe(0);
+      }),
+    );
+
+    it.effect("drops a write that waited for the settings lock past its generation", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const secrets = makeSecretStore();
+          const storeArrived = yield* Deferred.make<void>();
+          const { catalog, settings } = yield* startPlugins(
+            yield* Scope.Scope,
+            secrets.service,
+            undefined,
+            (method) =>
+              method === "storage.set" ? Deferred.succeed(storeArrived, undefined) : Effect.void,
+          );
+          const installationId = yield* install(catalog, yield* preparePlugin());
+          expect(yield* catalog.invoke(installationId, "read", { key: "mode" })).toEqual({
+            value: "safe",
+          });
+
+          // A client save holds the settings lock while its secret is written.
+          const writing = yield* Deferred.make<void>();
+          const finishWrite = yield* Deferred.make<void>();
+          secrets.hooks.beforeSet = Deferred.succeed(writing, undefined).pipe(
+            Effect.andThen(Deferred.await(finishWrite)),
+          );
+          const saving = yield* settings
+            .update({ installationId, changes: [{ key: "token", value: SECRET }] })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(writing);
+          const storing = yield* catalog
+            .invoke(installationId, "store", { key: "cursor", value: 1 })
+            .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(storeArrived);
+
+          // The plugin's write waits for the lock while the plugin is disabled and enabled again.
+          yield* catalog.disable({ installationId });
+          yield* catalog.enable({ installationId });
+          yield* Deferred.succeed(finishWrite, undefined);
+          expect((yield* Fiber.join(saving)).secrets).toEqual(["token"]);
+          yield* Fiber.join(storing);
+          expect((yield* countRows(installationId)).storage).toBe(0);
+
+          // The new generation saves as usual.
+          yield* catalog.invoke(installationId, "store", { key: "cursor", value: 2 });
+          expect(yield* catalog.invoke(installationId, "load", { key: "cursor" })).toEqual({
+            value: 2,
+          });
+        }),
+      ),
+    );
+
+    it.effect("stops reading a plugin that does not read its answers, and loses none", () => {
+      const backedUp = Deferred.makeUnsafe<void>();
+      const logger = Logger.make(({ message }) => {
+        if (String(message).includes("not reading the server's answers"))
+          Deferred.doneUnsafe(backedUp, Exit.void);
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maxMessageBytes = 128 * 1024;
+        const supervisor = yield* makeSupervisor(yield* Scope.Scope, RAW_CHILD_PATH, {
+          maxMessageBytes,
+        });
+        const answerBytes = 60_000;
+        let served = 0;
+        yield* supervisor
+          .serveHostMethod("flood.get", () =>
+            Effect.sync(() => {
+              served++;
+              return { data: "x".repeat(answerBytes) };
+            }),
+          )
+          .pipe(Effect.provideService(Scope.Scope, yield* Scope.Scope));
+        const requests = 400;
+        const flood = yield* prepareRawPlugin("test.flood", {
+          mode: "flood",
+          requests,
+          method: "flood.get",
+        });
+        const echo = yield* prepareRawPlugin("test.echo", { mode: "echo" });
+        yield* supervisor.enable(flood.registration);
+        yield* supervisor.enable(echo.registration);
+        const summary = yield* awaitLog(supervisor, "test.flood", (message) =>
+          message.startsWith("answered"),
+        );
+        const first = yield* supervisor
+          .invoke(flood.registration.manifest.id, "ping", 1)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(backedUp);
+        // Other plugins keep working while this one is not read.
+        expect(yield* supervisor.invoke(echo.registration.manifest.id, "ping", 2)).toBe(2);
+        // Without backpressure all 400 answers (24 MB) would sit in the server's write buffer.
+        expect(served).toBeGreaterThan(0);
+        expect(served).toBeLessThan(40);
+
+        // Once the plugin reads again, every request gets exactly one answer.
+        const pid = Number(yield* fs.readFileString(path.join(flood.directory, "raw-child.pid")));
+        process.kill(pid, "SIGUSR2");
+        const answered = yield* Fiber.join(summary);
+        const [, total, refused, messages] = /^answered (\d+), refused (\d+): (.*)$/.exec(
+          answered,
+        )!;
+        expect(Number(total)).toBe(requests);
+        expect(served + Number(refused)).toBe(requests);
+        // A refusal can only be the cap, while answers wait for the plugin to read.
+        for (const message of parseRefusals(messages!))
+          expect(message).toBe("16 calls to the server are already in flight.");
+        expect(yield* Fiber.join(first)).toBe(1);
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+    });
+
+    it.effect("refuses past 16 host calls from a plugin that bypasses the API", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor(yield* Scope.Scope, RAW_CHILD_PATH);
+        const release = yield* Deferred.make<void>();
+        let inFlight = 0;
+        yield* supervisor
+          .serveHostMethod("burst.get", () =>
+            Effect.sync(() => inFlight++).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(null),
+            ),
+          )
+          .pipe(Effect.provideService(Scope.Scope, yield* Scope.Scope));
+        const burst = yield* prepareRawPlugin("test.burst", {
+          mode: "burst",
+          requests: 17,
+          method: "burst.get",
+        });
+        const pluginId = burst.registration.manifest.id;
+        yield* supervisor.enable(burst.registration);
+        const refused = yield* awaitLog(supervisor, pluginId, (message) =>
+          message.startsWith("refused"),
+        );
+        const summary = yield* awaitLog(supervisor, pluginId, (message) =>
+          message.startsWith("answered"),
+        );
+        expect(yield* supervisor.invoke(pluginId, "ping", 1)).toBe(1);
+        expect(yield* Fiber.join(refused)).toBe(
+          "refused: 16 calls to the server are already in flight.",
+        );
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(summary)).toBe(
+          'answered 17, refused 1: ["16 calls to the server are already in flight."]',
+        );
+        expect(inFlight).toBe(16);
       }),
     );
   });

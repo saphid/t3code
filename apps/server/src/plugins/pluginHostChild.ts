@@ -17,6 +17,7 @@ import {
   DEFAULT_PLUGIN_IPC_MAX_BYTES,
   PLUGIN_IPC_FD,
   PLUGIN_IPC_MAX_BYTES_LIMIT,
+  PLUGIN_MAX_HOST_CALLS,
   makeLineDecoder,
 } from "./pluginIpcFraming.ts";
 
@@ -97,6 +98,10 @@ export const runPluginHostChild = (): void => {
       }
       if (Buffer.byteLength(line) > maxBytes) {
         reject(new Error(`The request exceeds ${maxBytes} bytes.`));
+        return;
+      }
+      if (hostCalls.size >= PLUGIN_MAX_HOST_CALLS) {
+        reject(new Error(`${PLUGIN_MAX_HOST_CALLS} calls to the server are already in flight.`));
         return;
       }
       hostCalls.set(requestId, { resolve, reject });

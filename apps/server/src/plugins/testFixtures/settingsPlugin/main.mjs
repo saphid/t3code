@@ -1,9 +1,11 @@
 // Reads its settings and uses its storage on request so PluginSettings.test.ts and the live
 // proof can check what the plugin sees. It never writes into its own directory.
 let modeAtActivation;
+let api;
 
 export async function activate(context) {
   const { handle, settings, storage } = context.proposed;
+  api = { log: context.log, settings };
   // Host calls work before the plugin reports ready.
   modeAtActivation = await settings.get("mode");
   handle("activationMode", () => modeAtActivation ?? null);
@@ -33,6 +35,7 @@ export async function activate(context) {
       return { ok: false, message: error.message };
     }
   });
+  handle("exit", () => process.exit(1));
   // Logs each refusal, so a test can hold the accepted calls until one is refused.
   handle("burst", async ({ count }) => {
     const calls = Array.from({ length: count }, (_, index) => storage.get(`burst-${index}`));
@@ -40,4 +43,14 @@ export async function activate(context) {
     const results = await Promise.allSettled(calls);
     return results.map((result) => (result.status === "fulfilled" ? "ok" : result.reason.message));
   });
+}
+
+// Reports whether the server still answers a revoked plugin.
+export async function deactivate() {
+  try {
+    await api.settings.get("mode");
+    api.log.info("deactivate: answered");
+  } catch (error) {
+    api.log.info(`deactivate: ${error.message}`);
+  }
 }

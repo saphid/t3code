@@ -331,7 +331,7 @@ export const make = Effect.fn("PluginSettings.make")(function* (
     });
   });
 
-  const storageSet = Effect.fnUntraced(function* ({ registration, input }: HostCall) {
+  const storageSet = Effect.fnUntraced(function* ({ registration, input, admitted }: HostCall) {
     const installationId = yield* owner(registration);
     const { key, value } = yield* decodeSetInput(input).pipe(Effect.mapError(malformed));
     yield* checkStorageKey(key);
@@ -355,6 +355,8 @@ export const make = Effect.fn("PluginSettings.make")(function* (
           return yield* hostError(
             `Saving this would store more than ${limits.maxTotalBytes} bytes for the plugin.`,
           );
+        // A revoked generation's write that waited for the lock is dropped here.
+        yield* admitted;
         yield* sql`
           INSERT INTO plugin_storage (installation_id, key, value_json, bytes)
           VALUES (${installationId}, ${key}, ${json}, ${bytes})
@@ -367,14 +369,19 @@ export const make = Effect.fn("PluginSettings.make")(function* (
     );
   });
 
-  const storageDelete = Effect.fnUntraced(function* ({ registration, input }: HostCall) {
+  const storageDelete = Effect.fnUntraced(function* ({ registration, input, admitted }: HostCall) {
     const installationId = yield* owner(registration);
     const { key } = yield* decodeKeyInput(input).pipe(Effect.mapError(malformed));
     yield* checkStorageKey(key);
-    yield* sql`
-      DELETE FROM plugin_storage WHERE installation_id = ${installationId} AND key = ${key}
-    `.pipe(Effect.catch(hostFailed));
-    return null;
+    return yield* lock.withPermit(
+      Effect.gen(function* () {
+        yield* admitted;
+        yield* sql`
+          DELETE FROM plugin_storage WHERE installation_id = ${installationId} AND key = ${key}
+        `.pipe(Effect.catch(hostFailed));
+        return null;
+      }),
+    );
   });
 
   const storageKeys = Effect.fnUntraced(function* ({ registration }: HostCall) {
