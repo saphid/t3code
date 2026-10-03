@@ -27,6 +27,13 @@ export function usePluginActions(environmentId: EnvironmentId | null): ReadonlyA
   );
 }
 
+/** The environment's plugin actions snapshot, including what its limit left out; null until it arrives. */
+export function usePluginActionsSnapshot(environmentId: EnvironmentId | null) {
+  return useEnvironmentQuery(
+    environmentId === null ? null : pluginActionEnvironment.snapshot({ environmentId, input: {} }),
+  ).data;
+}
+
 /**
  * Runs a plugin action in the environment that listed it. A message from the
  * plugin or a failure is shown in an alert; a silent success taps a haptic.
