@@ -11,6 +11,7 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ContributionStatusSnapshot } from "./contributionStatus.ts";
+import { PluginNotificationFrame } from "./pluginNotifications.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -601,6 +602,7 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
   subscribeContributionStatus: "subscribeContributionStatus",
+  pluginsNotificationsSubscribe: "plugins.notifications.subscribe",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1910,6 +1912,14 @@ const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributi
   stream: true,
 });
 
+/** Streams plugin notifications; see PluginNotificationFrame. Gated by the `pluginNotifications` capability. */
+const WsPluginsNotificationsSubscribeRpc = Rpc.make(WS_METHODS.pluginsNotificationsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginNotificationFrame,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2095,6 +2105,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
   WsSubscribeContributionStatusRpc,
+  WsPluginsNotificationsSubscribeRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnDiffRpc,

@@ -85,6 +85,45 @@ export interface PluginStorageApi {
   keys(): Promise<ReadonlyArray<string>>;
 }
 
+export type PluginTone = "neutral" | "info" | "success" | "warning" | "error";
+
+/**
+ * Short advisory statuses on threads, shown beside provider statuses on every
+ * client. Present with the `status` capability. Text is one plain line (up to
+ * 80 characters, longer text is truncated); empty text clears the key. A
+ * plugin shows at most 16 statuses at once and 10 updates at once, then 2 per
+ * second; past a bound `set` rejects. Everything is cleared when the plugin's
+ * process stops, so set statuses again after a restart.
+ */
+export interface PluginStatusApi {
+  set(status: {
+    readonly threadId: string;
+    /** Up to 64 characters; setting an existing key replaces it. */
+    readonly key: string;
+    readonly text: string;
+    readonly tone?: PluginTone;
+    /** Up to 240 characters. */
+    readonly tooltip?: string;
+  }): Promise<void>;
+  clear(status: { readonly threadId: string; readonly key: string }): Promise<void>;
+}
+
+/**
+ * A short notification, shown as a toast on connected clients. Present with
+ * the `notifications` capability. Best-effort, not durable: clients that are
+ * not connected may never see it. 5 at once, then one every 5 seconds;
+ * past that the call rejects.
+ */
+export type PluginNotifyInput = {
+  /** One line, up to 80 characters. */
+  readonly title: string;
+  /** Up to 240 characters. */
+  readonly body?: string;
+  readonly tone?: PluginTone;
+  /** A thread the notification is about; clients offer to open it. */
+  readonly threadId?: string;
+};
+
 export interface PluginProposedApi {
   /**
    * Registers the entry point the server calls by `name`. Names are unique per
@@ -102,6 +141,8 @@ export interface PluginProposedApi {
   onEvent(handler: PluginEventHandler): PluginDisposable;
   readonly settings: PluginSettingsApi | undefined;
   readonly storage: PluginStorageApi | undefined;
+  readonly status: PluginStatusApi | undefined;
+  readonly notify: ((notification: PluginNotifyInput) => Promise<void>) | undefined;
 }
 
 export interface PluginContext {

@@ -68,7 +68,7 @@ function accessibleName(element: Element) {
 
 function statusButton() {
   const button = [...container.querySelectorAll("button")].find((candidate) =>
-    accessibleName(candidate).startsWith("Provider status"),
+    accessibleName(candidate).startsWith("Thread status"),
   );
   if (!button) throw new Error("Status button was not rendered");
   return button;
@@ -126,7 +126,7 @@ describe("ThreadContributionStatus", () => {
     ]);
 
     expect(accessibleName(statusButton())).toBe(
-      `Provider status: Plan, ${longText}, disk almost full`,
+      `Thread status: Plan, ${longText}, disk almost full`,
     );
 
     await act(async () => statusButton().click());
