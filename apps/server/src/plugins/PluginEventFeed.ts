@@ -8,14 +8,17 @@
  * catalogue, and moves the cursor past a page only after the plugin answered
  * it. A failed page is retried with backoff and, after `maxFailures`
  * consecutive failures, the worker is quarantined with the cursor unchanged
- * until `resume`, a re-enable, or a server restart. Delivery is at-least-once.
+ * until `plugins.resume`, a re-enable, or a server restart. Delivery is
+ * at-least-once. Each worker reports its state through `PluginEventDelivery`,
+ * which the catalogue shows as the installation's `eventDelivery`.
  *
  * The cursor starts at the end of the log when an installation is first
  * enabled (the catalogue records it with the enable, through
  * `PluginEventDelivery`), so a new plugin sees exactly the later events. It
  * belongs to the installation: disable and re-enable, consent to changed
- * bytes, and restarts continue from it; remove forgets it. Workers never subscribe to raw events:
- * a commit of a projected event type only wakes them, and they read the store.
+ * bytes, and restarts continue from it; remove forgets it. Workers never
+ * subscribe to raw events: a commit of a projected event type only wakes
+ * them, and they read the store.
  */
 import {
   OrchestrationV2RunFinalizationFailed,
@@ -153,8 +156,6 @@ export class PluginEventFeed extends Context.Service<
     readonly status: (
       installationId: PluginInstallationId,
     ) => Effect.Effect<Option.Option<PluginEventFeedStatus>>;
-    /** Restarts a quarantined worker from its cursor. Does nothing otherwise. */
-    readonly resume: (installationId: PluginInstallationId) => Effect.Effect<void>;
     /** Subscribes before returning, so no receipt after this point is missed (sliding, 1024). */
     readonly subscribe: Effect.Effect<
       PubSub.Subscription<PluginEventFeedReceipt>,
@@ -312,6 +313,25 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   const backoff = (failures: number) =>
     Duration.min(Duration.times(retryBackoff, 2 ** (failures - 1)), maxRetryBackoff);
 
+  /** Records a worker's state and shows it on its installation; cursor moves change nothing shown. */
+  const setState = (
+    installationId: PluginInstallationId,
+    worker: Worker,
+    state: PluginEventFeedState,
+  ) =>
+    Effect.suspend(() => {
+      worker.state = state;
+      return delivery.report(
+        installationId,
+        worker.generation,
+        state._tag === "waiting" || state._tag === "delivering"
+          ? { _tag: "active" }
+          : state._tag === "stopped"
+            ? undefined
+            : state,
+      );
+    });
+
   /** True while the catalogue still shows this registration enabled. */
   const isRegistered = (installationId: PluginInstallationId, generation: number) =>
     catalog.list.pipe(
@@ -338,7 +358,11 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       /** Stops at the cursor until `resume`, a re-enable, or a restart. */
       const quarantine = (attempts: number, reason: string) =>
         Effect.gen(function* () {
-          worker.state = { _tag: "quarantined", failures: attempts, reason };
+          yield* setState(installationId, worker, {
+            _tag: "quarantined",
+            failures: attempts,
+            reason,
+          });
           yield* publish({
             _tag: "Quarantined",
             installationId,
@@ -352,7 +376,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       while (true) {
         const head = yield* eventSink.latestSequence();
         if (cursor >= head) {
-          worker.state = { _tag: "waiting" };
+          yield* setState(installationId, worker, { _tag: "waiting" });
           yield* PubSub.take(wake);
           continue;
         }
@@ -384,7 +408,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
           return yield* quarantine(0, unreadable.reason);
         }
         if (events.length > 0) {
-          worker.state = { _tag: "delivering" };
+          yield* setState(installationId, worker, { _tag: "delivering" });
           const input = yield* encodePage({ events }).pipe(Effect.orDie);
           const exit = yield* catalog
             .invoke(installationId, PLUGIN_EVENTS_HANDLER, input, {
@@ -397,7 +421,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             if (error?._tag === "PluginCatalogError" || error?._tag === "PluginStoppedError") {
               // Revoked or replaced: this registration is over, and a catalogue change follows.
               if (!(yield* isRegistered(installationId, generation))) {
-                worker.state = { _tag: "stopped" };
+                yield* setState(installationId, worker, { _tag: "stopped" });
                 return yield* Effect.never;
               }
               // Still registered (a storage failure, or a call that raced a management step
@@ -405,12 +429,12 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               transient++;
               const delay = backoff(transient);
               const reason = error.message.slice(0, 1000);
-              worker.state = {
+              yield* setState(installationId, worker, {
                 _tag: "retrying",
                 failures: transient,
                 reason,
                 retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, delay)),
-              };
+              });
               yield* publish({ _tag: "Retrying", installationId, generation, cursor, reason });
               yield* Effect.sleep(delay);
               continue;
@@ -430,12 +454,12 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
               return yield* quarantine(failures, reason);
             }
             const delay = backoff(failures);
-            worker.state = {
+            yield* setState(installationId, worker, {
               _tag: "retrying",
               failures,
               reason,
               retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, delay)),
-            };
+            });
             yield* publish({
               _tag: "Failed",
               installationId,
@@ -466,12 +490,12 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       // Storage trouble is not the plugin's failure: wait and start over from the stored cursor.
       Effect.tapError((error) =>
         Effect.gen(function* () {
-          worker.state = {
+          yield* setState(installationId, worker, {
             _tag: "retrying",
             failures: 1,
             reason: "Could not read or save event delivery progress.",
             retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, maxRetryBackoff)),
-          };
+          });
           yield* Effect.logWarning("Plugin event delivery could not read or save its cursor", {
             installationId,
             error,
@@ -489,6 +513,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   ) {
     const worker: Worker = { generation, cursor, state: { _tag: "waiting" }, fiber: undefined };
     workers.set(installationId, worker);
+    yield* delivery.report(installationId, generation, { _tag: "active" });
     worker.fiber = yield* run(installationId, worker).pipe(
       Effect.forkIn(scope, { startImmediately: true }),
     );
@@ -499,6 +524,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
     if (worker === undefined) return;
     workers.delete(installationId);
     if (worker.fiber) yield* Fiber.interrupt(worker.fiber);
+    yield* delivery.report(installationId, worker.generation, undefined);
   });
 
   let known: ReadonlySet<PluginInstallationId> | undefined;
@@ -562,22 +588,26 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
     Effect.forkScoped,
   );
 
+  // `plugins.resume` reaches this through the catalogue.
+  yield* delivery.handleResume((installationId) =>
+    lock.withPermit(
+      Effect.suspend(() => {
+        const worker = workers.get(installationId);
+        if (worker?.state._tag !== "quarantined" && worker?.state._tag !== "retrying")
+          return Effect.void;
+        return stop(installationId).pipe(
+          Effect.andThen(start(installationId, worker.generation, worker.cursor)),
+        );
+      }),
+    ),
+  );
+
   return PluginEventFeed.of({
     status: (installationId) =>
       Effect.sync(() =>
         Option.fromNullishOr(workers.get(installationId)).pipe(
           Option.map(({ generation, cursor, state }) => ({ generation, cursor, state })),
         ),
-      ),
-    resume: (installationId) =>
-      lock.withPermit(
-        Effect.suspend(() => {
-          const worker = workers.get(installationId);
-          if (worker?.state._tag !== "quarantined") return Effect.void;
-          return stop(installationId).pipe(
-            Effect.andThen(start(installationId, worker.generation, worker.cursor)),
-          );
-        }),
       ),
     subscribe: PubSub.subscribe(receipts),
   });

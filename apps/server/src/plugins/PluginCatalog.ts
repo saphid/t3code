@@ -56,9 +56,9 @@ import {
 } from "./pluginSource.ts";
 import { PluginSupervisor, type PluginInvokeError } from "./PluginSupervisor.ts";
 
-/** What is persisted: the wire record without the live process state. */
+/** What is persisted: the wire record without the live process and delivery states. */
 const PluginInstallationRecord = PluginInstallation.mapFields(
-  ({ hostState: _hostState, ...fields }) => fields,
+  ({ hostState: _hostState, eventDelivery: _eventDelivery, ...fields }) => fields,
 );
 type PluginInstallationRecord = typeof PluginInstallationRecord.Type;
 
@@ -141,6 +141,7 @@ export class PluginCatalog extends Context.Service<
     readonly remove: (
       input: PluginInstallationInput,
     ) => Effect.Effect<PluginRemoveResult, PluginCatalogError>;
+    /** Clears the process's backoff, quarantine, or incompatibility, and restarts stopped event delivery. */
     readonly resume: (
       input: PluginInstallationInput,
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
@@ -170,7 +171,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const scope = yield* Effect.scope;
-  const eventDelivery = yield* Effect.serviceOption(PluginEventDelivery);
+  const eventDeliveries = yield* Effect.serviceOption(PluginEventDelivery);
 
   const installations = new Map<PluginInstallationId, Installation>();
   // Management is rare and each step may wait for a process to exit; one at a time keeps the
@@ -200,7 +201,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   /** Saves `record` as enabled, with the event cursor its capabilities need, or neither. */
   const saveEnabled = (record: PluginInstallationRecord, capabilities: ReadonlyArray<string>) =>
-    Option.match(eventDelivery, {
+    Option.match(eventDeliveries, {
       onNone: () => save(record),
       onSome: (delivery) =>
         sql
@@ -363,14 +364,21 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     });
 
   const toWire = Effect.fnUntraced(function* (installation: Installation) {
-    const state =
-      installation.registered === undefined
-        ? Option.none()
-        : yield* supervisor.state(installation.registered.pluginId);
-    return Option.match(state, {
-      onNone: (): PluginInstallation => installation.record,
-      onSome: (hostState): PluginInstallation => ({ ...installation.record, hostState }),
-    });
+    const registered = installation.registered;
+    if (registered === undefined) return installation.record;
+    const hostState = yield* supervisor.state(registered.pluginId);
+    const eventDelivery = Option.isSome(eventDeliveries)
+      ? yield* eventDeliveries.value.state(
+          installation.record.installationId,
+          registered.generation,
+        )
+      : Option.none();
+    const wire: PluginInstallation = {
+      ...installation.record,
+      ...(Option.isSome(hostState) ? { hostState: hostState.value } : {}),
+      ...(Option.isSome(eventDelivery) ? { eventDelivery: eventDelivery.value } : {}),
+    };
+    return wire;
   });
 
   const list = Effect.suspend(() =>
@@ -531,6 +539,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     if (installation.registered === undefined)
       return yield* catalogError("unavailable", "The plugin is not enabled.", input.installationId);
     yield* supervisor.resume(installation.registered.pluginId).pipe(Effect.ignore);
+    if (Option.isSome(eventDeliveries)) yield* eventDeliveries.value.resume(input.installationId);
     return yield* result(installation);
   });
 
@@ -651,6 +660,15 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     Stream.runForEach(() => notify),
     Effect.forkScoped,
   );
+
+  // So do changes of event delivery state.
+  if (Option.isSome(eventDeliveries)) {
+    const deliveryChanges = yield* eventDeliveries.value.changes;
+    yield* Stream.fromSubscription(deliveryChanges).pipe(
+      Stream.runForEach(() => notify),
+      Effect.forkScoped,
+    );
+  }
 
   // Re-register what was enabled, off the startup path. Changed bytes are disabled here;
   // nothing starts a process until it is used.

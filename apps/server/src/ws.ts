@@ -118,7 +118,6 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
-import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1124,7 +1123,6 @@ const makeWsRpcLayer = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pluginCatalog = yield* PluginCatalog.PluginCatalog;
-      const pluginEventFeed = yield* PluginEventFeed.PluginEventFeed;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2049,16 +2047,9 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "plugins",
           }),
         [WS_METHODS.pluginsResume]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.pluginsResume,
-            // Resume also restarts event delivery quarantined by repeated handler failures.
-            pluginCatalog
-              .resume(input)
-              .pipe(Effect.tap(() => pluginEventFeed.resume(input.installationId))),
-            {
-              "rpc.aggregate": "plugins",
-            },
-          ),
+          observeRpcEffect(WS_METHODS.pluginsResume, pluginCatalog.resume(input), {
+            "rpc.aggregate": "plugins",
+          }),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
             "rpc.aggregate": "scheduledTasks",

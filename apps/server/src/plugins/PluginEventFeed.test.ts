@@ -4,6 +4,8 @@ import {
   EnvironmentId,
   EventId,
   PluginCatalogError,
+  type PluginCatalogSnapshot,
+  type PluginEventDeliveryState,
   type PluginInstallationId,
   ProjectId,
   ProviderInstanceId,
@@ -20,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -167,6 +170,28 @@ const install = Effect.fn("install")(function* (catalog: Catalog, directory: str
   yield* catalog.consent({ installationId, digest: installation.source!.digest });
   yield* catalog.enable({ installationId });
   return installationId;
+});
+
+/** Follows the event delivery states that catalogue subscribers see. */
+const deliveryStates = Effect.fn("deliveryStates")(function* (catalog: Catalog) {
+  const snapshots = yield* Queue.unbounded<PluginCatalogSnapshot>();
+  yield* catalog.subscribe.pipe(
+    Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
+    Effect.forkScoped,
+  );
+  return {
+    /** Takes snapshots until one shows `tag` for the installation; earlier ones are dropped. */
+    next: (installationId: PluginInstallationId, tag: PluginEventDeliveryState["_tag"]) =>
+      Effect.gen(function* () {
+        while (true) {
+          const snapshot = yield* Queue.take(snapshots);
+          const state = snapshot.installations.find(
+            (installation) => installation.installationId === installationId,
+          )?.eventDelivery;
+          if (state?._tag === tag) return state;
+        }
+      }),
+  };
 });
 
 /** Takes receipts until one matches; earlier ones are dropped. */
@@ -463,20 +488,30 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             maxFailures: 2,
             retryBackoff: "1 second",
           });
+          const shown = yield* deliveryStates(catalog);
           const installationId = yield* install(catalog, plugin.directory);
           const { cursor } = yield* next(receipts, "Started", installationId);
+          expect(yield* shown.next(installationId, "active")).toEqual({ _tag: "active" });
 
           yield* plugin.failing(true);
           const sequence = yield* finalizeRun("failing");
           const failed = yield* next(receipts, "Failed", installationId);
           expect(failed).toMatchObject({ cursor, failures: 1 });
           expect(failed.reason).toContain("told to fail");
+          expect(yield* shown.next(installationId, "retrying")).toMatchObject({ failures: 1 });
           yield* TestClock.adjust("1 second");
           const quarantined = yield* next(receipts, "Quarantined", installationId);
           expect(quarantined).toMatchObject({ cursor, failures: 2 });
           expect(yield* storedCursor(installationId)).toBe(cursor);
           const status = Option.getOrThrow(yield* feed.status(installationId));
           expect(status).toMatchObject({ cursor, state: { _tag: "quarantined", failures: 2 } });
+          // Management sees the quarantine and why, beside a plugin process that still runs.
+          const visible = yield* shown.next(installationId, "quarantined");
+          expect(visible).toMatchObject({ failures: 2 });
+          expect(visible._tag === "quarantined" && visible.reason).toContain("told to fail");
+          const [listed] = (yield* catalog.list).installations;
+          expect(listed?.hostState?._tag).toBe("running");
+          expect(listed?.eventDelivery?._tag).toBe("quarantined");
 
           // Quarantine waits for a person, even when the handler would succeed now.
           yield* plugin.failing(false);
@@ -486,13 +521,20 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           );
           expect(yield* plugin.handled).toEqual([]);
 
-          yield* feed.resume(installationId);
+          // The one management resume clears it, and its answer already shows delivery active.
+          const resumed = yield* catalog.resume({ installationId });
+          expect(resumed.installation.eventDelivery).toEqual({ _tag: "active" });
           expect(yield* next(receipts, "Started", installationId)).toMatchObject({ cursor });
           expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
             delivered: 1,
             throughSequence: sequence,
           });
+          expect(yield* shown.next(installationId, "active")).toEqual({ _tag: "active" });
           expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([sequence]);
+
+          // Disable removes the state with the registration.
+          const disabled = yield* catalog.disable({ installationId });
+          expect(disabled.installation.eventDelivery).toBeUndefined();
         }),
       ),
     );
@@ -503,7 +545,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           const sql = yield* SqlClient.SqlClient;
           const plugin = yield* preparePlugin("test.unreadable");
           const observed = yield* Deferred.make<void>();
-          const { catalog, feed, receipts } = yield* startServer(
+          const { catalog, receipts } = yield* startServer(
             yield* Scope.Scope,
             {},
             { catalog: observedAfter(observed) },
@@ -532,7 +574,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             UPDATE orchestration_events SET payload_json = ${stored!.payload_json}
             WHERE sequence = ${broken}
           `;
-          yield* feed.resume(installationId);
+          yield* catalog.resume({ installationId });
           expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
             delivered: 2,
             throughSequence: last,

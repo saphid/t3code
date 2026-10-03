@@ -103,3 +103,30 @@ export const PluginEventPage = Schema.Struct({
   events: Schema.Array(PluginEvent).check(Schema.isMaxLength(PLUGIN_EVENT_PAGE_MAX_EVENTS)),
 });
 export type PluginEventPage = typeof PluginEventPage.Type;
+
+const PluginEventDeliveryReason = Schema.String.check(Schema.isMaxLength(1000));
+
+/**
+ * How delivery to one enabled installation that declares `events` is going.
+ * It is separate from the plugin process's state: a running plugin can have
+ * quarantined delivery. `plugins.resume` clears both.
+ *
+ * - `active`: delivering, or waiting for the next event.
+ * - `retrying`: a page failed; the same page is tried again at `retryAt`.
+ * - `quarantined`: stopped in front of a page after `failures` consecutive
+ *   failures, or in front of an event the server cannot read (`failures` 0).
+ *   Nothing is delivered until resume, a re-enable, or a server restart.
+ */
+export const PluginEventDeliveryState = Schema.Union([
+  Schema.TaggedStruct("active", {}),
+  Schema.TaggedStruct("retrying", {
+    failures: NonNegativeInt,
+    reason: PluginEventDeliveryReason,
+    retryAt: IsoDateTime,
+  }),
+  Schema.TaggedStruct("quarantined", {
+    failures: NonNegativeInt,
+    reason: PluginEventDeliveryReason,
+  }),
+]);
+export type PluginEventDeliveryState = typeof PluginEventDeliveryState.Type;
