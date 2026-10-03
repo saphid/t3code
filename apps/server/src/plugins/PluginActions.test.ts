@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PluginActionId,
+  PluginActionInvokeInput,
   PluginId,
   PluginInstallationId,
   ProjectId,
@@ -10,7 +11,9 @@ import {
   type PluginInstallation,
 } from "@t3tools/contracts";
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -233,6 +236,40 @@ it.layer(NodeServices.layer)("PluginActions", (it) => {
         yield* awaitHostState(catalog, installationId, ["starting", "running"]);
         yield* catalog.disable({ installationId });
         expect((yield* Fiber.join(running)).reason).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.effect("refuses malformed ids the wire accepts with a typed error, never a defect", () =>
+    withDatabase(
+      Effect.gen(function* () {
+        const { catalog, actions } = yield* startActions(yield* Scope.Scope);
+        const { installationId } = yield* enablePlugin(catalog, yield* preparePlugin());
+        const decode = Schema.decodeUnknownEffect(PluginActionInvokeInput);
+        const exits = yield* Effect.forEach(
+          [
+            ":1:go",
+            `${"x".repeat(65)}:1:go`,
+            "::",
+            `${installationId}::say-hello`,
+            `${installationId}:1.0:say-hello`,
+            `${installationId}:99999999999999999999:say-hello`,
+            `${installationId} :1:say-hello`,
+          ],
+          (actionId) =>
+            decode({ actionId, target: { _tag: "environment" } }).pipe(
+              Effect.flatMap((input) => actions.invoke(input).pipe(Effect.exit)),
+            ),
+        );
+        for (const exit of exits) {
+          expect(Exit.isFailure(exit) && !Cause.hasDies(exit.cause)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toMatchObject({
+              _tag: "PluginActionError",
+              reason: "not-found",
+            });
+          }
+        }
       }),
     ),
   );

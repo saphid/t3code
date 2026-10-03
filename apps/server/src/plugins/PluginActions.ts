@@ -31,7 +31,7 @@ import {
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { PluginCatalog } from "./PluginCatalog.ts";
@@ -115,13 +115,21 @@ const pluginActionHandlerName = (name: string) => `action:${name}`;
 const actionId = (installationId: string, generation: number, name: string) =>
   PluginActionId.make(`${installationId}:${generation}:${name}`);
 
+const decodeInstallationId = Schema.decodeUnknownOption(PluginInstallationId);
+
+/** The parts of an id this server issued; undefined for anything else. */
 const parseActionId = (id: PluginActionId) => {
   const parts = id.split(":");
   const name = parts.pop();
-  const generation = Number(parts.pop());
-  if (name === undefined || !Number.isSafeInteger(generation) || parts.length === 0)
+  const generationText = parts.pop();
+  if (name === undefined || generationText === undefined || !/^[0-9]+$/.test(generationText))
     return undefined;
-  return { installationId: PluginInstallationId.make(parts.join(":")), generation, name };
+  const generation = Number(generationText);
+  if (!Number.isSafeInteger(generation)) return undefined;
+  const segment = parts.join(":");
+  const installationId = decodeInstallationId(segment);
+  if (Option.isNone(installationId) || installationId.value !== segment) return undefined;
+  return { installationId: installationId.value, generation, name };
 };
 
 /** The actions a catalogue snapshot offers: enabled installations that can run. */
