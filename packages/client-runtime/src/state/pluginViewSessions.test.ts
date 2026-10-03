@@ -1,18 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  AVAILABLE_CONNECTION_STATE,
-  EnvironmentRegistry,
-  EnvironmentSupervisor,
-  type PreparedConnection,
-  PrimaryConnectionTarget,
-  type SupervisorConnectionState,
-} from "@t3tools/client-runtime/connection";
-import {
-  EnvironmentRpcSubscriptionObserver,
-  type RpcSession,
-  type WsRpcProtocolClient,
-} from "@t3tools/client-runtime/rpc";
-import {
   EnvironmentId,
   PluginInstallationId,
   type PluginView,
@@ -31,13 +18,26 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
 
-import { resolvePluginViewTarget, sessionEpoch } from "../panels/pluginView/pluginViewHost";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  EnvironmentRegistry,
+  EnvironmentSupervisor,
+  type PreparedConnection,
+  PrimaryConnectionTarget,
+  type SupervisorConnectionState,
+} from "../connection/index.ts";
+import { resolvePluginViewTarget, sessionEpoch } from "../pluginViews/viewHost.ts";
+import {
+  EnvironmentRpcSubscriptionObserver,
+  type RpcSession,
+  type WsRpcProtocolClient,
+} from "../rpc/index.ts";
 import {
   createSessionPluginViewsAtoms,
   currentSessionPluginViews,
   type SessionPluginViews,
   sidePanelPluginViews,
-} from "./pluginViewSessions";
+} from "./pluginViewSessions.ts";
 
 const environmentId = EnvironmentId.make("plugin-views-environment");
 const TARGET = new PrimaryConnectionTarget({

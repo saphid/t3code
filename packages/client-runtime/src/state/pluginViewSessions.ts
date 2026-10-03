@@ -1,6 +1,3 @@
-import { EnvironmentRegistry, EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
-import { EnvironmentRpcSubscriptionObserver, type RpcSession } from "@t3tools/client-runtime/rpc";
-import type { PluginViewsView } from "@t3tools/client-runtime/state/pluginViews";
 import { type EnvironmentId, type PluginView, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -8,6 +5,12 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { type AsyncResult, Atom } from "effect/unstable/reactivity";
+
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { EnvironmentRpcSubscriptionObserver } from "../rpc/client.ts";
+import type { RpcSession } from "../rpc/session.ts";
+import type { PluginViewsView } from "./pluginViews.ts";
 
 /**
  * An environment's plugin views as the host may act on them. `views` is the

@@ -5,6 +5,7 @@ import {
   buildPluginViewDocument,
   PLUGIN_VIEW_FRAME_ATTRIBUTES,
 } from "@t3tools/client-runtime/plugin-views/document";
+import { resolvePluginViewTarget, sessionEpoch } from "@t3tools/client-runtime/plugin-views/host";
 import { callPluginView } from "@t3tools/client-runtime/state/pluginViews";
 import type { EnvironmentId, PluginView } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -28,12 +29,7 @@ import { pluginViewEnvironment, usePluginViews } from "~/state/pluginViews";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { usePanelHost } from "../panelHost";
-import {
-  awaitPluginViewReady,
-  resolvePluginViewTarget,
-  runPluginViewMount,
-  sessionEpoch,
-} from "./pluginViewHost";
+import { awaitPluginViewReady, runPluginViewMount } from "./pluginViewHost";
 
 /** The bootstrap posts `ready` as it parses, so a view silent this long never started. */
 const READY_TIMEOUT_MS = 10_000;

@@ -1,17 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createPluginViewEnvironmentAtoms } from "@t3tools/client-runtime/state/pluginViews";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
-
-import { connectionAtomRuntime } from "../connection/runtime";
 import {
   createSessionPluginViewsAtoms,
   currentSessionPluginViews,
   NO_SESSION_VIEWS,
   type SessionPluginViews,
-} from "./pluginViewSessions";
+} from "@t3tools/client-runtime/state/pluginViewSessions";
+import { createPluginViewEnvironmentAtoms } from "@t3tools/client-runtime/state/pluginViews";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-export { sidePanelPluginViews } from "./pluginViewSessions";
+import { connectionAtomRuntime } from "../connection/runtime";
+
+export { sidePanelPluginViews } from "@t3tools/client-runtime/state/pluginViewSessions";
 
 export const pluginViewEnvironment = createPluginViewEnvironmentAtoms(connectionAtomRuntime);
 

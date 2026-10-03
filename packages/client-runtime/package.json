@@ -195,6 +195,14 @@
       "types": "./src/pluginViews/viewBridge.ts",
       "default": "./src/pluginViews/viewBridge.ts"
     },
+    "./plugin-views/host": {
+      "types": "./src/pluginViews/viewHost.ts",
+      "default": "./src/pluginViews/viewHost.ts"
+    },
+    "./state/pluginViewSessions": {
+      "types": "./src/state/pluginViewSessions.ts",
+      "default": "./src/state/pluginViewSessions.ts"
+    },
     "./state/pluginSettings": {
       "types": "./src/state/pluginSettings.ts",
       "default": "./src/state/pluginSettings.ts"
