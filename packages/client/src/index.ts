@@ -1,6 +1,5 @@
 export {
   decodeCredential,
-  DEFAULT_EXTERNAL_CLIENT_SCOPES,
   encodeCredential,
   pair,
   type PairInput,

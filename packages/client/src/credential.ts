@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
  * send messages. Terminal, review, access and relay authority must be requested
  * explicitly, and the pairing link still caps what the server grants.
  */
-export const DEFAULT_EXTERNAL_CLIENT_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
+const DEFAULT_EXTERNAL_CLIENT_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
 ];
