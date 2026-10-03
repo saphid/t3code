@@ -7,7 +7,7 @@
  * (JSON text only, byte size, nesting depth, a message rate budget, in-flight
  * calls) and turns `call` messages into calls on the host's binding. Every
  * message it sends keeps the same byte and depth bounds: an answer that would
- * not is replaced by a small `error`. Every call it admits or refuses gets
+ * not, or that is not JSON, is replaced by a small `error`. Every call it admits or refuses gets
  * exactly one answer, so the view's promise always settles. The
  * binding (environment, installation, generation, view) lives in the host's
  * `call` closure; nothing in a message can name another target.
@@ -54,7 +54,7 @@ export interface PluginViewBridge {
 
 const decodeJson = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeMessage = Schema.decodeUnknownExit(PluginViewMessage);
-const encodeHostMessage = Schema.encodeSync(Schema.fromJsonString(PluginViewHostMessage));
+const encodeHostMessage = Schema.encodeExit(Schema.fromJsonString(PluginViewHostMessage));
 const encoder = new TextEncoder();
 
 /** Encoded UTF-8 bytes, without allocating for text that is too long either way. */
@@ -114,35 +114,35 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
     if (closed) return;
     // Depth first: it is cheap and bounds the recursion of encoding.
     const text = withinDepth(message) ? encodeHostMessage(message) : undefined;
-    if (text !== undefined && fitsMessageBytes(text)) return options.port.post(text);
+    if (text !== undefined && Exit.isSuccess(text) && fitsMessageBytes(text.value))
+      return options.port.post(text.value);
     // Only answers carry plugin data. `init`, `ping` and `violation` are bounded host fields.
+    // The replacement errors are small and encodable, so this recursion ends.
     if (message._tag === "result")
-      options.port.post(
-        encodeHostMessage(
-          text === undefined
-            ? {
-                _tag: "error",
-                id: message.id,
-                code: "too-deep",
-                message: "The answer is nested too deeply.",
-              }
+      post(
+        text === undefined
+          ? {
+              _tag: "error",
+              id: message.id,
+              code: "too-deep",
+              message: "The answer is nested too deeply.",
+            }
+          : Exit.isFailure(text)
+            ? { _tag: "error", id: message.id, code: "invalid", message: "The answer is not JSON." }
             : {
                 _tag: "error",
                 id: message.id,
                 code: "too-large",
                 message: "The answer is too large.",
               },
-        ),
       );
     else if (message._tag === "error")
-      options.port.post(
-        encodeHostMessage({
-          _tag: "error",
-          id: message.id,
-          code: "too-large",
-          message: "The error is too large.",
-        }),
-      );
+      post({
+        _tag: "error",
+        id: message.id,
+        code: "too-large",
+        message: "The error is too large.",
+      });
   };
 
   const close = (reason: PluginViewCloseReason) => {

@@ -97,16 +97,20 @@ describe("makePluginViewBridge", () => {
       const { posted, send } = yield* mount((handler) =>
         handler === "deep"
           ? Effect.succeed(deep)
-          : Effect.fail(
-              new PluginViewError({ reason: "call-failed", message: "x".repeat(100_000) }),
-            ),
+          : handler === "nan"
+            ? Effect.succeed(Number.NaN)
+            : Effect.fail(
+                new PluginViewError({ reason: "call-failed", message: "x".repeat(100_000) }),
+              ),
       );
       send({ _tag: "call", id: 1, handler: "deep", input: null });
       send({ _tag: "call", id: 2, handler: "loud", input: null });
+      send({ _tag: "call", id: 3, handler: "nan", input: null });
       yield* Effect.yieldNow;
       expect(posted.slice(1)).toEqual([
         { _tag: "error", id: 1, code: "too-deep", message: "The answer is nested too deeply." },
         { _tag: "error", id: 2, code: "too-large", message: "The error is too large." },
+        { _tag: "error", id: 3, code: "invalid", message: "The answer is not JSON." },
       ]);
     }),
   );

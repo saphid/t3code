@@ -209,7 +209,8 @@ export const PluginViewHostMessage = Schema.TaggedUnion({
   result: { id: BridgeId, value: Schema.Json },
   /**
    * `code` is an open set: a `PluginViewError` reason, `cancelled`, `busy`,
-   * `rate` (the call arrived over the message rate), or `too-deep`.
+   * `rate` (the call arrived over the message rate), `too-deep`, `too-large`, or
+   * `invalid` (the answer is not JSON).
    */
   error: { id: BridgeId, code: Schema.String, message: Schema.String },
   ping: { n: NonNegativeInt },
