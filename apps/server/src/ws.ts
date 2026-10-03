@@ -121,6 +121,7 @@ import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginActions from "./plugins/PluginActions.ts";
+import * as PluginNpm from "./plugins/PluginNpm.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1141,6 +1142,7 @@ const makeWsRpcLayer = (
           getProjectShell: projectStore.getShell,
         }),
       });
+      const pluginNpm = yield* PluginNpm.PluginNpm;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2090,6 +2092,26 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.pluginActionsInvoke]: (input) =>
           observeRpcEffect(WS_METHODS.pluginActionsInvoke, pluginActions.invoke(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmList]: (_input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmList, pluginNpm.list, {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmAdd]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmAdd, pluginNpm.add(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmStageUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmStageUpdate, pluginNpm.stageUpdate(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmApplyUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmApplyUpdate, pluginNpm.applyUpdate(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsNpmDiscardUpdate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsNpmDiscardUpdate, pluginNpm.discardUpdate(input), {
             "rpc.aggregate": "plugins",
           }),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
