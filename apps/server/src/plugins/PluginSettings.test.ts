@@ -1014,5 +1014,83 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
         }),
       ),
     );
+
+    it.effect("saves nothing new while a retired secret cannot be deleted", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const secrets = makeSecretStore();
+          const { catalog, settings } = yield* startPlugins(yield* Scope.Scope, secrets.service);
+          const directory = yield* preparePlugin();
+          const installationId = yield* install(catalog, directory);
+          const declare = (generation: number) =>
+            Effect.gen(function* () {
+              const keys = Array.from(
+                { length: 32 },
+                (_, index) => `g${generation}k${String(index).padStart(2, "0")}`,
+              );
+              yield* writeManifest(directory, {
+                settings: keys.map((key) => ({ type: "secret", key, label: key })),
+              });
+              yield* catalog.refresh({ installationId });
+              return keys.map((key) => ({ key, value: SECRET }));
+            });
+          yield* settings.update({ installationId, changes: yield* declare(0) });
+          expect(secrets.entries.size).toBe(32);
+
+          // Renaming every field while deletes fail refuses each save and stores nothing more.
+          secrets.faults.remove = true;
+          for (const generation of [1, 2, 3]) {
+            const refused = yield* settings
+              .update({ installationId, changes: yield* declare(generation) })
+              .pipe(Effect.flip);
+            expect(refused.reason).toBe("storage");
+            expect(secrets.entries.size).toBe(32);
+            expect(yield* countRows(installationId)).toEqual({
+              settings: 0,
+              secrets: 32,
+              storage: 0,
+            });
+          }
+          // A secret field retyped as text keeps its secret and gets no value beside it.
+          yield* writeManifest(directory, {
+            settings: [{ type: "text", key: "g0k00", label: "g0k00" }],
+          });
+          yield* catalog.refresh({ installationId });
+          const retyped = yield* settings
+            .update({ installationId, changes: [{ key: "g0k00", value: "plain" }] })
+            .pipe(Effect.flip);
+          expect(retyped.reason).toBe("storage");
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 0,
+            secrets: 32,
+            storage: 0,
+          });
+
+          // Once deletes work, the next save retires the old secrets first.
+          secrets.faults.remove = false;
+          const changes = yield* declare(3);
+          const saved = yield* settings.update({ installationId, changes });
+          expect(saved.secrets).toEqual(changes.map((change) => change.key));
+          expect(secrets.entries.size).toBe(32);
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 0,
+            secrets: 32,
+            storage: 0,
+          });
+
+          const ended = yield* settings
+            .subscribe(installationId)
+            .pipe(Stream.runDrain, Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* catalog.remove({ installationId });
+          expect((yield* Fiber.join(ended)).reason).toBe("not-found");
+          expect(secrets.entries.size).toBe(0);
+          expect(yield* countRows(installationId)).toEqual({
+            settings: 0,
+            secrets: 0,
+            storage: 0,
+          });
+        }),
+      ),
+    );
   });
 });

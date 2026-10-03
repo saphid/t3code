@@ -18,8 +18,10 @@
  *
  * Only the fields the installation declares now are kept: each update first
  * deletes values (and secrets) of keys that are no longer declared, or no
- * longer of that kind, and snapshots only carry declared fields. So what is
- * stored and sent stays within the declaration's bounds as manifests change.
+ * longer of that kind, and snapshots only carry declared fields. An update
+ * whose retired secret cannot be deleted fails and saves nothing, keeping the
+ * row for the next attempt, so what is stored and sent stays within one
+ * declaration's bounds as manifests change, even while deletion fails.
  */
 import {
   PLUGIN_SETTINGS_CAPABILITY,
@@ -247,13 +249,16 @@ export const make = Effect.fn("PluginSettings.make")(function* (
       ),
     );
 
-  /** Deletes what is saved for keys the declaration no longer has, or has as another kind. */
+  /**
+   * Deletes what is saved for keys the declaration no longer has, or has as another kind. Fails
+   * if a secret's file cannot be deleted, so nothing new is saved beside it.
+   */
   const retireUndeclared = Effect.fnUntraced(function* (
     installationId: PluginInstallationId,
     fields: ReadonlyArray<PluginSettingField>,
   ) {
     for (const row of yield* secretRows(installationId))
-      if (!isSecret(fields, row.key)) yield* deleteSecretOrWarn(installationId, row.key);
+      if (!isSecret(fields, row.key)) yield* deleteSecret(installationId, row.key);
     for (const row of yield* savedRows(installationId))
       if (!isValue(fields, row.key))
         yield* sql`
