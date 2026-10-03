@@ -313,6 +313,114 @@ describe("external environment client", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("serves the request after reconnect on the new session", () =>
+    Effect.gen(function* () {
+      const served: Array<string> = [];
+      const projectionFrom = (session: string) => () =>
+        Effect.sync(() => {
+          served.push(session);
+          return { session } as never;
+        });
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        { client: { [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: projectionFrom("first") } },
+        { client: { [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: projectionFrom("second") } },
+      ]);
+      yield* environment.ready;
+      yield* environment.disconnect;
+      yield* awaitPhase(environment.state, "available");
+
+      yield* environment.reconnect;
+      yield* environment.ready;
+      yield* environment.request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+        threadId: ThreadId.make("thread-1"),
+      });
+
+      expect(served).toEqual(["second"]);
+      expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports a block found by the reconnect attempt", () =>
+    Effect.gen(function* () {
+      const revoked = new ConnectionBlockedError({
+        reason: "authentication",
+        detail: "The session was revoked.",
+      });
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        { client: {} },
+        revoked,
+      ]);
+      yield* environment.ready;
+      yield* environment.disconnect;
+      yield* awaitPhase(environment.state, "available");
+
+      yield* environment.reconnect;
+
+      expect(
+        yield* Effect.flip(
+          environment.request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+            threadId: ThreadId.make("thread-1"),
+          }),
+        ),
+      ).toBe(revoked);
+      expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("waits for the retried attempt after a block", () =>
+    Effect.gen(function* () {
+      const blocked = new ConnectionBlockedError({
+        reason: "permission",
+        detail: "This device is not allowed yet.",
+      });
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        blocked,
+        { client: {} },
+      ]);
+      expect(yield* Effect.flip(environment.ready)).toBe(blocked);
+
+      yield* environment.retryNow;
+      yield* environment.ready;
+
+      expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports the block found by the retried attempt", () =>
+    Effect.gen(function* () {
+      const first = new ConnectionBlockedError({ reason: "permission", detail: "first" });
+      const second = new ConnectionBlockedError({ reason: "permission", detail: "second" });
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        first,
+        second,
+      ]);
+      expect(yield* Effect.flip(environment.ready)).toBe(first);
+
+      yield* environment.retryNow;
+
+      expect(yield* Effect.flip(environment.ready)).toBe(second);
+      expect(yield* SubscriptionRef.get(attempts)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("stays disconnected when retried without a reconnect", () =>
+    Effect.gen(function* () {
+      const { environment, attempts } = yield* environmentWith(credentialFor("one"), [
+        { client: {} },
+      ]);
+      yield* environment.ready;
+      yield* environment.disconnect;
+      yield* awaitPhase(environment.state, "available");
+
+      yield* environment.retryNow;
+
+      expect(yield* Effect.flip(environment.ready)).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+      });
+      expect(yield* SubscriptionRef.get(attempts)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports a caller disconnect instead of waiting forever", () =>
     Effect.gen(function* () {
       const { environment } = yield* environmentWith(credentialFor("one"), [{ client: {} }]);

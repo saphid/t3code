@@ -46,6 +46,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -223,31 +224,45 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
     supervisor,
   );
 
+  // The disconnected or blocked state that a reconnect or retry replaces. The
+  // supervisor answers every request with a new state, so `ready` skips this
+  // exact state and reports the requested attempt, not the outcome before it.
+  const superseded = yield* Ref.make<SupervisorConnectionState | undefined>(undefined);
+  const recover = (request: Effect.Effect<void>) =>
+    SubscriptionRef.get(supervisor.state).pipe(
+      Effect.flatMap((current) =>
+        current.phase === "available" || current.phase === "blocked"
+          ? Ref.set(superseded, current)
+          : Effect.void,
+      ),
+      Effect.andThen(request),
+    );
+
   /**
    * Waits for a live session. Transient failures keep retrying with backoff,
    * so bound this with a timeout; authentication, permission and protocol
    * failures fail at once.
    */
-  const ready = SubscriptionRef.changes(supervisor.state).pipe(
-    Stream.filter(
-      (state) =>
-        state.phase === "connected" || state.phase === "blocked" || state.phase === "available",
-    ),
-    Stream.runHead,
-    Effect.flatMap(
-      Effect.fnUntraced(function* (state) {
-        if (Option.isNone(state) || state.value.phase === "available") {
-          return yield* new EnvironmentRpcUnavailableError({
-            environmentId: credential.environmentId,
-            message: `${credential.label} is disconnected.`,
-          });
-        }
-        if (state.value.phase === "blocked") {
-          return yield* blockedFailure(state.value);
-        }
-      }),
-    ),
-  );
+  const ready = Effect.gen(function* () {
+    const stale = yield* Ref.get(superseded);
+    const state = yield* SubscriptionRef.changes(supervisor.state).pipe(
+      Stream.filter(
+        (state) =>
+          state !== stale &&
+          (state.phase === "connected" || state.phase === "blocked" || state.phase === "available"),
+      ),
+      Stream.runHead,
+    );
+    if (Option.isNone(state) || state.value.phase === "available") {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: credential.environmentId,
+        message: `${credential.label} is disconnected.`,
+      });
+    }
+    if (state.value.phase === "blocked") {
+      return yield* blockedFailure(state.value);
+    }
+  });
 
   const negotiation = Effect.gen(function* () {
     yield* ready;
@@ -313,9 +328,9 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
     shell,
     sendMessage,
     /** Skips any pending backoff and reconnects now. */
-    retryNow: supervisor.retryNow,
+    retryNow: recover(supervisor.retryNow),
     disconnect: supervisor.disconnect,
-    reconnect: supervisor.connect,
+    reconnect: recover(supervisor.connect),
   };
 });
 
