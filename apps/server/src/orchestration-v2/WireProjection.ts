@@ -3,11 +3,10 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  isPluginContextTurnItem,
   PLUGIN_ENRICH_LIMITS,
 } from "@t3tools/contracts";
 import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
-
-import { isPluginContextItem } from "./RunContextEnrichment.ts";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
@@ -99,10 +98,11 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
     case "dynamic_tool": {
-      // Plugin context is the record users inspect, and its transform limits
-      // already bound it, so it travels whole.
+      // Plugin context is the record users inspect, so it travels whole. The
+      // transform limits bound it: one record's answer and a run's kept
+      // context are each at most 8 KiB, and a run has at most five records.
       if (
-        isPluginContextItem(item) &&
+        isPluginContextTurnItem(item) &&
         Buffer.byteLength(JSON.stringify(item.output ?? null), "utf8") <=
           PLUGIN_ENRICH_LIMITS.maxResultBytes
       )

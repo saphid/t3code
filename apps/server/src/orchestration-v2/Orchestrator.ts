@@ -13,6 +13,7 @@ import {
 import {
   type ChatAttachment,
   CommandId,
+  isPluginContextTurnItem,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -75,7 +76,7 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
-import { isPluginContextItem, notAddedPluginContextItem } from "./RunContextEnrichment.ts";
+import { notAddedPluginContextItem } from "./RunContextEnrichment.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -8066,7 +8067,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         // Plugins still answering never reach this run; close their items with it.
         for (const contextItem of projection.turnItems
-          .filter(isPluginContextItem)
+          .filter(isPluginContextTurnItem)
           .filter((candidate) => candidate.runId === run.id && candidate.status === "running")) {
           yield* emitEvent({
             type: "turn-item.updated",

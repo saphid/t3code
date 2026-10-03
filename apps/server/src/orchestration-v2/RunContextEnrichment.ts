@@ -12,11 +12,16 @@
  * receives exactly the context the saved items show.
  *
  * The items are `dynamic_tool` items with an integration source, which every
- * client already decodes and renders, so older clients show them too.
+ * client already decodes and renders, so older clients show them too. A run
+ * keeps at most `maxPluginsPerRun` plugin records plus one record counting
+ * the plugins it did not call, and at most `maxRunContextBytes` of context.
  */
 import {
+  isPluginContextTurnItem,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
+  PLUGIN_CONTEXT_OVERFLOW_SOURCE_KEY,
+  PLUGIN_CONTEXT_TOOL_NAME,
   PLUGIN_ENRICH_LIMITS,
   type PluginContextItem,
   type PluginEnrichInput,
@@ -67,17 +72,7 @@ export class RunContextEnricherV2 extends Context.Service<
   RunContextEnricherV2Shape
 >()("t3/orchestration-v2/RunContextEnrichment/RunContextEnricherV2") {}
 
-/** `toolName` of the timeline items that record plugin context. */
-export const PLUGIN_CONTEXT_TOOL_NAME = "plugin_context";
-
 type DynamicToolItem = Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>;
-
-export const isPluginContextItem = (item: OrchestrationV2TurnItem): item is DynamicToolItem =>
-  item.type === "dynamic_tool" &&
-  item.nativeItemRef === null &&
-  item.toolName === PLUGIN_CONTEXT_TOOL_NAME &&
-  item.toolSource?.kind === "integration" &&
-  item.toolSource.key.startsWith("plugin:");
 
 const decodeAdded = Schema.decodeUnknownOption(
   Schema.Struct({ context: Schema.Array(PluginContextItemSchema) }),
@@ -214,7 +209,7 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
     });
 
   const saved = input.turnItems.filter(
-    (item): item is DynamicToolItem => item.runId === input.runId && isPluginContextItem(item),
+    (item): item is DynamicToolItem => item.runId === input.runId && isPluginContextTurnItem(item),
   );
   if (saved.length > 0) {
     // This run already began enrichment: never call a plugin again.
@@ -241,11 +236,12 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
       0,
       ...input.turnItems.filter((item) => item.runId === input.runId).map((item) => item.ordinal),
     ) + 1;
-  const started = sources.map((source, index): DynamicToolItem => ({
-    id: input.idAllocator.derive.runSignalTurnItem({
-      runId: input.runId,
-      signal: `plugin-context:${source.installationId}`,
-    }),
+  const recordOf = (
+    index: number,
+    signal: string,
+    record: Pick<DynamicToolItem, "status" | "title" | "toolSource" | "input" | "output">,
+  ): DynamicToolItem => ({
+    id: input.idAllocator.derive.runSignalTurnItem({ runId: input.runId, signal }),
     type: "dynamic_tool",
     threadId: input.threadId,
     runId: input.runId,
@@ -255,33 +251,50 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
     nativeItemRef: null,
     parentItemId: null,
     ordinal: firstOrdinal + index,
-    status: "running",
-    title: `Adding context from ${source.name}`,
     toolName: PLUGIN_CONTEXT_TOOL_NAME,
-    toolSource: { key: `plugin:${source.pluginId}`, name: source.name, kind: "integration" },
-    input: {
-      plugin: {
-        id: source.pluginId,
-        name: source.name,
-        installationId: source.installationId,
-        generation: source.generation,
-      },
-    },
+    ...record,
     startedAt: now,
-    completedAt: null,
+    completedAt: record.status === "running" ? null : now,
     updatedAt: now,
-  }));
+  });
   const called = sources.slice(0, PLUGIN_ENRICH_LIMITS.maxPluginsPerRun);
-  const overflow = started.slice(called.length).map((item) =>
-    notAddedPluginContextItem(item, {
-      status: "failed",
-      reason: `At most ${PLUGIN_ENRICH_LIMITS.maxPluginsPerRun} plugins add context to one run.`,
-      now,
+  const started = called.map((source, index) =>
+    recordOf(index, `plugin-context:${source.installationId}`, {
+      status: "running",
+      title: `Adding context from ${source.name}`,
+      toolSource: { key: `plugin:${source.pluginId}`, name: source.name, kind: "integration" },
+      input: {
+        plugin: {
+          id: source.pluginId,
+          name: source.name,
+          installationId: source.installationId,
+          generation: source.generation,
+        },
+      },
     }),
   );
+  const notCalled = sources.length - called.length;
+  // One record for every plugin past the cap, so a run's records stay bounded.
+  const overflow =
+    notCalled === 0
+      ? []
+      : [
+          recordOf(called.length, "plugin-context-overflow", {
+            status: "failed",
+            title: `Context from ${notCalled} more ${notCalled === 1 ? "plugin" : "plugins"} not added`,
+            toolSource: {
+              key: PLUGIN_CONTEXT_OVERFLOW_SOURCE_KEY,
+              name: "Plugins",
+              kind: "integration",
+            },
+            input: { notCalled },
+            output: {
+              reason: `At most ${PLUGIN_ENRICH_LIMITS.maxPluginsPerRun} plugins add context to one run; ${notCalled} more ${notCalled === 1 ? "was" : "were"} not called.`,
+            },
+          }),
+        ];
   // The record that this run began enrichment, committed before any plugin runs.
-  if (!(yield* write([...started.slice(0, called.length), ...overflow], now)))
-    return { _tag: "stale" } as const;
+  if (!(yield* write([...started, ...overflow], now))) return { _tag: "stale" } as const;
 
   const truncated = input.userText.length > PLUGIN_ENRICH_LIMITS.maxMessageTextLength;
   const enrichInput = {
@@ -302,9 +315,26 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
     { concurrency: "unbounded" },
   );
   const answeredAt = yield* DateTime.now;
-  const finished = called.map((source, index) =>
-    outcomeItem(started[index]!, source, outcomes[index]!, answeredAt),
-  );
+  // Answers are kept in catalogue order until the run's context budget is spent.
+  let keptBytes = 0;
+  const finished = called.map((source, index) => {
+    const outcome = outcomes[index]!;
+    if (outcome._tag === "added") {
+      const bytes = Buffer.byteLength(JSON.stringify({ context: outcome.context }), "utf8");
+      if (keptBytes + bytes > PLUGIN_ENRICH_LIMITS.maxRunContextBytes)
+        return outcomeItem(
+          started[index]!,
+          source,
+          {
+            _tag: "skipped",
+            reason: `Its context would pass the ${PLUGIN_ENRICH_LIMITS.maxRunContextBytes / 1024} KiB one run keeps.`,
+          },
+          answeredAt,
+        );
+      keptBytes += bytes;
+    }
+    return outcomeItem(started[index]!, source, outcome, answeredAt);
+  });
   if (!(yield* write(finished, answeredAt))) return { _tag: "stale" } as const;
   return savedEntries(finished);
 });

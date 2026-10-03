@@ -36,7 +36,8 @@ import { jsonBytes } from "./pluginToolDeclarations.ts";
 const encodeInput = Schema.encodeSync(PluginEnrichInput);
 const decodeResult = Schema.decodeUnknownExit(PluginEnrichResult);
 
-const MAX_REASON_LENGTH = 1_000;
+// Reasons travel with the thread's snapshots, like the context itself.
+const MAX_REASON_LENGTH = 300;
 
 const errorMessage = (cause: Cause.Cause<{ readonly message: string }>) =>
   Option.match(Cause.findErrorOption(cause), {

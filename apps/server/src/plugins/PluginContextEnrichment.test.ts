@@ -194,7 +194,7 @@ it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
             "Context fixture answered with context outside the allowed shape",
           );
           expect(yield* reasonOf("[big]")).toBe(
-            "Context fixture answered with more than 16 KiB of context.",
+            "Context fixture answered with more than 8 KiB of context.",
           );
           // The plugin keeps answering after each refusal.
           expect((yield* enricher.enrich(source!, runInput("ok")))._tag).toBe("added");

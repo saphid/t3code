@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  isPluginContextTurnItem,
   NodeId,
   type OrchestrationV2TurnItem,
+  PLUGIN_ENRICH_LIMITS,
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
@@ -16,7 +18,6 @@ import * as Fiber from "effect/Fiber";
 import type * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import {
-  isPluginContextItem,
   prepareRunContext,
   type RunContextEnricherV2Shape,
   type RunContextOutcome,
@@ -106,7 +107,7 @@ const prepare = Effect.fn("prepare")(function* (
 });
 
 const contextItems = (store: ReturnType<typeof makeStore>) =>
-  [...store.items.values()].filter(isPluginContextItem);
+  [...store.items.values()].filter(isPluginContextTurnItem);
 
 describe("prepareRunContext", () => {
   it.effect("saves the call before it runs, then the answer, and reuses both on every retry", () =>
@@ -217,18 +218,60 @@ describe("prepareRunContext", () => {
     }).pipe(Effect.provide(IdAllocator.layer)),
   );
 
-  it.effect("calls at most eight plugins and records the rest as skipped", () =>
+  it.effect("keeps a constant number of records however many plugins are eligible", () =>
     Effect.gen(function* () {
       const store = makeStore();
-      const sources = Array.from({ length: 9 }, (_, index) => source(index + 1));
+      const sources = Array.from({ length: 1_000 }, (_, index) => source(index + 1));
       const { enricher, calls } = enricherOf(sources, () => Effect.succeed(added("x")));
       const prepared = yield* prepare(store, enricher);
-      expect(prepared._tag === "ready" ? prepared.entries.length : -1).toBe(8);
-      expect(calls.length).toBe(8);
+      const cap = PLUGIN_ENRICH_LIMITS.maxPluginsPerRun;
+      expect(prepared._tag === "ready" ? prepared.entries.length : -1).toBe(cap);
+      // The first plugins in catalogue order are called; one record counts the rest.
+      expect(calls.toSorted()).toEqual(sources.slice(0, cap).map((called) => called.pluginId));
+      expect(store.writes.map((batch) => batch.length)).toEqual([cap + 1, cap]);
+      expect(contextItems(store).length).toBe(cap + 1);
       expect(contextItems(store).at(-1)).toMatchObject({
         status: "failed",
-        input: { plugin: { id: "test.p9" } },
-        output: { reason: "At most 8 plugins add context to one run." },
+        title: "Context from 996 more plugins not added",
+        toolSource: { key: "plugins", name: "Plugins", kind: "integration" },
+        input: { notCalled: 996 },
+        output: {
+          reason: "At most 4 plugins add context to one run; 996 more were not called.",
+        },
+      });
+
+      // The same record shape for a much smaller overflow.
+      const few = makeStore();
+      yield* prepare(
+        few,
+        enricherOf(
+          Array.from({ length: cap + 1 }, (_, index) => source(index + 1)),
+          () => Effect.succeed(added("x")),
+        ).enricher,
+      );
+      expect(contextItems(few).length).toBe(cap + 1);
+      expect(contextItems(few).at(-1)).toMatchObject({
+        title: "Context from 1 more plugin not added",
+        output: { reason: "At most 4 plugins add context to one run; 1 more was not called." },
+      });
+    }).pipe(Effect.provide(IdAllocator.layer)),
+  );
+
+  it.effect("keeps answers in catalogue order until the run's context budget is spent", () =>
+    Effect.gen(function* () {
+      const store = makeStore();
+      const text = (length: number) => "x".repeat(length);
+      const { enricher } = enricherOf([source(1), source(2), source(3)], (called) =>
+        Effect.succeed(called.pluginId === "test.p3" ? added("small") : added(text(4_500))),
+      );
+      const prepared = yield* prepare(store, enricher);
+      expect(
+        prepared._tag === "ready" ? prepared.entries.map((entry) => entry.pluginId) : [],
+      ).toEqual(["test.p1", "test.p3"]);
+      expect(contextItems(store)[1]).toMatchObject({
+        status: "failed",
+        title: "Context from Plugin 2 not added",
+        output: { reason: "Its context would pass the 8 KiB one run keeps." },
       });
     }).pipe(Effect.provide(IdAllocator.layer)),
   );

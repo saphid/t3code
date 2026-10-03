@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  isPluginContextTurnItem,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -912,9 +913,7 @@ effectIt.effect("saves plugin context before the provider starts and sends exact
     yield* harness.start;
 
     expect(calls()).toBe(1);
-    const contextItem = harness
-      .projection()
-      .turnItems.find(RunContextEnrichment.isPluginContextItem);
+    const contextItem = harness.projection().turnItems.find(isPluginContextTurnItem);
     expect(contextItem).toMatchObject({
       status: "completed",
       title: "Added context from Codename notes",
