@@ -110,8 +110,12 @@ export function pluginActionsAt(
 
 /** Menu labels that stay distinct when two plugins use the same title. */
 export function pluginActionLabels(actions: ReadonlyArray<PluginAction>): ReadonlyArray<string> {
+  const titleCounts = new Map<string, number>();
+  for (const action of actions) {
+    titleCounts.set(action.title, (titleCounts.get(action.title) ?? 0) + 1);
+  }
   return actions.map((action) =>
-    actions.some((other) => other !== action && other.title === action.title)
+    (titleCounts.get(action.title) ?? 0) > 1
       ? `${action.title} (${action.pluginName})`
       : action.title,
   );
