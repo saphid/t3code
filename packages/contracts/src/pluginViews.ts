@@ -150,10 +150,13 @@ export const PluginViewBundle = Schema.Struct({
 });
 export type PluginViewBundle = typeof PluginViewBundle.Type;
 
+export const PLUGIN_VIEW_HANDLER_MAX_LENGTH = 64;
+export const PLUGIN_VIEW_HANDLER_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
+
 /** The name a view calls; the server invokes the plugin handler `view:<viewId>:<handler>`. */
 export const PluginViewHandlerName = Schema.String.check(
-  Schema.isMaxLength(64),
-  Schema.isPattern(/^[A-Za-z][A-Za-z0-9_.-]*$/),
+  Schema.isMaxLength(PLUGIN_VIEW_HANDLER_MAX_LENGTH),
+  Schema.isPattern(PLUGIN_VIEW_HANDLER_PATTERN),
 );
 export type PluginViewHandlerName = typeof PluginViewHandlerName.Type;
 
@@ -189,7 +192,7 @@ const BridgeId = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 ** 3
 /** From the view (through the host bootstrap) to the host. */
 export const PluginViewMessage = Schema.TaggedUnion({
   call: { id: BridgeId, handler: PluginViewHandlerName, input: Schema.Json },
-  /** Abandons call `id`; the host still answers it, usually with `cancelled`. */
+  /** Abandons call `id`; the host answers it `cancelled` unless it already answered. */
   cancel: { id: BridgeId },
   pong: { n: NonNegativeInt },
 });
@@ -199,7 +202,10 @@ export type PluginViewMessage = typeof PluginViewMessage.Type;
 export const PluginViewHostMessage = Schema.TaggedUnion({
   init: { pluginId: Schema.String, viewId: Schema.String, title: Schema.String },
   result: { id: BridgeId, value: Schema.Json },
-  /** `code` is an open set: a `PluginViewError` reason, or `cancelled`. */
+  /**
+   * `code` is an open set: a `PluginViewError` reason, `cancelled`, `busy`,
+   * `rate` (the call arrived over the message rate), or `too-deep`.
+   */
   error: { id: BridgeId, code: Schema.String, message: Schema.String },
   ping: { n: NonNegativeInt },
   /** A message from the view was dropped; enough of these end the mount. */

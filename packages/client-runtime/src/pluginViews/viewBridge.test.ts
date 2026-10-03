@@ -174,8 +174,17 @@ describe("makePluginViewBridge", () => {
         index += 1
       )
         send({ _tag: "pong", n: 0 });
-      send({ _tag: "pong", n: 0 });
-      expect(posted.at(-1)).toEqual({ _tag: "violation", reason: "rate" });
+      // An over-rate call is answered, so the view's promise settles.
+      send({ _tag: "call", id: 99, handler: "wait", input: null });
+      expect(posted.slice(-2)).toEqual([
+        {
+          _tag: "error",
+          id: 99,
+          code: "rate",
+          message: "Too many messages; try again shortly.",
+        },
+        { _tag: "violation", reason: "rate" },
+      ]);
       yield* TestClock.adjust("1 second");
       const violations = posted.length;
       for (let index = 0; index < 32; index += 1) send({ _tag: "pong", n: 0 });

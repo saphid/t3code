@@ -19,7 +19,10 @@
  */
 import {
   PLUGIN_VIEW_CONNECT_MESSAGE,
+  PLUGIN_VIEW_HANDLER_MAX_LENGTH,
+  PLUGIN_VIEW_HANDLER_PATTERN,
   PLUGIN_VIEW_MESSAGE_MAX_BYTES,
+  PLUGIN_VIEW_MESSAGE_MAX_DEPTH,
   PLUGIN_VIEW_READY_MESSAGE,
   type PluginViewBundle,
 } from "@t3tools/contracts";
@@ -38,7 +41,10 @@ export const PLUGIN_VIEW_FRAME_ATTRIBUTES = {
  * host window (the wrapper's parent), answers pings, and gives the view
  * script `t3View.ready` (resolves with `{ pluginId, viewId, title }`) and
  * `t3View.call(handler, input, { signal })`, which settles with the plugin's
- * answer or rejects with an Error carrying `code`.
+ * answer or rejects with an Error carrying `code`. A call the host would
+ * refuse for its shape, size or depth is rejected here without being sent;
+ * an abort rejects at once. The host answers every call it receives, so no
+ * call stays pending while the mount lives.
  */
 export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
   const host = window.parent.parent;
@@ -67,17 +73,32 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     else if (message._tag === "error") settle(message.id, (call) => call.reject(failure(message.code, message.message)));
     else if (message._tag === "violation") console.warn("T3 Code dropped a message from this view: " + message.reason);
   };
+  const tooDeep = (value) => {
+    const stack = [[value, 1]];
+    while (stack.length > 0) {
+      const [current, depth] = stack.pop();
+      if (current === null || typeof current !== "object") continue;
+      if (depth > ${PLUGIN_VIEW_MESSAGE_MAX_DEPTH}) return true;
+      for (const child of Object.values(current)) stack.push([child, depth + 1]);
+    }
+    return false;
+  };
   const call = (handler, input, options) => ready.then(() => new Promise((resolve, reject) => {
     const signal = options === undefined ? undefined : options.signal;
     if (signal !== undefined && signal.aborted) return reject(failure("cancelled", "The call was cancelled."));
+    if (typeof handler !== "string" || handler.length > ${PLUGIN_VIEW_HANDLER_MAX_LENGTH} || !/${PLUGIN_VIEW_HANDLER_PATTERN.source}/.test(handler)) return reject(failure("invalid", "The handler name is invalid."));
     const id = nextId++;
     let text;
     try { text = JSON.stringify({ _tag: "call", id, handler, input: input === undefined ? null : input }); }
     catch { return reject(failure("invalid", "The call input is not JSON.")); }
     if (encoder.encode(text).length > ${PLUGIN_VIEW_MESSAGE_MAX_BYTES}) return reject(failure("too-large", "The call input is too large."));
+    if (tooDeep(JSON.parse(text))) return reject(failure("too-deep", "The call input is nested too deeply."));
     pending.set(id, { resolve, reject });
     port.postMessage(text);
-    if (signal !== undefined) signal.addEventListener("abort", () => { if (pending.has(id)) send({ _tag: "cancel", id }); }, { once: true });
+    if (signal !== undefined) signal.addEventListener("abort", () => settle(id, (pendingCall) => {
+      send({ _tag: "cancel", id });
+      pendingCall.reject(failure("cancelled", "The call was cancelled."));
+    }), { once: true });
   }));
   window.addEventListener("message", (event) => {
     const data = event.data;
@@ -92,7 +113,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
 })();`;
 
 /** Base64 SHA-256 of `PLUGIN_VIEW_BOOTSTRAP_SOURCE`; a test keeps them in step. */
-export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "cnyklyx8aNoBOkPld7om4JR/H6gv0Ja61C5N4FCKhoc=";
+export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "I3c5i1bWPelB6HEr45GbmSAPhY7DnbeQJqEad0sH/kk=";
 
 export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocumentError>()(
   "PluginViewDocumentError",

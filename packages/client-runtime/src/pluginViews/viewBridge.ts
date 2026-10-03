@@ -5,7 +5,10 @@
  * handed the view the other port end, and passes every port message to
  * `receive`. The bridge enforces the contract bounds on what the view sends
  * (JSON text only, byte size, nesting depth, a message rate budget, in-flight
- * calls) and turns `call` messages into calls on the host's binding. The
+ * calls) and turns `call` messages into calls on the host's binding. Every
+ * message it sends keeps the same byte and depth bounds: an answer that would
+ * not is replaced by a small `error`. Every call it admits or refuses gets
+ * exactly one answer, so the view's promise always settles. The
  * binding (environment, installation, generation, view) lives in the host's
  * `call` closure; nothing in a message can name another target.
  *
@@ -194,7 +197,9 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
 
   const receive = (data: unknown, transferredPorts: number) => {
     if (closed) return;
-    if (!admit()) return violation("rate");
+    // An over-rate message is still read, so a refused call can be answered.
+    // Each one is a violation, which bounds that work per mount.
+    const admitted = admit();
     if (transferredPorts > 0) return violation("transfer");
     if (typeof data !== "string") return violation("not-text");
     if (!fitsMessageBytes(data)) return violation("too-large");
@@ -203,6 +208,17 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
     if (!withinDepth(json.value)) return violation("too-deep");
     const message = decodeMessage(json.value);
     if (Exit.isFailure(message)) return violation("invalid");
+    if (!admitted) {
+      const refused = message.value;
+      if (refused._tag === "call" && !inFlight.has(refused.id))
+        post({
+          _tag: "error",
+          id: refused.id,
+          code: "rate",
+          message: "Too many messages; try again shortly.",
+        });
+      return violation("rate");
+    }
     switch (message.value._tag) {
       case "call":
         return startCall(message.value.id, message.value.handler, message.value.input);
