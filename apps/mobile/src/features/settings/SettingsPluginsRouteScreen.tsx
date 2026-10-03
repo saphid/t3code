@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   canManagePlugins,
+  createPluginActionGate,
   describePluginSource,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
@@ -21,6 +22,7 @@ import {
   resolvePluginCatalogState,
   resolvePluginDetail,
   resolvePluginManageAccess,
+  startPluginAddHandoff,
   type PluginStateTone,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import {
@@ -29,7 +31,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useRef, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { Alert, Platform, Pressable, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -55,8 +57,8 @@ type PluginRoutes = {
   SettingsPlugin: {
     readonly environmentId: EnvironmentId;
     readonly installationId: PluginInstallationId;
-    /** Opened by adding: the snapshot that lists the new plugin may still be on its way. */
-    readonly added?: boolean;
+    /** Opened by adding: when the add reply arrived (client ms); the snapshot listing it may still be on its way. */
+    readonly addedSince?: number;
   };
   SettingsPluginAdd: { readonly environmentId: EnvironmentId };
 };
@@ -87,7 +89,17 @@ async function settle<A, E>(
   };
 }
 
-/** Management needs positive evidence of access:write on this environment. */
+/** Lets callbacks created earlier (native alerts, multi-step actions) act only while `actionable` is still true. */
+function usePluginActionGate(actionable: boolean) {
+  const [gate] = useState(createPluginActionGate);
+  useLayoutEffect(() => {
+    gate.set(actionable);
+    return () => gate.set(false);
+  });
+  return gate;
+}
+
+/** Management needs positive evidence of access:write from the current session read. */
 function usePluginManageAccess(environmentId: EnvironmentId) {
   const session = useAtomValue(environmentSession.sessionStateValueAtom(environmentId));
   const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
@@ -110,6 +122,7 @@ function usePluginCatalog(environmentId: EnvironmentId, environment: SettingsTar
     connected: environment !== undefined,
     data: supported ? catalog.data : { _tag: "unsupported" },
     error: catalog.error,
+    receivedAt: catalog.dataUpdatedAt,
   });
   return { data: catalog.data, state, retry: catalog.refresh };
 }
@@ -331,7 +344,7 @@ export function SettingsPluginRouteScreen({
       key={`${route.params.environmentId}:${route.params.installationId}`}
       environmentId={route.params.environmentId}
       installationId={route.params.installationId}
-      added={route.params.added === true}
+      addedSince={route.params.addedSince ?? null}
     />
   );
 }
@@ -339,11 +352,11 @@ export function SettingsPluginRouteScreen({
 function PluginDetail({
   environmentId,
   installationId,
-  added,
+  addedSince,
 }: {
   readonly environmentId: EnvironmentId;
   readonly installationId: PluginInstallationId;
-  readonly added: boolean;
+  readonly addedSince: number | null;
 }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -354,20 +367,16 @@ function PluginDetail({
     environmentId,
     environment,
   );
-  // Only a snapshot newer than the one on screen when this opened can show the new plugin is gone.
-  const [addedMarker] = useState(() =>
-    added ? { snapshot: catalog.data, installation: null } : null,
-  );
   const detail = resolvePluginDetail({
     catalog: catalog.state,
     installationId,
-    added: addedMarker,
+    added: addedSince === null ? null : { since: addedSince, installation: null },
   });
   const installation = detail._tag === "found" ? detail.installation : null;
+  const gate = usePluginActionGate(canManage && installation !== null);
   // The digest the user acknowledged; new bytes need a new acknowledgement.
   const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const pendingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const consent = useAtomCommand(pluginEnvironment.consent, "plugin consent");
   const enable = useAtomCommand(pluginEnvironment.enable, "plugin enable");
@@ -376,29 +385,17 @@ function PluginDetail({
   const refresh = useAtomCommand(pluginEnvironment.refresh, "plugin refresh");
   const remove = useAtomCommand(pluginEnvironment.remove, "plugin remove");
 
-  const run = async (
-    key: string,
-    steps: ReadonlyArray<
-      () => Promise<{ readonly error: string | null } | { readonly value: unknown }>
-    >,
-  ) => {
-    if (pendingRef.current) return false;
-    pendingRef.current = true;
-    setPending(key);
-    setError(null);
-    try {
-      for (const step of steps) {
-        const outcome = await step();
-        if ("error" in outcome) {
-          setError(outcome.error);
-          return false;
-        }
-      }
-      return true;
-    } finally {
-      pendingRef.current = false;
-      setPending(null);
-    }
+  // Every action, including a Remove confirmed in an already-open alert, re-checks the gate.
+  const run = async (key: string, steps: Parameters<typeof gate.run>[0]) => {
+    let started = false;
+    const outcome = await gate.run(steps, () => {
+      started = true;
+      setPending(key);
+      setError(null);
+    });
+    if (started) setPending(null);
+    if (outcome._tag === "failed") setError(outcome.error);
+    return outcome._tag === "done";
   };
 
   if (installation === null) {
@@ -512,7 +509,7 @@ function PluginDetail({
                 disabled={disabled || !acknowledged}
                 loading={pending === "approve"}
                 onPress={() => {
-                  if (digest === null || !acknowledged || !canManage) return;
+                  if (digest === null || !acknowledged) return;
                   void run("approve", [
                     () => settle(consent({ environmentId, input: { installationId, digest } })),
                     () => settle(enable(target)),
@@ -604,7 +601,7 @@ export function SettingsPluginAddRouteScreen({
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const { access, retryAccess, canManage, notice } = usePluginManagement(
+  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -621,13 +618,18 @@ export function SettingsPluginAddRouteScreen({
     setError(null);
     const outcome = await settle(add({ environmentId, input: { directory: trimmed } }));
     setBusy(false);
-    if ("value" in outcome)
+    if ("value" in outcome) {
+      const marker = startPluginAddHandoff({
+        installation: null,
+        restartCatalog: catalog.retry,
+        now: Date.now(),
+      });
       navigation.replace("SettingsPlugin", {
         environmentId,
         installationId: outcome.value.installation.installationId,
-        added: true,
+        addedSince: marker.since,
       });
-    else setError(outcome.error);
+    } else setError(outcome.error);
   };
 
   return (
