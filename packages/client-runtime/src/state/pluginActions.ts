@@ -107,3 +107,12 @@ export function pluginActionsAt(
     return target === null ? [] : [{ action, target }];
   });
 }
+
+/** Menu labels that stay distinct when two plugins use the same title. */
+export function pluginActionLabels(actions: ReadonlyArray<PluginAction>): ReadonlyArray<string> {
+  return actions.map((action) =>
+    actions.some((other) => other !== action && other.title === action.title)
+      ? `${action.title} (${action.pluginName})`
+      : action.title,
+  );
+}

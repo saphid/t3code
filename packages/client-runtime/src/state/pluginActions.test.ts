@@ -28,6 +28,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import {
   createPluginActionEnvironmentAtoms,
+  pluginActionLabels,
   pluginActionsAt,
   pluginActionsStream,
 } from "./pluginActions.ts";
@@ -182,5 +183,18 @@ describe("pluginActionsAt", () => {
     expect(
       names(pluginActionsAt(ACTIONS, "composer-slash", { threadId: null, projectId })),
     ).toEqual([]);
+  });
+});
+
+describe("pluginActionLabels", () => {
+  it("names the plugin only when two actions share a title", () => {
+    const deploy = { ...action("deploy", "environment", ["thread-menu"]), title: "Deploy" };
+    expect(
+      pluginActionLabels([
+        deploy,
+        { ...deploy, id: PluginActionId.make("installation-2:1:deploy"), pluginName: "Other" },
+        ACTIONS[0]!,
+      ]),
+    ).toEqual(["Deploy (Actions)", "Deploy (Other)", "everywhere"]);
   });
 });
