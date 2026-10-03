@@ -92,7 +92,10 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
     try { text = JSON.stringify({ _tag: "call", id, handler, input: input === undefined ? null : input }); }
     catch { return reject(failure("invalid", "The call input is not JSON.")); }
     if (encoder.encode(text).length > ${PLUGIN_VIEW_MESSAGE_MAX_BYTES}) return reject(failure("too-large", "The call input is too large."));
-    if (tooDeep(JSON.parse(text))) return reject(failure("too-deep", "The call input is nested too deeply."));
+    const envelope = JSON.parse(text);
+    // A function, Symbol or toJSON() => undefined serializes away, leaving no input.
+    if (!("input" in envelope)) return reject(failure("invalid", "The call input is not JSON."));
+    if (tooDeep(envelope)) return reject(failure("too-deep", "The call input is nested too deeply."));
     pending.set(id, { resolve, reject });
     port.postMessage(text);
     if (signal !== undefined) signal.addEventListener("abort", () => settle(id, (pendingCall) => {
@@ -113,7 +116,7 @@ export const PLUGIN_VIEW_BOOTSTRAP_SOURCE = `(() => {
 })();`;
 
 /** Base64 SHA-256 of `PLUGIN_VIEW_BOOTSTRAP_SOURCE`; a test keeps them in step. */
-export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "I3c5i1bWPelB6HEr45GbmSAPhY7DnbeQJqEad0sH/kk=";
+export const PLUGIN_VIEW_BOOTSTRAP_SHA256 = "hfw1YPYw+O7vxSeakpMkn71nUnbGuHA3VQOMDLNGGZE=";
 
 export class PluginViewDocumentError extends Schema.TaggedError<PluginViewDocumentError>()(
   "PluginViewDocumentError",

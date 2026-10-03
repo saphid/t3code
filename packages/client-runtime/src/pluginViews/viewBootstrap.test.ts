@@ -150,6 +150,24 @@ describe("plugin view bootstrap with the host bridge", () => {
     }),
   );
 
+  it.effect("rejects input that JSON leaves out instead of sending a call without it", () =>
+    Effect.gen(function* () {
+      const { t3View, toView, calls } = yield* mountBootstrap();
+      const outcomes = (yield* Effect.promise(() =>
+        Promise.allSettled([
+          t3View.call("echo", () => undefined),
+          t3View.call("echo", Symbol("input")),
+          t3View.call("echo", { toJSON: () => undefined }),
+        ]),
+      )).map(outcome);
+      expect(outcomes).toEqual(["invalid", "invalid", "invalid"]);
+      // Omitted input still means null.
+      expect(yield* Effect.promise(() => t3View.call("echo"))).toBeNull();
+      expect(calls).toEqual(["echo"]);
+      expect(toView.filter((message) => message._tag === "violation")).toEqual([]);
+    }),
+  );
+
   it.effect("rejects an aborted call at once and cancels it on the host", () =>
     Effect.gen(function* () {
       const interrupted = yield* Deferred.make<void>();
