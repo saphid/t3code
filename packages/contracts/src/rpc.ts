@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ContributionStatusSnapshot } from "./contributionStatus.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -532,6 +533,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeContributionStatus: "subscribeContributionStatus",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1682,6 +1684,14 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+/** Streams every live thread status in the environment: one snapshot on subscribe, then a full replacement after each change. Gated by the `contributionStatus` capability. */
+const WsSubscribeContributionStatusRpc = Rpc.make(WS_METHODS.subscribeContributionStatus, {
+  payload: Schema.Struct({}),
+  success: ContributionStatusSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1845,6 +1855,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeContributionStatusRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnDiffRpc,

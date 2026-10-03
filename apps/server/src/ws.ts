@@ -204,6 +204,7 @@ import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as ContributionStatusStore from "./contributions/ContributionStatusStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1218,6 +1219,7 @@ const makeWsRpcLayer = (
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -3708,6 +3710,16 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeResourceTelemetry,
             Stream.unwrap(
               Effect.map(resourceTelemetry.subscribe, ({ latest, changes }) =>
+                Stream.concat(Stream.make(latest), changes),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeContributionStatus]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeContributionStatus,
+            Stream.unwrap(
+              Effect.map(contributionStatus.subscribe, ({ latest, changes }) =>
                 Stream.concat(Stream.make(latest), changes),
               ),
             ),
