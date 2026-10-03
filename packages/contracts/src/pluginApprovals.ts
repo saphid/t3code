@@ -30,9 +30,12 @@
  * disabling the plugin all leave the request pending for the user. A plugin
  * never approves anything by failing, and never decides on part of a request:
  * when its prompt or subject is longer than `maxPromptLength`, no plugin is
- * asked, nor about a request whose approval card has no prompt. Approvals
- * only exist when a provider asks for them: a thread in full-access mode asks
- * for none.
+ * asked, nor about a request whose approval card has no prompt.
+ *
+ * Plugins see only the approvals providers raise; this is not an interception
+ * layer. Full-access normally bypasses provider tool approval gates, but
+ * explicit extension or runtime confirmation requests can still reach T3
+ * (including Pi's) and are offered like any other.
  *
  * @module PluginApprovals
  */
