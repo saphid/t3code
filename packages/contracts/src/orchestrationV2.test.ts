@@ -175,30 +175,30 @@ describe("orchestration V2 contracts", () => {
     ).toThrow();
   });
 
-  it("decodes the run finalized milestone as a known thread event", () => {
+  it("decodes run finalization records as known thread events", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
     );
-    const [item] = decodeWireItems([
-      {
-        kind: "event",
-        sequence: 1,
-        event: {
-          id: "event:run-finalized:run-1",
-          type: "run.finalized",
-          threadId: "thread-1",
-          runId: "run-1",
-          occurredAt: DateTime.formatIso(DateTime.makeUnsafe(0)),
-          payload: { runId: "run-1", outcome: "interrupted", checkpointId: null },
-        },
+    const event = (sequence: number, type: string, payload: unknown) => ({
+      kind: "event",
+      sequence,
+      event: {
+        id: `event:run-finalized:run-${sequence}`,
+        type,
+        threadId: "thread-1",
+        runId: `run-${sequence}`,
+        occurredAt: DateTime.formatIso(DateTime.makeUnsafe(0)),
+        payload,
       },
-    ]);
-    expect(item?.kind).toBe("event");
-    expect(item?.kind === "event" ? item.event.payload : undefined).toEqual({
-      runId: "run-1",
-      outcome: "interrupted",
-      checkpointId: null,
     });
+    const items = decodeWireItems([
+      event(1, "run.finalized", { runId: "run-1", outcome: "interrupted", checkpointId: null }),
+      event(2, "run.finalization-failed", { runId: "run-2", operation: "refresh-workspace" }),
+    ]);
+    expect(items.map((item) => (item.kind === "event" ? item.event.payload : item.kind))).toEqual([
+      { runId: "run-1", outcome: "interrupted", checkpointId: null },
+      { runId: "run-2", operation: "refresh-workspace" },
+    ]);
   });
 
   it("negotiates bounded socket snapshots as an optional capability", () => {
