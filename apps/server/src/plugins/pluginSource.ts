@@ -3,11 +3,12 @@
  * Digest of a plugin directory's exact bytes, which consent binds to.
  *
  * Every regular file under the directory counts, by relative path and
- * content, so an edit, addition, removal, or rename changes the digest. The
- * only exceptions are `.git` directories and `.DS_Store` files, which tools
- * rewrite on their own and Node never loads as modules. Symbolic links,
- * special files, and trees past the limits are refused rather than skipped: a
- * digest that silently left something out would not describe what runs.
+ * content, so an edit, addition, removal, or rename changes the digest. No
+ * name is exempt: the entry or anything it imports may live under any path,
+ * hidden ones included. Symbolic links, special files, and trees past the
+ * limits are refused rather than skipped: a digest that silently left
+ * something out would not describe what runs. A plugin developed in a git
+ * checkout should be added from a build directory, since `.git` counts too.
  *
  * The directory stays writable by its owner, so a digest describes the bytes
  * at the moment it was taken. Code the plugin loads from outside its
@@ -31,8 +32,6 @@ export const defaultPluginSourceLimits: PluginSourceLimits = {
   maxFiles: 10_000,
   maxBytes: 64 * 1024 * 1024,
 };
-
-const IGNORED_NAMES = new Set([".git", ".DS_Store"]);
 
 export class PluginSourceError extends Schema.TaggedError<PluginSourceError>()(
   "PluginSourceError",
@@ -64,7 +63,6 @@ const walk = async (
     const entries = await NodeFSP.readdir(NodePath.join(root, relative), { withFileTypes: true });
     for (const entry of entries) {
       if (signal.aborted) throw new Refusal("the inspection was cancelled.");
-      if (IGNORED_NAMES.has(entry.name)) continue;
       const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
       if (entry.isSymbolicLink()) throw new Refusal(`${child} is a symbolic link.`);
       if (entry.isDirectory()) {
