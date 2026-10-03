@@ -583,30 +583,27 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     const swap = entry.swap;
     if (swap === undefined) return;
     const previous = path.join(entry.home, ".previous");
+    const decide = (files?: Parameters<PluginCatalog["Service"]["settleReplace"]>[1]) =>
+      catalog
+        .settleReplace({ installationId: entry.installationId, digest: swap.digest }, files)
+        .pipe(
+          // Removed meanwhile: `collect` deletes the files.
+          Effect.catchIf(
+            (error) => error.reason === "not-found",
+            () => Effect.succeed("removed" as const),
+          ),
+        );
+    // Without files the step changes nothing, so a commit is known before any probe can fail.
+    let outcome = yield* decide();
     // Only npm steps, which hold the npm lock, move `.previous`.
-    const moved = yield* fs.exists(previous).pipe(Effect.catch(storageError));
-    const outcome = yield* catalog
-      .settleReplace(
-        { installationId: entry.installationId, digest: swap.digest },
-        moved
-          ? {
-              paths: [entry.home],
-              restore: fs
-                .remove(entry.directory, { recursive: true, force: true })
-                .pipe(
-                  Effect.andThen(fs.rename(previous, entry.directory)),
-                  Effect.catch(storageError),
-                ),
-            }
-          : undefined,
-      )
-      .pipe(
-        // Removed meanwhile: `collect` deletes the files.
-        Effect.catchIf(
-          (error) => error.reason === "not-found",
-          () => Effect.succeed("removed" as const),
-        ),
-      );
+    if (outcome === "rolled-back" && (yield* fs.exists(previous).pipe(Effect.catch(storageError))))
+      // Decided again in the step that puts the old files back.
+      outcome = yield* decide({
+        paths: [entry.home],
+        restore: fs
+          .remove(entry.directory, { recursive: true, force: true })
+          .pipe(Effect.andThen(fs.rename(previous, entry.directory)), Effect.catch(storageError)),
+      });
     if (outcome === "removed") return;
     entry.source = outcome === "committed" ? swap.next : swap.previous;
     yield* writeRecord(entry.home, { source: entry.source });

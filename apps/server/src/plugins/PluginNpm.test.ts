@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -1641,10 +1642,11 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             readonly pending: boolean;
           }> = [
             {
+              // A commit is settled without checking for `.previous`.
               name: "backup-check",
               fails: (method, target) =>
                 method === "exists" && path.basename(target) === ".previous",
-              pending: true,
+              pending: false,
             },
             {
               name: "record-write",
@@ -1730,6 +1732,78 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             expect(record, name).toEqual({ source: applied.package.source });
             expect((yield* callVersion(catalog, installationId)).version, name).toBe("1.1.0");
           }
+        }),
+      ),
+    );
+
+    it.effect("reports the committed version after a restart while cleanup still fails", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const scope = yield* Scope.Scope;
+          const faults = makeFaults(fs);
+          const registry = makeRegistry();
+          const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-plugin-npm-restart-" });
+          const root = path.join(base, "npm");
+          const firstScope = yield* Scope.make();
+          const firstCatalog = yield* startCatalog(firstScope);
+          const first = yield* startNpm(
+            firstScope,
+            firstCatalog,
+            registry,
+            root,
+            faults.fileSystem,
+          );
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("restarted", version, { tarball: filesTarball("restarted", version) });
+          const added = yield* first.add({ name: "restarted", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const home = path.dirname(added.installation.directory);
+          yield* firstCatalog.consent({
+            installationId,
+            digest: added.installation.source!.digest,
+          });
+          yield* firstCatalog.enable({ installationId });
+          const update = (yield* first.stageUpdate({ installationId, version: "1.1.0" })).package
+            .stagedUpdate!;
+          // Every `.previous` check and every record write but the journal fails, before and
+          // after the restart.
+          faults.armed.fail = (method, target, detail) =>
+            (method === "exists" && path.basename(target) === ".previous") ||
+            (method === "writeFileString" &&
+              path.basename(target) === ".npm.json.tmp" &&
+              !detail?.includes('"swap"'));
+          const applied = yield* first.applyUpdate({
+            installationId,
+            digest: update.source.digest,
+          });
+          expect(applied.package.source.version).toBe("1.1.0");
+          yield* Scope.close(firstScope, Exit.void);
+
+          // The catalogue, supervisor, and npm service all start again on the same state.
+          const catalog = yield* startCatalog(scope);
+          const npm = yield* startNpm(scope, catalog, registry, root, faults.fileSystem);
+          expect((yield* npm.list).packages[0]!.source).toEqual(applied.package.source);
+          const journal = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+          expect(journal).toMatchObject({ source: added.package.source, swap: {} });
+          yield* catalog.subscribe.pipe(
+            Stream.filter((snapshot) =>
+              snapshot.installations.some((row) => row.hostState !== undefined),
+            ),
+            Stream.runHead,
+          );
+          expect(yield* callFiles(catalog, installationId)).toMatchObject({ loaded: "1.1.0" });
+          expect((yield* catalog.list).installations[0]!.consent?.digest).toBe(
+            update.source.digest,
+          );
+
+          faults.armed.fail = undefined;
+          yield* npm.discardUpdate({ installationId });
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect(fromJson(yield* fs.readFileString(path.join(home, "npm.json")))).toEqual({
+            source: applied.package.source,
+          });
         }),
       ),
     );
