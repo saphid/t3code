@@ -100,6 +100,7 @@ const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
   capabilities: manifest.capabilities,
   proposedApi: manifest.proposedApi,
   ...(manifest.tools === undefined || manifest.tools.length === 0 ? {} : { tools: manifest.tools }),
+  ...(manifest.approvals === undefined ? {} : { approvals: manifest.approvals }),
 });
 
 const catalogError = (

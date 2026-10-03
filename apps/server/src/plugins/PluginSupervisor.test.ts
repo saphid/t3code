@@ -603,7 +603,12 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
           handler: "t3.tool.echo",
           input: { text: "hi" },
         });
+        expect(yield* supervisor.invoke(pluginId, "t3.approval.decide", null)).toEqual({
+          handler: "t3.approval.decide",
+          input: null,
+        });
         expect(yield* supervisor.invoke(pluginId, "refusals", null)).toEqual({
+          "t3.approval.other": 'Handler names starting with "t3." are reserved.',
           "t3.events": 'Handler names starting with "t3." are reserved.',
           "t3.other": 'Handler names starting with "t3." are reserved.',
         });
