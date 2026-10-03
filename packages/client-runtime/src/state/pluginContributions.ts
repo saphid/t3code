@@ -3,11 +3,13 @@ import {
   PLUGIN_VIEWS_CAPABILITY,
   type PluginActionDeclaration,
   type PluginActionsSnapshot,
+  type PluginInstallation,
   type PluginInstallationManifest,
   type PluginSettingField,
   type PluginToolDeclaration,
   type PluginView,
   type PluginViewProblem,
+  pluginInstallationStatus,
 } from "@t3tools/contracts";
 
 /** One declared contribution as a details screen lists it. */
@@ -100,28 +102,46 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /**
+ * Whether the server offers this installation's actions at all, before its
+ * environment-wide limit: enabled with matching consent, declaring `actions`,
+ * and not waiting on a Resume (quarantined or incompatible). Only eligible
+ * installations count towards the limit's `omitted`.
+ */
+export function pluginActionsEligible(installation: PluginInstallation): boolean {
+  const state = installation.hostState?._tag;
+  return (
+    installation.manifest !== null &&
+    pluginInstallationStatus(installation) === "enabled" &&
+    installation.manifest.capabilities.includes("actions") &&
+    state !== "quarantined" &&
+    state !== "incompatible"
+  );
+}
+
+/**
  * What a plugin adds to T3 Code, read from its manifest summary; nothing here
- * starts the plugin. Only kinds it declares are listed. `offered` is true while
- * the installation is enabled, so its actions and views should appear on the
- * environment's snapshots; pass a snapshot as null when its server lacks the
- * capability or it has not arrived.
+ * starts the plugin. Only kinds it declares are listed. `installation` is null
+ * for a manifest that is not installed, such as a downloaded update. Pass a
+ * snapshot as null when its server lacks the capability or it has not arrived.
  */
 export function describePluginContributions(input: {
   readonly manifest: PluginInstallationManifest;
-  readonly offered: boolean;
+  readonly installation: PluginInstallation | null;
   readonly actions: PluginActionsSnapshot | null;
   readonly views: PluginOfferedViews | null;
 }): ReadonlyArray<PluginContributionGroup> {
-  const { manifest, offered } = input;
+  const { manifest, installation } = input;
   const groups: Array<PluginContributionGroup> = [];
 
   const actions = manifest.actions ?? [];
   if (actions.length > 0) {
-    // The server takes plugins whole until its limit, so a left-out plugin offers none of its actions.
+    // The server takes eligible plugins whole until its limit, so an eligible
+    // plugin with none of its actions offered is one the limit left out.
     const snapshot = input.actions;
     const omitted = snapshot?.omitted;
     const left =
-      offered &&
+      installation !== null &&
+      pluginActionsEligible(installation) &&
       snapshot !== null &&
       omitted !== undefined &&
       !snapshot.actions.some((action) => action.pluginId === manifest.id);
@@ -145,7 +165,7 @@ export function describePluginContributions(input: {
     });
 
   if (manifest.capabilities.includes(PLUGIN_VIEWS_CAPABILITY)) {
-    const views = offered ? input.views : null;
+    const views = installation?.enabled === true ? input.views : null;
     groups.push({
       kind: "views",
       label: "Views",

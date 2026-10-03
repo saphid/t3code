@@ -54,7 +54,7 @@ export function PluginContributionsList({
       : null;
   const groups = describePluginContributions({
     manifest,
-    offered,
+    installation,
     actions: actions ?? null,
     views: offeredViews,
   });

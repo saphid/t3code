@@ -1,4 +1,5 @@
 import {
+  PluginInstallation,
   PluginInstallationId,
   PluginInstallationManifest,
   type PluginAction,
@@ -57,11 +58,37 @@ const action = (pluginId: string): PluginAction => ({
 
 const omitted = { plugins: 2, actions: 9 };
 
+const decodeInstallation = Schema.decodeUnknownSync(PluginInstallation);
+const DIGEST = `sha256:${"a".repeat(64)}`;
+
+/** An installation of FULL; by default enabled, approved, and running. A null `hostState` leaves it out. */
+const installed = (fields: Record<string, unknown> = {}) => {
+  const { hostState = { _tag: "running" }, ...rest } = fields;
+  return decodeInstallation({
+    installationId: "installation-1",
+    generation: 2,
+    directory: "/srv/plugins/notifier",
+    manifest: FULL,
+    source: { digest: DIGEST, files: 3, bytes: 2048 },
+    problem: null,
+    inspectedAt: "2026-10-04T00:00:00.000Z",
+    consent: {
+      digest: DIGEST,
+      capabilities: FULL.capabilities,
+      grantedAt: "2026-10-04T00:00:00.000Z",
+    },
+    enabled: true,
+    addedAt: "2026-10-04T00:00:00.000Z",
+    ...(hostState === null ? {} : { hostState }),
+    ...rest,
+  });
+};
+
 describe("describePluginContributions", () => {
   it("lists what the manifest declares, without starting the plugin", () => {
     const groups = describePluginContributions({
       manifest: FULL,
-      offered: false,
+      installation: null,
       actions: null,
       views: null,
     });
@@ -95,7 +122,7 @@ describe("describePluginContributions", () => {
     expect(
       describePluginContributions({
         manifest: manifest({}),
-        offered: true,
+        installation: null,
         actions: null,
         views: null,
       }),
@@ -105,7 +132,7 @@ describe("describePluginContributions", () => {
   it("says when the environment's action limit left this plugin out", () => {
     const left = describePluginContributions({
       manifest: FULL,
-      offered: true,
+      installation: installed(),
       actions: { actions: [action("other.plugin")], omitted },
       views: null,
     });
@@ -114,19 +141,66 @@ describe("describePluginContributions", () => {
     );
   });
 
-  it("has no notice when its actions are offered, it is not enabled, or nothing was left out", () => {
+  it("has no notice when its actions are offered, it is not installed, or nothing was left out", () => {
     const notice = (input: Omit<Parameters<typeof describePluginContributions>[0], "manifest">) =>
       describePluginContributions({ manifest: FULL, ...input })[0]?.notice;
     expect(
       notice({
-        offered: true,
+        installation: installed(),
         actions: { actions: [action("acme.notifier")], omitted },
         views: null,
       }),
     ).toBeNull();
-    expect(notice({ offered: false, actions: { actions: [], omitted }, views: null })).toBeNull();
-    expect(notice({ offered: true, actions: { actions: [] }, views: null })).toBeNull();
-    expect(notice({ offered: true, actions: null, views: null })).toBeNull();
+    expect(
+      notice({ installation: null, actions: { actions: [], omitted }, views: null }),
+    ).toBeNull();
+    expect(notice({ installation: installed(), actions: { actions: [] }, views: null })).toBeNull();
+    expect(notice({ installation: installed(), actions: null, views: null })).toBeNull();
+  });
+
+  it("blames the limit only for an installation the server counts towards it", () => {
+    // Overflow elsewhere: the snapshot omits other plugins, and offers none of this one's actions.
+    const elsewhere = { actions: [action("other.plugin")], omitted: { plugins: 1, actions: 16 } };
+    const contributionsOf = (installation: PluginInstallation) =>
+      describePluginContributions({
+        manifest: FULL,
+        installation,
+        actions: elsewhere,
+        views: null,
+      });
+    // The server never offers actions for these, so the limit did not leave them out.
+    const ineligible = [
+      installed({ hostState: { _tag: "quarantined", failures: 3, reason: "crashed" } }),
+      installed({ hostState: { _tag: "incompatible", reason: "needs a newer T3 Code" } }),
+      installed({ enabled: false, hostState: null }),
+      installed({ consent: null, enabled: false, hostState: null }),
+      installed({ manifest: manifest({ actions: FULL.actions }) }),
+    ];
+    for (const installation of ineligible) {
+      const actions = contributionsOf(installation)[0];
+      // Its declared actions stay listed while they are unavailable.
+      expect(actions?.items.map((item) => item.key)).toEqual(["summarize"]);
+      expect(actions?.notice).toBeNull();
+    }
+    expect(contributionsOf(installed())[0]?.notice).toContain("including this one");
+    // An enabled plugin waiting on a Resume still lists the views it offers.
+    const view = {
+      installationId: PluginInstallationId.make("installation-1"),
+      generation: 2,
+      pluginId: "acme.notifier",
+      pluginName: "Notifier",
+      viewId: "board",
+      title: "Board",
+      placement: "side-panel",
+    };
+    expect(
+      describePluginContributions({
+        manifest: FULL,
+        installation: ineligible[0]!,
+        actions: elsewhere,
+        views: { views: [view], problems: [] },
+      })[2]?.items.map((item) => item.title),
+    ).toEqual(["Board"]);
   });
 
   it("lists the views an enabled plugin offers, or why it offers none", () => {
@@ -150,7 +224,7 @@ describe("describePluginContributions", () => {
     }) =>
       describePluginContributions({
         manifest: FULL,
-        offered: true,
+        installation: installed(),
         actions: null,
         views: input,
       })[2];
