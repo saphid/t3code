@@ -108,6 +108,7 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
+import { ThreadContributionStatusStrip } from "./ThreadContributionStatusStrip";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
@@ -1107,6 +1108,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ) : (
         <View className="flex-1" />
       )}
+
+      {showContent ? (
+        <ThreadContributionStatusStrip
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          // A transparent (glass) header overlaps the screen; an opaque one
+          // ends where the screen begins.
+          top={
+            props.usesAutomaticContentInsets === true && Platform.OS === "ios"
+              ? navigationHeaderHeight
+              : 0
+          }
+          contentMaxWidth={contentMaxWidth}
+        />
+      ) : null}
 
       {/* Floating composer — sticks to keyboard via KeyboardStickyView */}
       {showContent ? (
