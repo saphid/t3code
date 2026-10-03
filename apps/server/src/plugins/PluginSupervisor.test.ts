@@ -589,5 +589,25 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
         expect(gated.message).toContain("activation failed");
       }),
     );
+
+    it.effect("lets plugins register t3.tool handlers and keeps other t3 names reserved", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        const { registration } = yield* preparePlugin("test.reserved", {
+          entry: "reservedHandlers.mjs",
+        });
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+
+        expect(yield* supervisor.invoke(pluginId, "t3.tool.echo", { text: "hi" })).toEqual({
+          handler: "t3.tool.echo",
+          input: { text: "hi" },
+        });
+        expect(yield* supervisor.invoke(pluginId, "refusals", null)).toEqual({
+          "t3.events": 'Handler names starting with "t3." are reserved.',
+          "t3.other": 'Handler names starting with "t3." are reserved.',
+        });
+      }),
+    );
   });
 });
