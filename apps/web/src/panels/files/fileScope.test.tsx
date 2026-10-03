@@ -115,6 +115,24 @@ describe("Files add to chat", () => {
     expect(composerOther.insertTextAtEnd).not.toHaveBeenCalled();
   });
 
+  it("keeps a late action dropped after leaving and returning to the thread", async () => {
+    const composerA = fakeComposer();
+    const composerOther = fakeComposer();
+    const files = renderFiles(threadA, composerA.handle);
+    const menu = openMenu(files.lent.at(-1)!);
+
+    files.navigate(otherThreadA, composerOther.handle);
+    files.navigate(threadA, composerA.handle);
+
+    await expect(menu.choose("add-to-chat")).resolves.toBe("dropped");
+    expect(composerA.insertTextAtEnd).not.toHaveBeenCalled();
+    expect(composerOther.insertTextAtEnd).not.toHaveBeenCalled();
+
+    // A menu opened on the return visit still reaches A.
+    await expect(openMenu(files.lent.at(-1)!).choose("add-to-chat")).resolves.toBe("inserted");
+    expect(composerA.insertTextAtEnd).toHaveBeenCalledOnce();
+  });
+
   it("keeps the action across re-renders within the same thread", async () => {
     const composerA = fakeComposer();
     const files = renderFiles(threadA, composerA.handle);
