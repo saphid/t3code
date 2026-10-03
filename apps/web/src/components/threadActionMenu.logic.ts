@@ -28,7 +28,8 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | `plugin-action:${string}`;
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
@@ -59,6 +60,11 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** Actions enabled plugins offer on this thread's menu, in listing order. */
+  readonly pluginActions?: ReadonlyArray<{
+    readonly id: `plugin-action:${string}`;
+    readonly label: string;
+  }>;
 }
 
 /**
@@ -163,6 +169,12 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.pluginActions ?? []).map((action, index) => ({
+      id: action.id,
+      label: action.label,
+      icon: "plug",
+      ...(index === 0 ? { separatorBefore: true } : {}),
+    })),
     {
       id: "copy",
       label: "Copy",

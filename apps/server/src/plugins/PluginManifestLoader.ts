@@ -18,6 +18,7 @@ import { preparePluginTools } from "./pluginToolDeclarations.ts";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
 export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  "actions",
   PLUGIN_EVENTS_CAPABILITY,
   PLUGIN_SETTINGS_CAPABILITY,
   PLUGIN_TOOLS_CAPABILITY,
@@ -57,6 +58,23 @@ const checkTools = (manifest: PluginManifest): string | undefined => {
   if (!manifest.proposedApi) return "it declares tools, which need proposedApi: true.";
   const prepared = preparePluginTools(manifest, tools);
   return "problem" in prepared ? prepared.problem : undefined;
+};
+
+/** Declared actions need the capability and the proposed `handle` API, and unique names. */
+const checkActions = (manifest: PluginManifest): string | undefined => {
+  const actions = manifest.actions ?? [];
+  if (actions.length === 0) return undefined;
+  if (!manifest.capabilities.includes("actions"))
+    return "it declares actions without the actions capability.";
+  if (!manifest.proposedApi) return "it declares actions, which need proposedApi: true.";
+  const names = new Set<string>();
+  for (const action of actions) {
+    if (names.has(action.name)) return `it declares the action ${action.name} twice.`;
+    names.add(action.name);
+    if (new Set(action.placements).size !== action.placements.length)
+      return `the action ${action.name} repeats a placement.`;
+  }
+  return undefined;
 };
 
 /**
@@ -106,6 +124,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   // The settings API is still proposed, so it only exists with the opt-in.
   if (hasSettings && !manifest.proposedApi)
     return yield* fail(`the "${PLUGIN_SETTINGS_CAPABILITY}" capability needs "proposedApi": true.`);
+  const actionProblem = checkActions(manifest);
+  if (actionProblem !== undefined) return yield* fail(actionProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))

@@ -17,6 +17,10 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => vi.fn(),
 }));
+vi.mock("../../state/plugin-actions", () => ({
+  usePluginActions: () => [],
+  runPluginAction: vi.fn(),
+}));
 
 import {
   buildComposerSlashCommandItems,
