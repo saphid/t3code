@@ -209,7 +209,10 @@ it.effect("keeps each entry's source so a takeover with the same text re-keys th
       const unmount = registry.mount(status);
       const waitForSession = (session: string) =>
         AtomRegistry.toStream(registry, status).pipe(
-          Stream.filter((entries) => entries[0]?.source.providerSessionId === session),
+          Stream.filter((entries) => {
+            const source = entries[0]?.source;
+            return source?.kind === "provider-session" && source.providerSessionId === session;
+          }),
           Stream.runHead,
         );
 
