@@ -1,4 +1,3 @@
-import type { KeybindingCommand } from "@t3tools/contracts";
 import { lazy, type ComponentType, type ReactNode } from "react";
 
 /** Panel bodies are function components; their props are inferred per id. */
@@ -18,8 +17,6 @@ export interface PanelDefinition<Id extends string, Body extends PanelBody> {
   placement: PanelPlacement;
   /** Letter that opens the panel from the empty launcher and the add menu. */
   launcherKey: string;
-  /** Configurable keybinding that toggles the panel. */
-  toggleCommand: KeybindingCommand;
   /** Whether this client can show the panel at all, such as desktop-only panels on web. */
   isSupported?: () => boolean;
   /** One-line reason shown in the empty launcher while unavailable. */

@@ -8,7 +8,6 @@ const metadata = {
   icon: () => null,
   placement: "side-panel",
   launcherKey: "X",
-  toggleCommand: "diff.toggle",
   unavailableHint: "Unavailable.",
   unavailableReason: "Unavailable here.",
 } as const;
