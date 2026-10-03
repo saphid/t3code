@@ -9,7 +9,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useAtomRefresh } from "@effect/atom-react";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useLayoutEffect, useState } from "react";
 import {
   type PluginInstallation,
   type PluginInstallationId,
@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import {
   canManagePlugins,
+  createPluginActionGate,
   describePluginSource,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
@@ -31,6 +32,7 @@ import {
   resolvePluginCatalogState,
   resolvePluginDetail,
   resolvePluginManageAccess,
+  startPluginAddHandoff,
   type PluginAddedMarker,
   type PluginDetailState,
   type PluginManageAccess,
@@ -104,6 +106,16 @@ async function settle<A, E>(command: Promise<AtomCommandResult<A, E>>): Promise<
       ? null
       : pluginCommandErrorMessage(squashAtomCommandFailure(result)),
   };
+}
+
+/** Lets callbacks created earlier (dialogs, multi-step actions) act only while `actionable` is still true. */
+function usePluginActionGate(actionable: boolean) {
+  const [gate] = useState(createPluginActionGate);
+  useLayoutEffect(() => {
+    gate.set(actionable);
+    return () => gate.set(false);
+  });
+  return gate;
 }
 
 export function PluginsSettings() {
@@ -202,7 +214,7 @@ function RemotePluginEnvironmentSection({
   );
 }
 
-function PluginEnvironmentCatalog({
+export function PluginEnvironmentCatalog({
   environment,
   access,
   onRetryAccess,
@@ -218,11 +230,6 @@ function PluginEnvironmentCatalog({
       ? pluginEnvironment.catalog({ environmentId: environment.environmentId, input: {} })
       : null,
   );
-  // The add reply resolves after the render that sent it; read the newest snapshot then.
-  const latestCatalog = useRef(catalog.data);
-  useEffect(() => {
-    latestCatalog.current = catalog.data;
-  });
   const [adding, setAdding] = useState(false);
   const [reviewing, setReviewing] = useState<{
     readonly installationId: PluginInstallationId;
@@ -232,6 +239,7 @@ function PluginEnvironmentCatalog({
     connected,
     data: catalog.data,
     error: catalog.error,
+    receivedAt: catalog.dataUpdatedAt,
   });
   if (catalogState._tag === "unsupported") return null;
   const installations = catalogState._tag === "available" ? catalogState.view.installations : null;
@@ -324,7 +332,11 @@ function PluginEnvironmentCatalog({
             setAdding(false);
             setReviewing({
               installationId: installation.installationId,
-              added: { snapshot: latestCatalog.current, installation },
+              added: startPluginAddHandoff({
+                installation,
+                restartCatalog: catalog.refresh,
+                now: Date.now(),
+              }),
             });
           }}
         />
@@ -370,12 +382,15 @@ function PluginRow({
     environmentId: environment.environmentId,
     input: { installationId: installation.installationId },
   };
+  const gate = usePluginActionGate(canManage);
   const act = async (failureTitle: string, command: () => Promise<Settled<unknown>>) => {
-    if (busy) return;
-    setBusy(true);
-    const outcome = await command();
-    setBusy(false);
-    if ("error" in outcome && outcome.error !== null)
+    let started = false;
+    const outcome = await gate.run([command], () => {
+      started = true;
+      setBusy(true);
+    });
+    if (started) setBusy(false);
+    if (outcome._tag === "failed" && outcome.error !== null)
       toastManager.add({ type: "error", title: failureTitle, description: outcome.error });
   };
   const manageable = canManage && !busy;
@@ -658,24 +673,29 @@ function PluginReviewDialog({
   const digest = installation?.source?.digest ?? null;
   const acknowledged = digest !== null && trustedDigest === digest;
 
+  const gate = usePluginActionGate(canManage && installation !== null);
+
   const approve = async () => {
-    if (!installation || digest === null || !acknowledged || busy || !canManage) return;
+    if (!installation || digest === null || !acknowledged) return;
     const target = {
       environmentId: environment.environmentId,
       input: { installationId: installation.installationId },
     };
-    setBusy(true);
-    setError(null);
-    const consented = await settle(consent({ ...target, input: { ...target.input, digest } }));
-    if ("error" in consented) {
-      setBusy(false);
-      setError(consented.error);
-      return;
-    }
-    const enabled = await settle(enable(target));
-    setBusy(false);
-    if ("error" in enabled) setError(enabled.error);
-    else onClose();
+    let started = false;
+    const outcome = await gate.run(
+      [
+        () => settle(consent({ ...target, input: { ...target.input, digest } })),
+        () => settle(enable(target)),
+      ],
+      () => {
+        started = true;
+        setBusy(true);
+        setError(null);
+      },
+    );
+    if (started) setBusy(false);
+    if (outcome._tag === "failed") setError(outcome.error);
+    else if (outcome._tag === "done") onClose();
   };
 
   const manifest = installation?.manifest ?? null;
