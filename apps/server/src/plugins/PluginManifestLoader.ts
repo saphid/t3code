@@ -10,7 +10,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 /** Capabilities this server implements. A plugin declaring any other is not loaded. */
-export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set();
+export const SUPPORTED_PLUGIN_CAPABILITIES: ReadonlySet<PluginCapabilityName> = new Set([
+  "actions",
+]);
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -33,6 +35,23 @@ export interface PluginRegistration {
   /** Real path of the entry module, inside `directory`. */
   readonly entryPath: string;
 }
+
+/** Declared actions need the capability and the proposed `handle` API, and unique names. */
+const checkActions = (manifest: PluginManifest): string | undefined => {
+  const actions = manifest.actions ?? [];
+  if (actions.length === 0) return undefined;
+  if (!manifest.capabilities.includes("actions"))
+    return "it declares actions without the actions capability.";
+  if (!manifest.proposedApi) return "it declares actions, which need proposedApi: true.";
+  const names = new Set<string>();
+  for (const action of actions) {
+    if (names.has(action.name)) return `it declares the action ${action.name} twice.`;
+    names.add(action.name);
+    if (new Set(action.placements).size !== action.placements.length)
+      return `the action ${action.name} repeats a placement.`;
+  }
+  return undefined;
+};
 
 /**
  * Reads and validates `t3-plugin.json` in `directory`. The entry must resolve,
@@ -71,6 +90,8 @@ export const loadPluginDirectory = Effect.fn("PluginManifestLoader.loadPluginDir
   );
   if (unsupported.length > 0)
     return yield* fail(`this server does not support ${unsupported.join(", ")}.`);
+  const actionProblem = checkActions(manifest);
+  if (actionProblem !== undefined) return yield* fail(actionProblem);
 
   const entryPath = yield* fs
     .realPath(path.resolve(realDirectory, manifest.entry))

@@ -54,6 +54,16 @@ describe("RPC authorization scopes", () => {
     expect(AuthStandardClientScopes).not.toContain(AuthAccessWriteScope);
   });
 
+  it("lets standard clients list and run the plugin actions an administrator enabled", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginActionsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginActionsInvoke)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(AuthStandardClientScopes).toContain(AuthOrchestrationOperateScope);
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,

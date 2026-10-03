@@ -102,6 +102,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pluginsDisable]: AuthAccessWriteScope,
   [WS_METHODS.pluginsRemove]: AuthAccessWriteScope,
   [WS_METHODS.pluginsResume]: AuthAccessWriteScope,
+  // Running an action the administrator already enabled is ordinary operation, like starting a
+  // turn; it cannot change what code runs.
+  [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
