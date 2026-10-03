@@ -574,9 +574,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
    * Finishes or rolls back a journaled swap. The catalogue decides under its
    * management lock, so a consent or enable from another client lands wholly
    * before or after: finished when it holds consent to the new digest,
-   * otherwise `.previous` goes back once the plugin has stopped. The journal
-   * and `.previous` stay until this has worked, so a failure is retried later
-   * and never loses a version.
+   * otherwise `.previous` goes back once the plugin has stopped. The decision
+   * sets the reported version at once; the journal and `.previous` stay until
+   * the cleanup after it has worked, so a failure is retried later and never
+   * loses a version.
    */
   const settle = Effect.fnUntraced(function* (entry: Installed) {
     const swap = entry.swap;
@@ -607,8 +608,6 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         ),
       );
     if (outcome === "removed") return;
-    // Reported at once: the journal and the catalogue's consent already say the same
-    // after a restart, so only the record write below is retried if it fails.
     entry.source = outcome === "committed" ? swap.next : swap.previous;
     yield* writeRecord(entry.home, { source: entry.source });
     entry.swap = undefined;
@@ -816,10 +815,13 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         },
       )
       .pipe(Effect.exit);
+    // The commit point: the new version is the installed one from here, whatever
+    // the cleanup below does.
+    if (Exit.isSuccess(replaced)) entry.source = next;
     // Staged files that never moved can be applied again.
     if (movedNew || Exit.isSuccess(replaced)) entry.staged = undefined;
     // After the commit a failure here is cleanup only: the apply still succeeds and
-    // reports the new version, and npm steps fail `storage` until the record is saved.
+    // reports the new version, and npm steps fail `storage` until the journal settles.
     yield* settle(entry).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not settle a plugin update; retrying later", {

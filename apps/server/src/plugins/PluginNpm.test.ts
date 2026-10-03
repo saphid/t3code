@@ -1620,47 +1620,116 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
       ),
     );
 
-    it.effect("reports the applied version while its record cannot be saved yet", () =>
+    it.effect("reports the applied version whichever cleanup after the commit fails", () =>
       withDatabase(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const faults = makeFaults(fs);
           const { catalog, npm, registry, plugin } = yield* setup(faults.fileSystem);
-          registry.publish("recorded", "1.0.0", { tarball: plugin("recorded", "1.0.0") });
-          registry.publish("recorded", "1.1.0", { tarball: plugin("recorded", "1.1.0") });
-          const added = yield* npm.add({ name: "recorded", version: "1.0.0" });
-          const installationId = added.installation.installationId;
-          const home = path.dirname(added.installation.directory);
-          yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
-          yield* catalog.enable({ installationId });
-          const { package: staged } = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
-          const update = staged.stagedUpdate!;
-          // The journal is written; every record after the commit fails.
-          faults.armed.fail = (method, target, data) =>
-            method === "writeFileString" &&
-            path.basename(target) === ".npm.json.tmp" &&
-            data !== undefined &&
-            !data.includes('"swap"');
+          // Each fails only once the journal is saved, so only work after the commit fails.
+          // `record` is the last record written, saved or not.
+          const cases: ReadonlyArray<{
+            readonly name: string;
+            readonly fails: (
+              method: Faulted,
+              target: string,
+              detail: string | undefined,
+              record: string,
+            ) => boolean;
+            /** The journal stays on disk until the failed step works. */
+            readonly pending: boolean;
+          }> = [
+            {
+              name: "backup-check",
+              fails: (method, target) =>
+                method === "exists" && path.basename(target) === ".previous",
+              pending: true,
+            },
+            {
+              name: "record-write",
+              fails: (method, target, detail) =>
+                method === "writeFileString" &&
+                path.basename(target) === ".npm.json.tmp" &&
+                !detail?.includes('"swap"'),
+              pending: true,
+            },
+            {
+              name: "record-rename",
+              fails: (method, _target, detail, record) =>
+                method === "rename" &&
+                detail !== undefined &&
+                path.basename(detail) === "npm.json" &&
+                !record.includes('"swap"'),
+              pending: true,
+            },
+            {
+              name: "backup-delete",
+              fails: (method, target) =>
+                method === "remove" && path.basename(target) === ".previous",
+              pending: false,
+            },
+          ];
+          for (const { name, fails, pending } of cases) {
+            registry.publish(name, "1.0.0", {
+              tarball: plugin(name, "1.0.0", { pluginId: `test.${name}` }),
+            });
+            registry.publish(name, "1.1.0", {
+              tarball: plugin(name, "1.1.0", { pluginId: `test.${name}` }),
+            });
+            const added = yield* npm.add({ name, version: "1.0.0" });
+            const installationId = added.installation.installationId;
+            const home = path.dirname(added.installation.directory);
+            yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
+            yield* catalog.enable({ installationId });
+            const { package: staged } = yield* npm.stageUpdate({
+              installationId,
+              version: "1.1.0",
+            });
+            const update = staged.stagedUpdate!;
+            let journaled = false;
+            let written = "";
+            faults.armed.fail = (method, target, detail) => {
+              if (method === "writeFileString" && detail !== undefined) written = detail;
+              const failed = journaled && fails(method, target, detail, written);
+              if (method === "rename" && !failed && written.includes('"swap"')) journaled = true;
+              return failed;
+            };
 
-          const applied = yield* npm.applyUpdate({ installationId, digest: update.source.digest });
-          const next = { version: "1.1.0", integrity: update.integrity };
-          expect(applied.package.source).toMatchObject(next);
-          expect(applied.installation.consent?.digest).toBe(update.source.digest);
-          expect((yield* npm.list).packages[0]!.source).toMatchObject(next);
-          expect((yield* callVersion(catalog, installationId)).version).toBe("1.1.0");
-          // The journal stays, so a restart also finishes the update, and npm steps wait for it.
-          const journal = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
-          expect(journal).toMatchObject({ source: { version: "1.0.0" }, swap: { source: next } });
-          const blocked = yield* npm.discardUpdate({ installationId }).pipe(Effect.flip);
-          expect(blocked.reason).toBe("storage");
+            const applied = yield* npm.applyUpdate({
+              installationId,
+              digest: update.source.digest,
+            });
+            // The reply, the npm list, the consent, and the running code all say 1.1.0.
+            const next = { version: "1.1.0", integrity: update.integrity };
+            expect(applied.package.source, name).toMatchObject(next);
+            expect(applied.installation.consent?.digest, name).toBe(update.source.digest);
+            const listed = (yield* npm.list).packages.find(
+              (item) => item.installationId === installationId,
+            );
+            expect(listed?.source, name).toEqual(applied.package.source);
+            const row = (yield* catalog.list).installations.find(
+              (item) => item.installationId === installationId,
+            );
+            expect(row?.consent?.digest, name).toBe(update.source.digest);
+            expect((yield* callVersion(catalog, installationId)).version, name).toBe("1.1.0");
+            const journal = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+            expect(journal, name).toEqual(
+              pending
+                ? {
+                    source: added.package.source,
+                    swap: expect.objectContaining({ source: expect.objectContaining(next) }),
+                  }
+                : { source: applied.package.source },
+            );
 
-          faults.armed.fail = undefined;
-          yield* npm.discardUpdate({ installationId });
-          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
-          const record = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
-          expect(record).toEqual({ source: applied.package.source });
-          expect((yield* npm.list).packages[0]!.source).toEqual(applied.package.source);
+            faults.armed.fail = undefined;
+            yield* npm.discardUpdate({ installationId });
+            expect(yield* entries(home), name).toEqual(["npm.json", "package"]);
+            const record = fromJson(yield* fs.readFileString(path.join(home, "npm.json")));
+            expect(record, name).toEqual({ source: applied.package.source });
+            expect((yield* callVersion(catalog, installationId)).version, name).toBe("1.1.0");
+          }
         }),
       ),
     );
