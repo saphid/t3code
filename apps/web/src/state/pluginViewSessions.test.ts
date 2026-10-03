@@ -7,11 +7,16 @@ import {
   PrimaryConnectionTarget,
   type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
-import type { RpcSession, WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
+import {
+  EnvironmentRpcSubscriptionObserver,
+  type RpcSession,
+  type WsRpcProtocolClient,
+} from "@t3tools/client-runtime/rpc";
 import {
   EnvironmentId,
   PluginInstallationId,
   type PluginView,
+  PluginViewError,
   type PluginViewsSnapshot,
   type ServerConfig,
   WS_METHODS,
@@ -24,6 +29,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { RpcClientError } from "effect/unstable/rpc";
 
 import { resolvePluginViewTarget, sessionEpoch } from "../panels/pluginView/pluginViewHost";
 import {
@@ -59,7 +65,7 @@ const snapshot = (views: ReadonlyArray<PluginView>): PluginViewsSnapshot => ({
 /** A session whose server answers `pluginViews.subscribe` with `views`, recording every call. */
 function makeSession(
   capabilities: ServerConfig["environment"]["capabilities"],
-  views: () => Stream.Stream<PluginViewsSnapshot>,
+  views: () => Stream.Stream<PluginViewsSnapshot, unknown>,
 ) {
   const calls: Array<string> = [];
   const client = new Proxy(
@@ -95,7 +101,10 @@ const makeHeldSession = Effect.fn("makeHeldSession")(function* () {
 });
 
 /** The real session-bound views atom over a supervisor and registry the test drives. */
-const makeHarness = Effect.fn("makeHarness")(function* (initial: RpcSession) {
+const makeHarness = Effect.fn("makeHarness")(function* (
+  initial: RpcSession,
+  observer = EnvironmentRpcSubscriptionObserver.defaultValue(),
+) {
   const session = yield* SubscriptionRef.make(Option.some(initial));
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
@@ -118,7 +127,10 @@ const makeHarness = Effect.fn("makeHarness")(function* (initial: RpcSession) {
     followStream,
   } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
   const runtime = Atom.runtime(
-    Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+    Layer.mergeAll(
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      Layer.succeed(EnvironmentRpcSubscriptionObserver, observer),
+    ),
   );
   const atom = createSessionPluginViewsAtoms(runtime)(environmentId);
   const registry = AtomRegistry.make();
@@ -149,7 +161,73 @@ const host = (state: SessionPluginViews) => ({
   launcher: sidePanelPluginViews(state.views).map((view) => view.viewId),
 });
 
+const subscriptionEndings: ReadonlyArray<{
+  readonly ending: string;
+  readonly endStream: Stream.Stream<never, unknown>;
+}> = [
+  {
+    ending: "loses its transport",
+    endStream: Stream.fail(
+      new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "socket closed",
+          cause: new Error("socket closed"),
+        }),
+      }),
+    ),
+  },
+  {
+    ending: "fails on the server",
+    endStream: Stream.fail(new PluginViewError({ reason: "busy", message: "busy" })),
+  },
+  { ending: "completes", endStream: Stream.empty },
+];
+
 describe("session-bound plugin views", () => {
+  it.effect.each(subscriptionEndings)(
+    "withdraws views while the session stays when its subscription $ending",
+    ({ endStream }) =>
+      Effect.gen(function* () {
+        const end = yield* Deferred.make<void>();
+        const finalized = yield* Deferred.make<void>();
+        const a = makeSession({ repositoryIdentity: true, pluginViews: true }, () =>
+          Stream.succeed(snapshot([board])).pipe(
+            Stream.concat(Stream.unwrap(Deferred.await(end).pipe(Effect.as(endStream)))),
+          ),
+        );
+        const harness = yield* makeHarness(a.session, {
+          observe: () => Effect.succeed(Deferred.succeed(finalized, undefined).pipe(Effect.asVoid)),
+        });
+        const available = host(yield* harness.until((state) => state.views !== null));
+        expect(available.target._tag).toBe("mount");
+        expect(available.launcher).toEqual(["board"]);
+
+        yield* Deferred.succeed(end, undefined);
+        yield* Deferred.await(finalized);
+        // The supervisor still publishes `a`; only its views stream ended.
+        const lost = yield* harness.until((state) => state.views === null);
+        expect(lost.session).toBe(a.session);
+        expect(host(lost)).toEqual({ target: { _tag: "waiting" }, launcher: [] });
+        expect(a.calls).toEqual([WS_METHODS.pluginViewsSubscribe]);
+
+        const b = yield* makeHeldSession();
+        yield* SubscriptionRef.set(harness.session, Option.some(b.session));
+        yield* Deferred.await(b.subscribed);
+        expect(host(yield* harness.until((state) => state.session === b.session))).toEqual({
+          target: { _tag: "waiting" },
+          launcher: [],
+        });
+        yield* Queue.offer(b.snapshots, snapshot([board]));
+        const restored = host(
+          yield* harness.until((state) => state.session === b.session && state.views !== null),
+        );
+        expect(restored.launcher).toEqual(["board"]);
+        expect(restored.target._tag).toBe("mount");
+        if (available.target._tag === "mount" && restored.target._tag === "mount")
+          expect(restored.target.key).not.toBe(available.target.key);
+      }),
+  );
+
   it.effect("never lets a previous session's views mount or list a view in the next one", () =>
     Effect.gen(function* () {
       const a = makeSession({ repositoryIdentity: true, pluginViews: true }, () =>
