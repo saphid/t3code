@@ -33,6 +33,7 @@ import {
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Equal from "effect/Equal";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -175,6 +176,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const lock = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<void>(1);
   const notify = PubSub.publish(changes, undefined).pipe(Effect.asVoid);
+  // Counts changes a snapshot can show, so a step that changed nothing tells no one.
+  let revision = 0;
 
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -199,6 +202,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       Effect.andThen(
         Effect.sync(() => {
           installation.record = record;
+          revision++;
         }),
       ),
       Effect.uninterruptible,
@@ -228,6 +232,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     const registered = installation.registered;
     if (registered === undefined) return undefined;
     installation.registered = undefined;
+    revision++;
     return yield* supervisor
       .disable(registered.pluginId)
       .pipe(Effect.forkIn(scope, { startImmediately: true }));
@@ -256,17 +261,25 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
    */
   const reinspect = Effect.fnUntraced(function* (installation: Installation) {
     const inspection = yield* inspect(installation.record.directory);
-    const inspectedAt = yield* now;
-    const record: PluginInstallationRecord =
+    const current = installation.record;
+    const found =
       inspection._tag === "ok"
         ? {
-            ...installation.record,
             manifest: summarize(inspection.registration.manifest),
             source: inspection.source,
             problem: null,
-            inspectedAt,
           }
-        : { ...installation.record, source: null, problem: inspection.reason, inspectedAt };
+        : { manifest: current.manifest, source: null, problem: inspection.reason };
+    // The same result keeps the record as it was, `inspectedAt` included.
+    if (
+      Equal.equals(found, {
+        manifest: current.manifest,
+        source: current.source,
+        problem: current.problem,
+      })
+    )
+      return inspection;
+    const record: PluginInstallationRecord = { ...current, ...found, inspectedAt: yield* now };
     if (record.enabled && !isReady(record)) {
       yield* Effect.logWarning("Plugin source changed; disabling until consent is renewed", {
         installationId: record.installationId,
@@ -318,6 +331,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     // Together, so an invoke never sees the new registration with the old generation.
     installation.record = record;
     installation.registered = { pluginId, generation: record.generation };
+    revision++;
   }, Effect.uninterruptible);
 
   const find = (installationId: PluginInstallationId) =>
@@ -355,9 +369,16 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   const result = (installation: Installation) =>
     toWire(installation).pipe(Effect.map((wire) => ({ installation: wire })));
 
-  /** Runs a management step under the lock and tells subscribers afterwards, even on failure. */
+  /** Runs a management step under the lock and tells subscribers if it changed anything, even when it then failed. */
   const managed = <A, E>(effect: Effect.Effect<A, E>) =>
-    lock.withPermit(effect).pipe(Effect.ensuring(notify));
+    lock.withPermit(
+      Effect.suspend(() => {
+        const before = revision;
+        return effect.pipe(
+          Effect.ensuring(Effect.suspend(() => (revision === before ? Effect.void : notify))),
+        );
+      }),
+    );
 
   const add = Effect.fn("PluginCatalog.add")(function* (input: PluginAddInput) {
     if (!path.isAbsolute(input.directory))
@@ -394,7 +415,12 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     };
     const installation: Installation = { record, registered: undefined };
     yield* save(record).pipe(
-      Effect.andThen(Effect.sync(() => installations.set(installationId, installation))),
+      Effect.andThen(
+        Effect.sync(() => {
+          installations.set(installationId, installation);
+          revision++;
+        }),
+      ),
       Effect.uninterruptible,
     );
     return yield* result(installation);
@@ -474,6 +500,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
           Effect.catch(storageError),
         );
         installations.delete(input.installationId);
+        revision++;
         const stopping = yield* unregister(installation);
         if (stopping) yield* restore(Fiber.join(stopping));
       }),
@@ -639,6 +666,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
           Stream.concat(
             Stream.fromEffect(list),
             Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => list)),
+          ).pipe(
+            // A plugin state event and the step that caused it can describe the same snapshot.
+            Stream.changes,
           ),
         ),
       ),

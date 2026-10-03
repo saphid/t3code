@@ -76,6 +76,7 @@ export const PluginInstallation = Schema.Struct({
   /** Null when the last inspection failed; `problem` says why. */
   source: Schema.NullOr(PluginSource),
   problem: Schema.NullOr(Schema.String),
+  /** When the current manifest, source, and problem were found; a check that finds the same keeps it. */
   inspectedAt: IsoDateTime,
   consent: Schema.NullOr(PluginConsent),
   /** Registered to run. Only true while `consent.digest` matches `source.digest`. */

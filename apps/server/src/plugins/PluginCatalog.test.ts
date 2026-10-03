@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -485,6 +486,50 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
             ).toBe(installation.directory);
           }),
         ),
+    );
+  });
+
+  describe("subscription", () => {
+    it.effect("sends a snapshot only when a step changed what it shows", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const stub = yield* makeStubSupervisor;
+          const catalog = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+          const plugin = yield* preparePlugin("test.quiet");
+          const { installation } = yield* catalog.add({ directory: plugin.directory });
+          const installationId = installation.installationId;
+          const digest = installation.source!.digest;
+          yield* catalog.consent({ installationId, digest });
+
+          const snapshots = yield* Queue.unbounded<ReadonlyArray<PluginInstallation>>();
+          yield* catalog.subscribe.pipe(
+            Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot.installations)),
+            Effect.forkScoped,
+          );
+          const [initial] = yield* Queue.take(snapshots);
+          expect(initial).toMatchObject({ enabled: false });
+
+          // Failures and steps that find nothing new.
+          yield* catalog.add({ directory: "relative" }).pipe(Effect.flip);
+          yield* catalog.add({ directory: plugin.directory }).pipe(Effect.flip);
+          yield* catalog
+            .consent({ installationId, digest: `sha256:${"0".repeat(64)}` })
+            .pipe(Effect.flip);
+          yield* catalog.resume({ installationId }).pipe(Effect.flip);
+          yield* catalog.refresh({});
+          yield* catalog.disable({ installationId });
+
+          yield* catalog.enable({ installationId });
+          const [enabled] = yield* Queue.take(snapshots);
+          expect(enabled).toMatchObject({ enabled: true, inspectedAt: initial!.inspectedAt });
+
+          yield* catalog.enable({ installationId });
+          yield* catalog.resume({ installationId });
+          yield* catalog.disable({ installationId });
+          const [disabled] = yield* Queue.take(snapshots);
+          expect(disabled).toMatchObject({ enabled: false });
+        }),
+      ),
     );
   });
 
