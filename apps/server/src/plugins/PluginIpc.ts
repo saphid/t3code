@@ -45,6 +45,8 @@ export type PluginHostMessage = typeof PluginHostMessage.Type;
 export const PluginChildMessage = Schema.TaggedUnion({
   Ready: {},
   ActivationFailed: { message: PluginErrorMessage },
+  /** The entry cannot load on any runtime this server ships on; retrying cannot help. */
+  Incompatible: { message: PluginErrorMessage },
   Succeeded: { requestId: RequestId, value: Schema.Json },
   Failed: { requestId: RequestId, message: PluginErrorMessage },
   Log: { level: PluginLogLevel, message: Schema.String.check(Schema.isMaxLength(4000)) },

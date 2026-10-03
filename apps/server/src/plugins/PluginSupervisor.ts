@@ -135,6 +135,15 @@ export class PluginCrashedError extends Schema.TaggedError<PluginCrashedError>()
   }
 }
 
+export class PluginIncompatibleError extends Schema.TaggedError<PluginIncompatibleError>()(
+  "PluginIncompatibleError",
+  { pluginId: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `Plugin ${this.pluginId} cannot run on this server: ${this.reason}`;
+  }
+}
+
 export class PluginStoppedError extends Schema.TaggedError<PluginStoppedError>()(
   "PluginStoppedError",
   { pluginId: Schema.String },
@@ -184,6 +193,7 @@ export type PluginInvokeError =
   | PluginNotEnabledError
   | PluginUnavailableError
   | PluginCrashedError
+  | PluginIncompatibleError
   | PluginStoppedError
   | PluginTimeoutError
   | PluginCallFailedError
@@ -218,13 +228,18 @@ interface Child {
   readonly process: NodeChildProcess.ChildProcess;
   readonly channel: NodeStream.Duplex;
   readonly startedAt: number;
-  readonly ready: Deferred.Deferred<void, PluginCrashedError | PluginStoppedError>;
+  readonly ready: Deferred.Deferred<
+    void,
+    PluginCrashedError | PluginIncompatibleError | PluginStoppedError
+  >;
   readonly exited: Deferred.Deferred<void>;
   readonly pending: Map<number, PendingCall>;
   /** Cancelled calls whose answer has not arrived yet. */
   readonly settling: Map<number, Deferred.Deferred<void>>;
   nextRequestId: number;
   stopping: boolean;
+  /** The child reported code that cannot load here; set before it is killed. */
+  incompatible: string | undefined;
   killReason: string | undefined;
   stderrTail: string;
   /** V8 reported reaching the heap limit; its message can scroll out of the tail. */
@@ -284,7 +299,7 @@ export class PluginSupervisor extends Context.Service<
     ) => Effect.Effect<void, PluginAlreadyEnabledError>;
     /** Stops the plugin's process, failing in-flight calls, and forgets it. Idempotent. */
     readonly disable: (pluginId: PluginId) => Effect.Effect<void>;
-    /** Clears backoff or quarantine so the next invoke starts a fresh process. */
+    /** Clears backoff, quarantine, or incompatibility so the next invoke starts a fresh process. */
     readonly resume: (pluginId: PluginId) => Effect.Effect<void, PluginNotEnabledError>;
     readonly invoke: (
       pluginId: PluginId,
@@ -410,6 +425,9 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       case "ActivationFailed":
         // The exit fails activation, after the state reflects the failure.
         return kill(child, `activation failed: ${message.message}`);
+      case "Incompatible":
+        child.incompatible = message.message;
+        return kill(child, message.message);
       case "Succeeded":
       case "Failed": {
         const pending = child.pending.get(message.requestId);
@@ -459,11 +477,16 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     const reason = child.killReason ?? describeExit(child, code, signal, options.heapLimitMb);
     const crashed = child.stopping
       ? new PluginStoppedError({ pluginId: entry.pluginId })
-      : new PluginCrashedError({ pluginId: entry.pluginId, reason });
+      : child.incompatible !== undefined
+        ? new PluginIncompatibleError({ pluginId: entry.pluginId, reason: child.incompatible })
+        : new PluginCrashedError({ pluginId: entry.pluginId, reason });
     // Settle the state first so a caller woken below already sees it.
     if (entry.child === child) entry.child = undefined;
     if (!entry.removed) {
       if (child.stopping) yield* setState(entry, { _tag: "idle" });
+      // Retrying cannot help, so this spends none of the restart budget.
+      else if (child.incompatible !== undefined)
+        yield* setState(entry, { _tag: "incompatible", reason: child.incompatible.slice(0, 1000) });
       else yield* recordFailure(entry, child.startedAt, reason);
     }
     yield* Deferred.fail(child.ready, crashed);
@@ -497,6 +520,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       settling: new Map(),
       nextRequestId: 0,
       stopping: false,
+      incompatible: undefined,
       killReason: undefined,
       stderrTail: "",
       outOfMemory: false,
@@ -679,6 +703,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         pluginId: entry.pluginId,
         reason: `quarantined after ${state.failures} failures: ${state.reason}`,
       });
+    if (state._tag === "incompatible")
+      return new PluginIncompatibleError({ pluginId: entry.pluginId, reason: state.reason });
     return undefined;
   };
 
@@ -803,7 +829,12 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     resume: Effect.fn("PluginSupervisor.resume")(function* (pluginId) {
       const entry = entries.get(pluginId);
       if (!entry) return yield* new PluginNotEnabledError({ pluginId });
-      if (entry.state._tag !== "backoff" && entry.state._tag !== "quarantined") return;
+      if (
+        entry.state._tag !== "backoff" &&
+        entry.state._tag !== "quarantined" &&
+        entry.state._tag !== "incompatible"
+      )
+        return;
       entry.failures = 0;
       yield* setState(entry, { _tag: "idle" });
     }),

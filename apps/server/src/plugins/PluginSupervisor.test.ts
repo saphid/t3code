@@ -536,6 +536,32 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
       }),
     );
 
+    it.effect("refuses top-level await in an entry or its imports without spending restarts", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor();
+        for (const [id, entry] of [
+          ["test.async-entry", "asyncEntry.mjs"],
+          ["test.async-dependency", "asyncDependency.mjs"],
+        ] as const) {
+          const { registration } = yield* preparePlugin(id, { entry });
+          const pluginId = registration.manifest.id;
+          yield* supervisor.enable(registration);
+          // More attempts than the restart cap allows still never back off or quarantine.
+          for (let attempt = 0; attempt <= testOptions.maxRestarts + 1; attempt++) {
+            const error = yield* supervisor.invoke(pluginId, "ping", null).pipe(Effect.flip);
+            expect(error._tag).toBe("PluginIncompatibleError");
+            expect(error.message).toContain("uses top-level await");
+            const state = Option.getOrUndefined(yield* supervisor.state(pluginId));
+            expect(state?._tag).toBe("incompatible");
+            // Refused up front until someone resumes it.
+            const again = yield* supervisor.invoke(pluginId, "ping", null).pipe(Effect.flip);
+            expect(again._tag).toBe("PluginIncompatibleError");
+            yield* supervisor.resume(pluginId);
+          }
+        }
+      }),
+    );
+
     it.effect("fails activation that hangs, throws, or uses unrequested proposed APIs", () =>
       Effect.gen(function* () {
         const supervisor = yield* makeSupervisor();

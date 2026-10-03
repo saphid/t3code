@@ -4,8 +4,6 @@
 // plugin process pays only for this file. Nothing here may run on import.
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
-import * as NodeSea from "node:sea";
-import * as NodeURL from "node:url";
 
 import type { PluginContext, PluginHandler, PluginJson, PluginModule } from "./pluginApi.ts";
 import type { PluginChildMessage, PluginHostMessage, PluginLogLevel } from "./PluginIpc.ts";
@@ -16,12 +14,15 @@ import {
   makeLineDecoder,
 } from "./pluginIpcFraming.ts";
 
-// A single executable can only import() built-ins, so it loads the entry
-// through require, which also accepts ES modules without top-level await.
-const loadEntry = (entryPath: string): Promise<Partial<PluginModule>> =>
-  NodeSea.isSea()
-    ? Promise.resolve().then(() => NodeModule.createRequire(entryPath)(entryPath))
-    : import(NodeURL.pathToFileURL(entryPath).href);
+// Every launcher loads the entry through require, so a plugin behaves the same
+// under Node, Electron, and the single executable (which can only import()
+// built-ins). require accepts CommonJS and ES modules, except an ES module
+// graph that uses top-level await.
+const loadEntry = (entryPath: string): Partial<PluginModule> =>
+  NodeModule.createRequire(entryPath)(entryPath);
+
+const isAsyncModuleError = (error: unknown) =>
+  error instanceof Error && "code" in error && error.code === "ERR_REQUIRE_ASYNC_MODULE";
 
 const errorMessage = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, 2000);
@@ -100,8 +101,22 @@ export const runPluginHostChild = (): void => {
       },
       proposed,
     };
+    let module: Partial<PluginModule>;
     try {
-      const module = await loadEntry(message.entryPath);
+      module = loadEntry(message.entryPath);
+    } catch (error) {
+      send(
+        isAsyncModuleError(error)
+          ? {
+              _tag: "Incompatible",
+              message:
+                "The plugin's entry or a module it imports uses top-level await, which plugins cannot use. Move asynchronous setup into activate().",
+            }
+          : { _tag: "ActivationFailed", message: errorMessage(error) },
+      );
+      return;
+    }
+    try {
       if (typeof module.activate !== "function")
         throw new Error("The plugin entry does not export an activate function.");
       activated = { module, controller };
