@@ -13,6 +13,7 @@ import {
   describePluginSource,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
+  pluginAccessStatus,
   pluginAddDirectory,
   pluginCommandErrorMessage,
   pluginDirectoryLocation,
@@ -23,6 +24,7 @@ import {
   resolvePluginDetail,
   resolvePluginManageAccess,
   startPluginAddHandoff,
+  type PluginActionSubject,
   type PluginStateTone,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import {
@@ -57,8 +59,8 @@ type PluginRoutes = {
   SettingsPlugin: {
     readonly environmentId: EnvironmentId;
     readonly installationId: PluginInstallationId;
-    /** Opened by adding: when the add reply arrived (client ms); the snapshot listing it may still be on its way. */
-    readonly addedSince?: number;
+    /** Opened by adding: the latest catalogue revision when the add reply arrived; the snapshot listing it may still be on its way. */
+    readonly addedAfterRevision?: number;
   };
   SettingsPluginAdd: { readonly environmentId: EnvironmentId };
 };
@@ -89,12 +91,12 @@ async function settle<A, E>(
   };
 }
 
-/** Lets callbacks created earlier (native alerts, multi-step actions) act only while `actionable` is still true. */
-function usePluginActionGate(actionable: boolean) {
+/** Lets callbacks created earlier (native alerts, multi-step actions) act only on what the screen still shows. */
+function usePluginActionGate(current: PluginActionSubject | null) {
   const [gate] = useState(createPluginActionGate);
   useLayoutEffect(() => {
-    gate.set(actionable);
-    return () => gate.set(false);
+    gate.set(current);
+    return () => gate.set(null);
   });
   return gate;
 }
@@ -122,7 +124,6 @@ function usePluginCatalog(environmentId: EnvironmentId, environment: SettingsTar
     connected: environment !== undefined,
     data: supported ? catalog.data : { _tag: "unsupported" },
     error: catalog.error,
-    receivedAt: catalog.dataUpdatedAt,
   });
   return { data: catalog.data, state, retry: catalog.refresh };
 }
@@ -140,10 +141,17 @@ function usePluginManagement(
     retryAccess,
     canManage: canManagePlugins(access, catalog.state),
     notice: pluginManagementNotice(access, catalog.state, environment?.label ?? "this environment"),
+    status: pluginAccessStatus(access, catalog.state),
   };
 }
 
-/** Why controls are off, with a retry when another read could turn them on. */
+/** Shown in a section header, whose height is fixed, so the brief access check moves nothing. */
+function AccessStatus({ status }: { readonly status: string | null }) {
+  if (status === null) return null;
+  return <Text className="px-2 text-sm text-foreground-muted">{status}</Text>;
+}
+
+/** Why controls are off for a lasting reason, with a retry when another read could turn them on. */
 function ManagementNotice({
   notice,
   onRetry,
@@ -204,7 +212,7 @@ export function SettingsPluginsRouteScreen() {
 function EnvironmentPlugins({ environment }: { readonly environment: SettingsTarget }) {
   const navigation = useNavigation<NativeStackNavigationProp<PluginRoutes>>();
   const environmentId = environment.environmentId;
-  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
+  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -224,6 +232,7 @@ function EnvironmentPlugins({ environment }: { readonly environment: SettingsTar
             }
           />
         }
+        trailing={<AccessStatus status={status} />}
       >
         {catalog.state._tag === "failed" ? (
           <>
@@ -265,7 +274,10 @@ function EnvironmentPlugins({ environment }: { readonly environment: SettingsTar
         )}
       </SettingsSection>
       {installations !== null ? (
-        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
+        <ManagementNotice
+          notice={status === null ? notice : null}
+          onRetry={access === "unreadable" ? retryAccess : null}
+        />
       ) : null}
     </View>
   );
@@ -344,7 +356,7 @@ export function SettingsPluginRouteScreen({
       key={`${route.params.environmentId}:${route.params.installationId}`}
       environmentId={route.params.environmentId}
       installationId={route.params.installationId}
-      addedSince={route.params.addedSince ?? null}
+      addedAfterRevision={route.params.addedAfterRevision ?? null}
     />
   );
 }
@@ -352,30 +364,39 @@ export function SettingsPluginRouteScreen({
 function PluginDetail({
   environmentId,
   installationId,
-  addedSince,
+  addedAfterRevision,
 }: {
   readonly environmentId: EnvironmentId;
   readonly installationId: PluginInstallationId;
-  readonly addedSince: number | null;
+  readonly addedAfterRevision: number | null;
 }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
+  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
   const detail = resolvePluginDetail({
     catalog: catalog.state,
     installationId,
-    added: addedSince === null ? null : { since: addedSince, installation: null },
+    added:
+      addedAfterRevision === null
+        ? null
+        : { afterRevision: addedAfterRevision, installation: null },
   });
   const installation = detail._tag === "found" ? detail.installation : null;
-  const gate = usePluginActionGate(canManage && installation !== null);
   // The digest the user acknowledged; new bytes need a new acknowledgement.
   const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
+  const digest = installation?.source?.digest ?? null;
+  const acknowledged = digest !== null && trustedDigest === digest;
+  const gate = usePluginActionGate(
+    canManage && installation !== null
+      ? { environmentId, installation, acknowledgedDigest: acknowledged ? digest : null }
+      : null,
+  );
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const consent = useAtomCommand(pluginEnvironment.consent, "plugin consent");
@@ -386,9 +407,18 @@ function PluginDetail({
   const remove = useAtomCommand(pluginEnvironment.remove, "plugin remove");
 
   // Every action, including a Remove confirmed in an already-open alert, re-checks the gate.
-  const run = async (key: string, steps: Parameters<typeof gate.run>[0]) => {
+  const run = async (
+    key: string,
+    steps: Parameters<typeof gate.run>[1],
+    approvedDigest?: string,
+  ) => {
     let started = false;
-    const outcome = await gate.run(steps, () => {
+    const actionTarget = {
+      environmentId,
+      installationId,
+      ...(approvedDigest === undefined ? {} : { approvedDigest }),
+    };
+    const outcome = await gate.run(actionTarget, steps, () => {
       started = true;
       setPending(key);
       setError(null);
@@ -426,8 +456,6 @@ function PluginDetail({
   }
 
   const view = presentPluginInstallation(installation);
-  const digest = installation.source?.digest ?? null;
-  const acknowledged = digest !== null && trustedDigest === digest;
   const disabled = !canManage || pending !== null;
   const target = { environmentId, input: { installationId } };
   const manifest = installation.manifest;
@@ -486,7 +514,7 @@ function PluginDetail({
         </SettingsSection>
 
         {view.canReview ? (
-          <SettingsSection title="Trusted local code">
+          <SettingsSection title="Trusted local code" trailing={<AccessStatus status={status} />}>
             <View className="gap-2 p-4">
               <Text className="text-sm text-foreground">{pluginTrustStatement(label)}</Text>
               <Text className="text-sm text-foreground-muted">{PLUGIN_DIGEST_STATEMENT}</Text>
@@ -510,17 +538,22 @@ function PluginDetail({
                 loading={pending === "approve"}
                 onPress={() => {
                   if (digest === null || !acknowledged) return;
-                  void run("approve", [
-                    () => settle(consent({ environmentId, input: { installationId, digest } })),
-                    () => settle(enable(target)),
-                  ]);
+                  // Bound to these exact files: new bytes stop it before enable.
+                  void run(
+                    "approve",
+                    [
+                      () => settle(consent({ environmentId, input: { installationId, digest } })),
+                      () => settle(enable(target)),
+                    ],
+                    digest,
+                  );
                 }}
               />
             </View>
           </SettingsSection>
         ) : null}
 
-        <SettingsSection title="Manage">
+        <SettingsSection title="Manage" trailing={<AccessStatus status={status} />}>
           {view.canEnable ? (
             <SettingsActionRow
               icon="play"
@@ -581,7 +614,10 @@ function PluginDetail({
           />
         </SettingsSection>
 
-        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
+        <ManagementNotice
+          notice={status === null ? notice : null}
+          onRetry={access === "unreadable" ? retryAccess : null}
+        />
         {error ? (
           <Text selectable className="px-2 text-sm text-danger-foreground">
             {error}
@@ -601,7 +637,7 @@ export function SettingsPluginAddRouteScreen({
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
+  const { catalog, access, retryAccess, canManage, notice, status } = usePluginManagement(
     environmentId,
     environment,
   );
@@ -619,15 +655,11 @@ export function SettingsPluginAddRouteScreen({
     const outcome = await settle(add({ environmentId, input: { directory: trimmed } }));
     setBusy(false);
     if ("value" in outcome) {
-      const marker = startPluginAddHandoff({
-        installation: null,
-        restartCatalog: catalog.retry,
-        now: Date.now(),
-      });
+      const marker = startPluginAddHandoff({ installation: null, restartCatalog: catalog.retry });
       navigation.replace("SettingsPlugin", {
         environmentId,
         installationId: outcome.value.installation.installationId,
-        addedSince: marker.since,
+        addedAfterRevision: marker.afterRevision,
       });
     } else setError(outcome.error);
   };
@@ -638,7 +670,7 @@ export function SettingsPluginAddRouteScreen({
         {...SCROLL_PROPS}
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Plugin directory">
+        <SettingsSection title="Plugin directory" trailing={<AccessStatus status={status} />}>
           <View className="px-4 py-3">
             <TextInput
               accessibilityLabel="Plugin directory"
@@ -677,7 +709,10 @@ export function SettingsPluginAddRouteScreen({
             </Text>
           ) : null}
         </View>
-        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
+        <ManagementNotice
+          notice={status === null ? notice : null}
+          onRetry={access === "unreadable" ? retryAccess : null}
+        />
       </ScrollView>
     </SettingsScreen>
   );
