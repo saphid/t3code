@@ -191,7 +191,9 @@ const checkpointCaptureServiceProvided = checkpointCaptureServiceLayer.pipe(
   ),
 );
 const runFinalizationServiceProvided = runFinalizationServiceLayer.pipe(
-  Layer.provide(Layer.merge(checkpointCaptureServiceProvided, projectionStoreLayer)),
+  Layer.provide(
+    Layer.mergeAll(checkpointCaptureServiceProvided, eventSinkProvided, projectionStoreLayer),
+  ),
 );
 
 const orchestratorProvided = orchestratorLayer.pipe(

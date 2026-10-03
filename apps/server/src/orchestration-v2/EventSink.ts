@@ -31,6 +31,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as RunFinalized from "./RunFinalized.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 /**
@@ -305,7 +306,104 @@ const baseLayer: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    // A run finalizes once. A run whose checkpoint capture is still unsettled
+    // finalizes when RunFinalizationService finishes it; any other run that
+    // ends finalizes in the commit that writes its terminal status. Events are
+    // checked against stored state so a repeated write cannot finalize twice.
+    const withRunFinalizedEvents = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>,
+    ) =>
+      Effect.gen(function* () {
+        if (
+          !events.some((event) => event.type === "run.updated" || event.type === "run.finalized")
+        ) {
+          return events;
+        }
+        const isRecorded = (runId: RunId) =>
+          sql<{ readonly found: number }>`
+            SELECT 1 AS found
+            FROM orchestration_events
+            WHERE event_id = ${RunFinalized.runFinalizedEventId(runId)}
+            LIMIT 1
+          `.pipe(Effect.map((rows) => rows.length > 0));
+        const hasUnsettledCapture = (runId: RunId) =>
+          effects.some(
+            (effect) =>
+              effect.request.type === "checkpoint.capture" && effect.request.runId === runId,
+          )
+            ? Effect.succeed(true)
+            : effectOutbox
+                .get(RunFinalized.checkpointCaptureEffectId(runId))
+                .pipe(
+                  Effect.map(
+                    Option.exists(
+                      (effect) => effect.status === "pending" || effect.status === "running",
+                    ),
+                  ),
+                );
+        const statuses = new Map<RunId, string | undefined>();
+        const previousStatus = (runId: RunId) =>
+          statuses.has(runId)
+            ? Effect.succeed(statuses.get(runId))
+            : sql<{ readonly status: string }>`
+                SELECT status
+                FROM orchestration_v2_projection_runs
+                WHERE run_id = ${runId}
+                LIMIT 1
+              `.pipe(Effect.map((rows) => rows[0]?.status));
+        const finalized = new Set<RunId>();
+        const result: Array<OrchestrationV2DomainEvent> = [];
+        // Appended last so the milestone follows every write in its commit.
+        const milestones: Array<OrchestrationV2DomainEvent> = [];
+        for (const event of events) {
+          if (event.type === "run.finalized") {
+            const runId = event.payload.runId;
+            if (!finalized.has(runId) && !(yield* isRecorded(runId))) {
+              finalized.add(runId);
+              result.push(event);
+            }
+            continue;
+          }
+          result.push(event);
+          if (event.type === "run.created") {
+            statuses.set(event.payload.id, event.payload.status);
+            continue;
+          }
+          if (event.type !== "run.updated") continue;
+          const run = event.payload;
+          const previous = yield* previousStatus(run.id);
+          statuses.set(run.id, run.status);
+          const outcome = RunFinalized.runFinalizedOutcome(run.status);
+          // Only the transition into a final status finalizes, so later
+          // updates to old runs never produce a late milestone.
+          if (
+            outcome === null ||
+            finalized.has(run.id) ||
+            (previous !== undefined && RunFinalized.isSettledRunStatus(previous)) ||
+            (yield* isRecorded(run.id)) ||
+            (yield* hasUnsettledCapture(run.id))
+          ) {
+            continue;
+          }
+          finalized.add(run.id);
+          milestones.push(
+            RunFinalized.makeRunFinalizedEvent({ run, outcome, occurredAt: event.occurredAt }),
+          );
+        }
+        return [...result, ...milestones];
+      });
+
+    const normalizeEvents = (
+      input: ReadonlyArray<OrchestrationV2DomainEvent>,
+      effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2> = [],
+    ) =>
+      Effect.gen(function* () {
+        const events = yield* withRunFinalizedEvents(input, effects);
+        return yield* normalizeTurnItemPositions(events);
+      });
+
+    const normalizeTurnItemPositions = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -373,6 +471,7 @@ const baseLayer: Layer.Layer<
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(input.events)
               : input.events,
+            input.effects,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -534,7 +633,7 @@ const baseLayer: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          const normalized = yield* normalizeEvents(input.events, input.effects);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,

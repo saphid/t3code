@@ -401,7 +401,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     ),
   );
   const runFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-    Layer.provide(Layer.merge(checkpointCaptureServiceProvided, storesLayer)),
+    Layer.provide(Layer.mergeAll(checkpointCaptureServiceProvided, eventSinkProvided, storesLayer)),
   );
   const threadTitleRegenerationTestLayer = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,

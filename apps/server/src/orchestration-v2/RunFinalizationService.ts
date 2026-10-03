@@ -1,5 +1,6 @@
-import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { CheckpointScopeId, CommandId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -8,7 +9,9 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as RunFinalized from "./RunFinalized.ts";
 
 export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
@@ -16,7 +19,7 @@ export class RunFinalizationError extends Schema.TaggedError<RunFinalizationErro
     threadId: ThreadId,
     runId: RunId,
     scopeId: CheckpointScopeId,
-    operation: Schema.Literals(["capture-checkpoint", "refresh-workspace"]),
+    operation: Schema.Literals(["capture-checkpoint", "refresh-workspace", "record-finalized"]),
     cause: Schema.Defect(),
   },
 ) {}
@@ -40,6 +43,10 @@ export class RunFinalizationObserver extends Context.Reference<{
 export class RunFinalizationService extends Context.Service<
   RunFinalizationService,
   {
+    /**
+     * Captures the run's checkpoint, refreshes its workspace, then records
+     * `run.finalized`. At-least-once: every step is safe to repeat.
+     */
     readonly finalize: (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
@@ -51,6 +58,7 @@ export class RunFinalizationService extends Context.Service<
 const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const observer = yield* RunFinalizationObserver;
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
@@ -81,6 +89,23 @@ const make = Effect.gen(function* () {
           ),
         );
     }
+    yield* Effect.gen(function* () {
+      const { run } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      // A rolled-back run was discarded before its capture ran.
+      const outcome = run === undefined ? null : RunFinalized.runFinalizedOutcome(run.status);
+      if (run === undefined || outcome === null) return;
+      // EventSink drops the event when this run already finalized.
+      yield* eventSink.write({
+        commandId: CommandId.make(`command:effect:run.finalized:${run.id}`),
+        events: [
+          RunFinalized.makeRunFinalizedEvent({ run, outcome, occurredAt: yield* DateTime.now }),
+        ],
+      });
+    }).pipe(
+      Effect.mapError(
+        (cause) => new RunFinalizationError({ ...input, operation: "record-finalized", cause }),
+      ),
+    );
   });
   return RunFinalizationService.of({ finalize });
 });
