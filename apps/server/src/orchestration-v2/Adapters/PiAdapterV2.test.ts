@@ -819,6 +819,39 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  // Known residual, not a fix: Pi runs the old session's session_shutdown
+  // handlers after it reads switch_session and reports no rebind on stdout, so
+  // those writes are indistinguishable from the new session's and persist.
+  // Flip this test if Pi ever marks the native-session boundary.
+  it.effect("keeps an old session's shutdown status written after the switch marker", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* emitStatus(fake, "legacy", "old-shutdown-write");
+      yield* emitStatus(fake, "mode", "new-startup");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(resumed);
+
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=new-startup"),
+      );
+      assert.deepStrictEqual(settled, {
+        [THREAD_ID]: ["legacy=old-shutdown-write", "mode=new-startup"],
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(testLayer, ContributionStatusStore.layer))),
+  );
+
   it.effect("rejects a resume while a turn is active", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

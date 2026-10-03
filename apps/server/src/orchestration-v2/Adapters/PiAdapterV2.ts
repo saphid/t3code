@@ -20,9 +20,15 @@
  * Dialog methods become v2 runtime requests (`confirm` → approval_request,
  * `select`/`input`/`editor` → user_input_request); answers travel back as
  * `extension_ui_response`. `notify` becomes a completed activity item.
- * `setStatus` feeds the thread's contribution status. Statuses are cleared
- * when T3 moves Pi to another native session (the new session's extensions
- * set theirs again on the target thread) and when this session closes.
+ * `setStatus` feeds the thread's contribution status, an advisory channel
+ * owned by this Pi process for the T3 provider session's lifetime. Before a
+ * T3-initiated switch, new session, or fork, a queued marker clears the
+ * statuses read so far and sends later ones to the target thread; a failed
+ * registration or rollback sends them nowhere until a thread registers. Pi's
+ * RPC stdout marks no native-session boundary, so old-session writes after
+ * the marker (such as session_shutdown handlers) look like the new session's
+ * and may persist, and extension-initiated switches or reloads are not
+ * tracked. Closing this session clears its statuses.
  * Other terminal decoration (widget, title, editor text) has no matching T3
  * surface and is ignored.
  */
@@ -1915,7 +1921,8 @@ export function makePiAdapterV2(
             return;
           }
           case "t3.status_generation": {
-            // Statuses queued before this marker came from the session Pi left.
+            // Statuses queued before this marker came from the session Pi is
+            // leaving. Its shutdown writes can still follow; see the header.
             yield* statusSource.clearAll;
             yield* statusSource.bindThread(statusGenerationTargets.shift() ?? null);
             return;
