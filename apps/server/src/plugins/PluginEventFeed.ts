@@ -408,7 +408,9 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
           return yield* quarantine(0, unreadable.reason);
         }
         if (events.length > 0) {
-          yield* setState(installationId, worker, { _tag: "delivering" });
+          // A retry keeps showing `retrying` until the page succeeds.
+          if (failures === 0 && transient === 0)
+            yield* setState(installationId, worker, { _tag: "delivering" });
           const input = yield* encodePage({ events }).pipe(Effect.orDie);
           const exit = yield* catalog
             .invoke(installationId, PLUGIN_EVENTS_HANDLER, input, {

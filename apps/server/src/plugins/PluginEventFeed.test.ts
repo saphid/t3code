@@ -179,7 +179,20 @@ const deliveryStates = Effect.fn("deliveryStates")(function* (catalog: Catalog) 
     Stream.runForEach((snapshot) => Queue.offer(snapshots, snapshot)),
     Effect.forkScoped,
   );
+  const stateOf = (snapshot: PluginCatalogSnapshot, installationId: PluginInstallationId) =>
+    snapshot.installations.find((installation) => installation.installationId === installationId)
+      ?.eventDelivery;
   return {
+    /** Takes snapshots through the first that shows `tag`; returns each state that changed on the way. */
+    untilTag: (installationId: PluginInstallationId, tag: PluginEventDeliveryState["_tag"]) =>
+      Effect.gen(function* () {
+        const states: Array<PluginEventDeliveryState | undefined> = [];
+        while (true) {
+          const state = stateOf(yield* Queue.take(snapshots), installationId);
+          if (state?._tag !== states.at(-1)?._tag) states.push(state);
+          if (state?._tag === tag) return states;
+        }
+      }),
     /** Takes snapshots until one shows `tag` for the installation; earlier ones are dropped. */
     next: (installationId: PluginInstallationId, tag: PluginEventDeliveryState["_tag"]) =>
       Effect.gen(function* () {
@@ -500,13 +513,16 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           expect(failed.reason).toContain("told to fail");
           expect(yield* shown.next(installationId, "retrying")).toMatchObject({ failures: 1 });
           yield* TestClock.adjust("1 second");
+          // The retry itself is not shown as active again.
+          const states = yield* shown.untilTag(installationId, "quarantined");
+          expect(states.map((state) => state?._tag)).not.toContain("active");
           const quarantined = yield* next(receipts, "Quarantined", installationId);
           expect(quarantined).toMatchObject({ cursor, failures: 2 });
           expect(yield* storedCursor(installationId)).toBe(cursor);
           const status = Option.getOrThrow(yield* feed.status(installationId));
           expect(status).toMatchObject({ cursor, state: { _tag: "quarantined", failures: 2 } });
           // Management sees the quarantine and why, beside a plugin process that still runs.
-          const visible = yield* shown.next(installationId, "quarantined");
+          const visible = states.at(-1)!;
           expect(visible).toMatchObject({ failures: 2 });
           expect(visible._tag === "quarantined" && visible.reason).toContain("told to fail");
           const [listed] = (yield* catalog.list).installations;
