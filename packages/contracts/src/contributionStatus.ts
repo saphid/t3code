@@ -14,9 +14,9 @@ export const CONTRIBUTION_STATUS_TEXT_MAX_LENGTH = 80;
 export const CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH = 240;
 export const CONTRIBUTION_STATUS_MAX_ITEMS_PER_SOURCE = 8;
 /**
- * Server-owned limits on a whole snapshot. They keep a worst-case full
- * replacement frame under 170 KB of JSON and a typical one under 1 KB. Clients never
- * enforce them; raising one needs a new capability.
+ * Server-owned limits on a whole snapshot. They bound counts, not bytes: frame
+ * size also depends on identifier lengths and on how JSON encodes the text.
+ * Clients never enforce them; raising one needs a new capability.
  */
 export const CONTRIBUTION_STATUS_MAX_SOURCES_PER_THREAD = 4;
 export const CONTRIBUTION_STATUS_MAX_THREADS = 64;

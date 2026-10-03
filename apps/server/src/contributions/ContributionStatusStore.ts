@@ -102,21 +102,23 @@ const HAS_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 /**
  * Keys are identities, not display text, so they are never rewritten: two
  * different keys must never collide. A key that is empty, longer than the
- * contract allows, or contains a control character is rejected on set and
- * clear alike.
+ * contract allows, or contains a control character or lone UTF-16 surrogate
+ * is rejected on set and clear alike.
  */
 const isValidKey = (key: string) =>
   key.length > 0 &&
   key.length <= CONTRIBUTION_STATUS_KEY_MAX_LENGTH &&
+  key.isWellFormed() &&
   !HAS_CONTROL_CHARACTER.test(key);
 
 /**
- * Producer text as one plain line: terminal styling removed, controls turned
- * into spaces, whitespace collapsed, and at most `maxLength` UTF-16 units
- * without splitting a surrogate pair. A truncated value ends in `…`.
+ * Producer text as one plain line: terminal styling removed, lone surrogates
+ * replaced with U+FFFD, controls turned into spaces, whitespace collapsed, and
+ * at most `maxLength` UTF-16 units without splitting a surrogate pair. A
+ * truncated value ends in `…`.
  */
 function normalizeContributionStatusText(raw: string, maxLength: number): string {
-  const text = NodeUtil.stripVTControlCharacters(raw)
+  const text = NodeUtil.stripVTControlCharacters(raw.toWellFormed())
     .replace(CONTROL_CHARACTERS, " ")
     .replace(/\s+/g, " ")
     .trim();

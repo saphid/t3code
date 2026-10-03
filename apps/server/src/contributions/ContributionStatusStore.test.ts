@@ -64,7 +64,13 @@ describe("ContributionStatusStore", () => {
       yield* handle.clear("branch");
       assert.deepStrictEqual(yield* itemsByThread(store), { [THREAD_A]: ["mode=build"] });
 
+      // A lone surrogate would encode as a six-byte JSON escape; it becomes U+FFFD.
+      yield* handle.set({ key: "lone", text: "a\uD800b", tooltip: "\uDC00" });
+      const lone = (yield* store.snapshot).entries[0]?.items.find((item) => item.key === "lone");
+      assert.deepStrictEqual(lone, { key: "lone", text: "a\uFFFDb", tooltip: "\uFFFD" });
+
       yield* handle.set({ key: "mode", text: " \t " });
+      yield* handle.clear("lone");
       assert.deepStrictEqual(yield* itemsByThread(store), {});
     }),
   );
@@ -100,6 +106,7 @@ describe("ContributionStatusStore", () => {
       // Overlong or control-character keys are rejected, never rewritten into another key.
       yield* handle.set({ key: `${prefix}AB`, text: "overlong" });
       yield* handle.set({ key: "a\nb", text: "control" });
+      yield* handle.set({ key: "a\uD800", text: "lone surrogate" });
       assert.deepStrictEqual(yield* itemsByThread(store), {
         [THREAD_A]: ["a  b=double spaced", "a b=spaced", `${prefix}A=first`, `${prefix}B=second`],
       });
@@ -107,6 +114,7 @@ describe("ContributionStatusStore", () => {
       // Clearing applies the same rule, so it cannot remove a neighbouring key.
       yield* handle.clear(`${prefix}AB`);
       yield* handle.clear("a\tb");
+      yield* handle.clear("a\uD800");
       yield* handle.clear(`${prefix}A`);
       yield* handle.clear("a b");
       assert.deepStrictEqual(yield* itemsByThread(store), {
