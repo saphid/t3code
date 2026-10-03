@@ -1,5 +1,8 @@
 import type { V2ItemSupport } from "@t3tools/client-runtime/state/item-support";
-import { toolItemForDisplay } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  pluginContextInspection,
+  toolItemForDisplay,
+} from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -187,9 +190,17 @@ export function buildThreadActivityInspector(
           addBlock(blocks, result.title ?? "Search result", result.snippet, false);
       }
       break;
-    case "dynamic_tool":
-      addBlock(blocks, "Input", item.input);
+    case "dynamic_tool": {
+      // Plugin context shows what the provider received, not the call's input.
+      const pluginContext = pluginContextInspection(item);
+      if (pluginContext === null) {
+        addBlock(blocks, "Input", item.input);
+        break;
+      }
+      fields.push({ label: "Plugin", value: pluginContext.source });
+      for (const block of pluginContext.blocks) addBlock(blocks, block.label, block.text, false);
       break;
+    }
     case "approval_request":
       addBlock(blocks, "Prompt", item.prompt, false);
       break;

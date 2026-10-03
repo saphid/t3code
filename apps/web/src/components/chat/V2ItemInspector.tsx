@@ -5,6 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
+import { pluginContextInspection } from "@t3tools/client-runtime/work-log/presentation";
 import { memo } from "react";
 
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
@@ -38,6 +39,7 @@ function StructuredValue({ value }: { readonly value: unknown }) {
 
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
   const { item } = props.projectedItem;
+  const pluginContext = pluginContextInspection(item);
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -153,7 +155,19 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {item.type === "dynamic_tool" ? (
+      {pluginContext ? (
+        <div className="space-y-2">
+          <p className="text-muted-foreground">From {pluginContext.source}</p>
+          {pluginContext.blocks.map((block) => (
+            <div key={JSON.stringify(block)}>
+              <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
+                {block.label}
+              </p>
+              <StructuredValue value={block.text} />
+            </div>
+          ))}
+        </div>
+      ) : item.type === "dynamic_tool" ? (
         <div>
           <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
             Input

@@ -271,4 +271,50 @@ describe("buildThreadActivityInspector", () => {
       monospaced: false,
     });
   });
+
+  it("shows plugin context and why it was not added, attributed to the plugin", () => {
+    const record = (
+      fields: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>>,
+    ): OrchestrationV2TurnItem => ({
+      ...itemBase("plugin-context"),
+      type: "dynamic_tool",
+      title: "Added context from Notes",
+      toolName: "plugin_context",
+      toolSource: { key: "plugin:acme.notes", name: "Notes", kind: "integration" },
+      input: { plugin: { id: "acme.notes", name: "Notes", installationId: "i-1", generation: 1 } },
+      ...fields,
+    });
+    const inspect = (item: OrchestrationV2TurnItem) =>
+      buildThreadActivityInspector(
+        activityFor(item),
+        { ...EMPTY_V2_ITEM_SUPPORT, item },
+        sourceThreadId,
+      );
+
+    const added = inspect(
+      record({ output: { context: [{ title: "Codename", text: "PERIWINKLE-42" }] } }),
+    );
+    expect(added.fields).toContainEqual({ label: "Plugin", value: "Notes (acme.notes)" });
+    expect(added.blocks).toEqual([
+      { label: "Codename", value: "PERIWINKLE-42", monospaced: false },
+    ]);
+
+    for (const status of ["failed", "interrupted"] as const) {
+      const notAdded = inspect(
+        record({
+          status,
+          title: "Context from Notes not added",
+          output: { reason: "The run was interrupted before the plugin answered." },
+        }),
+      );
+      expect(notAdded.fields).toContainEqual({ label: "Status", value: status });
+      expect(notAdded.blocks).toEqual([
+        {
+          label: "Not added",
+          value: "The run was interrupted before the plugin answered.",
+          monospaced: false,
+        },
+      ]);
+    }
+  });
 });
