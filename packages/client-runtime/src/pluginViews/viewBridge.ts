@@ -108,7 +108,38 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
   let pings = 0;
 
   const post = (message: PluginViewHostMessage) => {
-    if (!closed) options.port.post(encodeHostMessage(message));
+    if (closed) return;
+    // Depth first: it is cheap and bounds the recursion of encoding.
+    const text = withinDepth(message) ? encodeHostMessage(message) : undefined;
+    if (text !== undefined && fitsMessageBytes(text)) return options.port.post(text);
+    // Only answers carry plugin data. `init`, `ping` and `violation` are bounded host fields.
+    if (message._tag === "result")
+      options.port.post(
+        encodeHostMessage(
+          text === undefined
+            ? {
+                _tag: "error",
+                id: message.id,
+                code: "too-deep",
+                message: "The answer is nested too deeply.",
+              }
+            : {
+                _tag: "error",
+                id: message.id,
+                code: "too-large",
+                message: "The answer is too large.",
+              },
+        ),
+      );
+    else if (message._tag === "error")
+      options.port.post(
+        encodeHostMessage({
+          _tag: "error",
+          id: message.id,
+          code: "too-large",
+          message: "The error is too large.",
+        }),
+      );
   };
 
   const close = (reason: PluginViewCloseReason) => {
@@ -150,12 +181,7 @@ export const makePluginViewBridge = Effect.fnUntraced(function* <E, R>(options: 
         // Cancelling or closing interrupts this fiber before here, so its answer goes nowhere.
         Effect.map((exit) => {
           inFlight.delete(id);
-          if (Exit.isSuccess(exit)) {
-            const result = { _tag: "result" as const, id, value: exit.value };
-            return fitsMessageBytes(encodeHostMessage(result))
-              ? post(result)
-              : post({ _tag: "error", id, code: "too-large", message: "The answer is too large." });
-          }
+          if (Exit.isSuccess(exit)) return post({ _tag: "result", id, value: exit.value });
           post({
             _tag: "error",
             id,

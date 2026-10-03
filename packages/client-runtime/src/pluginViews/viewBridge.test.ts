@@ -90,6 +90,27 @@ describe("makePluginViewBridge", () => {
     }),
   );
 
+  it.effect("keeps answers within the message bounds", () =>
+    Effect.gen(function* () {
+      let deep: Schema.Json = null;
+      for (let depth = 0; depth < 40; depth += 1) deep = [deep];
+      const { posted, send } = yield* mount((handler) =>
+        handler === "deep"
+          ? Effect.succeed(deep)
+          : Effect.fail(
+              new PluginViewError({ reason: "call-failed", message: "x".repeat(100_000) }),
+            ),
+      );
+      send({ _tag: "call", id: 1, handler: "deep", input: null });
+      send({ _tag: "call", id: 2, handler: "loud", input: null });
+      yield* Effect.yieldNow;
+      expect(posted.slice(1)).toEqual([
+        { _tag: "error", id: 1, code: "too-deep", message: "The answer is nested too deeply." },
+        { _tag: "error", id: 2, code: "too-large", message: "The error is too large." },
+      ]);
+    }),
+  );
+
   it.effect("drops what breaks the bounds and ends the mount after too many", () =>
     Effect.gen(function* () {
       const { bridge, posted, closes, calls, send, portClosed } = yield* mount();
