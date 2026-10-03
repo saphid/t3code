@@ -3,6 +3,7 @@ import {
   PluginActionId,
   ProjectId,
   type PluginAction,
+  type PluginActionsSnapshot,
   type ServerConfig,
   ThreadId,
   WS_METHODS,
@@ -12,6 +13,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -61,9 +63,15 @@ const ACTIONS = [
   action("on-thread", "thread", ["command-palette", "composer-slash"]),
 ];
 
-/** One environment whose session reaches a server reporting `capabilities`, recording each call. */
+/**
+ * One environment whose session reaches a server reporting `capabilities` and
+ * sending `frames` to the subscription, recording each call.
+ */
 const makeEnvironment = Effect.fn("makeEnvironment")(function* (
   capabilities: ServerConfig["environment"]["capabilities"],
+  frames: Stream.Stream<PluginActionsSnapshot> = Stream.succeed({ actions: ACTIONS }).pipe(
+    Stream.concat(Stream.never),
+  ),
 ) {
   const calls: Array<string> = [];
   const session: RpcSession.RpcSession = {
@@ -73,7 +81,7 @@ const makeEnvironment = Effect.fn("makeEnvironment")(function* (
         get: (_target, method: string) => () => {
           calls.push(method);
           return method === WS_METHODS.pluginActionsSubscribe
-            ? Stream.succeed({ actions: ACTIONS }).pipe(Stream.concat(Stream.never))
+            ? frames
             : Effect.succeed({ message: "done" });
         },
       },
@@ -101,7 +109,9 @@ const makeEnvironment = Effect.fn("makeEnvironment")(function* (
         EnvironmentRegistry.EnvironmentRegistry,
         EnvironmentRegistry.EnvironmentRegistry.of({
           run,
-        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          followStream: (_environmentId, stream) =>
+            Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       ),
     ),
   );
@@ -119,7 +129,11 @@ const makeEnvironment = Effect.fn("makeEnvironment")(function* (
       input: { actionId: ACTIONS[0]!.id, target: { _tag: "environment" } },
     }),
   );
-  return { calls, firstList, invoke };
+  const snapshots = AtomRegistry.toStreamResult(
+    registry,
+    atoms.snapshot({ environmentId: TARGET.environmentId, input: {} }),
+  );
+  return { calls, firstList, invoke, snapshots };
 });
 
 const failureTag = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
@@ -137,7 +151,7 @@ describe("plugin actions on an older server", () => {
           { repositoryIdentity: true, plugins: true, pluginActions: false },
         ]) {
           const { calls, firstList, invoke } = yield* makeEnvironment(capabilities);
-          expect(yield* firstList).toEqual([]);
+          expect(yield* firstList).toEqual({ actions: [] });
           expect(failureTag(yield* invoke)).toBe("EnvironmentRpcUnavailableError");
           expect(calls).toEqual([]);
         }
@@ -152,10 +166,42 @@ describe("plugin actions on an older server", () => {
           repositoryIdentity: true,
           pluginActions: true,
         });
-        expect(yield* firstList).toEqual(ACTIONS);
+        expect(yield* firstList).toEqual({ actions: ACTIONS });
         const result = yield* invoke;
         expect(AsyncResult.isSuccess(result) && result.value).toEqual({ message: "done" });
         expect(calls).toEqual([WS_METHODS.pluginActionsSubscribe, WS_METHODS.pluginActionsInvoke]);
+      }),
+    ),
+  );
+});
+
+describe("the plugin actions snapshot", () => {
+  it.effect("keeps what the server's limit left out until room is freed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const frames = yield* Queue.unbounded<PluginActionsSnapshot>();
+        const { snapshots } = yield* makeEnvironment(
+          { repositoryIdentity: true, pluginActions: true },
+          Stream.fromQueue(frames),
+        );
+        const seen = yield* Queue.unbounded<PluginActionsSnapshot>();
+        yield* snapshots.pipe(
+          Stream.runForEach((snapshot) => Queue.offer(seen, snapshot)),
+          Effect.forkScoped,
+        );
+
+        yield* Queue.offer(frames, { actions: ACTIONS, omitted: { plugins: 1, actions: 16 } });
+        expect(yield* Queue.take(seen)).toEqual({
+          actions: ACTIONS,
+          omitted: { plugins: 1, actions: 16 },
+        });
+
+        // Disabling a listed plugin admits the next whole; the server stops reporting omissions.
+        const promoted = [...ACTIONS, action("promoted", "environment", ["thread-menu"])];
+        yield* Queue.offer(frames, { actions: promoted });
+        const freed = yield* Queue.take(seen);
+        expect(freed).toEqual({ actions: promoted });
+        expect(freed.omitted).toBeUndefined();
       }),
     ),
   );

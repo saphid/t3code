@@ -20,8 +20,10 @@ const NO_ACTIONS: ReadonlyArray<PluginAction> = [];
 export function usePluginActions(environmentId: EnvironmentId | null): ReadonlyArray<PluginAction> {
   return (
     useEnvironmentQuery(
-      environmentId === null ? null : pluginActionEnvironment.actions({ environmentId, input: {} }),
-    ).data ?? NO_ACTIONS
+      environmentId === null
+        ? null
+        : pluginActionEnvironment.snapshot({ environmentId, input: {} }),
+    ).data?.actions ?? NO_ACTIONS
   );
 }
 

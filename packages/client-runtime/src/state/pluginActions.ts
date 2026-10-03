@@ -2,6 +2,7 @@ import {
   type ExecutionEnvironmentCapabilities,
   type PluginAction,
   type PluginActionPlacement,
+  type PluginActionsSnapshot,
   type PluginActionTarget,
   type ProjectId,
   type ThreadId,
@@ -22,11 +23,12 @@ const supportsPluginActions = (
   capabilities: Pick<ExecutionEnvironmentCapabilities, "pluginActions"> | null | undefined,
 ) => capabilities?.pluginActions === true;
 
-const NO_ACTIONS: ReadonlyArray<PluginAction> = [];
+const NO_ACTIONS: PluginActionsSnapshot = { actions: [] };
 
 /**
- * The environment's plugin actions, following its sessions. A server without
- * the capability is never subscribed to and offers none.
+ * The environment's plugin actions snapshot, following its sessions. A server
+ * without the capability is never subscribed to and offers none. `omitted`
+ * is kept so a surface can explain actions the server's limit left out.
  */
 export const pluginActionsStream = Stream.unwrap(
   EnvironmentSupervisor.EnvironmentSupervisor.pipe(
@@ -40,9 +42,7 @@ export const pluginActionsStream = Stream.unwrap(
                 session.initialConfig.pipe(
                   Effect.map((config) =>
                     supportsPluginActions(config.environment.capabilities)
-                      ? subscribe(WS_METHODS.pluginActionsSubscribe, {}).pipe(
-                          Stream.map((snapshot) => snapshot.actions),
-                        )
+                      ? subscribe(WS_METHODS.pluginActionsSubscribe, {})
                       : Stream.succeed(NO_ACTIONS),
                   ),
                   Effect.orElseSucceed(() => Stream.empty),
@@ -59,8 +59,11 @@ export function createPluginActionEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
-    /** Every action the environment offers now; empty on servers without plugin actions. */
-    actions: createEnvironmentSubscriptionAtomFamily(runtime, {
+    /**
+     * Every action the environment offers now, plus `omitted` counts when its
+     * limit left plugins out; no actions on servers without plugin actions.
+     */
+    snapshot: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugin-actions",
       subscribe: (_input: Record<string, never>) => pluginActionsStream,
     }),
