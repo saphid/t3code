@@ -10,9 +10,11 @@ import {
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
   type AuthEnvironmentScope,
+  EnvironmentAuthorizationError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -172,6 +174,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeContributionStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitRunStackedAction]: AuthOrchestrationOperateScope,
@@ -237,3 +240,20 @@ export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironm
   input.retryHostId || input.updateTool
     ? AuthOrchestrationOperateScope
     : AuthOrchestrationReadScope;
+
+/** The failure a client gets when its token lacks `requiredScope`. */
+export const environmentAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
+  new EnvironmentAuthorizationError({
+    message: `The authenticated token is missing required scope: ${requiredScope}.`,
+    requiredScope,
+  });
+
+/** `stream` for a client holding `scopes`, or an authorization failure without running it. */
+export const authorizeScopedStream = <A, E, R>(
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  requiredScope: AuthEnvironmentScope,
+  stream: Stream.Stream<A, E, R>,
+): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
+  scopes.includes(requiredScope)
+    ? stream
+    : Stream.fail(environmentAuthorizationError(requiredScope));

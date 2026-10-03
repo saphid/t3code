@@ -24,6 +24,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as ContributionStatusStore from "./contributions/ContributionStatusStore.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
@@ -574,6 +575,9 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   Layer.provideMerge(
     Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive, PluginLayerLive),
   ),
+  // The same layer reference provider adapters write through, so memoization
+  // gives producers and the WebSocket stream one store.
+  Layer.provideMerge(ContributionStatusStore.layer),
   Layer.provideMerge(PersistenceLayerLive),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.

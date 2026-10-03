@@ -204,6 +204,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server stores plugin setting values and secrets (`plugins.settings.*`). Absent on
       older servers, so clients must not call or subscribe to those methods. */
   pluginSettings: Schema.optionalKey(Schema.Boolean),
+  /** Server serves subscribeContributionStatus. Absent on older servers, which
+      lack the method, so clients must not subscribe and show no statuses. */
+  contributionStatus: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
