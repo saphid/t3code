@@ -43,6 +43,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { runPluginAction, usePluginActions } from "../../state/plugin-actions";
+import { pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
@@ -171,6 +173,7 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
+  projectId = null,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
@@ -190,6 +193,8 @@ export function useComposerCommandMenu({
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
+  /** The project plugin actions with a project target run on. */
+  readonly projectId?: ProjectId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
@@ -319,6 +324,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const pluginActions = usePluginActions(environmentId);
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
@@ -371,7 +377,22 @@ export function useComposerCommandMenu({
           description: skill.shortDescription ?? skill.description ?? "",
         }));
 
-      return [...commandItems, ...skillItems];
+      // Plugin actions run when picked, so they are offered anywhere in the message.
+      const pluginActionItems = pluginActionsAt(pluginActions, "composer-slash", {
+        threadId: currentThreadId,
+        projectId,
+      })
+        .filter(({ action }) => action.name.includes(q) || action.title.toLowerCase().includes(q))
+        .map(({ action, target }) => ({
+          id: `plugin-action:${action.id}`,
+          type: "plugin-action" as const,
+          action,
+          target,
+          label: `/${action.name}`,
+          description: `${action.title} · ${action.pluginName}`,
+        }));
+
+      return [...commandItems, ...skillItems, ...pluginActionItems];
     }
 
     if (trigger.kind === "skill") {
@@ -491,6 +512,8 @@ export function useComposerCommandMenu({
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
+    pluginActions,
+    projectId,
     pullRequestSearch.entries,
     projectCwd,
     selectedProviderStatus,
@@ -571,6 +594,14 @@ export function useComposerCommandMenu({
         return;
       }
 
+      if (item.type === "plugin-action") {
+        if (environmentId === null) return;
+        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+        setSelection({ start: cleared.cursor, end: cleared.cursor });
+        onChangeDraftMessage(cleared.text);
+        void runPluginAction({ environmentId, action: item.action, target: item.target });
+        return;
+      }
       if (
         item.type === "provider-slash-command" &&
         item.command.name === USAGE_LIMITS_COMMAND.name &&
@@ -599,6 +630,7 @@ export function useComposerCommandMenu({
     },
     [
       draftMessage,
+      environmentId,
       ownerKey,
       items,
       onChangeDraftMessage,
