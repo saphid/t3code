@@ -28,7 +28,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
-import { getSidePanelMetadata, type SidePanelId } from "~/panels/bundledPanels";
+import { getSidePanelMetadata, type LauncherSidePanelId } from "~/panels/bundledPanels";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
@@ -101,7 +101,9 @@ interface RightPanelTabsProps {
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
   /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
-  panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
+  panels: Readonly<Record<LauncherSidePanelId, SidePanelLauncher>>;
+  /** Plugin views the thread's environment offers now, listed after the built-in panels. */
+  pluginViews?: readonly PluginViewLauncher[];
   onAddBrowserInProfile: (profileId: string) => void;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
@@ -140,6 +142,13 @@ export interface SidePanelLauncher {
   onOpen: () => void;
 }
 
+export interface PluginViewLauncher {
+  /** The plugin-view surface this opens; its tab takes `title` while the view is offered. */
+  surfaceId: string;
+  title: string;
+  onOpen: () => void;
+}
+
 interface SurfaceAction {
   id: string;
   label: string;
@@ -153,7 +162,7 @@ interface SurfaceAction {
   onClick: () => void;
 }
 
-type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels">;
+type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels" | "pluginViews">;
 
 /**
  * The surfaces the empty launcher and the add menu offer, in launcher order.
@@ -161,7 +170,7 @@ type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels">;
  * move onto the panel registry.
  */
 export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAction[] {
-  const registered = (id: SidePanelId): SurfaceAction => {
+  const registered = (id: LauncherSidePanelId): SurfaceAction => {
     const panel = getSidePanelMetadata(id);
     const launcher = props.panels[id];
     return {
@@ -184,6 +193,17 @@ export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAct
     registered("pull-request"),
     registered("pull-requests"),
     registered("device"),
+    // Plugin views have no letter: their titles come from plugins and could claim any key.
+    ...(props.pluginViews ?? []).map((view): SurfaceAction => ({
+      id: view.surfaceId,
+      label: view.title,
+      icon: getSidePanelMetadata("plugin-view").icon,
+      shortcut: "",
+      available: true,
+      unavailableHint: "",
+      unavailableReason: "",
+      onClick: () => view.onOpen(),
+    })),
   ];
 }
 
@@ -297,10 +317,10 @@ function SurfaceMenuItem(props: {
       className={!props.available ? "data-disabled:pointer-events-auto" : undefined}
       onClick={props.onClick}
       disabled={!props.available}
-      aria-keyshortcuts={props.shortcut}
+      aria-keyshortcuts={props.shortcut || undefined}
     >
       {props.children}
-      <MenuShortcut>{props.shortcut}</MenuShortcut>
+      {props.shortcut ? <MenuShortcut>{props.shortcut}</MenuShortcut> : null}
     </MenuItem>
   );
   if (props.available || !props.disabledReason) return item;
@@ -445,7 +465,7 @@ function RightPanelEmptyState(props: {
                   >
                     {action.label}
                   </span>
-                  <Kbd>{action.shortcut}</Kbd>
+                  {action.shortcut ? <Kbd>{action.shortcut}</Kbd> : null}
                 </button>
                 {/*
                   Same choice the tab bar's "+" menu offers: the row opens the
@@ -491,7 +511,7 @@ function RightPanelEmptyState(props: {
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                    <Kbd>{action.shortcut}</Kbd>
+                    {action.shortcut ? <Kbd>{action.shortcut}</Kbd> : null}
                   </div>
                 }
               />
@@ -507,8 +527,11 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  pluginViews: readonly PluginViewLauncher[] | undefined,
 ): string {
   switch (surface.kind) {
+    case "plugin-view":
+      return pluginViews?.find((view) => view.surfaceId === surface.id)?.title ?? surface.title;
     case "diff":
       return getSidePanelMetadata("diff").title;
     case "files":
@@ -617,6 +640,10 @@ function SurfaceIcon({
       );
     case "pull-requests": {
       const Icon = getSidePanelMetadata("pull-requests").icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
+    case "plugin-view": {
+      const Icon = getSidePanelMetadata("plugin-view").icon;
       return <Icon className="size-3 shrink-0" />;
     }
     case "device": {
@@ -973,7 +1000,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                props.pluginViews,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
