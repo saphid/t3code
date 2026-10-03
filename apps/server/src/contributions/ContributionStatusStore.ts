@@ -105,7 +105,7 @@ const HAS_CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
  * contract allows, or contains a control character or lone UTF-16 surrogate
  * is rejected on set and clear alike.
  */
-const isValidKey = (key: string) =>
+export const isValidContributionStatusKey = (key: string) =>
   key.length > 0 &&
   key.length <= CONTRIBUTION_STATUS_KEY_MAX_LENGTH &&
   key.isWellFormed() &&
@@ -117,7 +117,7 @@ const isValidKey = (key: string) =>
  * at most `maxLength` UTF-16 units without splitting a surrogate pair. A
  * truncated value ends in `…`.
  */
-function normalizeContributionStatusText(raw: string, maxLength: number): string {
+export function normalizeContributionStatusText(raw: string, maxLength: number): string {
   const text = NodeUtil.stripVTControlCharacters(raw.toWellFormed())
     .replace(CONTROL_CHARACTERS, " ")
     .replace(/\s+/g, " ")
@@ -140,9 +140,10 @@ interface SourceSlot {
 /**
  * Which handles compete for one entry on a thread. A thread hosts one provider
  * session at a time, so every provider-session source shares a slot and a new
- * session takes the old one over; plugins will each get their own slot.
+ * session takes the old one over; each plugin gets its own slot.
  */
-const slotKey = (source: ContributionStatusSource) => source.kind;
+const slotKey = (source: ContributionStatusSource) =>
+  source.kind === "plugin" ? contributionStatusSourceKey(source) : source.kind;
 
 const sameItem = (left: ContributionStatusItem | undefined, right: ContributionStatusItem) =>
   left !== undefined &&
@@ -270,7 +271,8 @@ export const make = Effect.fn("contributions.status.make")(function* () {
           update(() => {
             const slot = ownedSlot();
             const key = input.key;
-            if (slot === undefined || threadId === null || !isValidKey(key)) return false;
+            if (slot === undefined || threadId === null || !isValidContributionStatusKey(key))
+              return false;
             const text = normalizeContributionStatusText(
               input.text,
               CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
@@ -298,7 +300,7 @@ export const make = Effect.fn("contributions.status.make")(function* () {
         clear: (key) =>
           update(() => {
             const slot = ownedSlot();
-            if (slot === undefined || !isValidKey(key)) return false;
+            if (slot === undefined || !isValidContributionStatusKey(key)) return false;
             return slot.items.delete(key);
           }),
         clearAll: update(() => {

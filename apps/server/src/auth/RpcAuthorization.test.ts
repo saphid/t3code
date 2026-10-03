@@ -42,6 +42,9 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pluginsSettingsSubscribe)).toBe(
       AuthOrchestrationReadScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.pluginsNotificationsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
     for (const method of [
       WS_METHODS.pluginsAdd,
       WS_METHODS.pluginsRefresh,

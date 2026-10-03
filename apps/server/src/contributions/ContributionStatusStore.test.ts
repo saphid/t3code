@@ -169,10 +169,9 @@ describe("ContributionStatusStore", () => {
 
       const snapshot = yield* store.snapshot;
       assert.deepStrictEqual(yield* itemsByThread(store), { [THREAD_A]: ["mode=new"] });
-      assert.strictEqual(
-        snapshot.entries[0]?.source.providerSessionId,
-        ProviderSessionId.make("session-new"),
-      );
+      assert.deepInclude(snapshot.entries[0]?.source, {
+        providerSessionId: ProviderSessionId.make("session-new"),
+      });
     }),
   );
 
