@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   EventId,
+  PluginCatalogError,
   type PluginInstallationId,
   ProjectId,
   ProviderInstanceId,
@@ -47,14 +48,24 @@ const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 type Receipts = PubSub.Subscription<PluginEventFeed.PluginEventFeedReceipt>;
 
+type Catalog = PluginCatalog.PluginCatalog["Service"];
+
+/** A catalogue whose snapshots the feed sees only once `observed` completes. */
+const observedAfter =
+  (observed: Deferred.Deferred<void>) =>
+  (catalog: Catalog): Catalog => ({
+    ...catalog,
+    subscribe: Stream.unwrap(Deferred.await(observed).pipe(Effect.as(catalog.subscribe))),
+  });
+
 /**
  * Starts a supervisor, catalogue and event feed in `scope`, as one server start
- * would. With `observed`, the feed sees no catalogue snapshot until it completes.
+ * would. `feedCatalog` changes the catalogue the feed sees.
  */
 const startServer = Effect.fn("startServer")(function* (
   scope: Scope.Scope,
   options: Partial<PluginEventFeed.PluginEventFeedOptions> = {},
-  observed?: Deferred.Deferred<void>,
+  feedCatalog: (catalog: Catalog) => Catalog = (catalog) => catalog,
 ) {
   const delivery = yield* PluginEventDelivery.make;
   const supervisor = yield* PluginSupervisor.make({
@@ -70,15 +81,8 @@ const startServer = Effect.fn("startServer")(function* (
     Effect.provideService(PluginEventDelivery.PluginEventDelivery, delivery),
     Effect.provideService(Scope.Scope, scope),
   );
-  const feedCatalog =
-    observed === undefined
-      ? catalog
-      : PluginCatalog.PluginCatalog.of({
-          ...catalog,
-          subscribe: Stream.unwrap(Deferred.await(observed).pipe(Effect.as(catalog.subscribe))),
-        });
   const feed = yield* PluginEventFeed.make(options).pipe(
-    Effect.provideService(PluginCatalog.PluginCatalog, feedCatalog),
+    Effect.provideService(PluginCatalog.PluginCatalog, feedCatalog(catalog)),
     Effect.provideService(PluginEventDelivery.PluginEventDelivery, delivery),
     Effect.provideService(
       ServerEnvironment,
@@ -147,10 +151,7 @@ const preparePlugin = Effect.fn("preparePlugin")(function* (id: string, onEvent 
   };
 });
 
-const install = Effect.fn("install")(function* (
-  catalog: PluginCatalog.PluginCatalog["Service"],
-  directory: string,
-) {
+const install = Effect.fn("install")(function* (catalog: Catalog, directory: string) {
   const { installation } = yield* catalog.add({ directory });
   const installationId = installation.installationId;
   yield* catalog.consent({ installationId, digest: installation.source!.digest });
@@ -326,7 +327,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             yield* seedThread;
             const plugin = yield* preparePlugin("test.late-observer");
             const observed = yield* Deferred.make<void>();
-            const server = yield* startServer(yield* Scope.Scope, {}, observed);
+            const server = yield* startServer(yield* Scope.Scope, {}, observedAfter(observed));
             const installationId = yield* install(server.catalog, plugin.directory);
             const enabledAt = yield* storedCursor(installationId);
             const sequence = yield* finalizeRun("right-after-enable");
@@ -353,7 +354,11 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             yield* seedThread;
             const plugin = yield* preparePlugin("test.early-restart");
             const first = yield* Scope.make();
-            const server = yield* startServer(first, {}, yield* Deferred.make<void>());
+            const server = yield* startServer(
+              first,
+              {},
+              observedAfter(yield* Deferred.make<void>()),
+            );
             const installationId = yield* install(server.catalog, plugin.directory);
             const sequence = yield* finalizeRun("before-restart");
             yield* Scope.close(first, Exit.void);
@@ -419,7 +424,11 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           const sql = yield* SqlClient.SqlClient;
           const plugin = yield* preparePlugin("test.unreadable");
           const observed = yield* Deferred.make<void>();
-          const { catalog, feed, receipts } = yield* startServer(yield* Scope.Scope, {}, observed);
+          const { catalog, feed, receipts } = yield* startServer(
+            yield* Scope.Scope,
+            {},
+            observedAfter(observed),
+          );
           const installationId = yield* install(catalog, plugin.directory);
           const [first, broken, last] = yield* Effect.forEach(["a", "b", "c"], (name) =>
             finalizeRun(name),
@@ -454,6 +463,53 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
             broken,
             last,
           ]);
+        }),
+      ),
+    );
+    it.effect("retries after catalogue errors while still registered, without quarantine", () =>
+      withStores(
+        Effect.gen(function* () {
+          yield* seedThread;
+          const plugin = yield* preparePlugin("test.storage");
+          // The first two calls fail outside the plugin, the way a failed catalogue save does.
+          const refusals = ["storage", "unavailable"];
+          const { catalog, feed, receipts } = yield* startServer(
+            yield* Scope.Scope,
+            { maxFailures: 1, retryBackoff: "1 second" },
+            (catalog) => ({
+              ...catalog,
+              invoke: (installationId, handler, input, options) => {
+                const reason = refusals.shift();
+                return reason === undefined
+                  ? catalog.invoke(installationId, handler, input, options)
+                  : Effect.fail(new PluginCatalogError({ reason, message: `Refused: ${reason}.` }));
+              },
+            }),
+          );
+          const installationId = yield* install(catalog, plugin.directory);
+          const { cursor, generation } = yield* next(receipts, "Started", installationId);
+          const sequence = yield* finalizeRun("after-storage-trouble");
+
+          expect(yield* next(receipts, "Retrying", installationId)).toMatchObject({
+            cursor,
+            generation,
+            reason: "Refused: storage.",
+          });
+          expect(Option.getOrThrow(yield* feed.status(installationId)).state).toMatchObject({
+            _tag: "retrying",
+            failures: 1,
+          });
+          yield* TestClock.adjust("1 second");
+          expect(yield* next(receipts, "Retrying", installationId)).toMatchObject({
+            reason: "Refused: unavailable.",
+          });
+          yield* TestClock.adjust("2 seconds");
+          expect(yield* next(receipts, "Acknowledged", installationId)).toMatchObject({
+            generation,
+            delivered: 1,
+            throughSequence: sequence,
+          });
+          expect((yield* plugin.handled).map((event) => event.sequence)).toEqual([sequence]);
         }),
       ),
     );

@@ -91,7 +91,7 @@ export type PluginEventFeedState =
     }
   /** `failures` is 0 when delivery stopped in front of an event it cannot read. */
   | { readonly _tag: "quarantined"; readonly failures: number; readonly reason: string }
-  /** The registration it delivered to was revoked; the next catalogue change replaces it. */
+  /** The registration it delivered to is gone; the next catalogue change replaces it. */
   | { readonly _tag: "stopped" };
 
 export interface PluginEventFeedStatus {
@@ -125,6 +125,14 @@ export type PluginEventFeedReceipt =
       readonly generation: number;
       readonly cursor: number;
       readonly failures: number;
+      readonly reason: string;
+    }
+  | {
+      /** A step outside the plugin failed, such as catalogue storage; retried without counting. */
+      readonly _tag: "Retrying";
+      readonly installationId: PluginInstallationId;
+      readonly generation: number;
+      readonly cursor: number;
       readonly reason: string;
     }
   | {
@@ -302,6 +310,19 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
   const backoff = (failures: number) =>
     Duration.min(Duration.times(retryBackoff, 2 ** (failures - 1)), maxRetryBackoff);
 
+  /** True while the catalogue still shows this registration enabled. */
+  const isRegistered = (installationId: PluginInstallationId, generation: number) =>
+    catalog.list.pipe(
+      Effect.map(({ installations }) =>
+        installations.some(
+          (installation) =>
+            installation.installationId === installationId &&
+            installation.generation === generation &&
+            receivesEvents(installation),
+        ),
+      ),
+    );
+
   /** Delivers to one registration until interrupted. */
   const run = (installationId: PluginInstallationId, worker: Worker) =>
     Effect.gen(function* () {
@@ -311,6 +332,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       worker.cursor = cursor;
       yield* publish({ _tag: "Started", installationId, generation, cursor });
       let failures = 0;
+      let transient = 0;
       /** Stops at the cursor until `resume`, a re-enable, or a restart. */
       const quarantine = (attempts: number, reason: string) =>
         Effect.gen(function* () {
@@ -370,10 +392,26 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             .pipe(Effect.exit);
           if (exit._tag === "Failure") {
             const error = exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error;
-            // Revoked or replaced: this registration is over, and a catalogue change follows.
             if (error?._tag === "PluginCatalogError" || error?._tag === "PluginStoppedError") {
-              worker.state = { _tag: "stopped" };
-              return yield* Effect.never;
+              // Revoked or replaced: this registration is over, and a catalogue change follows.
+              if (!(yield* isRegistered(installationId, generation))) {
+                worker.state = { _tag: "stopped" };
+                return yield* Effect.never;
+              }
+              // Still registered (a storage failure, or a call that raced a management step
+              // that changed nothing): not the plugin's failure, so retry without counting it.
+              transient++;
+              const delay = backoff(transient);
+              const reason = error.message.slice(0, 1000);
+              worker.state = {
+                _tag: "retrying",
+                failures: transient,
+                reason,
+                retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, delay)),
+              };
+              yield* publish({ _tag: "Retrying", installationId, generation, cursor, reason });
+              yield* Effect.sleep(delay);
+              continue;
             }
             if (error === undefined && Cause.hasInterrupts(exit.cause))
               return yield* Effect.failCause(exit.cause);
@@ -408,6 +446,7 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             continue;
           }
           failures = 0;
+          transient = 0;
         }
         yield* saveCursor(installationId, covered);
         cursor = covered;
@@ -424,9 +463,17 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       Effect.scoped,
       // Storage trouble is not the plugin's failure: wait and start over from the stored cursor.
       Effect.tapError((error) =>
-        Effect.logWarning("Plugin event delivery could not read or save its cursor", {
-          installationId,
-          error,
+        Effect.gen(function* () {
+          worker.state = {
+            _tag: "retrying",
+            failures: 1,
+            reason: "Could not read or save event delivery progress.",
+            retryAt: DateTime.formatIso(DateTime.addDuration(yield* DateTime.now, maxRetryBackoff)),
+          };
+          yield* Effect.logWarning("Plugin event delivery could not read or save its cursor", {
+            installationId,
+            error,
+          });
         }),
       ),
       Effect.retry(Schedule.spaced(maxRetryBackoff)),
