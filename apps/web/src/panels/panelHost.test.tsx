@@ -45,6 +45,7 @@ function renderHost(threadKey: string, send: Send) {
     lent,
     rerender: (nextThreadKey: string, nextSend: Send) =>
       act(() => renderer.update(<Host threadKey={nextThreadKey} send={nextSend} />)),
+    unmount: () => act(() => renderer.unmount()),
   };
 }
 
@@ -93,5 +94,41 @@ describe("useScopedAnnotationSender", () => {
       [undefined, "auto", "foreground", { annotation, image: null }],
     ]);
     expect(sendA).not.toHaveBeenCalled();
+  });
+
+  it("drops a pick that settles after leaving and returning to the thread", async () => {
+    const sendA = vi.fn<Send>();
+    const sendB = vi.fn<Send>();
+    const sendAAgain = vi.fn<Send>();
+    const host = renderHost(threadA, sendA);
+    const pick = startPick(host.lent[0]!);
+
+    host.rerender(threadB, sendB);
+    host.rerender(threadA, sendAAgain);
+    await pick.settle(annotation);
+
+    expect(sendA).not.toHaveBeenCalled();
+    expect(sendB).not.toHaveBeenCalled();
+    expect(sendAAgain).not.toHaveBeenCalled();
+
+    // A pick started on the return visit still sends through thread A.
+    const returnPick = startPick(host.lent.at(-1)!);
+    await returnPick.settle(annotation);
+    expect(sendAAgain.mock.calls).toEqual([
+      [undefined, "auto", "foreground", { annotation, image: null }],
+    ]);
+    expect(sendA).not.toHaveBeenCalled();
+    expect(sendB).not.toHaveBeenCalled();
+  });
+
+  it("drops a pick that settles after the host unmounts", async () => {
+    const send = vi.fn<Send>();
+    const host = renderHost(threadA, send);
+    const pick = startPick(host.lent[0]!);
+
+    host.unmount();
+    await pick.settle(annotation);
+
+    expect(send).not.toHaveBeenCalled();
   });
 });

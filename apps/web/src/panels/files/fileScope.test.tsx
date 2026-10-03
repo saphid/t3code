@@ -8,7 +8,8 @@ import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import type { AddToChatResult } from "~/components/files/FileBrowserPanel";
 import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
 
-import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
+import { useScopeLifetime } from "../scopeLifetime";
+import { useScopedComposerInsert } from "./fileScope";
 
 // Same thread id in two environments, so only the environment tells them apart.
 const threadA = scopedThreadKey({

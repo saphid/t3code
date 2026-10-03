@@ -3,6 +3,8 @@ import { createContext, use, useCallback, useLayoutEffect, useRef } from "react"
 
 import type { ComposerImageAttachment, DraftId } from "~/composerDraftStore";
 
+import { useScopeLifetime } from "./scopeLifetime";
+
 /**
  * What the chat view lends the panel it is rendering. A panel reads this
  * instead of receiving the same values as props, so only panel-specific
@@ -21,8 +23,8 @@ export interface PanelHost {
   readonly workspaceMutationId: string | null;
   /**
    * Sends an annotation as its own message from this host's thread. A call that
-   * arrives after the host moved to another thread is dropped; the annotation
-   * stays attached to its own thread's draft.
+   * arrives after the host left the thread it started in (even if it has since
+   * returned) is dropped; the annotation stays attached to its own thread's draft.
    */
   readonly sendAnnotation: (
     annotation: PreviewAnnotationPayload,
@@ -51,25 +53,26 @@ type ComposerSend = (
 /**
  * Builds the host's `sendAnnotation` for the thread keyed by `threadKey`.
  * `send` is the composer's latest send for that thread. The callback stays
- * stable within one thread, so a pick that settles after navigation can never
- * send through another thread's composer, including a colliding thread id in
- * another environment.
+ * stable within one visit to that thread and is retired when the host leaves
+ * it, so a pick that settles after navigation can never send through another
+ * thread's composer (including a colliding thread id in another environment),
+ * nor through the same thread after leaving and returning to it.
  */
 export function useScopedAnnotationSender(
   threadKey: string | null,
   send: ComposerSend,
 ): PanelHost["sendAnnotation"] {
-  const latestRef = useRef({ threadKey, send });
+  const isVisitCurrent = useScopeLifetime(threadKey ?? "");
+  const sendRef = useRef(send);
   // Updated on commit, so a discarded render never redirects a pending send.
   useLayoutEffect(() => {
-    latestRef.current = { threadKey, send };
+    sendRef.current = send;
   });
   return useCallback(
     (annotation, image) => {
-      const latest = latestRef.current;
-      if (threadKey === null || latest.threadKey !== threadKey) return;
-      void latest.send(undefined, "auto", "foreground", { annotation, image });
+      if (threadKey === null || !isVisitCurrent()) return;
+      void sendRef.current(undefined, "auto", "foreground", { annotation, image });
     },
-    [threadKey],
+    [threadKey, isVisitCurrent],
   );
 }

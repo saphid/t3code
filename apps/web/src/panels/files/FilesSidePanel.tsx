@@ -99,7 +99,8 @@ import {
 } from "~/components/files/projectFilesQueryState";
 
 import { usePanelHost } from "../panelHost";
-import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
+import { useScopeLifetime } from "../scopeLifetime";
+import { useScopedComposerInsert } from "./fileScope";
 
 interface FilesSidePanelProps {
   cwd: string;

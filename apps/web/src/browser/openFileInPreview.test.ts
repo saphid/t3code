@@ -15,7 +15,7 @@ import { create } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
-import { useScopeLifetime } from "~/panels/files/fileScope";
+import { useScopeLifetime } from "~/panels/scopeLifetime";
 import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
