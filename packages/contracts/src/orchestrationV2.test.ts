@@ -175,6 +175,32 @@ describe("orchestration V2 contracts", () => {
     ).toThrow();
   });
 
+  it("decodes the run finalized milestone as a known thread event", () => {
+    const decodeWireItems = Schema.decodeUnknownSync(
+      Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
+    );
+    const [item] = decodeWireItems([
+      {
+        kind: "event",
+        sequence: 1,
+        event: {
+          id: "event:run-finalized:run-1",
+          type: "run.finalized",
+          threadId: "thread-1",
+          runId: "run-1",
+          occurredAt: DateTime.formatIso(DateTime.makeUnsafe(0)),
+          payload: { runId: "run-1", outcome: "interrupted", checkpointId: null },
+        },
+      },
+    ]);
+    expect(item?.kind).toBe("event");
+    expect(item?.kind === "event" ? item.event.payload : undefined).toEqual({
+      runId: "run-1",
+      outcome: "interrupted",
+      checkpointId: null,
+    });
+  });
+
   it("negotiates bounded socket snapshots as an optional capability", () => {
     expect(
       decodeOrchestrationV2SubscribeThreadInput({

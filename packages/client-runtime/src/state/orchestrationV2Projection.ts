@@ -190,6 +190,9 @@ export function applyOrchestrationV2ProjectionEvent(
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
       return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
     }
+    // A milestone over state the run rows already hold.
+    case "run.finalized":
+      return projection;
     case "run.background-work-cancelled":
       return {
         ...base,
