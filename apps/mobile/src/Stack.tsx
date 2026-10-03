@@ -43,6 +43,7 @@ import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentCompo
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
+import { ViewProofRouteScreen } from "./features/viewProof/ViewProofRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -830,6 +831,12 @@ const RootStackConfig = createNativeStackNavigator({
         ...LEGAL_DOCUMENT_HEADER_OPTIONS,
         title: "Legal",
       },
+    }),
+    // Dev-only isolated plugin view proof (sdk2/view-proof; never merged).
+    ViewProof: createNativeStackScreen({
+      screen: ViewProofRouteScreen,
+      linking: "view-proof",
+      options: { title: "View proof" },
     }),
     ConnectOnboarding: createNativeStackScreen({
       screen: ConnectOnboardingRouteScreen,
