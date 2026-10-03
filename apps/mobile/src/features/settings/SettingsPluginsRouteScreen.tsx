@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
@@ -8,14 +8,18 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
+  canManagePlugins,
   describePluginSource,
   PLUGIN_DIGEST_STATEMENT,
   PLUGIN_DIRECTORY_GUIDANCE,
-  PLUGIN_MANAGE_ACCESS_REQUIRED,
+  pluginAddDirectory,
   pluginCommandErrorMessage,
   pluginDirectoryLocation,
+  pluginManagementNotice,
   pluginTrustStatement,
   presentPluginInstallation,
+  resolvePluginCatalogState,
+  resolvePluginDetail,
   resolvePluginManageAccess,
   type PluginStateTone,
 } from "@t3tools/client-runtime/state/pluginPresentation";
@@ -51,6 +55,8 @@ type PluginRoutes = {
   SettingsPlugin: {
     readonly environmentId: EnvironmentId;
     readonly installationId: PluginInstallationId;
+    /** Opened by adding: the snapshot that lists the new plugin may still be on its way. */
+    readonly added?: boolean;
   };
   SettingsPluginAdd: { readonly environmentId: EnvironmentId };
 };
@@ -81,19 +87,68 @@ async function settle<A, E>(
   };
 }
 
-/** Management needs access:write on this environment. */
+/** Management needs positive evidence of access:write on this environment. */
 function usePluginManageAccess(environmentId: EnvironmentId) {
   const session = useAtomValue(environmentSession.sessionStateValueAtom(environmentId));
   const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
-  return resolvePluginManageAccess({
+  const retry = useAtomRefresh(environmentSession.sessionStateAtom(environmentId));
+  const access = resolvePluginManageAccess({
     session,
     isPending: result.waiting,
     hasError: AsyncResult.isFailure(result),
   });
+  return { access, retry };
 }
 
-function usePluginCatalog(environmentId: EnvironmentId) {
-  return useEnvironmentQuery(pluginEnvironment.catalog({ environmentId, input: {} }));
+/** The catalogue of a connected environment that supports plugins; anything else gets no call. */
+function usePluginCatalog(environmentId: EnvironmentId, environment: SettingsTarget | undefined) {
+  const supported = environment !== undefined && supportsPlugins(environment);
+  const catalog = useEnvironmentQuery(
+    supported ? pluginEnvironment.catalog({ environmentId, input: {} }) : null,
+  );
+  const state = resolvePluginCatalogState({
+    connected: environment !== undefined,
+    data: supported ? catalog.data : { _tag: "unsupported" },
+    error: catalog.error,
+  });
+  return { data: catalog.data, state, retry: catalog.refresh };
+}
+
+/** The access and catalogue that decide whether one environment's plugins can be managed. */
+function usePluginManagement(
+  environmentId: EnvironmentId,
+  environment: SettingsTarget | undefined,
+) {
+  const catalog = usePluginCatalog(environmentId, environment);
+  const { access, retry: retryAccess } = usePluginManageAccess(environmentId);
+  return {
+    catalog,
+    access,
+    retryAccess,
+    canManage: canManagePlugins(access, catalog.state),
+    notice: pluginManagementNotice(access, catalog.state, environment?.label ?? "this environment"),
+  };
+}
+
+/** Why controls are off, with a retry when another read could turn them on. */
+function ManagementNotice({
+  notice,
+  onRetry,
+}: {
+  readonly notice: string | null;
+  readonly onRetry: (() => void) | null;
+}) {
+  if (notice === null) return null;
+  return (
+    <View className="gap-2">
+      <Text className="px-2 text-sm text-foreground-muted">{notice}</Text>
+      {onRetry ? (
+        <SettingsSection>
+          <SettingsActionRow icon="arrow.clockwise" label="Check access again" onPress={onRetry} />
+        </SettingsSection>
+      ) : null}
+    </View>
+  );
 }
 
 const SCROLL_PROPS = {
@@ -136,11 +191,13 @@ export function SettingsPluginsRouteScreen() {
 function EnvironmentPlugins({ environment }: { readonly environment: SettingsTarget }) {
   const navigation = useNavigation<NativeStackNavigationProp<PluginRoutes>>();
   const environmentId = environment.environmentId;
-  const catalog = usePluginCatalog(environmentId);
-  const access = usePluginManageAccess(environmentId);
-  const view = catalog.data;
-  if (view?._tag === "unsupported") return null;
-  const installations = view?.installations ?? null;
+  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
+    environmentId,
+    environment,
+  );
+  if (catalog.state._tag === "unsupported") return null;
+  const installations =
+    catalog.state._tag === "available" ? catalog.state.view.installations : null;
   return (
     <View className="gap-2">
       <SettingsSection
@@ -155,8 +212,13 @@ function EnvironmentPlugins({ environment }: { readonly environment: SettingsTar
           />
         }
       >
-        {catalog.error ? (
-          <Text className="p-4 text-base text-danger-foreground">{catalog.error}</Text>
+        {catalog.state._tag === "failed" ? (
+          <>
+            <Text className="p-4 text-base text-danger-foreground">{catalog.state.message}</Text>
+            <View className="border-t border-border-subtle">
+              <SettingsActionRow icon="arrow.clockwise" label="Retry" onPress={catalog.retry} />
+            </View>
+          </>
         ) : installations === null ? (
           <Text className="p-4 text-base text-foreground-muted">Loading plugins…</Text>
         ) : (
@@ -182,15 +244,15 @@ function EnvironmentPlugins({ environment }: { readonly environment: SettingsTar
               <SettingsActionRow
                 icon="plus"
                 label="Add plugin"
-                disabled={access !== "granted"}
+                disabled={!canManage}
                 onPress={() => navigation.navigate("SettingsPluginAdd", { environmentId })}
               />
             </View>
           </>
         )}
       </SettingsSection>
-      {access === "denied" ? (
-        <Text className="px-2 text-sm text-foreground-muted">{PLUGIN_MANAGE_ACCESS_REQUIRED}</Text>
+      {installations !== null ? (
+        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
       ) : null}
     </View>
   );
@@ -269,6 +331,7 @@ export function SettingsPluginRouteScreen({
       key={`${route.params.environmentId}:${route.params.installationId}`}
       environmentId={route.params.environmentId}
       installationId={route.params.installationId}
+      added={route.params.added === true}
     />
   );
 }
@@ -276,25 +339,31 @@ export function SettingsPluginRouteScreen({
 function PluginDetail({
   environmentId,
   installationId,
+  added,
 }: {
   readonly environmentId: EnvironmentId;
   readonly installationId: PluginInstallationId;
+  readonly added: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const environment = availableTargets.find((target) => target.environmentId === environmentId);
   const label = environment?.label ?? "this environment";
-  const catalog = usePluginCatalog(environmentId);
-  const access = usePluginManageAccess(environmentId);
-  const installation =
-    catalog.data?._tag === "available"
-      ? (catalog.data.installations.find((entry) => entry.installationId === installationId) ??
-        null)
-      : null;
-  // Right after adding, the snapshot that lists the new plugin may still be on its way.
-  const [seen, setSeen] = useState(false);
-  if (installation !== null && !seen) setSeen(true);
+  const { catalog, access, retryAccess, canManage, notice } = usePluginManagement(
+    environmentId,
+    environment,
+  );
+  // Only a snapshot newer than the one on screen when this opened can show the new plugin is gone.
+  const [addedMarker] = useState(() =>
+    added ? { snapshot: catalog.data, installation: null } : null,
+  );
+  const detail = resolvePluginDetail({
+    catalog: catalog.state,
+    installationId,
+    added: addedMarker,
+  });
+  const installation = detail._tag === "found" ? detail.installation : null;
   // The digest the user acknowledged; new bytes need a new acknowledgement.
   const [trustedDigest, setTrustedDigest] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -336,10 +405,24 @@ function PluginDetail({
     return (
       <SettingsScreen title="Plugin">
         <ScrollView {...SCROLL_PROPS}>
-          <Text className="px-2 text-base text-foreground-muted">
-            {catalog.error ??
-              (seen ? `This plugin is no longer installed on ${label}.` : "Loading plugin…")}
-          </Text>
+          {detail._tag === "failed" ? (
+            <SettingsSection title="Could not load plugins">
+              <Text selectable className="p-4 text-base text-danger-foreground">
+                {detail.message}
+              </Text>
+              <View className="border-t border-border-subtle">
+                <SettingsActionRow icon="arrow.clockwise" label="Retry" onPress={catalog.retry} />
+              </View>
+            </SettingsSection>
+          ) : (
+            <Text className="px-2 text-base text-foreground-muted">
+              {detail._tag === "missing"
+                ? `This plugin is no longer installed on ${label}.`
+                : detail._tag === "loading"
+                  ? "Loading plugin…"
+                  : notice}
+            </Text>
+          )}
         </ScrollView>
       </SettingsScreen>
     );
@@ -348,7 +431,6 @@ function PluginDetail({
   const view = presentPluginInstallation(installation);
   const digest = installation.source?.digest ?? null;
   const acknowledged = digest !== null && trustedDigest === digest;
-  const canManage = access === "granted";
   const disabled = !canManage || pending !== null;
   const target = { environmentId, input: { installationId } };
   const manifest = installation.manifest;
@@ -430,7 +512,7 @@ function PluginDetail({
                 disabled={disabled || !acknowledged}
                 loading={pending === "approve"}
                 onPress={() => {
-                  if (digest === null || !acknowledged) return;
+                  if (digest === null || !acknowledged || !canManage) return;
                   void run("approve", [
                     () => settle(consent({ environmentId, input: { installationId, digest } })),
                     () => settle(enable(target)),
@@ -502,11 +584,7 @@ function PluginDetail({
           />
         </SettingsSection>
 
-        {access === "denied" ? (
-          <Text className="px-2 text-sm text-foreground-muted">
-            {PLUGIN_MANAGE_ACCESS_REQUIRED}
-          </Text>
-        ) : null}
+        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
         {error ? (
           <Text selectable className="px-2 text-sm text-danger-foreground">
             {error}
@@ -524,18 +602,21 @@ export function SettingsPluginAddRouteScreen({
   const navigation = useNavigation<NativeStackNavigationProp<PluginRoutes>>();
   const environmentId = route.params.environmentId;
   const { availableTargets } = useSettingsEnvironmentFilter();
-  const label =
-    availableTargets.find((target) => target.environmentId === environmentId)?.label ??
-    "this environment";
-  const access = usePluginManageAccess(environmentId);
+  const environment = availableTargets.find((target) => target.environmentId === environmentId);
+  const label = environment?.label ?? "this environment";
+  const { access, retryAccess, canManage, notice } = usePluginManagement(
+    environmentId,
+    environment,
+  );
   const add = useAtomCommand(pluginEnvironment.add, "plugin add");
   const [directory, setDirectory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const trimmed = directory.trim();
+  const trimmed = pluginAddDirectory({ canManage, busy, directory });
 
+  // The keyboard's Done key and the action row share this gate.
   const submit = async () => {
-    if (busy || trimmed.length === 0) return;
+    if (trimmed === null) return;
     setBusy(true);
     setError(null);
     const outcome = await settle(add({ environmentId, input: { directory: trimmed } }));
@@ -544,6 +625,7 @@ export function SettingsPluginAddRouteScreen({
       navigation.replace("SettingsPlugin", {
         environmentId,
         installationId: outcome.value.installation.installationId,
+        added: true,
       });
     else setError(outcome.error);
   };
@@ -564,7 +646,7 @@ export function SettingsPluginAddRouteScreen({
               autoCorrect={false}
               autoFocus
               maxLength={4096}
-              readOnly={busy}
+              readOnly={busy || !canManage}
               placeholder="/path/to/plugin"
               placeholderTextColorClassName="accent-foreground-muted"
               returnKeyType="done"
@@ -576,7 +658,7 @@ export function SettingsPluginAddRouteScreen({
             <SettingsActionRow
               icon="plus"
               label="Add and review"
-              disabled={access !== "granted" || busy || trimmed.length === 0}
+              disabled={trimmed === null}
               loading={busy}
               onPress={() => void submit()}
             />
@@ -587,15 +669,13 @@ export function SettingsPluginAddRouteScreen({
             {pluginDirectoryLocation(label, "other-device")}
           </Text>
           <Text className="text-sm text-foreground-muted">{PLUGIN_DIRECTORY_GUIDANCE}</Text>
-          {access === "denied" ? (
-            <Text className="text-sm text-foreground-muted">{PLUGIN_MANAGE_ACCESS_REQUIRED}</Text>
-          ) : null}
           {error ? (
             <Text selectable className="text-sm text-danger-foreground">
               {error}
             </Text>
           ) : null}
         </View>
+        <ManagementNotice notice={notice} onRetry={access === "unreadable" ? retryAccess : null} />
       </ScrollView>
     </SettingsScreen>
   );
