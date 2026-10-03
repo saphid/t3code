@@ -48,6 +48,7 @@ const unsafe = (message: string) => new NpmTarballError({ reason: "npm-archive-u
 const tooLarge = (message: string) => new NpmTarballError({ reason: "npm-too-large", message });
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
+const keyDecoder = new TextDecoder("utf-8");
 
 const readString = (block: Uint8Array, start: number, length: number) => {
   const field = block.subarray(start, start + length);
@@ -70,7 +71,11 @@ const checksumMatches = (block: Uint8Array) => {
   return expected === sum;
 };
 
-/** Parses pax `length key=value\n` records; only `path` and `size` matter here. */
+/**
+ * Parses pax `length key=value\n` records; only `path` and `size` matter here.
+ * Other values stay undecoded: `SCHILY.xattr.*` values are raw bytes (macOS
+ * tar writes one for every file).
+ */
 const readPax = (data: Uint8Array) => {
   const fields = new Map<string, string>();
   let offset = 0;
@@ -80,10 +85,12 @@ const readPax = (data: Uint8Array) => {
     const length = Number.parseInt(decoder.decode(data.subarray(offset, space)), 10);
     if (!Number.isSafeInteger(length) || length <= space - offset || offset + length > data.length)
       throw unsafe("The tarball has a malformed extended header.");
-    const record = decoder.decode(data.subarray(space + 1, offset + length - 1));
-    const equals = record.indexOf("=");
+    const record = data.subarray(space + 1, offset + length - 1);
+    const equals = record.indexOf(0x3d);
     if (equals === -1) throw unsafe("The tarball has a malformed extended header.");
-    fields.set(record.slice(0, equals), record.slice(equals + 1));
+    const key = keyDecoder.decode(record.subarray(0, equals));
+    if (key === "path" || key === "size")
+      fields.set(key, decoder.decode(record.subarray(equals + 1)));
     offset += length;
   }
   return fields;

@@ -12,6 +12,8 @@ export interface TarEntry {
   readonly data?: string | Uint8Array;
   readonly mode?: number;
   readonly linkname?: string;
+  /** Extra pax records written before this entry, as raw `key=value` bytes. */
+  readonly pax?: ReadonlyArray<Uint8Array>;
 }
 
 const BLOCK = 512;
@@ -45,6 +47,14 @@ const padded = (data: Uint8Array) => {
   return out;
 };
 
+/** `<length> <key=value>\n`, where the length counts itself. */
+const paxRecord = (keyValue: Uint8Array) => {
+  let length = keyValue.length + 2;
+  while (`${length}`.length + keyValue.length + 2 !== length)
+    length = `${length}`.length + keyValue.length + 2;
+  return Buffer.concat([encoder.encode(`${length} `), keyValue, encoder.encode("\n")]);
+};
+
 /** An uncompressed tar of `entries`; names over 100 bytes get a pax header. */
 export const makeTar = (entries: ReadonlyArray<TarEntry>) => {
   const blocks: Array<Uint8Array> = [];
@@ -55,13 +65,14 @@ export const makeTar = (entries: ReadonlyArray<TarEntry>) => {
         ? encoder.encode(entry.data)
         : (entry.data ?? new Uint8Array());
     let name = entry.path;
+    const records = [...(entry.pax ?? [])];
     if (encoder.encode(name).length > 100) {
-      const record = ` path=${name}\n`;
-      let length = record.length;
-      while (`${length}${record}`.length !== length) length = `${length}${record}`.length;
-      const pax = encoder.encode(`${length}${record}`);
-      blocks.push(header("PaxHeader", "x", pax.length, 0o644), padded(pax));
+      records.push(encoder.encode(`path=${name}`));
       name = name.slice(-100);
+    }
+    if (records.length > 0) {
+      const pax = Buffer.concat(records.map(paxRecord));
+      blocks.push(header("PaxHeader", "x", pax.length, 0o644), padded(pax));
     }
     blocks.push(
       header(

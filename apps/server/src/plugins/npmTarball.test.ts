@@ -38,6 +38,26 @@ describe("readNpmTarball", () => {
     }),
   );
 
+  it.effect("ignores binary extended attributes, as macOS tar writes them", () =>
+    Effect.gen(function* () {
+      // `SCHILY.xattr.com.apple.provenance` carries raw bytes that are not UTF-8.
+      const xattr = Buffer.concat([
+        new TextEncoder().encode("SCHILY.xattr.com.apple.provenance="),
+        Uint8Array.from([0x01, 0x00, 0x00, 0x37, 0xff, 0xfe]),
+      ]);
+      const files = yield* read([
+        { ...manifest, pax: [xattr] },
+        { path: "package/main.js", data: "x", pax: [xattr] },
+      ]);
+      expect(files.map((file) => file.path)).toEqual(["package.json", "main.js"]);
+      const link = yield* refusal([
+        manifest,
+        { path: "package/link.js", type: "2", linkname: "/etc/hosts", pax: [xattr] },
+      ]);
+      expect(link.message).toMatch(/is a link/);
+    }),
+  );
+
   it.effect("refuses links, special files, and paths that leave the package", () =>
     Effect.gen(function* () {
       const cases: ReadonlyArray<readonly [ReadonlyArray<TarEntry>, RegExp]> = [
