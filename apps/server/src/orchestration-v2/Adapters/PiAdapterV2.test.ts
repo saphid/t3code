@@ -20,18 +20,22 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../../config.ts";
+import * as ContributionStatusStore from "../../contributions/ContributionStatusStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
@@ -314,6 +318,7 @@ const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "", 
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
+  const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
   return makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
@@ -329,6 +334,7 @@ const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "", 
     fileSystem,
     idAllocator,
     serverConfig,
+    statusStore,
   });
 });
 
@@ -512,6 +518,64 @@ describe("PiAdapterV2", () => {
       Effect.scoped,
       Effect.provide(testLayer),
     ),
+  );
+
+  it.effect(
+    "shows extension statuses on the session's thread until Pi rebinds or the session ends",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const store = yield* ContributionStatusStore.ContributionStatusStore;
+        const subscription = yield* store.subscribe;
+        // Each status change publishes one snapshot; waiting on it is the receipt.
+        const nextStatuses = Stream.runHead(subscription.changes).pipe(
+          Effect.map((snapshot) =>
+            Option.match(snapshot, {
+              onNone: () => ({}),
+              onSome: (value) =>
+                Object.fromEntries(
+                  value.threads.map((thread) => [
+                    thread.threadId,
+                    thread.items.map((item) => `${item.key}=${item.text}`),
+                  ]),
+                ),
+            }),
+          ),
+        );
+        const setStatus = (statusKey: string, statusText?: string) =>
+          fake.emit({
+            type: "extension_ui_request",
+            id: `status-${statusKey}-${statusText ?? "clear"}`,
+            method: "setStatus",
+            statusKey,
+            ...(statusText === undefined ? {} : { statusText }),
+          });
+
+        const sessionScope = yield* Scope.make();
+        const { runtime } = yield* openRuntime(fake).pipe(Scope.provide(sessionScope));
+
+        // Extensions set statuses from session_start, before T3 registers a thread.
+        yield* setStatus("plan", "\u001b[33m⏸ plan\u001b[39m");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["plan=⏸ plan"] });
+
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* setStatus("mode", "build");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=build", "plan=⏸ plan"] });
+        yield* setStatus("plan");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=build"] });
+
+        yield* runtime.resumeThread({ providerThread });
+        assert.deepStrictEqual(yield* nextStatuses, {});
+        yield* setStatus("mode", "resumed");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=resumed"] });
+
+        yield* Scope.close(sessionScope, Exit.void);
+        assert.deepStrictEqual(yield* nextStatuses, {});
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(testLayer, ContributionStatusStore.layer))),
   );
 
   it.effect("rejects a resume while a turn is active", () =>

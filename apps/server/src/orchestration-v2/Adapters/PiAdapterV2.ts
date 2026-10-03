@@ -20,8 +20,10 @@
  * Dialog methods become v2 runtime requests (`confirm` → approval_request,
  * `select`/`input`/`editor` → user_input_request); answers travel back as
  * `extension_ui_response`. `notify` becomes a completed activity item.
- * Terminal-only decoration such as status, widget, title, and editor-text
- * updates has no matching T3 surface and is ignored.
+ * `setStatus` feeds the thread's contribution status, cleared whenever Pi
+ * rebinds its extensions to another session and when this session closes.
+ * Other terminal decoration (widget, title, editor text) has no matching T3
+ * surface and is ignored.
  */
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -61,6 +63,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ContributionStatusStore from "../../contributions/ContributionStatusStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -227,6 +230,7 @@ export interface PiAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
+  readonly statusStore: ContributionStatusStore.ContributionStatusStoreShape;
 }
 
 /** Concatenate the `text` fields of a Pi content-block array. */
@@ -468,6 +472,15 @@ export function makePiAdapterV2(
       // serialize the two paths to stop `turn.terminal` from overtaking the
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
+      // Extensions set statuses from session_start, before the first thread
+      // registration, so the source starts on the thread this session opened for.
+      const statusSource = yield* options.statusStore.openSource({
+        kind: "provider-session",
+        providerSessionId: input.providerSessionId,
+        providerInstanceId: options.instanceId,
+        driver: PI_PROVIDER,
+      });
+      yield* statusSource.bindThread(input.threadId);
       let threadState: PiThreadState | null = null;
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
@@ -581,22 +594,28 @@ export function makePiAdapterV2(
         return null;
       };
 
+      // Pi rebinds every extension for the new session, which sets its
+      // statuses again; the TUI clears the old ones at the same point.
       const lifecycleRequest = (record: PiRpcRecord) =>
-        request(record, PI_SESSION_TIMEOUT_MS).pipe(
-          // A local timeout does not cancel Pi's lifecycle hook. Retire the
-          // process before fallback can race its eventual switch/new-session.
-          Effect.tapError((error) =>
-            Effect.logWarning("Pi session lifecycle request failed", {
-              providerSessionId: input.providerSessionId,
-              operation: record["type"],
-              errorTag: error._tag,
-            }),
+        statusSource.clearAll.pipe(
+          Effect.andThen(
+            request(record, PI_SESSION_TIMEOUT_MS).pipe(
+              // A local timeout does not cancel Pi's lifecycle hook. Retire the
+              // process before fallback can race its eventual switch/new-session.
+              Effect.tapError((error) =>
+                Effect.logWarning("Pi session lifecycle request failed", {
+                  providerSessionId: input.providerSessionId,
+                  operation: record["type"],
+                  errorTag: error._tag,
+                }),
+              ),
+              Effect.catchTags({
+                PiRpcTimeoutError: (error) =>
+                  connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
+              }),
+              Effect.onInterrupt(() => connection.terminate),
+            ),
           ),
-          Effect.catchTags({
-            PiRpcTimeoutError: (error) =>
-              connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
-          }),
-          Effect.onInterrupt(() => connection.terminate),
         );
 
       const tokenUsageFromStats = (
@@ -1190,6 +1209,14 @@ export function makePiAdapterV2(
               },
             },
           });
+          return;
+        }
+        if (method === "setStatus") {
+          // Pi serializes a cleared status as a missing `statusText`.
+          const key = recordString(event, "statusKey");
+          if (key === undefined) return;
+          const text = recordString(event, "statusText");
+          yield* text === undefined ? statusSource.clear(key) : statusSource.set({ key, text });
           return;
         }
         if (
@@ -2084,6 +2111,8 @@ export function makePiAdapterV2(
                 updatedAt: createdAt,
               };
         threadState = { providerThread, activeTurn: null };
+        // A fork registers its target thread on this same process.
+        yield* statusSource.bindThread(providerThread.appThreadId);
         // Baseline the session-tree leaf so the first turn's user entry can
         // be located with a `since` cursor instead of a full entry scan.
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
@@ -2960,6 +2989,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig.ServerConfig;
+      const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
       return makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -2968,6 +2998,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
         fileSystem,
         idAllocator,
         serverConfig,
+        statusStore,
       });
     },
     (effect, input) =>
@@ -2994,6 +3025,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig.ServerConfig;
+      const statusStore = yield* ContributionStatusStore.ContributionStatusStore;
       return makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_PI_SETTINGS,
@@ -3002,6 +3034,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
         fileSystem,
         idAllocator,
         serverConfig,
+        statusStore,
       });
     }),
   );
