@@ -20,6 +20,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -98,6 +99,7 @@ import {
 } from "~/components/files/projectFilesQueryState";
 
 import { usePanelHost } from "../panelHost";
+import { useScopedComposerInsert, useScopeLifetime } from "./fileScope";
 
 interface FilesSidePanelProps {
   cwd: string;
@@ -924,6 +926,16 @@ export default function FilesSidePanel({
     (path: string) => useRightPanelStore.getState().openFile(threadRef, path),
     [threadRef],
   );
+  // Menu and browser actions settle late; they are dropped once the host moves
+  // to another thread or draft, never applied to the newer one.
+  const isScopeCurrent = useScopeLifetime(
+    `${scopedThreadKey(threadRef)}|${
+      typeof composerDraftTarget === "string"
+        ? composerDraftTarget
+        : scopedThreadKey(composerDraftTarget)
+    }`,
+  );
+  const addToChat = useScopedComposerInsert(isScopeCurrent);
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const { resolvedTheme } = useTheme();
@@ -1311,6 +1323,7 @@ export default function FilesSidePanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
+              addToChat={addToChat}
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
