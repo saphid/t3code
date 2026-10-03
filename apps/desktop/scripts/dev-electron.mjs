@@ -107,6 +107,9 @@ function startApp() {
   const electronArgs = remoteDebuggingPort
     ? [`--remote-debugging-port=${remoteDebuggingPort}`]
     : [];
+  // Runs with an isolated HOME have no login keychain; without a mock keychain
+  // safeStorage blocks the main process on a keychain-creation dialog.
+  if (process.env.T3CODE_DESKTOP_MOCK_KEYCHAIN === "1") electronArgs.push("--use-mock-keychain");
   const launchArgs = devProtocolClient
     ? electronArgs
     : [...electronArgs, `--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"];

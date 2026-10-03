@@ -30,6 +30,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { shouldVetoViewFrameNavigation } from "./pluginViewNavigation.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Matches --workspace-topbar-height in apps/web/src/index.css. Native macOS
@@ -623,6 +624,25 @@ export const make = Effect.gen(function* () {
       if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
+    });
+    // View proof: plugin view frames may not navigate themselves. Set
+    // T3CODE_VIEW_PROOF_FRAME_VETO=off only for a baseline run.
+    const viewFrameVeto = process.env.T3CODE_VIEW_PROOF_FRAME_VETO !== "off";
+    window.webContents.on("will-frame-navigate", (event) => {
+      if (event.isMainFrame) return;
+      const veto = shouldVetoViewFrameNavigation({
+        url: event.url,
+        frame: event.frame,
+        initiator: event.initiator,
+        mainFrame: window.webContents.mainFrame,
+      });
+      void runPromise(
+        logWindowInfo("view-proof will-frame-navigate", {
+          decision: !veto ? "allowed" : viewFrameVeto ? "vetoed" : "would veto (veto off)",
+          url: event.url.slice(0, 120),
+        }),
+      );
+      if (veto && viewFrameVeto) event.preventDefault();
     });
 
     // Electron's windowMenu close role owns CmdOrCtrl+W. Holding the
