@@ -10,9 +10,12 @@ import {
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { act, createElement } from "react";
+import { create } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useScopeLifetime } from "~/panels/files/fileScope";
 import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -42,7 +45,7 @@ function deferred<A>() {
   return { promise, resolve };
 }
 
-function startOpen() {
+function startOpen(isScopeCurrent?: () => boolean) {
   const asset = deferred<AtomCommandResult<AssetCreateUrlResult, never>>();
   const session = deferred<AtomCommandResult<PreviewSessionSnapshot, never>>();
   const requested = deferred<void>();
@@ -55,7 +58,7 @@ function startOpen() {
     httpBaseUrl: "http://localhost:3773/",
     createAssetUrl: () => asset.promise,
     openPreview,
-    isScopeCurrent: () => current,
+    isScopeCurrent: isScopeCurrent ?? (() => current),
   });
   return {
     result,
@@ -67,6 +70,23 @@ function startOpen() {
     settleAsset: () =>
       asset.resolve(AsyncResult.success({ relativeUrl: "/a/index.html", expiresAt: 0 })),
     settleSession: () => session.resolve(AsyncResult.success(snapshot)),
+  };
+}
+
+// The Files panel's real scope lifetime, moved between threads without remounting.
+function mountFilesScope(scopeKey: string) {
+  const checks: (() => boolean)[] = [];
+  function Body(props: { scopeKey: string }) {
+    checks.push(useScopeLifetime(props.scopeKey));
+    return null;
+  }
+  let renderer!: ReturnType<typeof create>;
+  act(() => {
+    renderer = create(createElement(Body, { scopeKey }));
+  });
+  return {
+    check: () => checks.at(-1)!,
+    navigate: (next: string) => act(() => renderer.update(createElement(Body, { scopeKey: next }))),
   };
 }
 
@@ -129,5 +149,44 @@ describe("openFileInPreview scope", () => {
     expect(readThreadPreviewState(threadA).recentlySeenUrls).toEqual([]);
     expect(browserSurfaces(threadA)).toEqual([]);
     expect(browserSurfaces(threadB)).toEqual([]);
+  });
+
+  it("never asks for a browser when the thread was left and re-entered during asset creation", async () => {
+    const files = mountFilesScope("thread-a");
+    const open = startOpen(files.check());
+    files.navigate("thread-b");
+    files.navigate("thread-a");
+    open.settleAsset();
+
+    const result = await open.result;
+
+    expect(isAtomCommandInterrupted(result)).toBe(true);
+    expect(open.openPreview).not.toHaveBeenCalled();
+    expect(browserSurfaces(threadA)).toEqual([]);
+  });
+
+  it("does not apply a browser that settles after the thread was left and re-entered", async () => {
+    const files = mountFilesScope("thread-a");
+    const open = startOpen(files.check());
+    open.settleAsset();
+    await open.requested;
+    files.navigate("thread-b");
+    files.navigate("thread-a");
+    open.settleSession();
+
+    const result = await open.result;
+
+    expect(isAtomCommandInterrupted(result)).toBe(true);
+    expect(readThreadPreviewState(threadA).snapshot).toBeNull();
+    expect(readThreadPreviewState(threadA).recentlySeenUrls).toEqual([]);
+    expect(browserSurfaces(threadA)).toEqual([]);
+
+    // An open started on the return visit still lands.
+    const fresh = startOpen(files.check());
+    fresh.settleAsset();
+    await fresh.requested;
+    fresh.settleSession();
+    await expect(fresh.result).resolves.toMatchObject({ _tag: "Success" });
+    expect(browserSurfaces(threadA).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
   });
 });
