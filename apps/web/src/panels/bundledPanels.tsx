@@ -1,6 +1,7 @@
 import { FileDiff, Globe2, Smartphone, TerminalSquare } from "lucide-react";
 import { Suspense, type ComponentType } from "react";
 
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -48,6 +49,26 @@ const bundledPanels = createPanelRegistry([
     unavailableHint: "Available from a thread.",
     unavailableReason: "Devices are only available from a thread.",
     load: () => import("./device/DeviceSidePanel"),
+  },
+  {
+    id: "pull-request",
+    title: "Pull request",
+    icon: PullRequestGlyph.pullRequest,
+    placement: "side-panel",
+    launcherKey: "P",
+    unavailableHint: "No pull request on this branch yet.",
+    unavailableReason: "This thread's branch has no pull request yet.",
+    load: () => import("./pullRequest/PullRequestSidePanel"),
+  },
+  {
+    id: "pull-requests",
+    title: "Linked pull requests",
+    icon: PullRequestGlyph.link,
+    placement: "side-panel",
+    launcherKey: "L",
+    unavailableHint: "No linked pull requests available.",
+    unavailableReason: "No linked pull requests are available for this thread.",
+    load: () => import("./pullRequest/PullRequestsSidePanel"),
   },
 ]);
 
