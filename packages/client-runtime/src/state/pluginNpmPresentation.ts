@@ -199,7 +199,12 @@ export interface PluginNpmUpdatePresentation {
   readonly sameAsInstalled: boolean;
   readonly addedCapabilities: ReadonlyArray<string>;
   readonly removedCapabilities: ReadonlyArray<string>;
+  /** Shown beside the acknowledgement, before Apply: what installing a package does and what applying does. */
+  readonly disclosure: ReadonlyArray<string>;
 }
+
+const PLUGIN_NPM_APPLY_STATEMENT =
+  "Applying approves these files in place of the installed ones. If anything fails before that, the installed version stays. A server restart discards the download.";
 
 export function presentPluginNpmUpdate(
   installation: PluginInstallation,
@@ -214,6 +219,7 @@ export function presentPluginNpmUpdate(
     sameAsInstalled: update.source.digest === installation.source?.digest,
     addedCapabilities: next.filter((capability) => !current.includes(capability)),
     removedCapabilities: current.filter((capability) => !next.includes(capability)),
+    disclosure: [PLUGIN_NPM_SCRIPTS_STATEMENT, PLUGIN_NPM_APPLY_STATEMENT],
   };
 }
 

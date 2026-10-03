@@ -11,6 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { createPluginActionGate } from "./pluginPresentation.ts";
 import {
+  PLUGIN_NPM_SCRIPTS_STATEMENT,
   pluginNpmInstallRequest,
   pluginNpmListKey,
   pluginNpmProvenanceKnown,
@@ -358,6 +359,23 @@ describe("presentPluginNpmUpdate", () => {
         ?.sameAsInstalled,
     ).toBe(true);
     expect(presentPluginNpmUpdate(installation(), pkg("1.0.0"))).toBeNull();
+  });
+
+  it("states that scripts never run and dependencies are never installed before Apply", () => {
+    // Every staged download, including one approved and staged by another client.
+    for (const download of [
+      staged("1.1.0", NEXT_DIGEST, ["actions", "tools"]),
+      staged("1.0.0", DIGEST, []),
+    ]) {
+      const update = presentPluginNpmUpdate(
+        installation({
+          consent: { digest: DIGEST, capabilities: [], grantedAt: "2026-10-04T00:00:00.000Z" },
+        }),
+        pkg("1.0.0", download),
+      );
+      expect(update?.disclosure[0]).toBe(PLUGIN_NPM_SCRIPTS_STATEMENT);
+      expect(update?.disclosure.join(" ")).toContain("the installed version stays");
+    }
   });
 });
 

@@ -1516,11 +1516,11 @@ export function PluginNpmUpdateSection({
               {formatRelativeTimeLabel(update.update.stagedAt)}
             </ReviewField>
           </dl>
-          <p className="text-sm text-muted-foreground">
-            Nothing in the download has run. Applying approves these files in place of the installed
-            ones. If anything fails before that, the installed version stays. A server restart
-            discards the download.
-          </p>
+          {update.disclosure.map((statement) => (
+            <p key={statement} className="text-sm text-muted-foreground">
+              {statement}
+            </p>
+          ))}
           <label htmlFor={checkboxId} className="flex items-start gap-2 text-sm">
             <Checkbox
               id={checkboxId}

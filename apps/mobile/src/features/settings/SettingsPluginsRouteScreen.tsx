@@ -1198,11 +1198,11 @@ function PluginNpmUpdateSection({
                 .join("\n")}
             />
             <View className="gap-2 border-t border-border-subtle p-4">
-              <Text className="text-sm text-foreground-muted">
-                Nothing in the download has run. Applying approves these files in place of the
-                installed ones. If anything fails before that, the installed version stays. A server
-                restart discards the download.
-              </Text>
+              {update.disclosure.map((statement) => (
+                <Text key={statement} className="text-sm text-foreground-muted">
+                  {statement}
+                </Text>
+              ))}
             </View>
             <View className="flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
               <Text className="min-w-0 flex-1 text-base text-foreground">
