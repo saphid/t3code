@@ -11,7 +11,7 @@ import type { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { subscribe } from "../rpc/client.ts";
+import { requestIfSupported, subscribe } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
@@ -28,6 +28,15 @@ const supportsPluginCatalog = (
 ) => capabilities?.plugins === true;
 
 const UNSUPPORTED: PluginCatalogView = { _tag: "unsupported" };
+
+type PluginCommandTag =
+  | typeof WS_METHODS.pluginsAdd
+  | typeof WS_METHODS.pluginsRefresh
+  | typeof WS_METHODS.pluginsConsent
+  | typeof WS_METHODS.pluginsEnable
+  | typeof WS_METHODS.pluginsDisable
+  | typeof WS_METHODS.pluginsRemove
+  | typeof WS_METHODS.pluginsResume;
 
 /**
  * Follows the environment's sessions and checks each server's capability
@@ -74,53 +83,27 @@ export function createPluginEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { environmentId: string }) => environmentId,
   };
+  /** A command that checks the capability on the session it would use, so an older server never receives it. */
+  const command = <TTag extends PluginCommandTag>(label: string, tag: TTag) =>
+    createEnvironmentRpcCommand(runtime, {
+      label,
+      tag,
+      scheduler,
+      concurrency,
+      execute: (input) => requestIfSupported(tag, input, supportsPluginCatalog),
+    });
   return {
     /** The live catalogue with each enabled plugin's process state. */
     catalog: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:plugins:catalog",
       subscribe: (_input: Record<string, never>) => pluginCatalogStream,
     }),
-    add: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:add",
-      tag: WS_METHODS.pluginsAdd,
-      scheduler,
-      concurrency,
-    }),
-    refresh: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:refresh",
-      tag: WS_METHODS.pluginsRefresh,
-      scheduler,
-      concurrency,
-    }),
-    consent: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:consent",
-      tag: WS_METHODS.pluginsConsent,
-      scheduler,
-      concurrency,
-    }),
-    enable: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:enable",
-      tag: WS_METHODS.pluginsEnable,
-      scheduler,
-      concurrency,
-    }),
-    disable: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:disable",
-      tag: WS_METHODS.pluginsDisable,
-      scheduler,
-      concurrency,
-    }),
-    remove: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:remove",
-      tag: WS_METHODS.pluginsRemove,
-      scheduler,
-      concurrency,
-    }),
-    resume: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:plugins:resume",
-      tag: WS_METHODS.pluginsResume,
-      scheduler,
-      concurrency,
-    }),
+    add: command("environment-data:plugins:add", WS_METHODS.pluginsAdd),
+    refresh: command("environment-data:plugins:refresh", WS_METHODS.pluginsRefresh),
+    consent: command("environment-data:plugins:consent", WS_METHODS.pluginsConsent),
+    enable: command("environment-data:plugins:enable", WS_METHODS.pluginsEnable),
+    disable: command("environment-data:plugins:disable", WS_METHODS.pluginsDisable),
+    remove: command("environment-data:plugins:remove", WS_METHODS.pluginsRemove),
+    resume: command("environment-data:plugins:resume", WS_METHODS.pluginsResume),
   };
 }
