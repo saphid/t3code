@@ -3,6 +3,7 @@ import { useLinkTo } from "@react-navigation/native";
 import {
   pluginNotificationChanges,
   pluginNotificationDescription,
+  type PluginNotificationMark,
   type ReceivedPluginNotification,
 } from "@t3tools/client-runtime/state/plugin-notifications";
 import type { ContributionStatusTone, EnvironmentId } from "@t3tools/contracts";
@@ -35,8 +36,9 @@ interface Banner {
 /**
  * Plugin notifications as an in-app banner under the status bar, one at a
  * time for a few seconds each. Only notifications that arrive while the app
- * is open are shown; tapping one about a thread opens it, and a banner whose
- * plugin was disabled or stopped goes away.
+ * is open are shown; tapping one about a thread opens it, and a banner goes
+ * away once the server no longer retains its notification (its plugin
+ * stopped, it expired or was evicted, or the server restarted).
  */
 export function PluginNotificationBannerHost() {
   const { environments } = useEnvironments();
@@ -45,16 +47,15 @@ export function PluginNotificationBannerHost() {
     (
       environmentId: EnvironmentId,
       show: ReadonlyArray<ReceivedPluginNotification>,
-      close: ReadonlyArray<string>,
+      keep: ReadonlySet<string>,
     ) =>
-      setQueue((current) =>
-        [
-          ...current.filter(
-            (banner) => banner.environmentId !== environmentId || !close.includes(banner.entry.key),
-          ),
-          ...show.map((entry) => ({ environmentId, entry })),
-        ].slice(-MAX_QUEUED),
-      ),
+      setQueue((current) => {
+        const kept = current.filter(
+          (banner) => banner.environmentId !== environmentId || keep.has(banner.entry.key),
+        );
+        if (show.length === 0 && kept.length === current.length) return current;
+        return [...kept, ...show.map((entry) => ({ environmentId, entry }))].slice(-MAX_QUEUED);
+      }),
     [],
   );
   const dismiss = useCallback(
@@ -88,22 +89,19 @@ function EnvironmentPluginNotifications(props: {
   readonly onChanges: (
     environmentId: EnvironmentId,
     show: ReadonlyArray<ReceivedPluginNotification>,
-    close: ReadonlyArray<string>,
+    keep: ReadonlySet<string>,
   ) => void;
 }) {
   const { environmentId, onChanges } = props;
-  const feed = useAtomValue(pluginNotificationEnvironment.feed(environmentId));
-  // Null until the first feed is seen: whatever it already holds is history, not news.
-  const handled = useRef<Set<string> | null>(null);
+  const frame = useAtomValue(pluginNotificationEnvironment.frame(environmentId));
+  // The newest notification seen; banners themselves live in the host's queue.
+  const mark = useRef<PluginNotificationMark | undefined>(undefined);
 
   useEffect(() => {
-    if (handled.current === null) {
-      handled.current = new Set([...feed.received.map((entry) => entry.key), ...feed.withdrawn]);
-      return;
-    }
-    const { show, close } = pluginNotificationChanges(feed, handled.current);
-    if (show.length > 0 || close.length > 0) onChanges(environmentId, show, close);
-  }, [environmentId, feed, onChanges]);
+    const changes = pluginNotificationChanges(mark.current, frame);
+    mark.current = changes.mark;
+    onChanges(environmentId, changes.show, changes.keep);
+  }, [environmentId, frame, onChanges]);
 
   return null;
 }
