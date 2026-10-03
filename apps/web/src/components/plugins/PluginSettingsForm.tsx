@@ -62,6 +62,8 @@ export function PluginSettingsForm({
     setDrafts((current) => new Map(current).set(key, draft));
 
   const save = async (next: ReadonlyArray<PluginSettingChange>, clearDrafts: boolean) => {
+    // Disabled controls are the affordance; this keeps a read-only form from saving by any path.
+    if (readOnly || saving) return;
     setSaving(true);
     try {
       const saved = await update({ environmentId, input: { installationId, changes: next } });

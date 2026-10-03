@@ -45,6 +45,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { PluginSettingsSection } from "~/components/plugins/PluginSettingsSection";
+import { pluginSettingsReadOnly } from "@t3tools/client-runtime/state/pluginPresentation";
 import { supportsPluginSettings } from "@t3tools/client-runtime/state/pluginSettings";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -640,7 +641,7 @@ function SelectedEnvironmentPluginSettings() {
         <PluginSettingsSection
           environmentId={selected.environmentId}
           capabilities={capabilities}
-          readOnly={access !== "granted"}
+          readOnly={pluginSettingsReadOnly(access)}
         />
       )}
     </PluginManageAccessScope>
