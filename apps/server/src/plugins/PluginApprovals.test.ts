@@ -372,8 +372,9 @@ const stubCatalog = (plugins: ReadonlyArray<StubPlugin>) => {
 /** Starts the participant in the test's scope and follows its receipts. */
 const startApprovals = Effect.fn("startApprovals")(function* (
   catalog: PluginCatalog.PluginCatalog["Service"],
+  options?: PluginApprovals.PluginApprovalsOptions,
 ) {
-  const approvals = yield* PluginApprovals.make().pipe(
+  const approvals = yield* PluginApprovals.make(options).pipe(
     Effect.provideService(PluginCatalog.PluginCatalog, catalog),
     Effect.provideService(
       ServerEnvironment,
@@ -783,6 +784,94 @@ it.layer(NodeServices.layer)("PluginApprovals", (it) => {
           expect(seen.filter((receipt) => receipt.requestId !== whole)).toHaveLength(2);
           expect(yield* outcome(suffixed)).toMatchObject({ status: "pending", item: "waiting" });
           expect(yield* outcome(longPrompt)).toMatchObject({ status: "pending", item: "waiting" });
+        }),
+      ),
+    );
+
+    it.effect("skips requests past the active offer limit and never re-offers them", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const held = yield* Deferred.make<Schema.Json>();
+          const asked: Array<string> = [];
+          const { seen, until } = yield* startApprovals(
+            stubCatalog([
+              {
+                id: "test.policy",
+                decide: (input) => {
+                  const { prompt } = input as { prompt: string };
+                  asked.push(prompt);
+                  return prompt === "first" ? heldAnswer(held) : answer({ decision: "approve" });
+                },
+              },
+            ]),
+            { maxActiveOffers: 1 },
+          );
+          const first = yield* raise("limit-first", "first");
+          yield* until(is("Asked", "test.policy"));
+
+          const second = yield* raise("limit-second", "second");
+          expect(yield* until(skipped(second))).toMatchObject({ cause: "overloaded" });
+          // Repeated pending updates neither re-offer the live request nor the skipped one:
+          // either would be skipped as overloaded before the marker below.
+          yield* updateRequest(first, { status: "pending" });
+          yield* updateRequest(second, { status: "pending" });
+          const marker = yield* raise("limit-marker", "marker");
+          yield* until(skipped(marker));
+          expect(
+            seen
+              .filter((receipt) => receipt._tag === "Skipped")
+              .map((receipt) => receipt.requestId),
+          ).toEqual([second, marker]);
+
+          // The live offer still owns its call: answering withdraws it and frees the slot.
+          yield* userAnswers(first, "decline");
+          expect(yield* until(is("Abstained", "test.policy"))).toMatchObject({
+            requestId: first,
+            cause: "withdrawn",
+          });
+          const third = yield* raise("limit-third", "third");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: third });
+          expect(asked).toEqual(["first", "third"]);
+          expect(yield* outcome(second)).toMatchObject({ status: "pending", item: "waiting" });
+        }),
+      ),
+    );
+
+    it.effect("abstains at once when the plugin call limit is reached", () =>
+      withOrchestration(
+        Effect.gen(function* () {
+          yield* createThread;
+          const held = yield* Deferred.make<Schema.Json>();
+          const { until } = yield* startApprovals(
+            stubCatalog([
+              {
+                id: "test.policy",
+                // A call still being prepared (the catalogue inspects the plugin inside
+                // `invoke`, before the supervisor admits it) holds its place.
+                decide: (input) =>
+                  (input as { prompt: string }).prompt === "preparing"
+                    ? heldAnswer(held)
+                    : answer({ decision: "approve" }),
+              },
+            ]),
+            { maxActiveCalls: 1 },
+          );
+          const preparing = yield* raise("calls-preparing", "preparing");
+          yield* until(is("Asked", "test.policy"));
+          const next = yield* raise("calls-next", "next");
+          expect(yield* until(is("Abstained", "test.policy"))).toMatchObject({
+            requestId: next,
+            cause: "overloaded",
+          });
+          expect(yield* outcome(next)).toMatchObject({ status: "pending", item: "waiting" });
+
+          yield* Deferred.succeed(held, { decision: "approve" });
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({
+            requestId: preparing,
+          });
+          const after = yield* raise("calls-after", "after");
+          expect(yield* until(is("Recorded", "test.policy"))).toMatchObject({ requestId: after });
         }),
       ),
     );

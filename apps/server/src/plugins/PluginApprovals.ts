@@ -14,7 +14,10 @@
  * still running are cancelled.
  *
  * Plugins decide on the whole request or not at all: when its prompt or subject
- * is longer than a plugin may receive, no plugin is asked.
+ * is longer than a plugin may receive, no plugin is asked. Work is bounded: at
+ * most `maxActiveOffers` requests are being offered and `maxActiveCalls` plugin
+ * calls are running at once; past either limit the request, or that plugin's
+ * call, is left to the user at once rather than queued.
  *
  * Only requests committed while this service runs are offered: after a
  * restart, an older pending request waits for the user. Plugin work never runs
@@ -43,11 +46,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -68,6 +73,8 @@ export type PluginApprovalAbstainCause =
   | "deadline"
   /** Disabled, removed, re-registered, stopped, busy, or otherwise not callable. */
   | "unavailable"
+  /** `maxActiveCalls` plugin calls were already running; this one was not started. */
+  | "overloaded"
   /** The handler threw, the process crashed, or the result was too large. */
   | "failed"
   /** The request stopped being pending (answered, cancelled, or no longer answerable) first. */
@@ -109,8 +116,11 @@ export type PluginApprovalReceipt =
   | {
       readonly _tag: "Skipped";
       readonly requestId: RuntimeRequestId;
-      /** `incomplete`: its prompt or subject is longer than a plugin may receive. */
-      readonly cause: "incomplete";
+      /**
+       * `overloaded`: `maxActiveOffers` requests were already being offered.
+       * `incomplete`: its prompt or subject is longer than a plugin may receive.
+       */
+      readonly cause: "overloaded" | "incomplete";
     };
 
 export class PluginApprovals extends Context.Service<
@@ -125,7 +135,14 @@ export class PluginApprovals extends Context.Service<
   }
 >()("t3/plugins/PluginApprovals") {}
 
-/** Requests remembered so a repeated pending update is not offered twice. */
+export interface PluginApprovalsOptions {
+  /** Requests being offered at once; later ones are skipped. Default 32. */
+  readonly maxActiveOffers?: number;
+  /** Plugin calls running at once, across requests; later ones abstain. Default 16. */
+  readonly maxActiveCalls?: number;
+}
+
+/** Finished requests remembered so a repeated pending update is not offered twice. */
 const MAX_REMEMBERED_REQUESTS = 1024;
 
 const isPluginApprovalKind = Schema.is(PluginApprovalKind);
@@ -159,7 +176,9 @@ const abstainCause = (
   }
 };
 
-export const make = Effect.fn("PluginApprovals.make")(function* () {
+export const make = Effect.fn("PluginApprovals.make")(function* (
+  options: PluginApprovalsOptions = {},
+) {
   const catalog = yield* PluginCatalog;
   const eventSink = yield* EventSinkV2;
   const projections = yield* ProjectionStoreV2;
@@ -169,6 +188,9 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
   const receipts = yield* PubSub.sliding<PluginApprovalReceipt>(1024);
   const publish = (receipt: PluginApprovalReceipt) =>
     PubSub.publish(receipts, receipt).pipe(Effect.asVoid);
+  const maxActiveOffers = options.maxActiveOffers ?? 32;
+  // Covers each call from before the catalogue inspects the plugin until its answer is recorded.
+  const calls = yield* Semaphore.make(options.maxActiveCalls ?? 16);
 
   /** One plugin's call for one request. Its answer is recorded even if the request is withdrawn meanwhile. */
   const ask = (
@@ -227,7 +249,11 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
               message: userFacingDispatchErrorMessage(recorded.failure) ?? recorded.failure.message,
             });
       }),
-    ).pipe(Effect.onInterrupt(() => abstain("withdrawn")));
+    ).pipe(
+      Effect.onInterrupt(() => abstain("withdrawn")),
+      calls.withPermitsIfAvailable(1),
+      Effect.flatMap((ran) => (Option.isSome(ran) ? Effect.void : abstain("overloaded"))),
+    );
   };
 
   /** The tool call an approval is for: the item of the approval node's parent, if it has one yet. */
@@ -298,26 +324,50 @@ export const make = Effect.fn("PluginApprovals.make")(function* () {
     ),
   );
 
-  // Keyed by thread and request; insertion order makes the oldest the first to forget.
-  const offers = new Map<string, Fiber.Fiber<void>>();
+  // Requests being offered, keyed by thread and request. Each entry owns its fiber's
+  // cancellation and leaves only when the offer ends or is withdrawn.
+  const active = new Map<string, { fiber?: Fiber.Fiber<void> }>();
+  // Requests already offered or skipped; insertion order makes the oldest the first to forget.
+  const finished = new Set<string>();
+  const finish = (key: string) => {
+    finished.delete(key);
+    finished.add(key);
+    if (finished.size > MAX_REMEMBERED_REQUESTS)
+      finished.delete(finished.values().next().value as string);
+  };
   const consider = (request: OrchestrationV2RuntimeRequest, threadId: ThreadId) =>
     Effect.suspend(() => {
       const key = `${threadId}\u0000${request.id}`;
       const answerable = request.status === "pending" && request.responseCapability.type === "live";
-      const current = offers.get(key);
+      const current = active.get(key);
       if (!answerable) {
         if (current === undefined) return Effect.void;
-        offers.delete(key);
+        active.delete(key);
+        finish(key);
         // Withdraws the calls still running, without waiting for an answer being recorded.
-        return Fiber.interrupt(current).pipe(Effect.forkIn(scope), Effect.asVoid);
+        return current.fiber === undefined
+          ? Effect.void
+          : Fiber.interrupt(current.fiber).pipe(Effect.forkIn(scope), Effect.asVoid);
       }
-      if (current !== undefined || !isPluginApprovalKind(request.kind)) return Effect.void;
+      if (current !== undefined || finished.has(key) || !isPluginApprovalKind(request.kind))
+        return Effect.void;
+      if (active.size >= maxActiveOffers) {
+        finish(key);
+        return publish({ _tag: "Skipped", requestId: request.id, cause: "overloaded" });
+      }
+      const entry: { fiber?: Fiber.Fiber<void> } = {};
+      active.set(key, entry);
       return offer(threadId, request.id, request.kind).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (active.get(key) !== entry) return;
+            active.delete(key);
+            finish(key);
+          }),
+        ),
         Effect.forkIn(scope),
         Effect.map((fiber) => {
-          offers.set(key, fiber);
-          if (offers.size > MAX_REMEMBERED_REQUESTS)
-            offers.delete(offers.keys().next().value as string);
+          entry.fiber = fiber;
         }),
       );
     });
