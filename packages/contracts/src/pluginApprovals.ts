@@ -1,0 +1,108 @@
+/**
+ * PluginApprovals - Lets a plugin answer the approvals a provider asks for.
+ *
+ * A plugin declares the `approvals` capability (with `proposedApi: true`) and
+ * the request kinds it wants in its manifest, and registers one handler:
+ *
+ * ```js
+ * export function activate(context) {
+ *   context.proposed.handle("t3.approval.decide", ({ kind, prompt }) =>
+ *     kind === "command" && prompt?.startsWith("git status")
+ *       ? { decision: "approve", reason: "Read-only git command." }
+ *       : { decision: "abstain" },
+ *   );
+ * }
+ * ```
+ *
+ * When a provider asks to approve a request of a declared kind, the server
+ * calls the handler of every enabled plugin that declares it, all at once. The
+ * user can answer the request in the app at any time. The first answer the
+ * server records wins, whether it came from the user or a plugin; later
+ * answers change nothing, and plugins still deciding are cancelled.
+ *
+ * `abstain`, `null`, an invalid answer, a failure, a crash, the deadline, and
+ * disabling the plugin all leave the request pending for the user. A plugin
+ * never approves anything by failing. Approvals only exist when a provider
+ * asks for them: a thread in full-access mode asks for none.
+ *
+ * @module PluginApprovals
+ */
+import * as Schema from "effect/Schema";
+
+import { EnvironmentId, ProjectId, RunId, RuntimeRequestId, ThreadId } from "./baseSchemas.ts";
+
+/** The manifest capability a plugin declares to answer approvals. */
+export const PLUGIN_APPROVALS_CAPABILITY = "approvals";
+
+/** The handler the server calls; plugins register it with `context.proposed.handle`. */
+export const PLUGIN_APPROVAL_HANDLER = "t3.approval.decide";
+
+export const PLUGIN_APPROVAL_LIMITS = {
+  defaultTimeoutSeconds: 15,
+  maxTimeoutSeconds: 120,
+  /** Longest `prompt` sent to a plugin, in UTF-16 code units. Longer prompts are cut. */
+  maxPromptLength: 8000,
+  maxReasonLength: 500,
+} as const;
+
+/**
+ * The provider requests a plugin may answer: running a command, reading or
+ * changing files, and other tool permissions. MCP elicitations, questions,
+ * and sign-in requests are not offered to plugins.
+ */
+export const PluginApprovalKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "permission",
+]);
+export type PluginApprovalKind = typeof PluginApprovalKind.Type;
+
+/** The manifest's `approvals` object; needs the `approvals` capability. */
+export const PluginApprovalDeclaration = Schema.Struct({
+  kinds: Schema.Array(PluginApprovalKind).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
+  /** How long the plugin may take to answer once it runs; default 15. */
+  timeoutSeconds: Schema.optionalKey(
+    Schema.Int.check(
+      Schema.isBetween({ minimum: 1, maximum: PLUGIN_APPROVAL_LIMITS.maxTimeoutSeconds }),
+    ),
+  ),
+});
+export type PluginApprovalDeclaration = typeof PluginApprovalDeclaration.Type;
+
+/**
+ * What the handler receives. `prompt` is what the provider asked, as the
+ * approval card shows it: a command, a path, or the provider's reason. It is
+ * user and agent content and may contain anything the agent wrote.
+ */
+export const PluginApprovalRequest = Schema.Struct({
+  requestId: RuntimeRequestId,
+  kind: PluginApprovalKind,
+  prompt: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxPromptLength)),
+  ),
+  context: Schema.Struct({
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    threadId: ThreadId,
+    runId: Schema.NullOr(RunId),
+    /** The provider driver that asked, such as `codex` or `claudeAgent`. */
+    provider: Schema.NullOr(Schema.String),
+  }),
+});
+export type PluginApprovalRequest = typeof PluginApprovalRequest.Type;
+
+/**
+ * What the handler returns. `approve` allows this one request, `deny` declines
+ * it, and `abstain` (or `null`) leaves it to the user. `reason` is shown in the
+ * thread next to the decision.
+ */
+export const PluginApprovalAnswer = Schema.NullOr(
+  Schema.Struct({
+    decision: Schema.Literals(["approve", "deny", "abstain"]),
+    reason: Schema.optionalKey(
+      Schema.String.check(Schema.isMaxLength(PLUGIN_APPROVAL_LIMITS.maxReasonLength)),
+    ),
+  }),
+);
+export type PluginApprovalAnswer = typeof PluginApprovalAnswer.Type;

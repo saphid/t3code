@@ -55,6 +55,7 @@ export * from "./plugin.ts";
 export * from "./pluginCatalog.ts";
 export * from "./pluginTools.ts";
 export * from "./pluginEvents.ts";
+export * from "./pluginApprovals.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";
