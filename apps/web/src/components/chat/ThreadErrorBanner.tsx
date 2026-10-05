@@ -1,7 +1,8 @@
-import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
@@ -40,10 +41,13 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
   errorClass,
+  logsEnvironmentId = null,
   chatGptUsageLimit = false,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
+  /** The environment whose server logs explain this error, linked as Settings > Diagnostics. */
+  logsEnvironmentId?: EnvironmentId | null;
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
 }) {
@@ -64,12 +68,23 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               <p>Review your usage settings in ChatGPT to continue.</p>
             </div>
           ) : (
-            <Tooltip>
-              <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
-              <TooltipPopup side="top" className="whitespace-pre-wrap">
-                {error}
-              </TooltipPopup>
-            </Tooltip>
+            <>
+              <Tooltip>
+                <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
+                <TooltipPopup side="top" className="whitespace-pre-wrap">
+                  {error}
+                </TooltipPopup>
+              </Tooltip>
+              {logsEnvironmentId !== null && errorClass !== "usage_limit" ? (
+                <InlineButton
+                  render={
+                    <Link to="/settings/diagnostics" search={{ machine: logsEnvironmentId }} />
+                  }
+                >
+                  View logs
+                </InlineButton>
+              ) : null}
+            </>
           )}
         </AlertDescription>
         {(chatGptUsageLimit || onDismiss) && (

@@ -10990,6 +10990,11 @@ export default function ChatView(props: ChatViewProps) {
                     ? (serverRuntime?.lastErrorClass ?? null)
                     : null
                 }
+                logsEnvironmentId={
+                  localServerError === null && visibleThreadError === serverRuntime?.lastError
+                    ? activeThread.environmentId
+                    : null
+                }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
