@@ -542,6 +542,98 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
 }
 
+/** A spent window that applies to the selected model, with its scope (`undefined` when account-wide). */
+export interface ExhaustedUsageWindow {
+  readonly window: ServerProviderUsageWindow;
+  readonly modelScope: string | undefined;
+}
+
+/**
+ * Whether a provider's name for a model (`Fable`, `opencode`) covers the
+ * selection. Providers name the scoped model by display name rather than
+ * catalog slug, so the entry's name, short name, and aliases all count, and
+ * a scope matches when every one of its words appears in the candidate.
+ */
+function modelScopeCovers(
+  provider: Pick<ServerProvider, "models">,
+  model: string,
+  modelScope: string,
+): boolean {
+  const words = (name: string) =>
+    name
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+  const wanted = words(modelScope);
+  if (wanted.length === 0) return false;
+  const entry = provider.models.find((candidate) => candidate.slug === model);
+  const candidates = entry
+    ? [model, entry.name, ...(entry.shortName ? [entry.shortName] : []), ...(entry.aliases ?? [])]
+    : [model];
+  return candidates.some((candidate) => {
+    const have = words(candidate);
+    return have.join("") === wanted.join("") || wanted.every((word) => have.includes(word));
+  });
+}
+
+/**
+ * The spent window that will make a send to `model` fail, or null. An
+ * account-wide window applies to every model, a `modelScope`d one only to
+ * the model it names, and `blocksSends: false` sub-meters never apply.
+ * Unavailable snapshots, snapshots from servers that do not mark scopes, and
+ * windows whose reset has passed (a stale read) are ignored. When several
+ * apply, the one that frees last is the one the user waits on.
+ */
+export function exhaustedUsageWindow(
+  provider: Pick<ServerProvider, "models" | "usageLimits"> | null | undefined,
+  model: string,
+  now: number,
+): ExhaustedUsageWindow | null {
+  const limits = provider?.usageLimits;
+  if (!provider || !limits || limits.unavailable || limits.scopedWindows !== true) return null;
+  let exhausted: ExhaustedUsageWindow | null = null;
+  for (const window of limits.windows) {
+    if (window.blocksSends === false || window.usedPercent < 100) continue;
+    const resetsAt = resetMillis(window);
+    if (resetsAt !== null && resetsAt <= now) continue;
+    if (window.modelScope !== undefined && !modelScopeCovers(provider, model, window.modelScope)) {
+      continue;
+    }
+    const current = exhausted === null ? null : resetMillis(exhausted.window);
+    if (
+      exhausted === null ||
+      (resetsAt ?? Number.POSITIVE_INFINITY) > (current ?? Number.POSITIVE_INFINITY)
+    ) {
+      exhausted = { window, modelScope: window.modelScope };
+    }
+  }
+  return exhausted;
+}
+
+/**
+ * The composer's warning for a spent window: what is out, when it frees, and
+ * the way to send sooner. `providerLocked` drops the provider-switch advice
+ * where the picker only offers the thread's own provider.
+ */
+export function formatUsageLimitWarning(
+  providerLabel: string,
+  exhausted: ExhaustedUsageWindow,
+  now: number,
+  options?: { readonly providerLocked?: boolean },
+): string {
+  const subject = exhausted.window.scopeLabel ?? exhausted.modelScope ?? providerLabel;
+  const kind = exhausted.window.kind === "other" ? "usage" : exhausted.window.kind;
+  const resetsIn = formatResetsIn(exhausted.window, now);
+  const detail = resetsIn ? `its ${kind} limit ${resetsIn}` : `its ${kind} limit is used up`;
+  const advice =
+    exhausted.modelScope !== undefined
+      ? "Pick another model, or messages will fail until it resets."
+      : options?.providerLocked === true
+        ? "Messages will fail until it resets."
+        : "Pick another provider, or messages will fail until it resets.";
+  return `${subject} is out of usage: ${detail}. ${advice}`;
+}
+
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",

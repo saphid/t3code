@@ -67,6 +67,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
+import { UsageLimitWarning } from "./UsageLimitWarning";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -1664,6 +1665,13 @@ export function NewTaskDraftScreen(props: {
         >
           <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
         </Pressable>
+      ) : null}
+      {environmentConnected ? (
+        <UsageLimitWarning
+          provider={flow.selectedProviderStatus}
+          model={flow.selectedModel?.model ?? null}
+          providerLocked={false}
+        />
       ) : null}
 
       <ComposerSurface

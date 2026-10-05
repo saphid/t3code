@@ -571,6 +571,7 @@ describe("makeManagedServerProvider", () => {
         const [update] = Array.from(yield* Fiber.join(updatesFiber));
         assert.deepStrictEqual(update?.usageLimits, {
           checkedAt: "2026-04-10T00:05:00.000Z",
+          scopedWindows: true,
           windows: [
             { id: "five_hour", kind: "session", label: "Session", usedPercent: 10 },
             {

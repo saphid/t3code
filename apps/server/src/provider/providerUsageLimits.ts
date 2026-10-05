@@ -29,7 +29,9 @@ export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  // Windows built here mark their model scope and sub-meters, so clients may
+  // warn about a spent one; snapshots without the flag predate that contract.
+  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows), scopedWindows: true };
 }
 
 export function makeUnavailableUsageLimits(input: {
@@ -82,6 +84,16 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
+      // Runtime updates never restate scope; they inherit it from the probed row.
+      ...(window.modelScope === undefined && existing?.modelScope !== undefined
+        ? { modelScope: existing.modelScope }
+        : {}),
+      ...(window.scopeLabel === undefined && existing?.scopeLabel !== undefined
+        ? { scopeLabel: existing.scopeLabel }
+        : {}),
+      ...(window.blocksSends === undefined && existing?.blocksSends !== undefined
+        ? { blocksSends: existing.blocksSends }
+        : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
@@ -104,7 +116,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.modelScope === b.modelScope &&
+    a.scopeLabel === b.scopeLabel &&
+    a.blocksSends === b.blocksSends
   );
 }
 

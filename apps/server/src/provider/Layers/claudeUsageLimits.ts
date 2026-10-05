@@ -75,6 +75,8 @@ function scopedWindow(
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
+    // The bucket limits only the model the CLI named.
+    modelScope: displayName,
     ...(resetsAt ? { resetsAt } : {}),
   };
 }

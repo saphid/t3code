@@ -24,6 +24,20 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /**
+   * The model a window applies to, named as the provider names it: Claude's
+   * `model_scoped` rows arrive as a display name, and an upstream name like
+   * `opencode` scopes a window to that sub-provider's models. Absent windows
+   * apply to every model on the account.
+   */
+  modelScope: Schema.optional(TrimmedNonEmptyString),
+  /** What the composer calls a scoped window's quota ("Go") when `modelScope` is a match key. */
+  scopeLabel: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `false` marks a sub-meter that only informs, like Cursor's per-source
+   * split: it can sit at 100% while another meter still serves the model.
+   */
+  blocksSends: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
@@ -66,6 +80,12 @@ export const ServerProviderUsageLimits = Schema.Struct({
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),
+  /**
+   * Set by servers whose windows carry `modelScope` and `blocksSends`. An
+   * older server's unscoped-looking row can be a model-scoped one, so clients
+   * only warn about spent windows on snapshots that set this.
+   */
+  scopedWindows: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 

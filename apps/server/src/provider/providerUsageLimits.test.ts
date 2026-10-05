@@ -48,6 +48,7 @@ describe("applyUsageLimitsUpdate", () => {
     expect(next).not.toBe(published);
     expect(next).toEqual({
       checkedAt: "2026-09-03T12:00:05.000Z",
+      scopedWindows: true,
       windows: [{ ...session, usedPercent: 55 }, weekly],
     });
   });
@@ -72,6 +73,7 @@ describe("applyUsageLimitsUpdate", () => {
 
     expect(next).toEqual({
       checkedAt: "2026-09-03T12:00:05.000Z",
+      scopedWindows: true,
       windows: [{ ...session, usedPercent: 55 }, weekly],
       resetCredits,
     });
@@ -85,5 +87,28 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+
+  it("keeps a probed row's model scope when a streamed update restates only usage", () => {
+    const fable = {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 90,
+      modelScope: "Fable",
+    } as const;
+    const next = applyUsageLimitsUpdate({
+      previous: { ...published, windows: [...published.windows, fable] },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: {
+        windows: [
+          { id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable", usedPercent: 100 },
+        ],
+      },
+    });
+    expect(next?.windows.find((window) => window.id === "seven_day_fable")).toEqual({
+      ...fable,
+      usedPercent: 100,
+    });
   });
 });

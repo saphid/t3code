@@ -50,6 +50,10 @@ export function cursorUsageResponseToLimits(
         kind: "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
+        // Either pool can sit at 100% while the other still serves a model
+        // (Auto uses both, Grok and Composer fall back), so only the total
+        // means sends will fail.
+        ...(id === "totalPercentUsed" ? {} : { blocksSends: false }),
         ...(resetsAt ? { resetsAt } : {}),
       });
     }

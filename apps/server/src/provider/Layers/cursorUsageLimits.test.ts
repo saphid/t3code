@@ -35,6 +35,7 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Cursor Models",
           usedPercent: 69.5,
+          blocksSends: false,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
         {
@@ -42,6 +43,7 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Other Models",
           usedPercent: 100,
+          blocksSends: false,
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
       ]),

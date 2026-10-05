@@ -50,6 +50,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { UsageLimitWarning } from "./UsageLimitWarning";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -807,6 +808,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
+        ) : null}
+        {/* A limited thread already shows its recovery card. */}
+        {props.connectionState === "connected" &&
+        !(
+          props.selectedThread.runtime?.status === "failed" &&
+          props.selectedThread.runtime.lastErrorClass === "usage_limit"
+        ) ? (
+          <UsageLimitWarning
+            provider={selectedProviderStatus}
+            model={currentModelSelection.model}
+            providerLocked={!props.canSwitchProvider}
+            onPress={usageLimitsOffered ? () => void openUsageLimits() : undefined}
+          />
         ) : null}
 
         <ComposerSurface

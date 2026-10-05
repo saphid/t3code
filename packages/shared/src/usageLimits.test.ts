@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -19,7 +20,9 @@ import {
   collectLimitPools,
   displayLimitWindows,
   elapsedShare,
+  exhaustedUsageWindow,
   formatResetsIn,
+  formatUsageLimitWarning,
   limitsNotice,
   paceOf,
   providersWithLimits,
@@ -1203,5 +1206,122 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("exhaustedUsageWindow", () => {
+  const spent = { ...window, usedPercent: 100 } as const;
+  const weekly = {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 100,
+    windowDurationMins: 10_080,
+    resetsAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+  const model = (slug: string, name: string) =>
+    ({ slug, name, isCustom: false, capabilities: null }) as const;
+  const claude = (usageLimits: NonNullable<ServerProvider["usageLimits"]>) =>
+    provider({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [
+        model("claude-fable-5-1", "Claude Fable 5.1"),
+        model("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+      ],
+      usageLimits,
+    });
+
+  it("finds a spent account-wide window and words the warning", () => {
+    const codex = provider({
+      usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [spent], scopedWindows: true },
+    });
+    const exhausted = exhaustedUsageWindow(codex, "gpt-6-astra", now);
+    expect(exhausted?.window.id).toBe("five_hour");
+    expect(formatUsageLimitWarning("Codex", exhausted!, now)).toBe(
+      "Codex is out of usage: its session limit resets in 2h 0m. Pick another provider, or messages will fail until it resets.",
+    );
+    expect(formatUsageLimitWarning("Codex", exhausted!, now, { providerLocked: true })).toBe(
+      "Codex is out of usage: its session limit resets in 2h 0m. Messages will fail until it resets.",
+    );
+  });
+
+  it("ignores windows with headroom, passed resets, informational meters, and unmarked snapshots", () => {
+    const limits = (windows: ServerProviderUsageWindow[], scopedWindows?: boolean) =>
+      provider({
+        usageLimits: {
+          checkedAt: "2026-09-03T11:00:00.000Z",
+          windows,
+          ...(scopedWindows === undefined ? {} : { scopedWindows }),
+        },
+      });
+    expect(exhaustedUsageWindow(limits([window], true), "m", now)).toBeNull();
+    expect(
+      exhaustedUsageWindow(
+        limits([{ ...spent, resetsAt: "2026-09-03T11:59:00.000Z" }], true),
+        "m",
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      exhaustedUsageWindow(limits([{ ...spent, blocksSends: false }], true), "m", now),
+    ).toBeNull();
+    // An older server cannot say whether a spent row is model-scoped.
+    expect(exhaustedUsageWindow(limits([spent]), "m", now)).toBeNull();
+    expect(
+      exhaustedUsageWindow(
+        provider({
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [spent],
+            scopedWindows: true,
+            unavailable: { reason: "probeFailed" },
+          },
+        }),
+        "m",
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("applies a model-scoped window only to the model it names", () => {
+    const fable = {
+      ...weekly,
+      id: "seven_day_fable",
+      label: "Weekly · Fable",
+      modelScope: "Fable",
+    } as const;
+    const snapshot = claude({
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [fable],
+      scopedWindows: true,
+    });
+    const exhausted = exhaustedUsageWindow(snapshot, "claude-fable-5-1", now);
+    expect(exhausted?.modelScope).toBe("Fable");
+    expect(formatUsageLimitWarning("Claude", exhausted!, now)).toBe(
+      "Fable is out of usage: its weekly limit resets in 3d 0h. Pick another model, or messages will fail until it resets.",
+    );
+    expect(exhaustedUsageWindow(snapshot, "claude-sonnet-5-5", now)).toBeNull();
+  });
+
+  it("scopes an upstream name to that upstream's models only", () => {
+    const go = { ...weekly, id: "go_weekly", modelScope: "opencode", scopeLabel: "Go" } as const;
+    const openCode = provider({
+      driver: ProviderDriverKind.make("opencode"),
+      usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [go], scopedWindows: true },
+    });
+    const exhausted = exhaustedUsageWindow(openCode, "opencode/kimi-k3", now);
+    expect(formatUsageLimitWarning("OpenCode", exhausted!, now)).toMatch(/^Go is out of usage/);
+    expect(exhaustedUsageWindow(openCode, "anthropic/claude-sonnet-5-5", now)).toBeNull();
+  });
+
+  it("names the window that frees last when several are spent", () => {
+    const codex = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [spent, weekly],
+        scopedWindows: true,
+      },
+    });
+    expect(exhaustedUsageWindow(codex, "gpt-6-astra", now)?.window.id).toBe("seven_day");
   });
 });

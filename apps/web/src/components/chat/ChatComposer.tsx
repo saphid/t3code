@@ -54,7 +54,11 @@ import {
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import {
+  USAGE_LIMITS_COMMAND,
+  exhaustedUsageWindow,
+  formatUsageLimitWarning,
+} from "@t3tools/shared/usageLimits";
 import {
   memo,
   type ComponentProps,
@@ -1076,6 +1080,7 @@ import {
   FileIcon,
   BotIcon,
   CircleAlertIcon,
+  GaugeIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -1128,6 +1133,7 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -2165,6 +2171,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : (attachmentBlockReason ??
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
+  // Warn before a send the provider has already said it will refuse. Sending
+  // stays allowed: the snapshot can be stale, and a limited thread already
+  // shows its own recovery banner. The minute clock clears it at reset.
+  const nowMinute = useNowMinute();
+  const threadRuntime = props.activeThreadShell?.runtime;
+  const threadLimited =
+    threadRuntime?.status === "failed" && threadRuntime.lastErrorClass === "usage_limit";
+  const usageLimitWarning = useMemo(() => {
+    if (threadLimited) return null;
+    const now = Date.parse(`${nowMinute}:00Z`);
+    const selections = multipleModelSelections?.map((selection) => ({
+      entry: providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId),
+      model: selection.model,
+    })) ?? [{ entry: selectedProviderEntry, model: selectedModel }];
+    for (const { entry, model } of selections) {
+      const exhausted = exhaustedUsageWindow(entry?.snapshot, model, now);
+      if (entry && exhausted) {
+        return formatUsageLimitWarning(entry.displayName, exhausted, now, {
+          providerLocked: lockedProvider !== null && multipleModelSelections === null,
+        });
+      }
+    }
+    return null;
+  }, [
+    lockedProvider,
+    multipleModelSelections,
+    nowMinute,
+    providerInstanceEntries,
+    selectedModel,
+    selectedProviderEntry,
+    threadLimited,
+  ]);
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -5564,9 +5602,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         content: activityStackContent,
       }
     : null;
-  const bannerStackItems = activityStackItem
-    ? [activityStackItem, ...props.bannerItems]
-    : props.bannerItems;
+  const usageLimitWarningItem: ComposerBannerStackItem | null =
+    usageLimitWarning === null
+      ? null
+      : {
+          id: "usage-limit-warning",
+          variant: "warning",
+          icon: <GaugeIcon />,
+          title: "Out of usage",
+          description: usageLimitWarning,
+        };
+  const bannerStackItems =
+    activityStackItem || usageLimitWarningItem
+      ? [
+          ...(activityStackItem ? [activityStackItem] : []),
+          ...(usageLimitWarningItem ? [usageLimitWarningItem] : []),
+          ...props.bannerItems,
+        ]
+      : props.bannerItems;
   useEffect(() => {
     if (activeTasksProgress === null || activeTaskSteps === null) {
       setIsTasksDrawerOpen(false);
