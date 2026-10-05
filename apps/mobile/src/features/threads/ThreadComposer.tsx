@@ -523,8 +523,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
+  // Keep live speech visible even when dictation starts with the keyboard closed.
+  const isExpanded =
+    isFocused || settingsSheetPresentation.keepsComposerExpanded || voiceInput.isBusy;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -590,11 +591,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.keepsComposerExpanded) {
+    if (!settingsSheetPresentation.keepsComposerExpanded && !voiceInput.isBusy) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
+  }, [
+    onEditorFocusChange,
+    onExpandedChange,
+    settingsSheetPresentation.keepsComposerExpanded,
+    voiceInput.isBusy,
+  ]);
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;

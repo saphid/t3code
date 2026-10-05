@@ -1,6 +1,10 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import type {
+  PreparedVoiceTranscription,
+  VoiceTranscriber,
+  VoiceStreamingSession,
+} from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -191,6 +195,8 @@ export class VoiceInputController {
   private transcription: PreparedVoiceTranscription | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
+  private streaming: VoiceStreamingSession | null = null;
+  private expectedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
@@ -202,6 +208,10 @@ export class VoiceInputController {
 
   get currentState(): VoiceInputState {
     return this.state;
+  }
+
+  get streamingStatus() {
+    return this.streaming?.getStatus() ?? null;
   }
 
   async start(): Promise<void> {
@@ -262,6 +272,63 @@ export class VoiceInputController {
       await this.dependencies.configureRecording();
       this.recordingConfigured = true;
       if (!this.isCurrent(operationToken)) return;
+      const streamingDraft = this.dependencies.readDraft();
+      if (this.transcription.startStreaming) {
+        const prepareFileFallback = this.transcription.prepareFileFallback;
+        if (!streamingDraft || streamingDraft.ownerKey !== initiatingDraft.ownerKey) {
+          this.setError("This draft is no longer available.", "retry");
+          return;
+        }
+        this.capturedDraft = streamingDraft;
+        this.expectedDraft = streamingDraft;
+        let receivedStreamingTranscript = false;
+        try {
+          this.streaming = await this.transcription.startStreaming({
+            signal: abortController.signal,
+            onTranscript: (text) => {
+              receivedStreamingTranscript ||= text.trim().length > 0;
+              if (this.isCurrent(operationToken)) this.updateLiveTranscript(text);
+            },
+            onError: (message) => {
+              if (this.isCurrent(operationToken)) this.failStreaming(message);
+            },
+            onEnd: () => {
+              if (this.isCurrent(operationToken)) void this.stop();
+            },
+          });
+          if (!this.isCurrent(operationToken)) return;
+          this.setState({ phase: "recording", error: null, errorAction: null });
+          return;
+        } catch (error) {
+          if (!this.isCurrent(operationToken)) return;
+          const currentDraft = this.dependencies.readDraft();
+          const expectedDraft = this.expectedDraft;
+          if (
+            receivedStreamingTranscript ||
+            !prepareFileFallback ||
+            !currentDraft ||
+            !expectedDraft ||
+            currentDraft.ownerKey !== expectedDraft.ownerKey ||
+            currentDraft.text !== expectedDraft.text ||
+            currentDraft.revision !== expectedDraft.revision
+          ) {
+            throw error;
+          }
+          this.capturedDraft = null;
+          this.expectedDraft = null;
+          try {
+            this.transcription = await runTranscriptionOperation(() =>
+              prepareFileFallback({ signal: abortController.signal }),
+            );
+          } catch (fallbackError) {
+            if (this.isCurrent(operationToken)) {
+              this.setError(preparationErrorMessage(fallbackError), "retry");
+            }
+            return;
+          }
+          if (!this.isCurrent(operationToken)) return;
+        }
+      }
       await this.dependencies.recorder.prepareToRecordAsync();
       if (!this.isCurrent(operationToken)) return;
       this.recordingUri = this.dependencies.recorder.uri;
@@ -302,13 +369,16 @@ export class VoiceInputController {
         this.setState(IDLE_STATE);
         return;
       case "preparing":
+        this.restoreBeforeDictation();
         this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
       case "recording":
+        this.restoreBeforeDictation();
         this.discardRecording(null);
         return;
       case "transcribing":
+        this.restoreBeforeDictation();
         this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
@@ -335,7 +405,7 @@ export class VoiceInputController {
   }
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
-    if (this.state.phase !== "recording") return;
+    if (this.state.phase !== "recording" || this.streaming) return;
     if (status.hasError) {
       return this.interruptRecording(
         status.error ?? "Voice recording was interrupted.",
@@ -376,6 +446,18 @@ export class VoiceInputController {
     this.setState({ phase: "transcribing", error: null, errorAction: null });
 
     try {
+      if (this.streaming) {
+        const transcript = await this.streaming.stop();
+        if (!this.isCurrent(operationToken)) return;
+        this.updateLiveTranscript(transcript);
+        if (!this.isCurrent(operationToken)) return;
+        if (!transcript.trim()) {
+          this.setError("No speech was detected.", "retry");
+        } else {
+          this.setState(IDLE_STATE);
+        }
+        return;
+      }
       if (!alreadyStopped) await this.dependencies.recorder.stop();
       await this.releaseAudioSession();
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
@@ -446,14 +528,74 @@ export class VoiceInputController {
         : { phase: "idle", error: null, errorAction: null },
     );
     try {
-      await this.dependencies.recorder.stop();
+      if (this.streaming) await this.streaming.cancel();
+      else await this.dependencies.recorder.stop();
     } catch {
     } finally {
       await this.releaseResources();
     }
   }
 
+  private failStreaming(message: string): void {
+    if (this.state.phase === "preparing" || this.finishing) {
+      // Startup/finalization owns cleanup until its native operation settles.
+      this.invalidateOperation();
+      this.setError(message, "retry");
+    } else {
+      void this.discardRecording(message);
+    }
+  }
+
+  private restoreBeforeDictation(): void {
+    const current = this.dependencies.readDraft();
+    const expected = this.expectedDraft;
+    const captured = this.capturedDraft;
+    if (
+      current &&
+      expected &&
+      captured &&
+      current.ownerKey === expected.ownerKey &&
+      current.text === expected.text &&
+      current.revision === expected.revision
+    ) {
+      this.dependencies.commitDraft(captured.text, captured.selection);
+    }
+  }
+
+  private updateLiveTranscript(transcript: string): void {
+    const captured = this.capturedDraft;
+    const expected = this.expectedDraft;
+    const current = this.dependencies.readDraft();
+    if (!captured || !expected || !this.transcription) return;
+    if (
+      !current ||
+      current.ownerKey !== expected.ownerKey ||
+      current.text !== expected.text ||
+      current.revision !== expected.revision
+    ) {
+      this.failStreaming("The draft changed while voice input was running. Dictation stopped.");
+      return;
+    }
+    // Always replace the original selection, never append successive hypotheses.
+    const result = resolveTranscriptCommit(
+      captured,
+      captured,
+      transcript,
+      this.transcription.locale,
+    );
+    if (result.kind === "stale") return;
+    const next = result.kind === "empty" ? captured : result;
+    if (next.text === current.text) return;
+    this.dependencies.commitDraft(next.text, next.selection);
+    this.expectedDraft = this.dependencies.readDraft();
+  }
+
   private async releaseResources(): Promise<void> {
+    if (this.streaming) {
+      await this.streaming.cancel().catch(() => undefined);
+      this.streaming = null;
+    }
+    this.expectedDraft = null;
     this.rememberRecordingUri(this.recordingUri);
     try {
       this.rememberRecordingUri(this.dependencies.recorder.uri);

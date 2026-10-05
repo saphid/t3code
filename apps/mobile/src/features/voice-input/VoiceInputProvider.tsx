@@ -197,7 +197,7 @@ function useVoiceInputRuntime() {
 
     const sampleRecording = () => {
       if (controller.currentState.phase !== "recording") return;
-      const status = recorder.getStatus();
+      const status = controller.streamingStatus ?? recorder.getStatus();
       if (!status?.isRecording) return;
 
       const level = normalizeVoiceInputDecibels(status.metering);

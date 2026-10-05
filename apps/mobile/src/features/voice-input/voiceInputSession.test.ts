@@ -269,4 +269,72 @@ describe("global voice input", () => {
     expect(oldCommit).not.toHaveBeenCalled();
     expect(nextCommit).toHaveBeenCalledWith("second spoken text", { start: 18, end: 18 });
   });
+  it("streams live hypotheses into an atom-backed draft until Finish", async () => {
+    const registry = AtomRegistry.make();
+    const draft = Atom.make("Fix ");
+    let emit: (text: string) => void = () => {};
+    const { session, recorder, prepare } = createSession();
+    prepare.mockImplementationOnce(async () => ({
+      locale: "en-US",
+      transcribe: async () => "unused",
+      startStreaming: async ({ onTranscript }) => {
+        emit = onTranscript;
+        return {
+          stop: async () => "the time out bug",
+          cancel: async () => {},
+          getStatus: () => null,
+        };
+      },
+    }));
+    await session.start(
+      createVoiceInputTarget(
+        "first",
+        () => registry.get(draft),
+        (text) => registry.set(draft, text),
+        { start: 4, end: 4 },
+        (onChange) => registry.subscribe(draft, onChange),
+      ),
+    );
+    emit("the time");
+    expect(registry.get(draft)).toBe("Fix the time");
+    emit("the time out bag");
+    expect(registry.get(draft)).toBe("Fix the time out bag");
+    emit("the time out bug");
+    expect(session.controller.currentState.phase).toBe("recording");
+    await session.controller.stop();
+    expect(registry.get(draft)).toBe("Fix the time out bug");
+    expect(session.controller.currentState.phase).toBe("idle");
+    expect(recorder.record).not.toHaveBeenCalled();
+    registry.dispose();
+  });
+
+  it("stops live dictation when the draft is edited elsewhere", async () => {
+    const registry = AtomRegistry.make();
+    const draft = Atom.make("");
+    let emit: (text: string) => void = () => {};
+    const { session, prepare } = createSession();
+    prepare.mockImplementationOnce(async () => ({
+      locale: "en-US",
+      transcribe: async () => "unused",
+      startStreaming: async ({ onTranscript }) => {
+        emit = onTranscript;
+        return { stop: async () => "hello", cancel: async () => {}, getStatus: () => null };
+      },
+    }));
+    await session.start(
+      createVoiceInputTarget(
+        "first",
+        () => registry.get(draft),
+        (text) => registry.set(draft, text),
+        { start: 0, end: 0 },
+        (onChange) => registry.subscribe(draft, onChange),
+      ),
+    );
+    emit("hello");
+    registry.set(draft, "typed elsewhere");
+    emit("hello there");
+    expect(registry.get(draft)).toBe("typed elsewhere");
+    expect(session.controller.currentState.error).toContain("draft changed");
+    registry.dispose();
+  });
 });
