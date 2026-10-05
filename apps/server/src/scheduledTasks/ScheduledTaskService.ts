@@ -153,13 +153,13 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-// Contention surfaces differently per runtime: Bun's SQLite driver reports
-// `code`/`errno`, which the vendored classifier maps to a retryable
-// LockTimeoutError, while node:sqlite reports `errcode` (e.g.
-// SQLITE_BUSY_SNAPSHOT 517), which the classifier cannot see. Accept either:
-// a reason the classifier already marked retryable, or a native numeric code
-// in the SQLITE_BUSY (5) / SQLITE_LOCKED (6) families on any of the field
-// names a driver might use. The ScheduledTaskError unwrap covers statements
+// Write transactions take the lock up front and wait up to busy_timeout, so
+// contention only surfaces when another process holds the lock longer than
+// that. Bun reports `code`/`errno`, and the node:sqlite client copies
+// `errcode` into `errno`, so both normally arrive as a retryable
+// LockTimeoutError. Accept that classification, and as a fallback a raw
+// native code in the SQLITE_BUSY (5) / SQLITE_LOCKED (6) families on any of
+// the field names a driver might use without that normalization. The ScheduledTaskError unwrap covers statements
 // that wrap SqlError inside the transaction before the retry policy sees it.
 const isContendedWriteError = (cause: unknown): boolean => {
   if (isScheduledTaskError(cause)) return isContendedWriteError(cause.cause);
@@ -175,9 +175,9 @@ const isContendedWriteError = (cause: unknown): boolean => {
   return false;
 };
 
-// A commit on another connection between a transaction's read and its write
-// leaves that transaction on a stale snapshot (SQLITE_BUSY_SNAPSHOT) — retry
-// on a fresh snapshot so disjoint edits still merge instead of failing.
+// Retry a write that timed out waiting for another process's lock, so a
+// lock held a little past busy_timeout does not drop an edit or strand a run
+// as 'running'.
 const retryContended = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.retry({ times: 2, while: isContendedWriteError }));
 
@@ -562,7 +562,7 @@ export const layer = Layer.effect(
         // Re-read and write under one lock so an edit committed between them
         // keeps its own next_run_at rather than being overwritten by the
         // schedule snapshot taken before the edit. Contention retry keeps a
-        // cross-connection commit from stranding the task as 'running'.
+        // lock held by another process from stranding the task as 'running'.
         yield* retryContended(
           sql
             .withTransaction(
@@ -740,8 +740,9 @@ export const layer = Layer.effect(
         // is *now* (the user may have edited or deleted it while we ran). The
         // re-read and the write share one transaction so a concurrent edit
         // cannot land between them and have its next_run_at overwritten by a
-        // stale schedule. Contention retry keeps a cross-connection commit
-        // from abandoning the completion write with the task left 'running'.
+        // stale schedule. Contention retry keeps a lock held by another
+        // process from abandoning the completion write with the task left
+        // 'running'.
         const current = yield* retryContended(
           sql
             .withTransaction(
@@ -1111,11 +1112,8 @@ export const layer = Layer.effect(
                 }
               }
               patch.updated_at = iso(now);
-              // The read above and this write share one transaction on the
-              // client's single connection, so no same-process write can land
-              // between them; a commit from another connection invalidates the
-              // snapshot (SQLITE_BUSY_SNAPSHOT) and retryContended rebuilds the
-              // patch on fresh state.
+              // The read above and this write share one write-locked
+              // transaction, so no other write can land between them.
               const written = yield* sql<ScheduledTaskRow>`
                 UPDATE scheduled_tasks
                 SET ${sql.update(patch)}

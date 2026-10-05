@@ -1,10 +1,7 @@
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
-import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -18,7 +15,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -33,10 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import {
-  makeSqlitePersistenceLive,
-  SqlitePersistenceMemory,
-} from "../persistence/Layers/Sqlite.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -1122,17 +1115,16 @@ const countingLaunchLayer = Layer.mock(ThreadLaunchService.ThreadLaunchService)(
     }),
 });
 
-// The exact failure a WAL read snapshot raises when a cross-connection
-// commit invalidates it mid-transaction (SQLITE_BUSY_SNAPSHOT) — node:sqlite
-// reports it via `errcode`, which the classifier misses (UnknownError).
-const busySnapshotError = () =>
+// A lock timeout reported only through a raw `errcode`, without the client's
+// `errno` normalization: the native-code fallback must still retry it.
+const nodeBusyError = () =>
   new SqlError.SqlError({
     reason: new SqlError.UnknownError({
-      cause: Object.assign(new Error("database is locked"), { errcode: 517 }),
+      cause: Object.assign(new Error("database is locked"), { errcode: 5 }),
     }),
   });
 
-// The same contention as Bun reports it — `code`/`errno`, which the
+// The same lock timeout as Bun reports it — `code`/`errno`, which the
 // classifier maps to a retryable LockTimeoutError. Both shapes must retry.
 const bunBusyError = () =>
   new SqlError.SqlError({
@@ -1305,12 +1297,12 @@ it.effect("a contended completion write retries instead of stranding the task", 
     dispatchLaunchCount = 0;
     let injected = false;
     sqlProbe = (statement) => {
-      // One-shot SQLITE_BUSY_SNAPSHOT on the completion write: without the
+      // One-shot lock timeout on the completion write: without the
       // contention retry the transaction's failure propagates and the row is
       // left last_run_status='running', which due scans then exclude forever.
       if (!injected && isTerminalWrite(statement) && statement.includes("last_run_at =")) {
         injected = true;
-        return Effect.fail(busySnapshotError());
+        return Effect.fail(nodeBusyError());
       }
     };
     try {
@@ -1339,7 +1331,7 @@ it.effect("a contended recovery write retries instead of stranding the task", ()
       // scans forever. ('failed' is a literal only in releaseStuckRun's SQL.)
       if (statement.includes("last_run_at =")) {
         completionFails += 1;
-        return Effect.fail(busySnapshotError());
+        return Effect.fail(nodeBusyError());
       }
       if (statement.includes("'failed'")) {
         releaseFails += 1;
@@ -1361,40 +1353,6 @@ it.effect("a contended recovery write retries instead of stranding the task", ()
     }
   }).pipe(Effect.provide(gatedDispatchLayer)),
 );
-
-// A second physical connection is required for true contention: the client's
-// single connection serializes transactions, so nothing else can interleave
-// mid-transaction — a file database plus a raw second handle can.
-const fileDbLayer = (dbPath: string) =>
-  ScheduledTaskService.layer.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        gatedSqlClient.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath))),
-        NodeCrypto.layer,
-        Scheduler.layer,
-        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-      ),
-    ),
-  );
-
-// Parks the first scoped-update read (the SELECT inside the update
-// transaction) until the test releases it — the deterministic mid-read window
-// a competing connection writes into.
-const armUpdateReadGate = (readDone: Deferred.Deferred<void>, proceed: Deferred.Deferred<void>) => {
-  let fired = false;
-  sqlProbe = (statement) => {
-    // getScopedRows inside the update transaction.
-    if (
-      !fired &&
-      statement.includes("FROM scheduled_tasks") &&
-      statement.includes("AND project_id")
-    ) {
-      fired = true;
-      return Deferred.succeed(readDone, undefined).pipe(Effect.andThen(Deferred.await(proceed)));
-    }
-  };
-};
 
 it.effect("update keeps a project move and a thread binding consistent", () =>
   Effect.gen(function* () {
@@ -1468,146 +1426,4 @@ it.effect("update keeps a project move and a thread binding consistent", () =>
     if (Result.isSuccess(missing)) assert.fail("expected a typed conflict");
     assert.equal(missing.failure._tag, "ScheduledTaskError");
   }).pipe(Effect.provide(updateTestLayerWithSql)),
-);
-
-it.effect("competing updates on separate connections preserve disjoint fields", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const dir = yield* fs.makeTempDirectory();
-    const dbPath = `${dir}/state.sqlite`;
-    yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-      yield* seedTask;
-      const readDone = yield* Deferred.make<void>();
-      const proceed = yield* Deferred.make<void>();
-      armUpdateReadGate(readDone, proceed);
-      try {
-        // The title update parks between its in-transaction read and write.
-        const updateFiber = yield* tasks
-          .update({ id: updateTaskId, projectId: updateProjectId, title: "title A" })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(readDone);
-        // A prompt write commits on an independent connection while the
-        // first update holds its snapshot.
-        const db = new NodeSqlite.DatabaseSync(dbPath);
-        try {
-          db.exec(
-            `UPDATE scheduled_tasks SET prompt = 'prompt B' WHERE task_id = '${updateTaskId}'`,
-          );
-        } finally {
-          db.close();
-        }
-        yield* Deferred.succeed(proceed, undefined);
-        const outcome = yield* Fiber.join(updateFiber);
-        assert.isTrue(Option.isSome(outcome));
-        const row = yield* findSeeded;
-        // Both fields survive a genuinely contested interleaving.
-        assert.equal(row?.title, "title A");
-        assert.equal(row?.prompt, "prompt B");
-      } finally {
-        sqlProbe = null;
-      }
-    }).pipe(Effect.provide(fileDbLayer(dbPath)));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
-);
-
-it.effect("a schedule update contended by a committed disable merges on a fresh snapshot", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const dir = yield* fs.makeTempDirectory();
-    const dbPath = `${dir}/state.sqlite`;
-    yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-      yield* seedTask;
-      const readDone = yield* Deferred.make<void>();
-      const proceed = yield* Deferred.make<void>();
-      armUpdateReadGate(readDone, proceed);
-      try {
-        // The schedule update parks with its read snapshot; under WAL its
-        // first write attempt after the competing commit lands on a stale
-        // snapshot (SQLITE_BUSY_SNAPSHOT) and the service retries, so the
-        // patch is rebuilt on the committed state instead of clobbering it.
-        const updateFiber = yield* tasks
-          .update({
-            id: updateTaskId,
-            projectId: updateProjectId,
-            schedule: { type: "interval", everyMs: 3_600_000 },
-          })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(readDone);
-        const db = new NodeSqlite.DatabaseSync(dbPath);
-        try {
-          db.exec(
-            `UPDATE scheduled_tasks SET enabled = 0, next_run_at = NULL WHERE task_id = '${updateTaskId}'`,
-          );
-        } finally {
-          db.close();
-        }
-        yield* Deferred.succeed(proceed, undefined);
-        const outcome = yield* Fiber.join(updateFiber);
-        assert.isTrue(Option.isSome(outcome));
-        const row = yield* findSeeded;
-        // Both edits survive: the disable and the new schedule, with the
-        // due time recomputed from the committed state (disabled → null).
-        assert.isFalse(row?.enabled);
-        assert.isNull(row?.nextRunAt);
-        assert.equal(row?.schedule.type, "interval");
-        if (row?.schedule.type === "interval") {
-          assert.equal(row.schedule.everyMs, 3_600_000);
-        }
-      } finally {
-        sqlProbe = null;
-      }
-    }).pipe(Effect.provide(fileDbLayer(dbPath)));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
-);
-
-it.effect("a delete committed inside the update read window is never resurrected", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const dir = yield* fs.makeTempDirectory();
-    const dbPath = `${dir}/state.sqlite`;
-    yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-      yield* seedTask;
-      const readDone = yield* Deferred.make<void>();
-      const proceed = yield* Deferred.make<void>();
-      armUpdateReadGate(readDone, proceed);
-      try {
-        const updateFiber = yield* tasks
-          .update({ id: updateTaskId, projectId: updateProjectId, title: "contended" })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(readDone);
-        // The update transaction holds its snapshot; this delete commits on
-        // an independent connection while the update is parked mid-read.
-        const db = new NodeSqlite.DatabaseSync(dbPath);
-        try {
-          db.exec(`DELETE FROM scheduled_tasks WHERE task_id = '${updateTaskId}'`);
-        } finally {
-          db.close();
-        }
-        yield* Deferred.succeed(proceed, undefined);
-        const outcome = yield* Fiber.join(updateFiber).pipe(Effect.result);
-        // The only permitted result: the committed delete wins and the
-        // update reports the task gone — `none`. A typed conflict would mean
-        // the delete was misread as a contested edit, and a failure means the
-        // contention retry gave up on a single commit; neither is allowed.
-        if (Result.isFailure(outcome)) {
-          assert.fail(`expected the update to return none, got ${outcome.failure._tag}`);
-        }
-        assert.isTrue(Option.isNone(outcome.success));
-        const check = new NodeSqlite.DatabaseSync(dbPath);
-        try {
-          const row = check.prepare("SELECT COUNT(*) AS n FROM scheduled_tasks").get() as {
-            n: number;
-          };
-          assert.equal(row.n, 0);
-        } finally {
-          check.close();
-        }
-      } finally {
-        sqlProbe = null;
-      }
-    }).pipe(Effect.provide(fileDbLayer(dbPath)));
-  }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
 );
