@@ -18,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  presentWaitingRowStatus,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -675,5 +676,43 @@ describe("provider-reported model selection", () => {
     const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
     expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
     expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
+  });
+});
+
+describe("presentWaitingRowStatus", () => {
+  it("names the one piece of work the agent waits on", () => {
+    expect(
+      presentWaitingRowStatus([
+        { taskId: "a", kind: "subagent", description: "Review src/math.ts" },
+      ]),
+    ).toEqual({ label: "Waiting on Review src/math.ts", kind: "subagent" });
+    expect(presentWaitingRowStatus([{ taskId: "a", kind: "monitor" }])).toEqual({
+      label: "Waiting on monitor",
+      kind: "monitor",
+    });
+  });
+
+  it("counts several pieces of work, led by subagents", () => {
+    expect(
+      presentWaitingRowStatus([
+        { taskId: "m", kind: "monitor", description: "Watch PR checks" },
+        { taskId: "a", kind: "subagent", description: "Review src/math.ts" },
+        { taskId: "b", kind: "subagent", description: "Write tests" },
+      ]),
+    ).toEqual({ label: "Waiting on 2 subagents and 1 monitor", kind: "subagent" });
+  });
+
+  // A dev server left running is not what the task waits on.
+  it("leaves out commands the agent left running", () => {
+    expect(
+      presentWaitingRowStatus([
+        { taskId: "dev", kind: "command", description: "vp run dev" },
+        { taskId: "m", kind: "monitor", description: "Watch PR checks" },
+      ]),
+    ).toEqual({ label: "Waiting on Watch PR checks", kind: "monitor" });
+    expect(
+      presentWaitingRowStatus([{ taskId: "dev", kind: "command", description: "vp run dev" }]),
+    ).toBeNull();
+    expect(presentWaitingRowStatus([])).toBeNull();
   });
 });
