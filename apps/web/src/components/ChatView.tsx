@@ -6761,11 +6761,17 @@ export default function ChatView(props: ChatViewProps) {
             })
           : nextHeight;
       setScrollToEndClearance(clearance);
+      const overlayRect = composerOverlayElement?.getBoundingClientRect();
       setComposerCoveredInset(
-        composerOverlayElement && mainSurfaceTop !== undefined
+        composerOverlayElement && overlayRect
           ? resolveComposerCoveredInset({
-              overlayBottom: composerOverlayElement.getBoundingClientRect().bottom,
-              mainSurfaceTop,
+              overlayBottom: overlayRect.bottom,
+              // A status bar in place of the composer has no main surface; it
+              // starts below the overlay's transparent top padding.
+              mainSurfaceTop:
+                mainSurfaceTop ??
+                overlayRect.top +
+                  (Number.parseFloat(getComputedStyle(composerOverlayElement).paddingTop) || 0),
               attachments,
             })
           : nextHeight,

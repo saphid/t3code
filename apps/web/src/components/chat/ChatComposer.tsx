@@ -845,6 +845,9 @@ function useComposerRestingTransition(
           animation.cancel();
           stripAnimation?.cancel();
           clearTransitionStyles();
+          // The chat view may have measured the surface mid-tween while the
+          // pinned overlay kept its size; republish the settled geometry.
+          if (overlay?.isConnected) onOverlayHeightChange(overlay.getBoundingClientRect().height);
         };
         void animation.finished.catch(() => undefined).then(() => finishTransition(false));
         // A suspended document timeline can leave `finished` pending while
