@@ -7,6 +7,8 @@
  *
  * @module provider/Layers/claudeRelayUsageLimits
  */
+import * as NodeCrypto from "node:crypto";
+
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -138,6 +140,28 @@ function relayOrigin(environment: NodeJS.ProcessEnv): URL | undefined {
 }
 
 /**
+ * Relay windows share the Claude heading on Limits with Anthropic's own, so
+ * each label names its relay. Relays report no account email, so an unkeyed
+ * hash of the relay and key lets two instances or environments with the same
+ * key pool as one account, as OpenCode Go does.
+ */
+function asRelayAccount(
+  relay: string,
+  token: string,
+  limits: ServerProviderUsageLimits,
+): ServerProviderUsageLimits {
+  if (limits.unavailable) return limits;
+  return {
+    ...limits,
+    windows: limits.windows.map((window) => ({ ...window, label: `${window.label} · ${relay}` })),
+    credentialFingerprint: NodeCrypto.createHash("sha256")
+      .update(`claude-relay:${relay}\0`)
+      .update(token)
+      .digest("hex"),
+  };
+}
+
+/**
  * The relay's limits, or `undefined` when the instance does not point at a
  * relay this module knows, so the caller keeps whatever the CLI reported.
  */
@@ -164,7 +188,7 @@ export const readClaudeRelayUsageLimits = Effect.fn("readClaudeRelayUsageLimits"
     const body = yield* HttpClientResponse.schemaBodyJson(ZaiQuotaResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return zaiQuotaResponseToLimits(body, checkedAt);
+    return asRelayAccount("Z.ai", token, zaiQuotaResponseToLimits(body, checkedAt));
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() =>

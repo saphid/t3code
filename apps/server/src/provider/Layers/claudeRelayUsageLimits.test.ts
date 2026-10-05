@@ -253,12 +253,54 @@ describe("Z.ai usage limits", () => {
         {
           id: "credit_limit_3_5",
           kind: "session",
-          label: "Session",
+          label: "Session · Z.ai",
           usedPercent: 25,
           windowDurationMins: 300,
         },
       ]);
       expect(limits?.unavailable).toBeUndefined();
+    }),
+  );
+
+  it.effect("names one relay key as one account without exposing it", () =>
+    Effect.gen(function* () {
+      const read = (env: NodeJS.ProcessEnv, response: () => Response) =>
+        readClaudeRelayUsageLimits(env).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(HttpClientResponse.fromWeb(request, response())),
+            ),
+          ),
+        );
+      const quota = () =>
+        Response.json({
+          data: { limits: [{ type: "CREDIT_LIMIT", unit: 3, number: 5, percentage: 25 }] },
+        });
+      const first = yield* read(
+        { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN: "key-a" },
+        quota,
+      );
+      const sameKey = yield* read(
+        {
+          ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
+          ANTHROPIC_API_KEY: "key-a",
+        },
+        quota,
+      );
+      const otherKey = yield* read(
+        { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN: "key-b" },
+        quota,
+      );
+      const failed = yield* read(
+        { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN: "key-a" },
+        () => new Response("unavailable", { status: 500 }),
+      );
+      expect(first?.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(sameKey?.credentialFingerprint).toBe(first?.credentialFingerprint);
+      expect(otherKey?.credentialFingerprint).not.toBe(first?.credentialFingerprint);
+      expect(yield* encodeJson(first)).not.toContain("key-a");
+      expect(failed?.credentialFingerprint).toBeUndefined();
     }),
   );
 
