@@ -1,6 +1,6 @@
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
+import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as Option from "effect/Option";
 
 import type { AgentActivityRowProps } from "../../widgets/AgentActivity";
@@ -18,7 +18,7 @@ export function connectedWidgetActivities(
     for (const thread of snapshot.threads) {
       const project = projects.get(thread.projectId);
       if (!project || thread.archivedAt !== null) continue;
-      const activity = projectThreadAwareness({ environmentId, project, thread });
+      const activity = projectThreadAwarenessV2({ environmentId, project, thread });
       if (!activity || activity.phase === "completed") continue;
       const live = state.status === "live";
       rows.push({

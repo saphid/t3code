@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { connectedWidgetActivities, mergeWidgetActivities } from "./widgetSnapshot";
@@ -9,7 +16,8 @@ import { connectedWidgetActivities, mergeWidgetActivities } from "./widgetSnapsh
 const environmentId = EnvironmentId.make("direct");
 const projectId = ProjectId.make("project");
 const now = "2026-09-06T12:00:00.000Z";
-const thread: OrchestrationThreadShell = {
+const timestamp = DateTime.makeUnsafe(now);
+const thread: OrchestrationV2ThreadShell = {
   id: ThreadId.make("thread"),
   projectId,
   pullRequests: [],
@@ -19,27 +27,34 @@ const thread: OrchestrationThreadShell = {
   interactionMode: "default",
   branch: null,
   worktreePath: null,
-  latestTurn: {
-    turnId: TurnId.make("turn"),
-    state: "running",
-    requestedAt: now,
-    startedAt: now,
-    completedAt: null,
-    assistantMessageId: null,
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  activeProviderThreadId: null,
+  lineage: {
+    rootThreadId: ThreadId.make("thread"),
+    parentThreadId: null,
+    relationshipToParent: null,
   },
-  createdAt: now,
-  updatedAt: now,
+  forkedFrom: null,
+  createdBy: "user",
+  creationSource: "mobile",
+  latestRunId: null,
+  activeRunId: null,
+  status: "running",
+  pendingRuntimeRequest: null,
+  latestVisibleMessage: null,
+  latestUserMessageAt: timestamp,
+  hasActionableProposedPlan: false,
+  itemCount: 0,
+  visibleItemCount: 0,
+  createdAt: timestamp,
+  updatedAt: timestamp,
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
-  session: null,
-  latestUserMessageAt: now,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
+  deletedAt: null,
 };
 function connected(
-  threads: ReadonlyArray<OrchestrationThreadShell>,
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   status: EnvironmentShellState["status"] = "live",
 ) {
   return connectedWidgetActivities(
@@ -50,14 +65,16 @@ function connected(
           status,
           error: Option.none(),
           snapshot: Option.some({
+            schemaVersion: 1,
             snapshotSequence: 1,
-            updatedAt: now,
+            archivedThreads: [],
             threads,
             projects: [
               {
                 id: projectId,
                 title: "T3",
                 workspaceRoot: "/t3",
+                repositoryIdentity: null,
                 defaultModelSelection: null,
                 scripts: [],
                 createdAt: now,
@@ -75,8 +92,26 @@ describe("connected widget activity", () => {
   it("shows direct activity without a relay account, including approval and input transitions", () => {
     for (const [overrides, phase] of [
       [{}, "running"],
-      [{ hasPendingApprovals: true }, "waiting_for_approval"],
-      [{ hasPendingUserInput: true }, "waiting_for_input"],
+      [
+        {
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("approval"),
+            kind: "command",
+            createdAt: timestamp,
+          },
+        },
+        "waiting_for_approval",
+      ],
+      [
+        {
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("input"),
+            kind: "user_input",
+            createdAt: timestamp,
+          },
+        },
+        "waiting_for_input",
+      ],
     ] as const) {
       expect(mergeWidgetActivities({}, connected([{ ...thread, ...overrides }]))).toMatchObject({
         activeCount: 1,
@@ -88,13 +123,15 @@ describe("connected widget activity", () => {
   it("keeps failed direct activity visible without counting it as active", () => {
     const failed = {
       ...thread,
-      latestTurn: { ...thread.latestTurn!, state: "error" as const, completedAt: now },
+      status: "failed" as const,
     };
     expect(mergeWidgetActivities({}, connected([failed]))).toMatchObject({
       activeCount: 0,
       activities: [{ phase: "failed", status: "Agent failed", threadTitle: "Fix widget" }],
     });
-    expect(mergeWidgetActivities({}, connected([{ ...failed, archivedAt: now }]))).toEqual({});
+    expect(mergeWidgetActivities({}, connected([{ ...failed, archivedAt: timestamp }]))).toEqual(
+      {},
+    );
   });
 
   it("clears completed, archived, and removed threads even when relay data still says running", () => {
@@ -103,10 +140,10 @@ describe("connected widget activity", () => {
       [
         {
           ...thread,
-          latestTurn: { ...thread.latestTurn!, state: "completed" as const, completedAt: now },
+          status: "completed" as const,
         },
       ],
-      [{ ...thread, archivedAt: now }],
+      [{ ...thread, archivedAt: timestamp }],
       [],
     ]) {
       expect(mergeWidgetActivities(relay, connected(threads))).toEqual({});
@@ -155,7 +192,16 @@ describe("connected widget activity", () => {
     const row = relay.activities![0]!;
     const merged = mergeWidgetActivities(
       { ...relay, activities: [row, { ...row, environmentId: "remote" }] },
-      connected([{ ...thread, hasPendingApprovals: true }]),
+      connected([
+        {
+          ...thread,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("approval"),
+            kind: "command",
+            createdAt: timestamp,
+          },
+        },
+      ]),
     );
     expect(merged.activeCount).toBe(2);
     expect(merged.activities).toEqual([

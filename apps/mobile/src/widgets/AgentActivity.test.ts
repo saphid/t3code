@@ -86,6 +86,26 @@ describe("AgentActivity widget layout", () => {
     expect(banner).toContain("#fcd34d"); // amber-300: waiting_for_approval
   });
 
+  it("degrades in-flight rows once the system marks the activity stale", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 2,
+        activities: [
+          makeRow({}),
+          makeRow({ threadId: "thread-2", phase: "completed", status: "Done" }),
+        ],
+      },
+      { ...environment, isStale: true } as never,
+    );
+    const banner = JSON.stringify(layout.banner);
+    expect(banner).toContain("Agent status out of date");
+    expect(banner).toContain("Out of date");
+    expect(banner).not.toContain("#7dd3fc"); // sky-300: running
+    expect(banner).toContain("Done");
+    expect(JSON.stringify(layout.minimal)).not.toContain("2");
+  });
+
   it("switches to the web sidebar's light palette when the scheme is light", () => {
     // macOS (iPhone Mirroring / Mac notification center) renders the activity
     // on a light background; the dark-material palette is illegible there.
@@ -288,8 +308,9 @@ describe("AgentActivity widget layout", () => {
 });
 
 describe("home-screen widget unknown activity", () => {
-  for (const widgetFamily of ["systemSmall", "systemMedium", "accessoryRectangular"] as const) {
-    it(`distinguishes unknown activity from idle in ${widgetFamily}`, () => {
+  it.each(["systemSmall", "systemMedium", "accessoryRectangular"] as const)(
+    "distinguishes unknown activity from idle in %s",
+    (widgetFamily) => {
       const widgetEnvironment = { ...environment, widgetFamily };
       const unknown = JSON.stringify(
         AgentActivityWidget({ activeCount: null, activities: [] }, widgetEnvironment as never),
@@ -299,6 +320,6 @@ describe("home-screen widget unknown activity", () => {
       const idle = JSON.stringify(AgentActivityWidget({}, widgetEnvironment as never));
       expect(idle).toContain("No active agents");
       expect(idle).not.toContain("Activity count unavailable");
-    });
-  }
+    },
+  );
 });
