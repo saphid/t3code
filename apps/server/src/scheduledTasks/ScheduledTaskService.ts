@@ -1039,6 +1039,17 @@ export const layer = Layer.effect(
               const row = rows[0];
               if (row === undefined) return null;
               const existing = yield* decodeRow(row);
+              if (
+                (input.expectedRuntimeMode !== undefined &&
+                  existing.runtimeMode !== input.expectedRuntimeMode) ||
+                (input.expectedInteractionMode !== undefined &&
+                  existing.interactionMode !== input.expectedInteractionMode)
+              ) {
+                return yield* taskError(
+                  "Scheduled task changed since it was loaded; retry the operation.",
+                  { taskId: input.id },
+                );
+              }
               // Patches merge with whatever concurrent edits already
               // committed, so the resulting pair must still be dispatchable:
               // a move keeps an existing threadId only when that thread

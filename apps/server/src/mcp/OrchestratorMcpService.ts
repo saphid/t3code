@@ -1413,6 +1413,11 @@ const make = Effect.gen(function* () {
           .update({
             id: existing.id,
             projectId: existing.projectId,
+            // loadScheduledTask authorized these modes; a raise committed
+            // since must fail the edit rather than run the caller's patch
+            // above its limits.
+            expectedRuntimeMode: existing.runtimeMode,
+            expectedInteractionMode: existing.interactionMode,
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),

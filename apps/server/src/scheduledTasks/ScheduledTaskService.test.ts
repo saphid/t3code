@@ -477,6 +477,43 @@ it.effect("update keeps disjoint concurrent edits and untouched fields", () =>
   }).pipe(Effect.provide(updateTestLayer)),
 );
 
+it.effect("update rejects a patch whose authorized modes were raised since", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedTask;
+    yield* tasks.update({ id: updateTaskId, projectId: updateProjectId, runtimeMode: "auto" });
+    // A caller authorized against "auto" loses the race to a raise.
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      runtimeMode: "full-access",
+    });
+    const stale = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        prompt: "Run something else",
+        expectedRuntimeMode: "auto",
+        expectedInteractionMode: "default",
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(stale)) assert.fail("expected a typed conflict");
+    assert.equal(stale.failure._tag, "ScheduledTaskError");
+    const after = yield* findSeeded;
+    assert.equal(after?.prompt, "prompt original");
+    assert.equal(after?.runtimeMode, "full-access");
+    // Matching pins still apply.
+    const current = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      prompt: "Run something else",
+      expectedRuntimeMode: "full-access",
+      expectedInteractionMode: "default",
+    });
+    assert.equal(Option.getOrThrow(current).task.prompt, "Run something else");
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
 it.effect("update patches runtimeMode without disturbing other fields", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService.ScheduledTaskService;

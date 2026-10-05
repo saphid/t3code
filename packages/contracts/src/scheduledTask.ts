@@ -178,6 +178,11 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeMode),
   /** Moves the task to another project; `projectId` stays the lookup scope. */
   nextProjectId: Schema.optional(ProjectId),
+  // Preconditions checked inside the write transaction: when provided, the
+  // update is rejected if the stored modes no longer match, so a caller
+  // authorized against these modes cannot patch a task raised since.
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
