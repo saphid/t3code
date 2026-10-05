@@ -11024,7 +11024,9 @@ export default function ChatView(props: ChatViewProps) {
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChange}
                 onMessagesBelowChange={setMessagesBelow}
-                visibleBottomInset={composerTimelineInset}
+                // The resting composer keeps its expanded reservation as padding;
+                // only the measured composer surface hides messages.
+                visibleBottomInset={scrollToEndClearance}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
