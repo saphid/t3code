@@ -33,6 +33,7 @@ describe("codexRateLimitsToLimits", () => {
           label: "Session",
           usedPercent: 12,
           windowDurationMins: 300,
+          exceptModelScope: "spark",
           resetsAt: "2026-07-14T03:33:20.000Z",
         },
         {
@@ -41,6 +42,7 @@ describe("codexRateLimitsToLimits", () => {
           label: "Weekly",
           usedPercent: 47,
           windowDurationMins: 10080,
+          exceptModelScope: "spark",
           resetsAt: "2026-07-19T22:26:40.000Z",
         },
       ],
@@ -60,6 +62,7 @@ describe("codexRateLimitsToLimits", () => {
         label: "Monthly",
         usedPercent: 80,
         windowDurationMins: 43_200,
+        exceptModelScope: "spark",
       },
     ]);
   });
@@ -86,6 +89,7 @@ describe("codexRateLimitsToLimits", () => {
         label: "Weekly",
         usedPercent: 42,
         windowDurationMins: 10080,
+        exceptModelScope: "spark",
       },
     ]);
   });
@@ -127,6 +131,7 @@ describe("codexRateLimitsToUpdate", () => {
           label: "Weekly",
           usedPercent: 51,
           windowDurationMins: 10080,
+          exceptModelScope: "spark",
         },
       ],
     });
@@ -153,6 +158,7 @@ describe("codexRateLimitsToUpdate", () => {
         label: "Weekly",
         usedPercent: 42,
         windowDurationMins: 10080,
+        exceptModelScope: "spark",
       },
     ]);
   });

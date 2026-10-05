@@ -31,6 +31,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
    * apply to every model on the account.
    */
   modelScope: Schema.optional(TrimmedNonEmptyString),
+  /** A model this window does not cover because it has its own allowance (Codex's Spark). */
+  exceptModelScope: Schema.optional(TrimmedNonEmptyString),
   /** What the composer calls a scoped window's quota ("Go") when `modelScope` is a match key. */
   scopeLabel: Schema.optional(TrimmedNonEmptyString),
   /**

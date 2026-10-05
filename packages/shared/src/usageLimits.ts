@@ -579,7 +579,8 @@ function modelScopeCovers(
 /**
  * The spent window that will make a send to `model` fail, or null. An
  * account-wide window applies to every model, a `modelScope`d one only to
- * the model it names, and `blocksSends: false` sub-meters never apply.
+ * the model it names, `exceptModelScope` excludes a model with its own
+ * allowance, and `blocksSends: false` sub-meters never apply.
  * Unavailable snapshots, snapshots from servers that do not mark scopes, and
  * windows whose reset has passed (a stale read) are ignored. When several
  * apply, the one that frees last is the one the user waits on.
@@ -597,6 +598,12 @@ export function exhaustedUsageWindow(
     const resetsAt = resetMillis(window);
     if (resetsAt !== null && resetsAt <= now) continue;
     if (window.modelScope !== undefined && !modelScopeCovers(provider, model, window.modelScope)) {
+      continue;
+    }
+    if (
+      window.exceptModelScope !== undefined &&
+      modelScopeCovers(provider, model, window.exceptModelScope)
+    ) {
       continue;
     }
     const current = exhausted === null ? null : resetMillis(exhausted.window);

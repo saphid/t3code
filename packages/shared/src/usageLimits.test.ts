@@ -1347,6 +1347,26 @@ describe("exhaustedUsageWindow", () => {
     ).toBeNull();
   });
 
+  it("leaves out a model with its own allowance", () => {
+    const codex = provider({
+      models: [
+        {
+          slug: "gpt-5.3-codex-spark",
+          name: "GPT-5.3-Codex-Spark",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [{ ...weekly, id: "secondary", exceptModelScope: "spark" }],
+        scopedWindows: true,
+      },
+    });
+    expect(exhaustedUsageWindow(codex, "gpt-5.3-codex-spark", now)).toBeNull();
+    expect(exhaustedUsageWindow(codex, "gpt-6-astra", now)?.window.id).toBe("secondary");
+  });
+
   it("names the window that frees last when several are spent", () => {
     const codex = provider({
       usageLimits: {

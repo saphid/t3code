@@ -88,6 +88,9 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.modelScope === undefined && existing?.modelScope !== undefined
         ? { modelScope: existing.modelScope }
         : {}),
+      ...(window.exceptModelScope === undefined && existing?.exceptModelScope !== undefined
+        ? { exceptModelScope: existing.exceptModelScope }
+        : {}),
       ...(window.scopeLabel === undefined && existing?.scopeLabel !== undefined
         ? { scopeLabel: existing.scopeLabel }
         : {}),
@@ -118,6 +121,7 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.resetsAt === b.resetsAt &&
     a.windowDurationMins === b.windowDurationMins &&
     a.modelScope === b.modelScope &&
+    a.exceptModelScope === b.exceptModelScope &&
     a.scopeLabel === b.scopeLabel &&
     a.blocksSends === b.blocksSends
   );

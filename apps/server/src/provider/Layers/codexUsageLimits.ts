@@ -91,6 +91,8 @@ function codexRateLimitsToWindows(
       label: labelForKind(kind),
       usedPercent: clampPercent(window.usedPercent),
       windowDurationMins,
+      // Spark draws on its own allowance, which these rows leave out.
+      exceptModelScope: "spark",
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
