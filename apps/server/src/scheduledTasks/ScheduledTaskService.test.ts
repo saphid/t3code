@@ -1001,6 +1001,41 @@ it.effect(
     }).pipe(Effect.provide(updateTestLayer)),
 );
 
+it.effect("update keeps an unchanged binding to a since-archived thread editable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedProjectThreads;
+    yield* seedTask;
+    yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      enabled: false,
+    });
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET archived_at = '2026-09-15T00:00:00.000Z'
+      WHERE thread_id = ${boundThreadId}
+    `;
+    // A stale draft repeats the stored binding and project with a rename.
+    const renamed = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      nextProjectId: updateProjectId,
+      title: "renamed after archive",
+    });
+    assert.equal(Option.getOrThrow(renamed).task.title, "renamed after archive");
+    // A changed binding is still validated.
+    const rebound = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(rebound)) assert.fail("expected a typed conflict");
+    assert.equal(rebound.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
 it.effect("legacy upsert keeps an unchanged binding to a since-archived thread editable", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService.ScheduledTaskService;

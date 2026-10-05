@@ -1059,12 +1059,14 @@ export const layer = Layer.effect(
               if (input.threadId !== undefined || input.nextProjectId !== undefined) {
                 const mergedThreadId =
                   input.threadId === undefined ? existing.threadId : input.threadId;
-                if (mergedThreadId !== null) {
-                  yield* requireThreadInProject(
-                    input.id,
-                    input.nextProjectId ?? existing.projectId,
-                    mergedThreadId,
-                  );
+                const mergedProjectId = input.nextProjectId ?? existing.projectId;
+                // Like upsert, only a pair this write changes is validated, so
+                // a patch that repeats the stored binding of a since-archived
+                // thread does not lose the unrelated edits it carries.
+                const bindingChanged =
+                  mergedThreadId !== existing.threadId || mergedProjectId !== existing.projectId;
+                if (mergedThreadId !== null && bindingChanged) {
+                  yield* requireThreadInProject(input.id, mergedProjectId, mergedThreadId);
                 }
               }
               const patch: Record<string, unknown> = {};
