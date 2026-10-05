@@ -67,6 +67,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  EllipsisIcon,
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
@@ -1459,6 +1460,36 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onActionSweepStart, threadRef, variantAction],
   );
+  // Touch-only devices never hover and iOS never fires contextmenu on a touch,
+  // so this opens the row's right-click menu from a visible button instead.
+  const handleTouchMenuClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      onContextMenu(threadRef, { x: rect.left, y: rect.bottom + 4 });
+    },
+    [onContextMenu, threadRef],
+  );
+  // Keeps the press from arming the row's drag sensor.
+  const handleTouchMenuPointerDown = useCallback((event: ReactPointerEvent) => {
+    event.stopPropagation();
+  }, []);
+  const touchMenuButton = (
+    <span className="hidden shrink-0 items-center [@media(any-hover:none)]:flex">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Thread actions"
+        aria-haspopup="menu"
+        onClick={handleTouchMenuClick}
+        onPointerDown={handleTouchMenuPointerDown}
+      >
+        <EllipsisIcon />
+      </Button>
+    </span>
+  );
   const handleUnsettleClick = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
@@ -1895,6 +1926,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               </span>
             )}
             {props.sweepAction !== null ? dragDestination : null}
+            {touchMenuButton}
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
           </TooltipTrigger>
           {detailsTooltip}
@@ -2098,6 +2130,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   pressed action button stays connected and a cancelled sweep's
                   release click still fires and is consumed. */}
               {props.sweepAction !== null ? dragDestination : null}
+              {touchMenuButton}
             </div>
             <div className="mt-1 flex min-w-0">
               {title}
