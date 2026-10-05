@@ -50,10 +50,11 @@ export function cursorUsageResponseToLimits(
         kind: "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
-        // Either pool can sit at 100% while the other still serves a model
-        // (Auto uses both, Grok and Composer fall back), so only the total
-        // means sends will fail.
-        ...(id === "totalPercentUsed" ? {} : { blocksSends: false }),
+        // A spent Cursor Models pool never stops a send: Grok and Composer fall
+        // back to Other Models. A spent Other Models pool stops Claude, GPT,
+        // and Gemini, so it warns, naming the pool, for any selection.
+        ...(id === "autoPercentUsed" ? { blocksSends: false } : {}),
+        ...(id === "apiPercentUsed" ? { scopeLabel: label } : {}),
         ...(resetsAt ? { resetsAt } : {}),
       });
     }

@@ -611,9 +611,11 @@ export function exhaustedUsageWindow(
 }
 
 /**
- * The composer's warning for a spent window: what is out, when it frees, and
- * the way to send sooner. `providerLocked` drops the provider-switch advice
- * where the picker only offers the thread's own provider.
+ * The composer's warning for a spent window: what is used up, when it frees,
+ * and the way to send sooner. Sends only "may" fail because paid overage
+ * (Claude extra usage, Codex credits) can keep serving a spent window.
+ * `providerLocked` drops the provider-switch advice where the picker only
+ * offers the thread's own provider.
  */
 export function formatUsageLimitWarning(
   providerLabel: string,
@@ -624,14 +626,13 @@ export function formatUsageLimitWarning(
   const subject = exhausted.window.scopeLabel ?? exhausted.modelScope ?? providerLabel;
   const kind = exhausted.window.kind === "other" ? "usage" : exhausted.window.kind;
   const resetsIn = formatResetsIn(exhausted.window, now);
-  const detail = resetsIn ? `its ${kind} limit ${resetsIn}` : `its ${kind} limit is used up`;
   const advice =
     exhausted.modelScope !== undefined
-      ? "Pick another model, or messages will fail until it resets."
+      ? "Pick another model, or messages may fail until it resets."
       : options?.providerLocked === true
-        ? "Messages will fail until it resets."
-        : "Pick another provider, or messages will fail until it resets.";
-  return `${subject} is out of usage: ${detail}. ${advice}`;
+        ? "Messages may fail until it resets."
+        : "Pick another provider, or messages may fail until it resets.";
+  return `${subject} has used its ${kind} limit${resetsIn ? ` (${resetsIn})` : ""}. ${advice}`;
 }
 
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */

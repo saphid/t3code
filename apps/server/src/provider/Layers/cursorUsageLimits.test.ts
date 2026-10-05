@@ -43,7 +43,7 @@ describe("Cursor usage limits", () => {
           kind: "monthly",
           label: "Other Models",
           usedPercent: 100,
-          blocksSends: false,
+          scopeLabel: "Other Models",
           resetsAt: "2026-09-20T03:53:06.000Z",
         },
       ]),

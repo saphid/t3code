@@ -1238,10 +1238,10 @@ describe("exhaustedUsageWindow", () => {
     const exhausted = exhaustedUsageWindow(codex, "gpt-6-astra", now);
     expect(exhausted?.window.id).toBe("five_hour");
     expect(formatUsageLimitWarning("Codex", exhausted!, now)).toBe(
-      "Codex is out of usage: its session limit resets in 2h 0m. Pick another provider, or messages will fail until it resets.",
+      "Codex has used its session limit (resets in 2h 0m). Pick another provider, or messages may fail until it resets.",
     );
     expect(formatUsageLimitWarning("Codex", exhausted!, now, { providerLocked: true })).toBe(
-      "Codex is out of usage: its session limit resets in 2h 0m. Messages will fail until it resets.",
+      "Codex has used its session limit (resets in 2h 0m). Messages may fail until it resets.",
     );
   });
 
@@ -1298,7 +1298,7 @@ describe("exhaustedUsageWindow", () => {
     const exhausted = exhaustedUsageWindow(snapshot, "claude-fable-5-1", now);
     expect(exhausted?.modelScope).toBe("Fable");
     expect(formatUsageLimitWarning("Claude", exhausted!, now)).toBe(
-      "Fable is out of usage: its weekly limit resets in 3d 0h. Pick another model, or messages will fail until it resets.",
+      "Fable has used its weekly limit (resets in 3d 0h). Pick another model, or messages may fail until it resets.",
     );
     expect(exhaustedUsageWindow(snapshot, "claude-sonnet-5-5", now)).toBeNull();
   });
@@ -1310,8 +1310,41 @@ describe("exhaustedUsageWindow", () => {
       usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [go], scopedWindows: true },
     });
     const exhausted = exhaustedUsageWindow(openCode, "opencode/kimi-k3", now);
-    expect(formatUsageLimitWarning("OpenCode", exhausted!, now)).toMatch(/^Go is out of usage/);
+    expect(formatUsageLimitWarning("OpenCode", exhausted!, now)).toMatch(
+      /^Go has used its weekly limit/,
+    );
     expect(exhaustedUsageWindow(openCode, "anthropic/claude-sonnet-5-5", now)).toBeNull();
+  });
+
+  it("warns for Cursor's Other Models pool by name but not for the Cursor Models pool", () => {
+    const pool = (id: string, label: string, extra: Partial<ServerProviderUsageWindow>) => ({
+      id,
+      kind: "monthly" as const,
+      label,
+      usedPercent: 100,
+      resetsAt: "2026-09-20T00:00:00.000Z",
+      ...extra,
+    });
+    const cursor = (window: ServerProviderUsageWindow) =>
+      provider({
+        driver: ProviderDriverKind.make("cursor"),
+        usageLimits: {
+          checkedAt: "2026-09-03T11:00:00.000Z",
+          windows: [{ ...pool("totalPercentUsed", "Overall", {}), usedPercent: 80 }, window],
+          scopedWindows: true,
+        },
+      });
+    const other = cursor(pool("apiPercentUsed", "Other Models", { scopeLabel: "Other Models" }));
+    expect(
+      formatUsageLimitWarning("Cursor", exhaustedUsageWindow(other, "claude-opus-5-5", now)!, now),
+    ).toMatch(/^Other Models has used its monthly limit/);
+    expect(
+      exhaustedUsageWindow(
+        cursor(pool("autoPercentUsed", "Cursor Models", { blocksSends: false })),
+        "composer-2",
+        now,
+      ),
+    ).toBeNull();
   });
 
   it("names the window that frees last when several are spent", () => {

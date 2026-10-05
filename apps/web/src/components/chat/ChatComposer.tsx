@@ -5609,7 +5609,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           id: "usage-limit-warning",
           variant: "warning",
           icon: <GaugeIcon />,
-          title: "Out of usage",
+          title: "Usage limit used up",
           description: usageLimitWarning,
         };
   const bannerStackItems =
