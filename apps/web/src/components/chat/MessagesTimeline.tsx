@@ -190,6 +190,7 @@ import {
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
 import {
   computeStableMessagesTimelineRows,
+  countTimelineMessagesBelow,
   deriveMessagesTimelineRowsWithState,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
@@ -482,6 +483,8 @@ interface MessagesTimelineProps {
    * scroll-mode refs whenever the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
+  onMessagesBelowChange?: (count: number) => void;
+  visibleBottomInset?: number;
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -550,6 +553,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
+  onMessagesBelowChange,
+  visibleBottomInset = contentInsetEndAdjustment,
   onContentOverflowChange,
   liveFollowEnabled,
   onToolOutputCollapsedAtEnd,
@@ -800,6 +805,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
+  const messageRowIndices = useMemo(
+    () => rows.flatMap((row, index) => (row.kind === "message" ? [index] : [])),
+    [rows],
+  );
+  const timelineHeaderSizeRef = useRef(0);
+  const reportMessagesBelow = useCallback(() => {
+    onMessagesBelowChange?.(
+      countTimelineMessagesBelow(
+        messageRowIndices,
+        listRef.current?.getState?.(),
+        visibleBottomInset,
+        timelineHeaderSizeRef.current,
+      ),
+    );
+  }, [visibleBottomInset, listRef, messageRowIndices, onMessagesBelowChange]);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -1009,12 +1029,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, []);
   const reportContentOverflow = useCallback(() => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
+    if (contentOverflowFrameRef.current !== null) return;
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
       contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
+      onContentOverflowChange?.(measureContentOverflow());
+      reportMessagesBelow();
     });
-  }, [measureContentOverflow, onContentOverflowChange]);
+  }, [measureContentOverflow, onContentOverflowChange, reportMessagesBelow]);
+  const handleMetricsChange = useCallback(
+    (metrics: { headerSize: number }) => {
+      timelineHeaderSizeRef.current = metrics.headerSize;
+      reportContentOverflow();
+    },
+    [reportContentOverflow],
+  );
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -1024,7 +1052,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
-  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
+    reportMessagesBelow();
+  }, [
+    cancelContentOverflowFrame,
+    measureContentOverflow,
+    onContentOverflowChange,
+    reportMessagesBelow,
+    rows.length,
+  ]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -1372,6 +1407,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
+            onMetricsChange={handleMetricsChange}
             className={cn(
               "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
               topFadeEnabled && "topbar-scroll-fade",
