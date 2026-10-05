@@ -7,6 +7,7 @@ import {
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
   overlayComposerIsResting,
+  resolveComposerCoveredInset,
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
@@ -470,6 +471,22 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
         previous: { hiddenCount: 2, visible: false },
       }),
     ).toEqual({ hiddenCount: 2, visible: true });
+  });
+});
+
+describe("resolveComposerCoveredInset", () => {
+  it("excludes the overlay's transparent top padding but includes attached banners", () => {
+    // Overlay spans 790-900 with 8px of transparent padding above the surface.
+    expect(
+      resolveComposerCoveredInset({ overlayBottom: 900, mainSurfaceTop: 798, attachments: [] }),
+    ).toBe(102);
+    expect(
+      resolveComposerCoveredInset({
+        overlayBottom: 900,
+        mainSurfaceTop: 798,
+        attachments: [{ top: 760 }],
+      }),
+    ).toBe(140);
   });
 });
 

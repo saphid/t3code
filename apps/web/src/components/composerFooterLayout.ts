@@ -239,3 +239,17 @@ export function resolveScrollToEndClearance(input: {
   }
   return Math.ceil(input.overlayHeight - (top - contentTop));
 }
+
+/**
+ * Height of the timeline's bottom edge hidden by the composer and its attached
+ * banners. The overlay's transparent top padding leaves messages visible.
+ */
+export function resolveComposerCoveredInset(input: {
+  overlayBottom: number;
+  mainSurfaceTop: number;
+  attachments: ReadonlyArray<{ top: number }>;
+}): number {
+  let top = input.mainSurfaceTop;
+  for (const attachment of input.attachments) top = Math.min(top, attachment.top);
+  return Math.max(0, Math.ceil(input.overlayBottom - top));
+}

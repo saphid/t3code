@@ -431,6 +431,7 @@ import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/Messag
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
+  resolveComposerCoveredInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -1919,6 +1920,7 @@ export default function ChatView(props: ChatViewProps) {
   // False while a status bar stands in for the composer (a native subagent).
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
+  const [composerCoveredInset, setComposerCoveredInset] = useState(0);
   const isAtEndRef = useRef(true);
   const isTimelineAtLogicalEnd = useCallback(
     () => resolveTimelineIsAtEnd(legendListRef.current?.getState()) ?? isAtEndRef.current,
@@ -6740,21 +6742,34 @@ export default function ChatView(props: ChatViewProps) {
       const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
         "button[data-scroll-to-end]",
       );
+      const mainSurfaceTop = mainSurface?.getBoundingClientRect().top;
+      const attachments = composerOverlayElement
+        ? Array.from(
+            composerOverlayElement.querySelectorAll<HTMLElement>(
+              '[data-composer-banner-surface="attached"]',
+            ),
+            (element) => element.getBoundingClientRect(),
+          )
+        : [];
       const clearance =
-        composerOverlayElement && mainSurface && button
+        mainSurfaceTop !== undefined && button
           ? resolveScrollToEndClearance({
               overlayHeight: nextHeight,
-              mainSurfaceTop: mainSurface.getBoundingClientRect().top,
+              mainSurfaceTop,
               button: button.getBoundingClientRect(),
-              attachments: Array.from(
-                composerOverlayElement.querySelectorAll<HTMLElement>(
-                  '[data-composer-banner-surface="attached"]',
-                ),
-                (element) => element.getBoundingClientRect(),
-              ),
+              attachments,
             })
           : nextHeight;
       setScrollToEndClearance(clearance);
+      setComposerCoveredInset(
+        composerOverlayElement && mainSurfaceTop !== undefined
+          ? resolveComposerCoveredInset({
+              overlayBottom: composerOverlayElement.getBoundingClientRect().bottom,
+              mainSurfaceTop,
+              attachments,
+            })
+          : nextHeight,
+      );
     },
     [composerOverlayElement],
   );
@@ -11026,7 +11041,7 @@ export default function ChatView(props: ChatViewProps) {
                 onMessagesBelowChange={setMessagesBelow}
                 // The resting composer keeps its expanded reservation as padding;
                 // only the measured composer surface hides messages.
-                visibleBottomInset={scrollToEndClearance}
+                visibleBottomInset={composerCoveredInset}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
