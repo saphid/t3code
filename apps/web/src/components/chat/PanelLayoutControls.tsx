@@ -139,6 +139,38 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   );
 });
 
+/**
+ * A small tab on the terminal drawer's top edge, at the bottom of the chat column, so the
+ * terminal can be toggled where it appears. It follows the drawer's own motion setting and
+ * complements the titlebar toggle rather than replacing it.
+ */
+export const TerminalDrawerTab = memo(function TerminalDrawerTab({
+  terminalOpen,
+  terminalShortcutLabel,
+  onToggleTerminal,
+}: Pick<PanelLayoutControlsProps, "terminalOpen" | "terminalShortcutLabel" | "onToggleTerminal">) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Toggle terminal drawer"
+            aria-pressed={terminalOpen}
+            onClick={onToggleTerminal}
+            className="flex h-5 w-10 cursor-pointer items-center justify-center rounded-t-md border border-b-0 border-border bg-background text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:text-foreground"
+          >
+            <PanelBottomIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">
+        {`Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
+
 export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
   onToggle,
