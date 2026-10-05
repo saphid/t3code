@@ -1374,6 +1374,67 @@ it.effect("scheduled dispatch still fires when no edit lands in the gap", () =>
   }).pipe(Effect.provide(gatedDispatchLayer)),
 );
 
+it.effect("scheduled dispatch re-checks its window when claiming the run", () => {
+  const at = (day: number, hour: number, minute: number) =>
+    DateTime.makeZonedUnsafe(
+      { year: 2026, month: 9, day, hour, minute, second: 0, millisecond: 0 },
+      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+    );
+  const scenario = Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* tasks.upsert({
+      id: updateTaskId,
+      title: "Business hours",
+      prompt: "Check the queue.",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 60_000, window: { start: "09:00", end: "17:00" } },
+      projectId: updateProjectId,
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      creationSource: "mcp",
+    });
+    dispatchLaunchCount = 0;
+    dispatchLaunched = null;
+    let dueSeen = false;
+    let closed = false;
+    // The poll finds the task due inside the window; the window closes while
+    // the claim transaction reads the row.
+    sqlProbe = (statement, rows) => {
+      if (isDueRead(statement) && rows.length > 0) dueSeen = true;
+      if (dueSeen && !closed && isMarkRead(statement)) {
+        closed = true;
+        return TestClock.setTime(DateTime.toEpochMillis(at(28, 17, 0)));
+      }
+    };
+    try {
+      yield* TestClock.adjust("2 minutes");
+      const nextOpening = DateTime.formatIso(DateTime.toUtc(at(29, 9, 0)));
+      yield* tasks.subscribeList().pipe(
+        Stream.filter(({ tasks: all }) =>
+          all.some((task) => task.id === updateTaskId && task.nextRunAt === nextOpening),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      assert.isTrue(closed);
+      assert.equal(dispatchLaunchCount, 0);
+      const after = yield* findSeeded;
+      assert.equal(after?.runCount, 0);
+      assert.equal(after?.lastRunStatus, "never");
+      assert.isTrue(after?.enabled);
+    } finally {
+      sqlProbe = null;
+    }
+  });
+  // Monday 16:50, set before the scheduler starts polling: the one-minute
+  // task is due at 16:51, inside 09:00-17:00.
+  return TestClock.setTime(DateTime.toEpochMillis(at(28, 16, 50))).pipe(
+    Effect.andThen(scenario.pipe(Effect.provide(gatedDispatchLayer))),
+  );
+});
+
 it.effect("a contended completion write retries instead of stranding the task", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService.ScheduledTaskService;

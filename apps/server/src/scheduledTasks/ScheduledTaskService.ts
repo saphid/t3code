@@ -978,6 +978,33 @@ export const layer = Layer.effect(
                     } as const;
                   }
                 }
+                if (trigger === "scheduled") {
+                  // The poll judged the window before this transaction; the
+                  // clock may have crossed its end or a day boundary since.
+                  // Re-aim at the next opening without counting a run.
+                  const claimedAt = yield* localNow;
+                  if (isOutsideIntervalRestrictions(active.schedule, claimedAt)) {
+                    const next = nextRunAt(active, claimedAt);
+                    yield* sql`
+                      UPDATE scheduled_tasks
+                      SET next_run_at = ${next}, updated_at = ${iso(claimedAt)}
+                      WHERE task_id = ${active.id}
+                    `.pipe(
+                      Effect.mapError((cause) =>
+                        taskError("Could not reschedule schedule task run.", {
+                          taskId: active.id,
+                          cause,
+                        }),
+                      ),
+                    );
+                    return {
+                      task: { ...active, nextRunAt: next, updatedAt: iso(claimedAt) },
+                      running: false,
+                      paused: false,
+                      rescheduled: true,
+                    } as const;
+                  }
+                }
                 yield* markRunning(active.id, startedAtIso);
                 return { task: active, running: true, paused: false } as const;
               }),
@@ -1004,6 +1031,13 @@ export const layer = Layer.effect(
           return task;
         }
         if (!marked.running) {
+          if ("rescheduled" in marked) {
+            yield* Effect.logInfo("Skipping schedule task run outside its window", {
+              taskId: marked.task.id,
+              rescheduledTo: marked.task.nextRunAt,
+            });
+            yield* notifyChanged;
+          }
           if (marked.paused) {
             yield* Effect.logInfo(
               "Paused schedule task bound to a thread that no longer accepts runs",

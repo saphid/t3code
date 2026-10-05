@@ -284,6 +284,17 @@ describe("interval restrictions at dispatch and across DST", () => {
     expect(next && DateTime.toParts(next)).toMatchObject({ day: 9, hour: 2, minute: 10 });
   });
 
+  it("opens a window at the end of a spring-forward gap that swallows its opening", () => {
+    // 02:30 does not exist on 2026-03-08 in New York, but 03:00-04:00 does.
+    const from = zoned("America/New_York", { year: 2026, month: 3, day: 8, hour: 1, minute: 0 });
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 60_000, window: { start: "02:30", end: "04:00" } },
+      from,
+    );
+    expect(next && DateTime.toParts(next)).toMatchObject({ day: 8, hour: 3, minute: 0 });
+    expect(next && DateTime.formatIso(next)).toBe("2026-03-08T07:00:00.000Z");
+  });
+
   it("opens a window at the later 01:30 when a fall-back hour repeats", () => {
     // 2026-11-01 01:00-02:00 occurs twice in New York; 06:05Z is the
     // repeated 01:05 (EST), after the first 01:30 (EDT) has passed.
@@ -350,6 +361,7 @@ describe("interval restrictions at dispatch and across DST", () => {
       },
       from,
     );
-    expect(next).not.toBeNull();
+    // Sunday 2026-03-08 03:00 EDT, not a week later.
+    expect(next && DateTime.formatIso(next)).toBe("2026-03-08T07:00:00.000Z");
   });
 });

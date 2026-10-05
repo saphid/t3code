@@ -42,6 +42,15 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.scheduledTaskUpdate,
     ).toBe(true);
   });
+  it("requires explicit support for scheduled-task restrictions", () => {
+    expect(decodeDescriptor(descriptor).capabilities.scheduledTaskRestrictions).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, scheduledTaskRestrictions: true },
+      }).capabilities.scheduledTaskRestrictions,
+    ).toBe(true);
+  });
   it("requires an advertised required-worktree bootstrap capability", () => {
     expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
     expect(

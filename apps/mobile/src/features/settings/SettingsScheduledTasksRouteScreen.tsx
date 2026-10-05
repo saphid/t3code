@@ -61,6 +61,7 @@ import {
   editorEnabledSwitch,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
+  scheduleRestrictionsAccess,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
@@ -604,6 +605,7 @@ function TaskForm({
     draft,
     tasks.data?.tasks.find((task) => task.id === draft.task?.id) ?? draft.task,
   );
+  const restrictions = scheduleRestrictionsAccess(draft.schedule, config?.environment.capabilities);
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
@@ -640,6 +642,13 @@ function TaskForm({
     }
     if (!projects.some((project) => project.id === draft.projectId)) {
       Alert.alert("Project unavailable", "Choose a project in this environment.");
+      return;
+    }
+    if (restrictions === "blocked") {
+      Alert.alert(
+        "Run limits are not supported",
+        "This environment's server cannot limit runs by day, time, or count. Clear them or update the server.",
+      );
       return;
     }
     // Lock before React renders, and keep successful creates locked until the form closes.
@@ -963,146 +972,158 @@ function TaskForm({
                 at least 1 minute.
               </Text>
             ) : null}
-            <SelectRow
-              label="Repeat"
-              value={
-                draft.schedule.intervalWeekdays.length === 0
-                  ? "Every day"
-                  : repeatLabel(draft.schedule.intervalWeekdays)
-              }
-              borderTop
-              actions={[
-                {
-                  id: "every_day",
-                  title: "Every day",
-                  state: draft.schedule.intervalWeekdays.length === 0 ? "on" : undefined,
-                },
-                {
-                  id: "weekdays",
-                  title: "Weekdays",
-                  state:
-                    repeatLabel(draft.schedule.intervalWeekdays) === "Weekdays" &&
-                    draft.schedule.intervalWeekdays.length > 0
-                      ? "on"
-                      : undefined,
-                },
-                ...DAYS.map((day) => ({
-                  id: String(day.index),
-                  title: day.label,
-                  attributes: { keepsMenuPresented: true },
-                  state: draft.schedule.intervalWeekdays.includes(day.index)
-                    ? ("on" as const)
-                    : undefined,
-                })),
-              ]}
-              onSelect={(id) => {
-                if (id === "every_day") {
-                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalWeekdays: [] } });
-                  return;
-                }
-                if (id === "weekdays") {
-                  setDraft({
-                    ...draft,
-                    schedule: { ...draft.schedule, intervalWeekdays: [1, 2, 3, 4, 5] },
-                  });
-                  return;
-                }
-                const day = DAYS.find((item) => String(item.index) === id);
-                if (!day) return;
-                setDraft({
-                  ...draft,
-                  schedule: {
-                    ...draft.schedule,
-                    intervalWeekdays: draft.schedule.intervalWeekdays.includes(day.index)
-                      ? draft.schedule.intervalWeekdays.filter((index) => index !== day.index)
-                      : [...draft.schedule.intervalWeekdays, day.index],
-                  },
-                });
-              }}
-            />
-            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-              <Text className="min-w-0 flex-1 text-lg text-foreground">Only between</Text>
-              <ThemedSwitch
-                accessibilityLabel="Restrict runs to a time window"
-                value={draft.schedule.windowEnabled}
-                onValueChange={(windowEnabled) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, windowEnabled } })
-                }
-              />
-            </View>
-            {draft.schedule.windowEnabled ? (
+            {restrictions === "hidden" ? null : (
               <>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Window opens at ${formatTime(draft.schedule.windowStart)}`}
-                  onPress={() => setPicker(picker === "windowStart" ? null : "windowStart")}
-                  className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-                >
-                  <Text className="text-lg text-foreground">From</Text>
-                  <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
-                    {formatTime(draft.schedule.windowStart)}
-                  </Text>
-                  <SymbolView
-                    name="chevron.right"
-                    size={14}
-                    tintColorClassName="accent-chevron"
-                    type="monochrome"
+                <SelectRow
+                  label="Repeat"
+                  value={
+                    draft.schedule.intervalWeekdays.length === 0
+                      ? "Every day"
+                      : repeatLabel(draft.schedule.intervalWeekdays)
+                  }
+                  borderTop
+                  actions={[
+                    {
+                      id: "every_day",
+                      title: "Every day",
+                      state: draft.schedule.intervalWeekdays.length === 0 ? "on" : undefined,
+                    },
+                    {
+                      id: "weekdays",
+                      title: "Weekdays",
+                      state:
+                        repeatLabel(draft.schedule.intervalWeekdays) === "Weekdays" &&
+                        draft.schedule.intervalWeekdays.length > 0
+                          ? "on"
+                          : undefined,
+                    },
+                    ...DAYS.map((day) => ({
+                      id: String(day.index),
+                      title: day.label,
+                      attributes: { keepsMenuPresented: true },
+                      state: draft.schedule.intervalWeekdays.includes(day.index)
+                        ? ("on" as const)
+                        : undefined,
+                    })),
+                  ]}
+                  onSelect={(id) => {
+                    if (id === "every_day") {
+                      setDraft({ ...draft, schedule: { ...draft.schedule, intervalWeekdays: [] } });
+                      return;
+                    }
+                    if (id === "weekdays") {
+                      setDraft({
+                        ...draft,
+                        schedule: { ...draft.schedule, intervalWeekdays: [1, 2, 3, 4, 5] },
+                      });
+                      return;
+                    }
+                    const day = DAYS.find((item) => String(item.index) === id);
+                    if (!day) return;
+                    setDraft({
+                      ...draft,
+                      schedule: {
+                        ...draft.schedule,
+                        intervalWeekdays: draft.schedule.intervalWeekdays.includes(day.index)
+                          ? draft.schedule.intervalWeekdays.filter((index) => index !== day.index)
+                          : [...draft.schedule.intervalWeekdays, day.index],
+                      },
+                    });
+                  }}
+                />
+                <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+                  <Text className="min-w-0 flex-1 text-lg text-foreground">Only between</Text>
+                  <ThemedSwitch
+                    accessibilityLabel="Restrict runs to a time window"
+                    value={draft.schedule.windowEnabled}
+                    onValueChange={(windowEnabled) =>
+                      setDraft({ ...draft, schedule: { ...draft.schedule, windowEnabled } })
+                    }
                   />
-                </Pressable>
-                {picker === "windowStart" ? (
-                  <DateTimePicker
-                    value={timePickerValue(draft.schedule.windowStart)}
-                    mode="time"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onDismiss={() => setPicker(null)}
-                    onValueChange={(_, selected) => {
-                      const windowStart = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
-                      setDraft({ ...draft, schedule: { ...draft.schedule, windowStart } });
-                    }}
-                  />
-                ) : null}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Window closes at ${formatTime(draft.schedule.windowEnd)}`}
-                  onPress={() => setPicker(picker === "windowEnd" ? null : "windowEnd")}
-                  className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-                >
-                  <Text className="text-lg text-foreground">Until</Text>
-                  <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
-                    {formatTime(draft.schedule.windowEnd)}
-                  </Text>
-                  <SymbolView
-                    name="chevron.right"
-                    size={14}
-                    tintColorClassName="accent-chevron"
-                    type="monochrome"
-                  />
-                </Pressable>
-                {picker === "windowEnd" ? (
-                  <DateTimePicker
-                    value={timePickerValue(draft.schedule.windowEnd)}
-                    mode="time"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    onDismiss={() => setPicker(null)}
-                    onValueChange={(_, selected) => {
-                      const windowEnd = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
-                      setDraft({ ...draft, schedule: { ...draft.schedule, windowEnd } });
-                    }}
-                  />
+                </View>
+                {draft.schedule.windowEnabled ? (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Window opens at ${formatTime(draft.schedule.windowStart)}`}
+                      onPress={() => setPicker(picker === "windowStart" ? null : "windowStart")}
+                      className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                    >
+                      <Text className="text-lg text-foreground">From</Text>
+                      <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                        {formatTime(draft.schedule.windowStart)}
+                      </Text>
+                      <SymbolView
+                        name="chevron.right"
+                        size={14}
+                        tintColorClassName="accent-chevron"
+                        type="monochrome"
+                      />
+                    </Pressable>
+                    {picker === "windowStart" ? (
+                      <DateTimePicker
+                        value={timePickerValue(draft.schedule.windowStart)}
+                        mode="time"
+                        display={Platform.OS === "ios" ? "spinner" : "default"}
+                        onDismiss={() => setPicker(null)}
+                        onValueChange={(_, selected) => {
+                          const windowStart = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                          setDraft({ ...draft, schedule: { ...draft.schedule, windowStart } });
+                        }}
+                      />
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Window closes at ${formatTime(draft.schedule.windowEnd)}`}
+                      onPress={() => setPicker(picker === "windowEnd" ? null : "windowEnd")}
+                      className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                    >
+                      <Text className="text-lg text-foreground">Until</Text>
+                      <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                        {formatTime(draft.schedule.windowEnd)}
+                      </Text>
+                      <SymbolView
+                        name="chevron.right"
+                        size={14}
+                        tintColorClassName="accent-chevron"
+                        type="monochrome"
+                      />
+                    </Pressable>
+                    {picker === "windowEnd" ? (
+                      <DateTimePicker
+                        value={timePickerValue(draft.schedule.windowEnd)}
+                        mode="time"
+                        display={Platform.OS === "ios" ? "spinner" : "default"}
+                        onDismiss={() => setPicker(null)}
+                        onValueChange={(_, selected) => {
+                          const windowEnd = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                          setDraft({ ...draft, schedule: { ...draft.schedule, windowEnd } });
+                        }}
+                      />
+                    ) : null}
+                  </>
                 ) : null}
               </>
-            ) : null}
+            )}
           </>
         )}
-        <FormField
-          label="Stop after (runs)"
-          value={draft.schedule.maxRuns}
-          keyboardType="decimal-pad"
-          disabled={saving}
-          placeholder="No limit"
-          borderTop
-          onChange={(maxRuns) => setDraft({ ...draft, schedule: { ...draft.schedule, maxRuns } })}
-        />
+        {restrictions === "hidden" ? null : (
+          <FormField
+            label="Stop after (runs)"
+            value={draft.schedule.maxRuns}
+            keyboardType="decimal-pad"
+            disabled={saving}
+            placeholder="No limit"
+            borderTop
+            onChange={(maxRuns) => setDraft({ ...draft, schedule: { ...draft.schedule, maxRuns } })}
+          />
+        )}
+        {restrictions === "blocked" ? (
+          <Text className="px-4 pb-3 text-sm text-danger-foreground">
+            This environment's server cannot limit runs by day, time, or count. Clear them or update
+            the server before saving.
+          </Text>
+        ) : null}
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
           <View className="min-w-0 flex-1">
             <Text className="text-lg text-foreground">Enabled</Text>

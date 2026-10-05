@@ -75,8 +75,17 @@ function nextRestrictedIntervalRun(
           candidate,
           (windowStart - local) * MINUTE_MS - second * 1000 - millisecond,
         );
-    // A window opening inside a spring-forward gap does not exist that day.
     if (localMinutes(opensAt) === windowStart) return opensAt;
+    // The opening falls in a spring-forward gap: the window starts existing
+    // when the clocks jump, unless the jump lands past its end.
+    const jump = nextOffsetChange(
+      candidate,
+      DateTime.subtractDuration(startOfNextDay(candidate), 1),
+    );
+    if (jump !== null) {
+      const wall = localMinutes(jump);
+      if (wall >= windowStart && wall < windowEnd) return jump;
+    }
     candidate = startOfNextDay(candidate);
   }
   return null;
@@ -114,17 +123,32 @@ function repeatedWindowOpening(
   }
   // The window began before the repeated hour: find the fall-back instant
   // (first instant on the later offset) and use it if it lands in the window.
-  let before = DateTime.toEpochMillis(candidate);
-  let after = DateTime.toEpochMillis(endOfDay);
+  const fallBack = nextOffsetChange(candidate, endOfDay);
+  if (fallBack === null) return null;
+  const wall = localMinutes(fallBack);
+  return wall >= windowStart && wall < windowEnd ? fallBack : null;
+}
+
+/**
+ * First instant in (from, until] on a different UTC offset than `from`, or
+ * null when the offset does not change in that span.
+ */
+function nextOffsetChange(
+  from: DateTime.DateTime,
+  until: DateTime.DateTime,
+): DateTime.DateTime | null {
+  if (!DateTime.isZoned(from) || !DateTime.isZoned(until)) return null;
+  const offsetBefore = DateTime.zonedOffset(from);
+  if (DateTime.zonedOffset(until) === offsetBefore) return null;
+  let before = DateTime.toEpochMillis(from);
+  let after = DateTime.toEpochMillis(until);
   while (after - before > 1) {
     const middle = before + Math.floor((after - before) / 2);
-    const probe = DateTime.addDuration(candidate, middle - DateTime.toEpochMillis(candidate));
+    const probe = DateTime.addDuration(from, middle - DateTime.toEpochMillis(from));
     if (DateTime.isZoned(probe) && DateTime.zonedOffset(probe) === offsetBefore) before = middle;
     else after = middle;
   }
-  const fallBack = DateTime.addDuration(candidate, after - DateTime.toEpochMillis(candidate));
-  const wall = localMinutes(fallBack);
-  return wall >= windowStart && wall < windowEnd ? fallBack : null;
+  return DateTime.addDuration(from, after - DateTime.toEpochMillis(from));
 }
 
 function localMinutes(date: DateTime.DateTime): number {

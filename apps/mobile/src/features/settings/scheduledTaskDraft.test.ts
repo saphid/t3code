@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   type ServerConfig,
   ProviderInstanceId,
   ProjectId,
@@ -17,6 +19,7 @@ import {
   hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
+  scheduleRestrictionsAccess,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -83,6 +86,53 @@ describe("scheduleDraftForTask", () => {
       timeOfDay: "09:00",
       maxRuns: 5,
     });
+  });
+});
+
+describe("schedule restrictions follow server support", () => {
+  // A server from before restrictions shipped: it supports atomic edits but
+  // would decode a restricted interval as a plain, uncapped one.
+  const olderServer: ExecutionEnvironmentDescriptor = {
+    environmentId: EnvironmentId.make("server"),
+    label: "Server",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "0.0.40",
+    capabilities: { repositoryIdentity: true, scheduledTaskUpdate: true },
+  };
+  const interval = { ...DEFAULT_SCHEDULE, mode: "interval" as const };
+
+  it("hides restrictions on an older server and blocks a restricted save", () => {
+    expect(scheduleRestrictionsAccess(interval, olderServer.capabilities)).toBe("hidden");
+    expect(scheduleRestrictionsAccess(DEFAULT_SCHEDULE, undefined)).toBe("hidden");
+    for (const restricted of [
+      { ...interval, maxRuns: "3" },
+      { ...interval, windowEnabled: true },
+      { ...interval, intervalWeekdays: [1, 2, 3, 4, 5] },
+      { ...DEFAULT_SCHEDULE, maxRuns: "3" },
+    ]) {
+      expect(scheduleRestrictionsAccess(restricted, olderServer.capabilities)).toBe("blocked");
+    }
+    // All seven days, or interval-only fields left on a fixed-time draft, restrict nothing.
+    expect(
+      scheduleRestrictionsAccess(
+        { ...interval, intervalWeekdays: [0, 1, 2, 3, 4, 5, 6] },
+        olderServer.capabilities,
+      ),
+    ).toBe("hidden");
+    expect(
+      scheduleRestrictionsAccess(
+        { ...DEFAULT_SCHEDULE, windowEnabled: true },
+        olderServer.capabilities,
+      ),
+    ).toBe("hidden");
+  });
+
+  it("offers restrictions on a server that advertises them", () => {
+    const capabilities = { ...olderServer.capabilities, scheduledTaskRestrictions: true };
+    expect(scheduleRestrictionsAccess(interval, capabilities)).toBe("available");
+    expect(scheduleRestrictionsAccess({ ...interval, maxRuns: "3" }, capabilities)).toBe(
+      "available",
+    );
   });
 });
 

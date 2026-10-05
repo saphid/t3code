@@ -124,6 +124,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   /** Atomic scheduled-task edits; older servers use the existing upsert endpoint. */
   scheduledTaskUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Scheduled tasks honour weekday, time-window and run-cap restrictions. Older servers
+      decode a restricted schedule as an unrestricted one, so clients must not send them. */
+  scheduledTaskRestrictions: Schema.optionalKey(Schema.Boolean),
   /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),

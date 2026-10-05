@@ -78,6 +78,29 @@ function maxRunsFromDraft(value: string): number | null | undefined {
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
 }
 
+/** Whether the draft asks for weekday, time-window or run-cap restrictions. */
+function scheduleDraftHasRestrictions(draft: ScheduleDraft): boolean {
+  if (draft.maxRuns.trim() !== "") return true;
+  if (draft.mode !== "interval") return false;
+  const days = new Set(draft.intervalWeekdays).size;
+  return draft.windowEnabled || (days > 0 && days < 7);
+}
+
+/**
+ * How the editor offers run restrictions on the target server. A server
+ * without `scheduledTaskRestrictions` decodes a restricted schedule as an
+ * unrestricted one, so the controls stay hidden there; a draft that already
+ * carries restrictions (for example after switching servers) keeps them
+ * visible so they can be cleared, and cannot save until they are.
+ */
+export function scheduleRestrictionsAccess(
+  draft: ScheduleDraft,
+  capabilities: { readonly scheduledTaskRestrictions?: boolean } | undefined,
+): "available" | "hidden" | "blocked" {
+  if (capabilities?.scheduledTaskRestrictions === true) return "available";
+  return scheduleDraftHasRestrictions(draft) ? "blocked" : "hidden";
+}
+
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   const maxRuns = task.schedule.maxRuns === undefined ? "" : String(task.schedule.maxRuns);
   if (task.schedule.type === "fixed_time") {

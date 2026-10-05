@@ -51,6 +51,7 @@ import {
   runCapReached,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
+  scheduleRestrictionsAccess,
   taskToDraft,
   timeWindowValid,
   type DraftState,
@@ -548,6 +549,10 @@ function ScheduledTaskEditorDialog({
     baselineDraft,
     tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId) ?? task,
   );
+  const restrictions = scheduleRestrictionsAccess(
+    draft,
+    environment?.serverConfig?.environment.capabilities,
+  );
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
@@ -600,6 +605,13 @@ function ScheduledTaskEditorDialog({
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
     ) {
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
+      return;
+    }
+    if (restrictions === "blocked") {
+      reportFailure(
+        "Run limits are not supported",
+        "This environment's server cannot limit runs by day, time, or count. Clear them or update the server.",
+      );
       return;
     }
     if (maxRunsFromDraft(draft.maxRuns) === null) {
@@ -966,93 +978,107 @@ function ScheduledTaskEditorDialog({
                     />
                     <span className="text-xs text-muted-foreground">minutes</span>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Label htmlFor="scheduled-task-interval-days">On</Label>
-                    <ToggleGroup
-                      multiple
-                      variant="outline"
-                      size="sm"
-                      aria-label="Days an interval schedule may run"
-                      value={[...draft.intervalWeekdays].map(String)}
-                      onValueChange={(values) =>
-                        setDraft((current) => ({
-                          ...current,
-                          intervalWeekdays: new Set(values.map(Number)),
-                        }))
-                      }
-                    >
-                      {WEEKDAY_ORDER.map((day) => (
-                        <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                          {WEEKDAY_SHORT[day]}
-                        </Toggle>
-                      ))}
-                    </ToggleGroup>
-                    {draft.intervalWeekdays.size === 0 ? (
-                      <span className="text-xs text-muted-foreground">no days picked — daily</span>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      id="scheduled-task-window-enabled"
-                      checked={draft.windowEnabled}
-                      onCheckedChange={(windowEnabled) =>
-                        setDraft((current) => ({ ...current, windowEnabled }))
-                      }
-                    />
-                    <Label htmlFor="scheduled-task-window-enabled">Only between</Label>
-                    <Input
-                      type="time"
-                      id="scheduled-task-window-start"
-                      nativeInput
-                      aria-label="Window start"
-                      className="w-32"
-                      disabled={!draft.windowEnabled}
-                      value={draft.windowStart}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, windowStart: event.target.value }))
-                      }
-                    />
-                    <span className="text-xs text-muted-foreground">and</span>
-                    <Input
-                      type="time"
-                      id="scheduled-task-window-end"
-                      nativeInput
-                      aria-label="Window end"
-                      className="w-32"
-                      disabled={!draft.windowEnabled}
-                      value={draft.windowEnd}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, windowEnd: event.target.value }))
-                      }
-                    />
-                  </div>
+                  {restrictions === "hidden" ? null : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Label htmlFor="scheduled-task-interval-days">On</Label>
+                        <ToggleGroup
+                          multiple
+                          variant="outline"
+                          size="sm"
+                          aria-label="Days an interval schedule may run"
+                          value={[...draft.intervalWeekdays].map(String)}
+                          onValueChange={(values) =>
+                            setDraft((current) => ({
+                              ...current,
+                              intervalWeekdays: new Set(values.map(Number)),
+                            }))
+                          }
+                        >
+                          {WEEKDAY_ORDER.map((day) => (
+                            <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+                              {WEEKDAY_SHORT[day]}
+                            </Toggle>
+                          ))}
+                        </ToggleGroup>
+                        {draft.intervalWeekdays.size === 0 ? (
+                          <span className="text-xs text-muted-foreground">
+                            no days picked — daily
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="scheduled-task-window-enabled"
+                          checked={draft.windowEnabled}
+                          onCheckedChange={(windowEnabled) =>
+                            setDraft((current) => ({ ...current, windowEnabled }))
+                          }
+                        />
+                        <Label htmlFor="scheduled-task-window-enabled">Only between</Label>
+                        <Input
+                          type="time"
+                          id="scheduled-task-window-start"
+                          nativeInput
+                          aria-label="Window start"
+                          className="w-32"
+                          disabled={!draft.windowEnabled}
+                          value={draft.windowStart}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, windowStart: event.target.value }))
+                          }
+                        />
+                        <span className="text-xs text-muted-foreground">and</span>
+                        <Input
+                          type="time"
+                          id="scheduled-task-window-end"
+                          nativeInput
+                          aria-label="Window end"
+                          className="w-32"
+                          disabled={!draft.windowEnabled}
+                          value={draft.windowEnd}
+                          onChange={(event) =>
+                            setDraft((current) => ({ ...current, windowEnd: event.target.value }))
+                          }
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-max-runs" className="shrink-0 whitespace-nowrap">
-                    Stop after
-                  </Label>
-                  <Input
-                    type="number"
-                    id="scheduled-task-max-runs"
-                    nativeInput
-                    min={1}
-                    step={1}
-                    placeholder="No limit"
-                    className="w-28"
-                    value={draft.maxRuns}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, maxRuns: event.target.value }))
-                    }
-                  />
-                  <span className="text-sm text-muted-foreground">runs</span>
+              {restrictions === "hidden" ? null : (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="scheduled-task-max-runs" className="shrink-0 whitespace-nowrap">
+                      Stop after
+                    </Label>
+                    <Input
+                      type="number"
+                      id="scheduled-task-max-runs"
+                      nativeInput
+                      min={1}
+                      step={1}
+                      placeholder="No limit"
+                      className="w-28"
+                      value={draft.maxRuns}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, maxRuns: event.target.value }))
+                      }
+                    />
+                    <span className="text-sm text-muted-foreground">runs</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The task pauses at the limit. Raise or clear it, then turn on Enabled to resume.
+                    Leave empty for no limit.
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  The task pauses at the limit. Raise or clear it, then turn on Enabled to resume.
-                  Leave empty for no limit.
+              )}
+              {restrictions === "blocked" ? (
+                <p className="text-xs text-destructive" role="status">
+                  This environment&apos;s server cannot limit runs by day, time, or count. Clear
+                  them or update the server before saving.
                 </p>
-              </div>
+              ) : null}
             </div>
 
             <div className="flex items-center justify-between gap-4">

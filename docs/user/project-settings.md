@@ -76,7 +76,8 @@ For example, "every 30 minutes, Monday to Friday, 09:00 to 17:00".
 
 A run that comes due outside its days or window is skipped and rescheduled for
 the next allowed time, not run late. Agents can set the same restrictions when
-they schedule a task.
+they schedule a task. These options only appear for environments whose server
+is new enough to honour them; update the server to use them.
 
 ## Defaults and inheritance
 
