@@ -15,9 +15,10 @@ to keep a large paste editable in the composer instead.
 ## Return to the latest message
 
 On web and desktop, scrolling up shows a button above the composer with the number
-of messages remaining below your view. A partially visible message counts until
-its end is visible. Tool activity and messages hidden inside collapsed turns do
-not count. Select the button to return to the end of the conversation.
+of messages below your view, including new replies that arrive while you read.
+A message stops counting once its start is visible. Tool activity and messages
+hidden inside collapsed turns do not count. Select the button to return to the
+end of the conversation.
 
 ## Attach files
 

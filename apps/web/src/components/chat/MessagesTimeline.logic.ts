@@ -306,7 +306,11 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
-/** Counts message rows with content below the unobscured viewport, including a partial row. */
+/**
+ * Counts message rows that have not started inside the unobscured viewport.
+ * A message whose top is visible no longer counts, so its trailing actions
+ * and padding hidden behind the composer never inflate the count.
+ */
 export function countTimelineMessagesBelow(
   messageRowIndices: ReadonlyArray<number>,
   state:
@@ -314,7 +318,6 @@ export function countTimelineMessagesBelow(
         readonly scroll?: number;
         readonly scrollLength?: number;
         readonly positionAtIndex?: (index: number) => number | undefined;
-        readonly sizeAtIndex?: (index: number) => number | undefined;
       }
     | undefined,
   composerInset: number,
@@ -327,20 +330,10 @@ export function countTimelineMessagesBelow(
   let high = messageRowIndices.length;
   while (low < high) {
     const middle = (low + high) >>> 1;
-    const rowIndex = messageRowIndices[middle]!;
-    const top = state.positionAtIndex?.(rowIndex);
+    const top = state.positionAtIndex?.(messageRowIndices[middle]!);
     if (top === undefined || !Number.isFinite(top)) return 0;
-    // Offscreen rows can have an estimated position without a measured size.
-    // Their top alone is sufficient when the whole row is below the viewport.
-    const height = state.sizeAtIndex?.(rowIndex);
-    let bottom = top;
-    if (height !== undefined && Number.isFinite(height)) {
-      bottom = top + height;
-    } else {
-      const nextTop = state.positionAtIndex?.(rowIndex + 1);
-      if (nextTop !== undefined && Number.isFinite(nextTop)) bottom = nextTop;
-    }
-    if (top > visibleBottom + 1 || bottom > visibleBottom + 1) {
+    // Less than a pixel showing still reads as not started.
+    if (top > visibleBottom - 1) {
       high = middle;
     } else {
       low = middle + 1;
