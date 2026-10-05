@@ -21,6 +21,12 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Background scene
+
+On web and desktop, turn on **Background scene** under **Settings → Appearance** to show the active
+built-in theme's scene behind the interface. **Glass opacity** sets how much of it shows through.
+Custom themes and the default look have no scene. It is off until you turn it on.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.

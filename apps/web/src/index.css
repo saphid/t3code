@@ -2307,3 +2307,108 @@ code {
     }
   }
 }
+
+/* ── Background scene ──
+   With Settings → Appearance → Background scene on, a fixed, pre-dimmed
+   static image paints once under every surface, and the canvas, sidebar and
+   toolbar fills re-derive from the theme's solid colors at the glass opacity.
+   No backdrop-filter and no animation here: a blurred layer this large would
+   repaint on every streaming frame, so the scenes are softened in the image
+   itself. With the setting off, none of these rules match, and they stand
+   down while the theme editor previews a draft palette. Unlayered so they
+   outrank the theme blocks while active. */
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"]) {
+  --backdrop-dim: 20%;
+  --app-chrome-background: var(--background);
+  --toolbar-background: color-mix(
+    in srgb,
+    var(--app-backdrop-tint-toolbar) var(--glass-opacity),
+    transparent
+  );
+  --terminal-background: var(--app-backdrop-tint);
+
+  @variant dark {
+    /* Dark canvases leave less contrast headroom: a stronger veil. */
+    --backdrop-dim: 60%;
+  }
+}
+
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"]),
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"]) [data-app-sidebar] {
+  --background: color-mix(in srgb, var(--app-backdrop-tint) var(--glass-opacity), transparent);
+  --sidebar: color-mix(in srgb, var(--app-backdrop-tint-sidebar) var(--glass-opacity), transparent);
+  --sidebar-stage-fade: var(--sidebar);
+}
+
+/* The container owns the sidebar's edge border, which sits outside the inner
+   fill; tint the container instead so the scene never shows through as an
+   undimmed line along that edge. */
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"])
+  [data-app-sidebar][data-slot="sidebar-container"] {
+  background-color: var(--sidebar);
+
+  & > [data-slot="sidebar-inner"] {
+    background-color: transparent;
+  }
+}
+
+/* Form controls keep a solid fill so their shapes stay readable over the scene,
+   and sticky headers so content scrolling beneath them stays hidden. */
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"])
+  :is(
+    .sticky,
+    [data-slot="switch-thumb"],
+    [data-slot="checkbox"],
+    [data-slot="radio"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="select-trigger"],
+    [data-slot="number-field-group"],
+    [data-slot="input-group"],
+    [data-slot="toggle"]
+  ) {
+  --background: var(--app-backdrop-tint);
+}
+
+/* Nested bg-background layout wrappers would stack translucent fills back into
+   an opaque one; only the outermost keeps the glass fill. Sticky and
+   interactive elements keep their own fills. */
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"])
+  .bg-background
+  .bg-background:not(
+    .sticky,
+    button,
+    a,
+    [role="button"],
+    [data-slot="switch-thumb"],
+    [data-slot="checkbox"],
+    [data-slot="radio"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="select-trigger"],
+    [data-slot="number-field-group"],
+    [data-slot="input-group"],
+    [data-slot="toggle"]
+  ) {
+  background-color: transparent;
+}
+
+/* syncBrowserChromeTheme paints an inline body fill; the scene sits under the
+   body, so it must stay clear while the scene is on. */
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"]) body {
+  background: transparent !important;
+}
+
+html[data-app-backdrop="on"]:not([data-theme-id="__preview"]) body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--app-backdrop-tint) var(--backdrop-dim), transparent),
+      color-mix(in srgb, var(--app-backdrop-tint) var(--backdrop-dim), transparent)
+    ),
+    var(--app-backdrop-image) center / cover no-repeat;
+}

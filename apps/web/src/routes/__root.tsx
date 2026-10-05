@@ -53,6 +53,8 @@ import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
+import { getThemeDefinition, resolveThemeHalf } from "../themePalette";
+import { applyThemeBackground, resolveThemeSceneUrl } from "../themeBackground";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -60,7 +62,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, useTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -179,6 +181,7 @@ function RootRouteView() {
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
+          <ThemeBackgroundSync />
           <FontAppearanceSync />
           <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
@@ -220,6 +223,7 @@ function RootRouteView() {
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
+        <ThemeBackgroundSync />
         <FontAppearanceSync />
         <ProviderAuthCallbackCoordinator />
         <ChatGptWelcomeCoordinator />
@@ -298,6 +302,22 @@ function GlassAppearanceSync() {
       style.removeProperty("--glass-blur");
     }
   }, [glassOpacity]);
+
+  return null;
+}
+
+/** Paints the active built-in theme's scene while the background scene setting is on. */
+function ThemeBackgroundSync() {
+  const backgroundScene = useClientSettings((settings) => settings.backgroundScene);
+  const { theme, resolvedTheme, themeHalves } = useTheme();
+
+  useEffect(() => {
+    const definition = backgroundScene
+      ? getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme))
+      : null;
+    applyThemeBackground(resolveThemeSceneUrl(definition?.id), definition, resolvedTheme);
+    syncBrowserChromeTheme();
+  }, [backgroundScene, theme, resolvedTheme, themeHalves]);
 
   return null;
 }

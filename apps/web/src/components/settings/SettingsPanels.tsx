@@ -539,6 +539,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Contrast"]
         : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.backgroundScene !== DEFAULT_UNIFIED_SETTINGS.backgroundScene
+        ? ["Background scene"]
+        : []),
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
@@ -697,6 +700,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
       settings.glassOpacity,
+      settings.backgroundScene,
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
       settings.persistComposerContextStrip,
@@ -804,6 +808,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      backgroundScene: DEFAULT_UNIFIED_SETTINGS.backgroundScene,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
@@ -1250,7 +1255,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
-          description="Higher values make menus, dialogs, and the composer more solid."
+          description="Higher values make menus, dialogs, the composer, and surfaces over a background scene more solid."
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
@@ -1291,6 +1296,28 @@ export function AppearanceSettingsPanel() {
                 value={settings.glassOpacity}
               />
             </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("background-scene")}
+          description="Show the active built-in theme's scene behind the interface, tinted at the glass opacity. Custom themes and the default look have no scene."
+          resetAction={
+            settings.backgroundScene !== DEFAULT_UNIFIED_SETTINGS.backgroundScene ? (
+              <SettingResetButton
+                label="background scene"
+                onClick={() =>
+                  updateSettings({ backgroundScene: DEFAULT_UNIFIED_SETTINGS.backgroundScene })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.backgroundScene}
+              onCheckedChange={(checked) => updateSettings({ backgroundScene: Boolean(checked) })}
+              aria-label="Background scene"
+            />
           }
         />
 

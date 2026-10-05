@@ -542,6 +542,13 @@ describe("ClientSettings recording input overlays", () => {
   });
 });
 
+describe("ClientSettings background scene", () => {
+  it("is off by default so upgrading never changes the workspace", () => {
+    expect(decodeClientSettings({}).backgroundScene).toBe(false);
+    expect(decodeClientSettingsPatch({ backgroundScene: true }).backgroundScene).toBe(true);
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);
