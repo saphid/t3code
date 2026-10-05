@@ -2867,3 +2867,123 @@ it.effect("the startup sweep pauses enabled tasks whose thread was archived whil
     assert.isNull(swept!.nextRunAt);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect.each([
+  { name: "raise", originalCap: 1, editedCap: 5 },
+  { name: "clear", originalCap: 1, editedCap: undefined },
+  { name: "lower", originalCap: 5, editedCap: 1 },
+] as const)(
+  "serializes a $name of the cap with a completing run",
+  ({ name, originalCap, editedCap }) =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* seedTask;
+      yield* tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "interval", everyMs: 60_000, maxRuns: originalCap },
+      });
+      dispatchLaunchCount = 0;
+      const read = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const editStarted = yield* Deferred.make<void>();
+      const editDone = yield* Deferred.make<void>();
+      let parked = false;
+      sqlProbe = (statement) => {
+        if (!parked && dispatchLaunchCount === 1 && isMarkRead(statement)) {
+          parked = true;
+          return Deferred.succeed(read, undefined).pipe(Effect.andThen(Deferred.await(release)));
+        }
+      };
+      try {
+        const run = yield* tasks.runNow({ id: updateTaskId }).pipe(Effect.forkChild);
+        yield* Deferred.await(read);
+        const edit = yield* Effect.gen(function* () {
+          yield* Deferred.succeed(editStarted, undefined);
+          const result = yield* tasks.update({
+            id: updateTaskId,
+            projectId: updateProjectId,
+            enabled: true,
+            schedule: {
+              type: "interval",
+              everyMs: 60_000,
+              ...(editedCap === undefined ? {} : { maxRuns: editedCap }),
+            },
+          });
+          yield* Deferred.succeed(editDone, undefined);
+          return result;
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(editStarted);
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* Deferred.poll(editDone)));
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(run);
+        assert.isTrue(Option.isSome(yield* Fiber.join(edit)));
+        const after = yield* findSeeded;
+        assert.equal(after?.runCount, 1);
+        assert.equal(after?.schedule.maxRuns, editedCap);
+        assert.equal(after?.enabled, name !== "lower");
+        if (name === "lower") assert.isNull(after?.nextRunAt);
+        else assert.isNotNull(after?.nextRunAt);
+      } finally {
+        sqlProbe = null;
+        yield* Deferred.succeed(release, undefined);
+      }
+    }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect(
+  "raising an archived capped task's limit preserves its pause and enablement watermark",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      const { task } = yield* tasks.upsert({
+        ...boundTaskInput,
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000, maxRuns: 1 },
+      });
+      yield* tasks.runNow({ id: task.id });
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+      const raised = yield* tasks.update({
+        id: task.id,
+        projectId: task.projectId,
+        schedule: { type: "interval", everyMs: 60_000, maxRuns: 5 },
+      });
+      assert.isTrue(Option.isSome(raised));
+      if (Option.isSome(raised)) {
+        assert.isFalse(raised.value.task.enabled);
+        assert.isNull(raised.value.task.nextRunAt);
+      }
+      const marker = yield* sql<{ enabled_seq: number | null }>`
+      SELECT enabled_seq FROM scheduled_tasks WHERE task_id = ${task.id}`;
+      assert.isNull(marker[0]?.enabled_seq);
+      const enable = yield* tasks.setEnabled({ id: task.id, enabled: true }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(enable));
+      if (Exit.isFailure(enable)) assert.include(Cause.pretty(enable.cause), "archived");
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an old client's explicit false full save cannot re-arm a capped task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedTask;
+    yield* sql`UPDATE scheduled_tasks SET enabled = 0, next_run_at = NULL,
+      run_count = 1, schedule_json = '{"type":"interval","everyMs":60000,"maxRuns":1}'
+      WHERE task_id = ${updateTaskId}`;
+    const existing = yield* findSeeded;
+    assert.isDefined(existing);
+    const saved = yield* tasks.upsert({
+      ...existing!,
+      enabled: false,
+      title: "old client edit",
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+    assert.isFalse(saved.task.enabled);
+    assert.isNull(saved.task.nextRunAt);
+    assert.equal(saved.task.runCount, 1);
+    assert.isFalse((yield* findSeeded)?.enabled);
+  }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provideMerge(updateTestDeps)))),
+);

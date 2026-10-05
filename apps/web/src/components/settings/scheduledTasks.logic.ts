@@ -8,7 +8,7 @@ import type {
   ScheduledTaskUpdateInput,
 } from "@t3tools/contracts";
 
-import type { DraftState } from "./scheduledTasksSettings.logic";
+import { scheduleFromDraft, type DraftState } from "./scheduledTasksSettings.logic";
 
 // "Use a specific checkout" requires a path — the contract is
 // TrimmedNonEmptyString, so a blank field would produce a strategy the server
@@ -51,20 +51,7 @@ export function moveDetachesThreadBinding(
   );
 }
 
-export function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    // Invalid input stays invalid here; submit rejects it before building a
-    // create or update input.
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-  };
-}
+export { scheduleFromDraft } from "./scheduledTasksSettings.logic";
 
 // Mirrors the server's isSameSchedule: order and duplicates are irrelevant and
 // an empty/omitted weekday mask means the same as all seven days — daily.
@@ -75,8 +62,15 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 }
 
 function sameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
+  if (a.maxRuns !== b.maxRuns) return false;
   if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
+    return (
+      b.type === "interval" &&
+      a.everyMs === b.everyMs &&
+      weekdayKey(a.weekdays) === weekdayKey(b.weekdays) &&
+      a.window?.start === b.window?.start &&
+      a.window?.end === b.window?.end
+    );
   }
   return (
     b.type === "fixed_time" &&
@@ -97,6 +91,41 @@ function sameWorkspaceStrategy(
     return a.worktreePath === b.worktreePath;
   }
   return true;
+}
+
+/** The schedule a save sends, or undefined when the live schedule stays. */
+function scheduleToSave(
+  draft: DraftState,
+  baseline: DraftState,
+  task: ScheduledTask,
+): ScheduledTaskSchedule | undefined {
+  const schedule = scheduleFromDraft(draft);
+  return !sameSchedule(schedule, scheduleFromDraft(baseline)) ||
+    // taskToDraft clamps a legacy sub-minute interval to one minute, so the
+    // baseline diff cannot see the normalization the editor promises. Emit
+    // the normalized schedule while the live task still carries it — a
+    // concurrent write to a valid interval clears this condition instead
+    // of being overwritten.
+    (task.schedule.type === "interval" && task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
+    ? schedule
+    : undefined;
+}
+
+/**
+ * The editor's Enabled switch, matching what a save produces: the user's
+ * choice once they used it, otherwise the live task's state, and off and
+ * locked while the cap the saved schedule will carry is used up.
+ */
+export function editorEnabledSwitch(
+  draft: DraftState,
+  baseline: DraftState,
+  live: ScheduledTask | null,
+): { readonly checked: boolean; readonly locked: boolean } {
+  if (live === null) return { checked: draft.enabled, locked: false };
+  const cap = (scheduleToSave(draft, baseline, live) ?? live.schedule).maxRuns;
+  const locked = cap !== undefined && live.runCount >= cap;
+  const enabled = draft.enabledTouched ? draft.enabled : live.enabled;
+  return { checked: enabled && !locked, locked };
 }
 
 /**
@@ -127,19 +156,9 @@ export function buildScheduledTaskUpdateInput(
   if (prompt !== baseline.prompt.trim()) {
     patch.prompt = prompt as ScheduledTaskUpdateInput["prompt"];
   }
-  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
-  const schedule = scheduleFromDraft(draft);
-  if (
-    !sameSchedule(schedule, scheduleFromDraft(baseline)) ||
-    // taskToDraft clamps a legacy sub-minute interval to one minute, so the
-    // baseline diff cannot see the normalization the editor promises. Emit
-    // the normalized schedule while the live task still carries it — a
-    // concurrent write to a valid interval clears this condition instead
-    // of being overwritten.
-    (task.schedule.type === "interval" && task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
-  ) {
-    patch.schedule = schedule;
-  }
+  if (draft.enabledTouched && draft.enabled !== task.enabled) patch.enabled = draft.enabled;
+  const schedule = scheduleToSave(draft, baseline, task);
+  if (schedule !== undefined) patch.schedule = schedule;
   const baselineStrategy = workspaceStrategyFromDraft(baseline);
   if (!sameWorkspaceStrategy(workspaceStrategy, baselineStrategy)) {
     if (workspaceStrategy.type !== baselineStrategy.type) {

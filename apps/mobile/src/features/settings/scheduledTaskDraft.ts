@@ -43,6 +43,13 @@ export type ScheduleDraft = {
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
+  /** Weekdays an interval schedule may run on; empty means every day. */
+  readonly intervalWeekdays: ReadonlyArray<number>;
+  readonly windowEnabled: boolean;
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  /** Run cap as freeform input; empty string means no limit. */
+  readonly maxRuns: string;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -50,30 +57,83 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   timeOfDay: "09:00",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
+  intervalWeekdays: [],
+  windowEnabled: false,
+  windowStart: "09:00",
+  windowEnd: "17:00",
+  maxRuns: "",
 };
 
+/** Minutes since midnight; accepts the padded and unpadded forms the contract allows. */
+function timeOfDayMinutes(value: string): number | null {
+  if (!/^([01]?\d|2[0-3]):([0-5]\d)$/.test(value.trim())) return null;
+  const [hours, minutes] = value.split(":").map(Number);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+}
+
+/** Parse the maxRuns input; null when set but invalid. */
+function maxRunsFromDraft(value: string): number | null | undefined {
+  if (value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
-  return task.schedule.type === "fixed_time"
-    ? {
-        ...DEFAULT_SCHEDULE,
-        timeOfDay: task.schedule.timeOfDay,
-        weekdays: task.schedule.weekdays?.length
-          ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
-          : [0, 1, 2, 3, 4, 5, 6],
-      }
-    : {
-        ...DEFAULT_SCHEDULE,
-        mode: "interval",
-        intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
-      };
+  const maxRuns = task.schedule.maxRuns === undefined ? "" : String(task.schedule.maxRuns);
+  if (task.schedule.type === "fixed_time") {
+    return {
+      ...DEFAULT_SCHEDULE,
+      timeOfDay: task.schedule.timeOfDay,
+      weekdays: task.schedule.weekdays?.length
+        ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
+        : [0, 1, 2, 3, 4, 5, 6],
+      maxRuns,
+    };
+  }
+  return {
+    ...DEFAULT_SCHEDULE,
+    mode: "interval",
+    intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
+    intervalWeekdays: [...new Set(task.schedule.weekdays ?? [])].sort((a, b) => a - b),
+    windowEnabled: task.schedule.window !== undefined,
+    windowStart: task.schedule.window?.start ?? DEFAULT_SCHEDULE.windowStart,
+    windowEnd: task.schedule.window?.end ?? DEFAULT_SCHEDULE.windowEnd,
+    maxRuns,
+  };
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  const maxRuns = maxRunsFromDraft(draft.maxRuns);
+  if (maxRuns === null) return null;
+  const maxRunsField = maxRuns === undefined ? {} : { maxRuns };
   if (draft.mode === "interval") {
     const minutes = Number(draft.intervalMinutes);
     // Undo floating-point noise from displaying existing millisecond intervals as minutes.
     const everyMs = Math.round(minutes * 60_000);
-    return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
+    if (!(minutes >= 1 && Number.isSafeInteger(everyMs))) return null;
+    const weekdays = [...new Set(draft.intervalWeekdays)].sort((a, b) => a - b);
+    const everyDay = weekdays.length === 0 || weekdays.length === 7;
+    const startMinutes = timeOfDayMinutes(draft.windowStart);
+    const endMinutes = timeOfDayMinutes(draft.windowEnd);
+    // An enabled window must be valid: silently dropping it would save a task
+    // without the restriction the user asked for.
+    if (
+      draft.windowEnabled &&
+      (startMinutes === null || endMinutes === null || startMinutes >= endMinutes)
+    ) {
+      return null;
+    }
+    const window =
+      draft.windowEnabled && startMinutes !== null && endMinutes !== null
+        ? { window: { start: draft.windowStart, end: draft.windowEnd } }
+        : {};
+    return {
+      type: "interval",
+      everyMs,
+      ...(everyDay ? {} : { weekdays }),
+      ...window,
+      ...maxRunsField,
+    };
   }
   const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
   if (
@@ -87,6 +147,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
     ...(weekdays.length === 7 ? {} : { weekdays }),
+    ...maxRunsField,
   };
 }
 
@@ -103,6 +164,12 @@ export type ScheduledTaskDraft = {
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
+  /**
+   * Whether the user used the Enabled switch. Until then the editor shows the
+   * live task's state and a save leaves enabled alone, so a cap pause or
+   * another client's pause is never undone implicitly.
+   */
+  readonly enabledTouched: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
 };
@@ -121,10 +188,16 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.timeOfDay,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
+    [...draft.schedule.intervalWeekdays].sort((a, b) => a - b),
+    draft.schedule.windowEnabled,
+    draft.schedule.windowStart,
+    draft.schedule.windowEnd,
+    draft.schedule.maxRuns,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
     draft.enabled,
+    draft.enabledTouched,
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
@@ -153,6 +226,7 @@ export function createDraft(
     baseRef: "main",
     checkoutPath: "",
     enabled: true,
+    enabledTouched: false,
     startFromOrigin: true,
     runtimeMode: "full-access",
   };
@@ -174,6 +248,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? task.workspaceStrategy.worktreePath
         : "",
     enabled: task.enabled,
+    enabledTouched: false,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)
@@ -183,15 +258,23 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
 }
 
 function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSchedule): boolean {
-  if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
-  }
-  if (b.type !== "fixed_time") return false;
   const key = (weekdays: ReadonlyArray<number> | undefined) => {
     const unique = [...new Set(weekdays ?? [])].sort((x, y) => x - y);
     return unique.length === 0 || unique.length === 7 ? "daily" : unique.join(",");
   };
-  return a.timeOfDay === b.timeOfDay && key(a.weekdays) === key(b.weekdays);
+  if (a.maxRuns !== b.maxRuns) return false;
+  if (a.type === "interval") {
+    return (
+      b.type === "interval" &&
+      a.everyMs === b.everyMs &&
+      key(a.weekdays) === key(b.weekdays) &&
+      a.window?.start === b.window?.start &&
+      a.window?.end === b.window?.end
+    );
+  }
+  return (
+    b.type === "fixed_time" && a.timeOfDay === b.timeOfDay && key(a.weekdays) === key(b.weekdays)
+  );
 }
 
 function sameModelSelection(a: ModelSelection | null, b: ModelSelection | null): boolean {
@@ -221,6 +304,44 @@ function workspaceStrategyFromDraft(
   };
 }
 
+/** The schedule a save sends, or undefined when the live schedule stays. */
+function scheduleToSave(
+  draft: ScheduledTaskDraft,
+  liveTask: ScheduledTask,
+): ScheduledTaskUpsertSchedule | undefined {
+  if (draft.task === null) return undefined;
+  const schedule = scheduleFromDraft(draft.schedule);
+  const baselineSchedule = scheduleFromDraft(editDraft(draft.task).schedule);
+  return schedule !== null &&
+    baselineSchedule !== null &&
+    (!sameSchedule(schedule, baselineSchedule) ||
+      // scheduleDraftForTask clamps a legacy sub-minute interval to one
+      // minute, so the baseline diff cannot see the normalization the
+      // editor promises. Emit the normalized schedule while the live task
+      // still carries it — a concurrent write to a valid interval clears
+      // this condition instead of being overwritten.
+      (liveTask.schedule.type === "interval" &&
+        liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
+    ? schedule
+    : undefined;
+}
+
+/**
+ * The editor's Enabled switch, matching what a save produces: the user's
+ * choice once they used it, otherwise the live task's state, and off and
+ * locked while the cap the saved schedule will carry is used up.
+ */
+export function editorEnabledSwitch(
+  draft: ScheduledTaskDraft,
+  live: ScheduledTask | null,
+): { readonly checked: boolean; readonly locked: boolean } {
+  if (live === null) return { checked: draft.enabled, locked: false };
+  const cap = (scheduleToSave(draft, live) ?? live.schedule).maxRuns;
+  const locked = cap !== undefined && live.runCount >= cap;
+  const enabled = draft.enabledTouched ? draft.enabled : live.enabled;
+  return { checked: enabled && !locked, locked };
+}
+
 /**
  * Dirty-field patch for an existing task, scoped to its live project. The
  * baseline is the task snapshot the editor opened with (`draft.task`), so a
@@ -244,23 +365,9 @@ export function buildScheduledTaskUpdateInput(
   if (title !== baseline.title.trim()) patch.title = title;
   const prompt = draft.prompt.trim();
   if (prompt !== baseline.prompt.trim()) patch.prompt = prompt;
-  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
-  const schedule = scheduleFromDraft(draft.schedule);
-  const baselineSchedule = scheduleFromDraft(baseline.schedule);
-  if (
-    schedule !== null &&
-    baselineSchedule !== null &&
-    (!sameSchedule(schedule, baselineSchedule) ||
-      // scheduleDraftForTask clamps a legacy sub-minute interval to one
-      // minute, so the baseline diff cannot see the normalization the
-      // editor promises. Emit the normalized schedule while the live task
-      // still carries it — a concurrent write to a valid interval clears
-      // this condition instead of being overwritten.
-      (liveTask.schedule.type === "interval" &&
-        liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
-  ) {
-    patch.schedule = schedule;
-  }
+  if (draft.enabledTouched && draft.enabled !== liveTask.enabled) patch.enabled = draft.enabled;
+  const schedule = scheduleToSave(draft, liveTask);
+  if (schedule !== undefined) patch.schedule = schedule;
   if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
   if (
     draft.modelSelection !== null &&
