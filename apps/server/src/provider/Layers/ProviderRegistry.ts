@@ -55,6 +55,7 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
 import type { ProviderInstance, ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
+import type { ProviderDriverError } from "../Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 import { watchSkillRoots } from "../skillRootWatch.ts";
@@ -907,9 +908,12 @@ export const ProviderRegistryLive = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
-      /** Scan a held snapshot again without invalidating caches (skill root changed). */
-      readonly rescan?: boolean;
-    }) {
+      /**
+       * Scan a held snapshot again without invalidating caches, because a
+       * skill root changed. Counts attempts; see `lostToConcurrentWrite`.
+       */
+      readonly rescan?: number;
+    }): Effect.fn.Return<ReadonlyArray<ServerProvider>, ProviderDriverError> {
       // Fresh scans drop other instances' snapshots for this cwd first, so a
       // composer on one of them scans again on next use, even when this
       // instance is gone or cannot be scanned.
@@ -927,11 +931,12 @@ export const ProviderRegistryLive = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const rescan = input.rescan !== undefined;
       if (
         !provider ||
         !provider.enabled ||
-        (input.rescan && !scannedFrom) ||
-        (!input.fresh && !input.rescan && scannedFrom && !scannedFrom.slashCommandsPending)
+        (rescan && !scannedFrom) ||
+        (!input.fresh && !rescan && scannedFrom && !scannedFrom.slashCommandsPending)
       ) {
         return providers;
       }
@@ -945,14 +950,15 @@ export const ProviderRegistryLive = Layer.effect(
         return [true, next] as const;
       });
       // A fresh scan or rescan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh && !input.rescan) return yield* Ref.get(providersRef);
+      if (!claimed && !input.fresh && !rescan) return yield* Ref.get(providersRef);
       // Fresh scans also re-read the machine snapshot after invalidating caches.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
           )
         : Effect.void;
-      return yield* refreshMachineSnapshot.pipe(
+      let lostToConcurrentWrite = false;
+      const providersAfterScan = yield* refreshMachineSnapshot.pipe(
         Effect.andThen(instance.snapshotForCwd(input.cwd)),
         Effect.flatMap((scopedSnapshot) =>
           scopedSnapshot.status === "error" && scopedSnapshot.slashCommandsPending === undefined
@@ -963,12 +969,19 @@ export const ProviderRegistryLive = Layer.effect(
                   // Write only if the cwd's snapshot did not change during the
                   // scan. A session event or another scan that landed first is newer.
                   return updateProviders((currentProviders) =>
-                    currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId &&
-                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                        : candidate,
-                    ),
+                    currentProviders.map((candidate) => {
+                      if (candidate.instanceId !== input.instanceId) return candidate;
+                      const current = workspaceSnapshotOf(candidate);
+                      if (Equal.equals(current, scannedFrom)) {
+                        return upsertProviderWorkspaceSnapshot(
+                          candidate,
+                          input.cwd,
+                          scopedSnapshot,
+                        );
+                      }
+                      lostToConcurrentWrite = current !== undefined;
+                      return candidate;
+                    }),
                   );
                 }),
               ),
@@ -986,6 +999,12 @@ export const ProviderRegistryLive = Layer.effect(
             : Effect.void,
         ),
       );
+      // The write that won may come from a scan that started before the skill
+      // root changed, so a rescan that lost scans again, a bounded number of times.
+      if (input.rescan !== undefined && lostToConcurrentWrite && input.rescan < 3) {
+        return yield* refreshWorkspaceSnapshot({ ...input, rescan: input.rescan + 1 });
+      }
+      return providersAfterScan;
     });
 
     // Rescan held workspace snapshots when a skill root they read changes.
@@ -1034,7 +1053,7 @@ export const ProviderRegistryLive = Layer.effect(
       yield* Effect.forEach(
         targets.values(),
         (target) =>
-          refreshWorkspaceSnapshot({ ...target, rescan: true }).pipe(
+          refreshWorkspaceSnapshot({ ...target, rescan: 1 }).pipe(
             Effect.ignoreCause({ log: true }),
           ),
         { discard: true },
