@@ -68,6 +68,7 @@ type NativePasteTextEvent = NativeSyntheticEvent<{
 interface NativeComposerEditorRef {
   focus: () => Promise<void>;
   blur: () => Promise<void>;
+  clear: () => Promise<void>;
   setSelection: (start: number, end: number) => Promise<void>;
 }
 
@@ -152,6 +153,7 @@ export function ComposerEditor({
     () => ({
       focus: () => void nativeRef.current?.focus(),
       blur: () => void nativeRef.current?.blur(),
+      clear: () => void nativeRef.current?.clear(),
       setSelection: (nextSelection) =>
         void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
     }),

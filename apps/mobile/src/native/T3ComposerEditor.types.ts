@@ -21,6 +21,8 @@ export type ComposerTextPaste = {
 export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
+  /** Empties the editor even when a native edit raced the parent's cleared draft. */
+  clear: () => void;
   setSelection: (selection: ComposerEditorSelection) => void;
 }
 

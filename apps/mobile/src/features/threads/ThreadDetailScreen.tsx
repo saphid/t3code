@@ -990,6 +990,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           queuedMessageCount: props.selectedThreadQueueCount,
         }),
       );
+      // The draft is already empty, but an edit committed natively after the tap
+      // (dictation finalizing on blur) would make that clear stale and leave the
+      // sent text in the box. Clear natively first so the blur has nothing to commit.
+      composerEditorRef.current?.clear();
       composerEditorRef.current?.blur();
       return messageId;
     },

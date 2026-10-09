@@ -762,6 +762,19 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     applyRequestedSelection()
   }
 
+  /// Empties the editor after a send, ignoring the controlled revision. An edit
+  /// committed after the tap (dictation finalizing, say) would otherwise make
+  /// the cleared draft stale and leave the sent text in the box.
+  func clearDocument() {
+    tokensJson = "[]"
+    tokens = []
+    value = ""
+    requestedSelection = nil
+    applyControlledDocument(force: true)
+    tokensNeedRebuild = false
+    emitTextChange()
+  }
+
   public func textViewDidChange(_ textView: UITextView) {
     emitTextChange()
   }

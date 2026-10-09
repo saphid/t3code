@@ -141,6 +141,9 @@ class T3ComposerEditorModule : Module() {
       AsyncFunction("blur") { view: T3ComposerEditorView ->
         view.blurEditor()
       }
+      AsyncFunction("clear") { view: T3ComposerEditorView ->
+        view.clearDocument()
+      }
       AsyncFunction("setSelection") { view: T3ComposerEditorView, start: Int, end: Int ->
         view.setSelection(start, end)
       }

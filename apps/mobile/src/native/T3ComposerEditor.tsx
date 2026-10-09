@@ -31,6 +31,7 @@ export function ComposerEditor({
     () => ({
       focus: () => inputRef.current?.focus(),
       blur: () => inputRef.current?.blur(),
+      clear: () => inputRef.current?.clear(),
       setSelection: (nextSelection) =>
         inputRef.current?.setSelection(nextSelection.start, nextSelection.end),
     }),

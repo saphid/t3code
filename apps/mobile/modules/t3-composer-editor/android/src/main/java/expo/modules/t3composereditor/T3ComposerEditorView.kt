@@ -354,6 +354,32 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     applySelection(start, end)
   }
 
+  /**
+   * Empties the editor after a send, ignoring the controlled revision. An edit
+   * committed after the tap (an IME composition finishing, say) would otherwise
+   * make the cleared draft stale and leave the sent text in the box.
+   */
+  fun clearDocument() {
+    applyingNativeValue = true
+    try {
+      editor.setText("")
+      tokensJson = "[]"
+      tokens = emptyList()
+      applyTokenSpans()
+    } finally {
+      applyingNativeValue = false
+    }
+    nativeEventCount += 1
+    onComposerChange(
+      mapOf(
+        "value" to "",
+        "selection" to currentSelectionPayload(),
+        "eventCount" to nativeEventCount,
+      ),
+    )
+    emitContentSizeIfNeeded()
+  }
+
   private fun applySelection(start: Int, end: Int) {
     val textLength = editor.text?.length ?: 0
     val safeStart = start.coerceIn(0, textLength)
