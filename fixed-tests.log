@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-file-search-matches
+
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  23:13:04
+   Duration  522ms (import 41%, setup 31%, transform 18%, tests 7%, worker 2%)
+

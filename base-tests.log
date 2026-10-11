@@ -1,0 +1,68 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-file-search-matches
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for composer
+{"query":"composer","serverEntries":[{"kind":"file","path":"src/components/Composer.tsx"},{"kind":"directory","path":"src/components"}],"mobileVisible":["src","src/components","src/components/Composer.test.tsx","src/components/Composer.tsx"]}
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for compoesr
+{"query":"compoesr","serverEntries":[{"kind":"file","path":"src/components/Composer.tsx"},{"kind":"directory","path":"src/components"}],"mobileVisible":[]}
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts (2 tests | 2 failed) 154ms
+   × keeps FFF matches visible on mobile for composer 96ms
+   × keeps FFF matches visible on mobile for compoesr 56ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for composer
+AssertionError: expected [ 'src', 'src/components', …(2) ] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+  [
+    "src",
+    "src/components",
++   "src/components/Composer.test.tsx",
+    "src/components/Composer.tsx",
+  ]
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts:45:21
+     43|     }).map(({ node }) => node.path);
+     44|     console.log(JSON.stringify({ query, serverEntries, mobileVisible: …
+     45|     expect(visible).toEqual(["src", "src/components", "src/components/…
+       |                     ^
+     46|   } finally {
+     47|     finder?.destroy();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for compoesr
+AssertionError: expected [] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "src",
+-   "src/components",
+-   "src/components/Composer.tsx",
+- ]
++ []
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts:45:21
+     43|     }).map(({ node }) => node.path);
+     44|     console.log(JSON.stringify({ query, serverEntries, mobileVisible: …
+     45|     expect(visible).toEqual(["src", "src/components", "src/components/…
+       |                     ^
+     46|   } finally {
+     47|     finder?.destroy();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:10:58
+   Duration  469ms (tests 45%, setup 27%, transform 19%, import 8%, worker 1%)
+

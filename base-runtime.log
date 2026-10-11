@@ -1,0 +1,101 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/sweep-20261012/evidence/H-1
+
+stdout | runtime.test.ts > keeps FFF matches visible on mobile for composer
+[23:15:20.830] ERROR (#1): Error [AssertionError]: expected [ 'src', 'src/components', …(2) ] to deeply equal [ 'src', 'src/components', …(1) ]
+    at /home/saphid/sweep-20261012/evidence/H-1/runtime.test.ts:37:23 {
+  actual: [
+    'src',
+    'src/components',
+    'src/components/Composer.test.tsx',
+    'src/components/Composer.tsx'
+  ],
+  expected: [ 'src', 'src/components', 'src/components/Composer.tsx' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | runtime.test.ts > keeps FFF matches visible on mobile for compoesr
+[23:15:20.894] ERROR (#13): Error [AssertionError]: expected [] to deeply equal [ 'src', 'src/components', …(1) ]
+    at /home/saphid/sweep-20261012/evidence/H-1/runtime.test.ts:37:23 {
+  actual: [],
+  expected: [ 'src', 'src/components', 'src/components/Composer.tsx' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ runtime.test.ts (2 tests | 2 failed) 161ms
+   × keeps FFF matches visible on mobile for composer 100ms
+   × keeps FFF matches visible on mobile for compoesr 58ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  runtime.test.ts > keeps FFF matches visible on mobile for composer
+AssertionError: expected [ 'src', 'src/components', …(2) ] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+  [
+    "src",
+    "src/components",
++   "src/components/Composer.test.tsx",
+    "src/components/Composer.tsx",
+  ]
+
+ ❯ runtime.test.ts:37:23
+     35|       }).map(({ node }) => node.path);
+     36|       yield* Effect.log(JSON.stringify({ query, serverEntries, mobileV…
+     37|       expect(visible).toEqual(["src", "src/components", "src/component…
+       |                       ^
+     38|     }),
+     39|   ).pipe(Effect.provide(NodeServices.layer)),
+ ❯ IteratorImpl.~effect/Effect/successCont ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1120:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  runtime.test.ts > keeps FFF matches visible on mobile for compoesr
+AssertionError: expected [] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "src",
+-   "src/components",
+-   "src/components/Composer.tsx",
+- ]
++ []
+
+ ❯ runtime.test.ts:37:23
+     35|       }).map(({ node }) => node.path);
+     36|       yield* Effect.log(JSON.stringify({ query, serverEntries, mobileV…
+     37|       expect(visible).toEqual(["src", "src/components", "src/component…
+       |                       ^
+     38|     }),
+     39|   ).pipe(Effect.provide(NodeServices.layer)),
+ ❯ IteratorImpl.~effect/Effect/successCont ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ ../../../.t3code/worktrees/t3code/mobile-file-search-matches/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1120:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:15:20
+   Duration  955ms (import 55%, tests 22%, transform 22%, worker 1%)
+

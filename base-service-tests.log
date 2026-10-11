@@ -1,0 +1,107 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-file-search-matches
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for composer
+{"query":"composer","serverEntries":[{"path":"src/components/Composer.tsx","kind":"file"},{"path":"src/components","kind":"directory"}],"mobileVisible":["src","src/components","src/components/Composer.test.tsx","src/components/Composer.tsx"]}
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for composer
+[23:12:38.144] ERROR (#1): Error [AssertionError]: expected [ 'src', 'src/components', …(2) ] to deeply equal [ 'src', 'src/components', …(1) ]
+    at /home/saphid/.t3code/worktrees/t3code/mobile-file-search-matches/apps/server/src/workspace/mobileFileSearch.test.ts:40:23 {
+  actual: [
+    'src',
+    'src/components',
+    'src/components/Composer.test.tsx',
+    'src/components/Composer.tsx'
+  ],
+  expected: [ 'src', 'src/components', 'src/components/Composer.tsx' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for compoesr
+{"query":"compoesr","serverEntries":[{"path":"src/components/Composer.tsx","kind":"file"},{"path":"src/components","kind":"directory"}],"mobileVisible":[]}
+
+stdout | apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for compoesr
+[23:12:38.153] ERROR (#6): Error [AssertionError]: expected [] to deeply equal [ 'src', 'src/components', …(1) ]
+    at /home/saphid/.t3code/worktrees/t3code/mobile-file-search-matches/apps/server/src/workspace/mobileFileSearch.test.ts:40:23 {
+  actual: [],
+  expected: [ 'src', 'src/components', 'src/components/Composer.tsx' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts (2 tests | 2 failed) 37ms
+   × keeps FFF matches visible on mobile for composer 30ms
+   × keeps FFF matches visible on mobile for compoesr 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for composer
+AssertionError: expected [ 'src', 'src/components', …(2) ] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+  [
+    "src",
+    "src/components",
++   "src/components/Composer.test.tsx",
+    "src/components/Composer.tsx",
+  ]
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts:40:23
+     38|       }).map(({ node }) => node.path);
+     39|       console.log(JSON.stringify({ query, serverEntries, mobileVisible…
+     40|       expect(visible).toEqual(["src", "src/components", "src/component…
+       |                       ^
+     41|     }),
+     42|   ),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1120:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/server/src/workspace/mobileFileSearch.test.ts > keeps FFF matches visible on mobile for compoesr
+AssertionError: expected [] to deeply equal [ 'src', 'src/components', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "src",
+-   "src/components",
+-   "src/components/Composer.tsx",
+- ]
++ []
+
+ ❯ apps/server/src/workspace/mobileFileSearch.test.ts:40:23
+     38|       }).map(({ node }) => node.path);
+     39|       console.log(JSON.stringify({ query, serverEntries, mobileVisible…
+     40|       expect(visible).toEqual(["src", "src/components", "src/component…
+       |                       ^
+     41|     }),
+     42|   ),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1120:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:12:37
+   Duration  534ms (import 37%, transform 27%, setup 24%, tests 10%, worker 1%)
+
