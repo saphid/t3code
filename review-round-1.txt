@@ -1,0 +1,19 @@
+I found no defects in F-3 (`0ddea4d465`). The change is correct and as small as the task asked for.
+
+**What I checked against the code**
+- **Same behaviour as before:**
+  - `refKind: "local"` does the job of the old `!branch.isRemote` check. The driver sorts and dedupes first, then filters by kind, so local refs are never dropped (`apps/server/src/vcs/GitVcsDriverCore.ts:3367-3375`).
+  - The query is a case-insensitive substring filter (`GitVcsDriverCore.ts:257-266`), and every match is then compared by exact `name`. A broad query can't cause a wrong match.
+  - The `Set` dedupe keeps the old early exit when `localPullRequestBranch === pullRequest.headBranch`.
+  - The order of preference is unchanged. The dedicated branch is returned whenever it exists, even without a worktree. The legacy `headBranch` is only taken when it has a worktree outside the root (`apps/server/src/git/GitManager.ts:2716-2748`).
+- **Paging:** `nextCursor` comes from `paginateBranches` and is `null` once the results run out (`GitVcsDriverCore.ts:269-287`), so the `do…while` loop always ends.
+- **Refresh once per lookup:** only the first call (first name, no cursor) passes `refresh: true`. Later pages and the `headBranch` pass read the cached snapshot for that epoch. Both lookups in `preparePullRequestThread`, before and after the fetch, still refresh.
+- **The new test:** the 110 padding branches all contain `localBranch` and share one commit time. They sort ahead by name (`a-…` before `pr-…` and `t3code/…`). The target is not the current branch, since `main` is checked out in `repoDir`. So the check that the target is missing from page one and `nextCursor` is set is a real precondition.
+- **Test run:** I re-ran the 4 new cases plus 3 related existing ones (dedicated head-branch reuse, fork-upstream reuse, root-checkout rejection) with `vp test run src/git/GitManager.test.ts -t …`. All 7 passed.
+
+**Small notes, none blocking**
+1. **Untested branch:** no test pushes the legacy fallback (fork PR whose worktree sits on the plain `headBranch` name) past the first page. The fork cases always pre-create `t3code/pr-78/…`. The existing test at `GitManager.test.ts:6466` covers the fallback, but only on a single page. The code path is the same loop, so I'm not counting this as a defect.
+2. **Pages can come from different snapshots:** a later page reads whatever snapshot epoch is current at that moment. If another caller refreshes in the middle of the loop, the list could shift and skip an entry. This needs a concurrent refresh while refs are changing, which is very unlikely; the old code had no cross-page issue because it read only one page.
+3. **Optional:** passing `limit: 200` (the contract maximum) would halve the number of pages. Each page re-maps and re-sorts the whole snapshot. I wouldn't change it; the query filter already keeps the page count small.
+
+**Outside F-3:** `apps/server/src/mcp/WorktreeMcpService.ts:200-206` also reads only the first page with `query`. That lookup only adds detail to an error message, though, and whether the branch exists is checked against the full `listLocalBranchNames` list. Leave it out of this fix.

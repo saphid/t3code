@@ -1,0 +1,215 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages
+
+stdout | apps/server/src/git/GitManager.test.ts > GitManager > reuses an existing PR worktree with 110 preceding matching branches (fork: false)
+[23:27:50.989] ERROR (#615): Error [GitPullRequestMaterializationError]: Failed to materialize pull request #78 branch pr-pagination as pr-pagination.
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:1056:17
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96
+    at preparePullRequestThread (/home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.test.ts:721:18)
+    at preparePullRequestThread (definition) (/home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:2544:94) {
+  _tag: 'GitPullRequestMaterializationError',
+  cwd: '/tmp/t3code-git-manager-iTcYQc',
+  pullRequestNumber: 78,
+  headRepository: null,
+  headBranch: 'pr-pagination',
+  localBranch: 'pr-pagination',
+  [cause]: Error [AggregateError]: Repository-head and pull-request-ref fetches both failed for pull request #78.
+      at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:1062:26
+      at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96 {
+    [cause]: Error [GitCommandError]: Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed
+        at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11 {
+      _tag: 'GitCommandError',
+      operation: 'GitVcsDriver.fetchPullRequestBranch',
+      command: 'git',
+      cwd: '/tmp/t3code-git-manager-iTcYQc',
+      argumentCount: 5,
+      exitCode: 128,
+      stdoutLength: 0,
+      stderrLength: 124,
+      detail: 'git fetch pull request branch failed',
+      [cause]: undefined
+    }
+  }
+}
+
+stdout | apps/server/src/git/GitManager.test.ts > GitManager > reuses an existing PR worktree with 110 preceding matching branches (fork: true)
+[23:27:52.911] ERROR (#2304): Error [GitPullRequestMaterializationError]: Failed to materialize pull request #78 branch pr-pagination as t3code/pr-78/pr-pagination.
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:1056:17
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96
+    at preparePullRequestThread (/home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.test.ts:721:18)
+    at preparePullRequestThread (definition) (/home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:2544:94) {
+  _tag: 'GitPullRequestMaterializationError',
+  cwd: '/tmp/t3code-git-manager-TlBbut',
+  pullRequestNumber: 78,
+  headRepository: 'contributor/codething-mvp',
+  headBranch: 'pr-pagination',
+  localBranch: 't3code/pr-78/pr-pagination',
+  [cause]: Error [AggregateError]: Repository-head and pull-request-ref fetches both failed for pull request #78.
+      at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/git/GitManager.ts:1062:26
+      at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96 {
+    [cause]: Error [GitCommandError]: Git command failed in GitVcsDriver.fetchRemoteBranch.materialize (/tmp/t3code-git-manager-TlBbut): Git command exited with a non-zero status.
+        at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11 {
+      _tag: 'GitCommandError',
+      operation: 'GitVcsDriver.fetchRemoteBranch.materialize',
+      command: 'git',
+      cwd: '/tmp/t3code-git-manager-TlBbut',
+      argumentCount: 4,
+      exitCode: 128,
+      stdoutLength: 0,
+      stderrLength: 132,
+      detail: 'Git command exited with a non-zero status.',
+      [cause]: undefined
+    }
+  }
+}
+
+ ❯ apps/server/src/git/GitManager.test.ts (131 tests | 2 failed | 127 skipped) 3709ms
+   ❯ GitManager (131)
+     × reuses an existing PR worktree with 110 preceding matching branches (fork: false) 1248ms
+     × reuses an existing PR worktree with 110 preceding matching branches (fork: true) 1362ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/git/GitManager.test.ts > GitManager > reuses an existing PR worktree with 110 preceding matching branches (fork: false)
+GitPullRequestMaterializationError: Failed to materialize pull request #78 branch pr-pagination as pr-pagination.
+ ❯ apps/server/src/git/GitManager.ts:1056:17
+    1054|             Effect.mapError(
+    1055|               (fallbackCause) =>
+    1056|                 new GitPullRequestMaterializationError({
+       |                 ^
+    1057|                   cwd,
+    1058|                   pullRequestNumber: pullRequest.number,
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3377:72
+ ❯ PrimitiveImpl.~effect/Effect/args node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1057:95
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:980:22
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+Caused by: AggregateError: Repository-head and pull-request-ref fetches both failed for pull request #78.
+ ❯ apps/server/src/git/GitManager.ts:1062:26
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96
+ ❯ PrimitiveImpl.~effect/Effect/args node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:746:53
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:707:22
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errors: [ { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchPullRequestBranch', command: 'git', cwd: '/tmp/t3code-git-manager-iTcYQc', argumentCount: 5, exitCode: 128, stdoutLength: 0, stderrLength: 124, detail: 'git fetch pull request branch failed', message: 'Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed', stack: 'GitCommandError: Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+    at ContImpl.andThenCont [as ~effect/Effect/successCont] (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10)
+    at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+    at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+    at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+    at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21)', name: 'GitCommandError' }, { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchPullRequestBranch', command: 'git', cwd: '/tmp/t3code-git-manager-iTcYQc', argumentCount: 5, exitCode: 128, stdoutLength: 0, stderrLength: 124, detail: 'git fetch pull request branch failed', message: 'Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed', stack: 'GitCommandError: Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+    at ContImpl.andThenCont [as ~effect/Effect/successCont] (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10)
+    at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+    at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+    at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+    at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21)', name: 'GitCommandError' } ] }
+Caused by: GitCommandError: Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-iTcYQc): git fetch pull request branch failed
+ ❯ apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+ ❯ ContImpl.andThenCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchPullRequestBranch', command: 'git', cwd: '/tmp/t3code-git-manager-iTcYQc', argumentCount: 5, exitCode: 128, stdoutLength: 0, stderrLength: 124, detail: 'git fetch pull request branch failed' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/server/src/git/GitManager.test.ts > GitManager > reuses an existing PR worktree with 110 preceding matching branches (fork: true)
+GitPullRequestMaterializationError: Failed to materialize pull request #78 branch pr-pagination as t3code/pr-78/pr-pagination.
+ ❯ apps/server/src/git/GitManager.ts:1056:17
+    1054|             Effect.mapError(
+    1055|               (fallbackCause) =>
+    1056|                 new GitPullRequestMaterializationError({
+       |                 ^
+    1057|                   cwd,
+    1058|                   pullRequestNumber: pullRequest.number,
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3377:72
+ ❯ PrimitiveImpl.~effect/Effect/args node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1057:95
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:980:22
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+Caused by: AggregateError: Repository-head and pull-request-ref fetches both failed for pull request #78.
+ ❯ apps/server/src/git/GitManager.ts:1062:26
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1475:96
+ ❯ PrimitiveImpl.~effect/Effect/args node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:746:53
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:707:22
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errors: [ { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchRemoteBranch.materialize', command: 'git', cwd: '/tmp/t3code-git-manager-TlBbut', argumentCount: 4, exitCode: 128, stdoutLength: 0, stderrLength: 132, detail: 'Git command exited with a non-zero status.', message: 'Git command failed in GitVcsDriver.fetchRemoteBranch.materialize (/tmp/t3code-git-manager-TlBbut): Git command exited with a non-zero status.', stack: 'GitCommandError: Git command failed in GitVcsDriver.fetchRemoteBranch.materialize (/tmp/t3code-git-manager-TlBbut): Git command exited with a non-zero status.
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+    at ContImpl.andThenCont [as ~effect/Effect/successCont] (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10)
+    at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+    at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+    at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+    at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21)', name: 'GitCommandError' }, { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchPullRequestBranch', command: 'git', cwd: '/tmp/t3code-git-manager-TlBbut', argumentCount: 5, exitCode: 128, stdoutLength: 0, stderrLength: 137, detail: 'git fetch pull request branch failed', message: 'Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-TlBbut): git fetch pull request branch failed', stack: 'GitCommandError: Git command failed in GitVcsDriver.fetchPullRequestBranch (/tmp/t3code-git-manager-TlBbut): git fetch pull request branch failed
+    at /home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+    at ContImpl.andThenCont [as ~effect/Effect/successCont] (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10)
+    at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+    at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+    at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+    at file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+    at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9)
+    at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/pr-worktree-branch-pages/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21)', name: 'GitCommandError' } ] }
+Caused by: GitCommandError: Git command failed in GitVcsDriver.fetchRemoteBranch.materialize (/tmp/t3code-git-manager-TlBbut): Git command exited with a non-zero status.
+ ❯ apps/server/src/vcs/GitVcsDriverCore.ts:1140:11
+ ❯ ContImpl.andThenCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1047:10
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:806:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1129:9
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:421:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { _tag: 'GitCommandError', operation: 'GitVcsDriver.fetchRemoteBranch.materialize', command: 'git', cwd: '/tmp/t3code-git-manager-TlBbut', argumentCount: 4, exitCode: 128, stdoutLength: 0, stderrLength: 132, detail: 'Git command exited with a non-zero status.' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 127 skipped (131)
+   Start at  23:27:40
+   Duration  12.20s (transform 49%, tests 31%, import 20%, setup 1%)
+
+  Transform  transforming modules took 5.90s · 49% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
