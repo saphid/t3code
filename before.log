@@ -1,0 +1,71 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/desktop-bearer-renewal
+
+ ❯ apps/web/src/environments/primary/desktopAuth.test.ts (3 tests | 1 failed) 12ms
+   ❯ desktop primary auth (3)
+     × picks up a bearer token the main process renewed 7ms
+stdout | apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts > DesktopLocalEnvironmentAuth > renews the bearer token before the session expires
+[23:09:13.968] ERROR (#18): Error [AssertionError]: expected 'desktop-bearer-token-1' to equal 'desktop-bearer-token-2'
+    at /home/saphid/.t3/worktrees/t3code/desktop-bearer-renewal/apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts:138:14 {
+  actual: 'desktop-bearer-token-1',
+  expected: 'desktop-bearer-token-2',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts
+Downloading Electron binary...
+
+ ❯ apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts (5 tests | 1 failed) 48ms
+   ❯ DesktopLocalEnvironmentAuth (5)
+     × renews the bearer token before the session expires 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts > DesktopLocalEnvironmentAuth > renews the bearer token before the session expires
+AssertionError: expected 'desktop-bearer-token-1' to equal 'desktop-bearer-token-2'
+
+Expected: "desktop-bearer-token-2"
+Received: "desktop-bearer-token-1"
+
+ ❯ apps/desktop/src/backend/DesktopLocalEnvironmentAuth.test.ts:138:14
+    136|         concurrency: "unbounded",
+    137|       });
+    138|       assert.strictEqual(first, "desktop-bearer-token-2");
+       |              ^
+    139|       assert.strictEqual(second, "desktop-bearer-token-2");
+    140|       assert.strictEqual(yield* Ref.get(requestCount), 2);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:803:44
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/web/src/environments/primary/desktopAuth.test.ts > desktop primary auth > picks up a bearer token the main process renewed
+AssertionError: expected 'desktop-bearer-token-1' to be 'desktop-bearer-token-2' // Object.is equality
+
+Expected: "desktop-bearer-token-2"
+Received: "desktop-bearer-token-1"
+
+ ❯ apps/web/src/environments/primary/desktopAuth.test.ts:41:50
+     39|
+     40|     await expect(readDesktopPrimaryBearerToken()).resolves.toBe("deskt…
+     41|     await expect(readDesktopPrimaryBearerToken()).resolves.toBe("deskt…
+       |                                                  ^
+     42|   });
+     43|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 6 passed (8)
+   Start at  23:09:08
+   Duration  5.12s (import 67%, transform 28%, setup 4%, tests 1%)
+
