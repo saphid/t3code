@@ -82,6 +82,10 @@ interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly completeWhen?: (value: A) => boolean;
   readonly idleTtlMs?: number;
+  readonly resumeWhen?: (target: {
+    readonly environmentId: EnvironmentIdType;
+    readonly input: Input;
+  }) => Atom.Atom<boolean>;
 }
 
 export type SettledAsyncResult<A, E> = AsyncResult.Success<A, E> | AsyncResult.Failure<A, E>;
@@ -651,20 +655,40 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
 ) {
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
-    return runtime
-      .atom(
-        followStreamInEnvironment(target.environmentId, options.subscribe(target.input)).pipe(
-          options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream,
-        ),
-      )
-      .pipe(
-        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(
-          options.sensitiveInput
-            ? `${options.label}:${target.environmentId}`
-            : `${options.label}:${key}`,
-        ),
-      );
+    const source = runtime.atom(
+      followStreamInEnvironment(target.environmentId, options.subscribe(target.input)).pipe(
+        options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream,
+      ),
+    );
+    const signal = options.resumeWhen?.(target);
+    const seen = new WeakMap<AtomRegistry.AtomRegistry, boolean>();
+    const subscription =
+      signal === undefined
+        ? source
+        : Atom.transform(
+            source,
+            (get) => {
+              const resume = get(signal);
+              const result = get(source);
+              const changed = seen.has(get.registry) && seen.get(get.registry) !== resume;
+              seen.set(get.registry, resume);
+              // Keep live streams intact, and don't refresh a fresh node after its cache was swept.
+              if (changed && resume && !result.waiting) {
+                get.refresh(source);
+                return get(source);
+              }
+              return result;
+            },
+            { initialValueTarget: source },
+          );
+    return subscription.pipe(
+      Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
+      Atom.withLabel(
+        options.sensitiveInput
+          ? `${options.label}:${target.environmentId}`
+          : `${options.label}:${key}`,
+      ),
+    );
   });
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
     family(environmentRpcKey(target));

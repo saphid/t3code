@@ -1,6 +1,6 @@
-import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -36,9 +36,41 @@ export function createTerminalEnvironmentAtoms<R, E>(
     readonly input: { readonly threadId: string; readonly terminalId?: string | undefined };
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
+  const metadata = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:terminal:metadata",
+    subscribe: (_input: null) =>
+      subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
+        Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
+      ),
+  });
+  const sessionPresent = Atom.family((environmentId: EnvironmentId) =>
+    Atom.family((threadId: string) =>
+      Atom.family((terminalId: string) =>
+        Atom.make((get) => {
+          const result = get(metadata({ environmentId, input: null }));
+          return (
+            AsyncResult.isSuccess(result) &&
+            result.value.some(
+              (terminal) => terminal.threadId === threadId && terminal.terminalId === terminalId,
+            )
+          );
+        }),
+      ),
+    ),
+  );
+  // Metadata also sees sessions reopened by other devices or server-owned setup scripts.
+  const resumeWhen = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>;
+  }) => sessionPresent(environmentId)(input.threadId)(input.terminalId);
   return {
     observe: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:observe",
+      completeWhen: (state) => state.version > 0 && state.status === "closed",
+      resumeWhen,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
         Stream.suspend(() =>
           subscribe(WS_METHODS.terminalObserve, input).pipe(
@@ -48,6 +80,9 @@ export function createTerminalEnvironmentAtoms<R, E>(
     }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
+      // The seed is also "closed". Only a close event ends reconnects; live sessions stay warm.
+      completeWhen: (state) => state.version > 0 && state.status === "closed",
+      resumeWhen,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
         Stream.suspend(() =>
           subscribe(WS_METHODS.terminalAttach, input).pipe(
@@ -59,13 +94,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:events",
       tag: WS_METHODS.subscribeTerminalEvents,
     }),
-    metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:metadata",
-      subscribe: (_input: null) =>
-        subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
-          Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
-        ),
-    }),
+    metadata,
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:open",
       tag: WS_METHODS.terminalOpen,
