@@ -1,0 +1,151 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+[23:27:17.323] ERROR (#20): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+[23:27:17.383] ERROR (#326): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+[23:27:17.438] ERROR (#632): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+[23:27:17.500] ERROR (#938): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+[23:27:17.556] ERROR (#1244): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+[23:27:17.609] ERROR (#1552): [Error: {"_tag":"Defect","defect":{"name":"Error","message":"Service not found: t3/contracts/RpcScopeAuthorization"}}] {
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/ws.authAccess.test.ts (6 tests | 6 failed) 387ms
+   ❯ subscribeAuthAccess snapshot handoff (6)
+     × buffers revoke link while waiting for snapshot read 94ms
+     × buffers revoke link while waiting for snapshot ACK 58ms
+     × buffers connect client while waiting for snapshot read 56ms
+     × buffers connect client while waiting for snapshot ACK 62ms
+     × buffers disconnect client while waiting for snapshot read 56ms
+     × buffers disconnect client while waiting for snapshot ACK 53ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+{
+  _tag: 'Defect',
+  defect: {
+    name: 'Error',
+    message: 'Service not found: t3/contracts/RpcScopeAuthorization'
+  },
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  23:27:09
+   Duration  8.48s (transform 69%, import 25%, tests 5%, setup 1%)
+
+  Transform  transforming modules took 5.80s · 69% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

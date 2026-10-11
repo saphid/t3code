@@ -1,0 +1,153 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order
+
+ ❯ apps/server/src/ws.authAccess.test.ts (6 tests | 6 failed) 360303ms
+   ❯ subscribeAuthAccess snapshot handoff (6)
+     × buffers revoke link while waiting for snapshot read 60051ms
+     × buffers revoke link while waiting for snapshot ACK 60037ms
+     × buffers connect client while waiting for snapshot read 60061ms
+     × buffers connect client while waiting for snapshot ACK 60061ms
+     × buffers disconnect client while waiting for snapshot read 60026ms
+     × buffers disconnect client while waiting for snapshot ACK 60056ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+Error: Test timed out in 60000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ Array.<anonymous> apps/server/src/ws.authAccess.test.ts:77:14
+     75|     { change: "connect client", milestone: "snapshot ACK" },
+     76|     { change: "disconnect client", milestone: "snapshot read" },
+     77|     { change: "disconnect client", milestone: "snapshot ACK" },
+       |              ^
+     78|   ] as const)("buffers $change while waiting for $milestone", ({ chang…
+     79|     Effect.gen(function* () {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  23:23:34
+   Duration  372.04s (tests 97%, transform 2%, import 1%)
+
+rce-control:write","filesystem:read","filesystem:write","relay:read"],"subject":"one-time-token","label":"Revoked during subscription","createdAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-01T00:05:00.000Z"}],"clientSessions":[{"sessionId":"ece444c9-781e-435d-8f1c-c599aa04a000","subject":"current-client","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"method":"browser-session-cookie","client":{"deviceType":"unknown"},"issuedAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-31T00:00:00.000Z","lastConnectedAt":null,"connected":false,"current":true}]}}]}] {
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+[23:27:34.022] ERROR (#638): [Error: {"_tag":"Chunk","requestId":"1","values":[{"version":1,"revision":1,"type":"snapshot","payload":{"pairingLinks":[{"id":"70f79f9b-5172-49ac-90b8-652bd116783b","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"subject":"one-time-token","label":"Revoked during subscription","createdAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-01T00:05:00.000Z"}],"clientSessions":[{"sessionId":"b0cd4eee-cb9c-431a-96f6-29f9dac8094b","subject":"current-client","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"method":"browser-session-cookie","client":{"deviceType":"unknown"},"issuedAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-31T00:00:00.000Z","lastConnectedAt":null,"connected":false,"current":true}]}}]}] {
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+[23:27:34.084] ERROR (#947): [Error: {"_tag":"Chunk","requestId":"1","values":[{"version":1,"revision":1,"type":"snapshot","payload":{"pairingLinks":[{"id":"1220723f-ed3e-4fca-8886-bc60b587c5bd","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"subject":"one-time-token","label":"Revoked during subscription","createdAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-01T00:05:00.000Z"}],"clientSessions":[{"sessionId":"697e05b7-2d73-4865-b0dd-5bfc11be22dc","subject":"current-client","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"method":"browser-session-cookie","client":{"deviceType":"unknown"},"issuedAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-31T00:00:00.000Z","lastConnectedAt":null,"connected":false,"current":true}]}}]}] {
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+[23:27:34.138] ERROR (#1256): [Error: {"_tag":"Chunk","requestId":"1","values":[{"version":1,"revision":1,"type":"snapshot","payload":{"pairingLinks":[{"id":"83a38d44-7320-4935-bb16-866b1ec8969f","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"subject":"one-time-token","label":"Revoked during subscription","createdAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-01T00:05:00.000Z"}],"clientSessions":[{"sessionId":"e85c693c-af10-4330-8854-9dfdea65f2e9","subject":"current-client","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"method":"browser-session-cookie","client":{"deviceType":"unknown"},"issuedAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-31T00:00:00.000Z","lastConnectedAt":"1970-01-01T00:00:00.000Z","connected":true,"current":true}]}}]}] {
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+[23:27:34.193] ERROR (#1567): [Error: {"_tag":"Chunk","requestId":"1","values":[{"version":1,"revision":1,"type":"snapshot","payload":{"pairingLinks":[{"id":"1782449f-e993-4c12-a502-e8f6e33d267e","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"subject":"one-time-token","label":"Revoked during subscription","createdAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-01T00:05:00.000Z"}],"clientSessions":[{"sessionId":"02047d7f-b11e-4862-a7f6-76fbf4fbe03c","subject":"current-client","scopes":["orchestration:read","orchestration:operate","terminal:operate","relay:read"],"permissions":["orchestration:read","orchestration:operate","settings:write","providers:manage","environment:maintain","preview:operate","diagnostics:read","terminal:read","terminal:operate","source-control:write","filesystem:read","filesystem:write","relay:read"],"method":"browser-session-cookie","client":{"deviceType":"unknown"},"issuedAt":"1970-01-01T00:00:00.000Z","expiresAt":"1970-01-31T00:00:00.000Z","lastConnectedAt":"1970-01-01T00:00:00.000Z","connected":true,"current":true}]}}]}] {
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/ws.authAccess.test.ts (6 tests | 6 failed) 398ms
+   ❯ subscribeAuthAccess snapshot handoff (6)
+     × buffers revoke link while waiting for snapshot read 99ms
+     × buffers revoke link while waiting for snapshot ACK 62ms
+     × buffers connect client while waiting for snapshot read 59ms
+     × buffers connect client while waiting for snapshot ACK 62ms
+     × buffers disconnect client while waiting for snapshot read 54ms
+     × buffers disconnect client while waiting for snapshot ACK 55ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+{
+  _tag: 'Chunk',
+  requestId: '1',
+  values: [ { version: 1, revision: 1, type: 'snapshot', payload: [Object] } ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  23:27:25
+   Duration  8.66s (transform 70%, import 25%, tests 5%, setup 1%)
+
+  Transform  transforming modules took 5.96s · 70% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

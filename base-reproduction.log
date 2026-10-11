@@ -1,0 +1,135 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+[23:28:31.678] ERROR (#20): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'pairingLinkRemoved'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:147:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'pairingLinkRemoved',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+[23:28:31.746] ERROR (#333): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'pairingLinkRemoved'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:147:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'pairingLinkRemoved',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+[23:28:31.818] ERROR (#646): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'clientUpserted'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:154:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'clientUpserted',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+[23:28:31.879] ERROR (#960): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'clientUpserted'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:154:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'clientUpserted',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+[23:28:31.938] ERROR (#1274): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'clientUpserted'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:154:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'clientUpserted',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+[23:28:31.997] ERROR (#1588): Error [AssertionError]: expected 'pairingLinkUpserted' to equal 'clientUpserted'
+    at /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order/apps/server/src/ws.authAccess.test.ts:154:16 {
+  actual: 'pairingLinkUpserted',
+  expected: 'clientUpserted',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/ws.authAccess.test.ts (6 tests | 6 failed) 435ms
+   ❯ subscribeAuthAccess snapshot handoff (6)
+     × buffers revoke link while waiting for snapshot read 111ms
+     × buffers revoke link while waiting for snapshot ACK 65ms
+     × buffers connect client while waiting for snapshot read 73ms
+     × buffers connect client while waiting for snapshot ACK 60ms
+     × buffers disconnect client while waiting for snapshot read 59ms
+     × buffers disconnect client while waiting for snapshot ACK 59ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers revoke link while waiting for snapshot ACK
+AssertionError: expected 'pairingLinkUpserted' to equal 'pairingLinkRemoved'
+
+Expected: "pairingLinkRemoved"
+Received: "pairingLinkUpserted"
+
+ ❯ apps/server/src/ws.authAccess.test.ts:147:16
+    145|       assert.equal(next?.revision, 2);
+    146|       if (change === "revoke link") {
+    147|         assert.equal(next?.type, "pairingLinkRemoved");
+       |                ^
+    148|         if (next?.type === "pairingLinkRemoved") {
+    149|           assert.equal(next.payload.id, link.id);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2548:86
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers connect client while waiting for snapshot ACK
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot read
+ FAIL  apps/server/src/ws.authAccess.test.ts > subscribeAuthAccess snapshot handoff > buffers disconnect client while waiting for snapshot ACK
+AssertionError: expected 'pairingLinkUpserted' to equal 'clientUpserted'
+
+Expected: "clientUpserted"
+Received: "pairingLinkUpserted"
+
+ ❯ apps/server/src/ws.authAccess.test.ts:154:16
+    152|         }
+    153|       } else {
+    154|         assert.equal(next?.type, "clientUpserted");
+       |                ^
+    155|         if (next?.type === "clientUpserted") {
+    156|           assert.equal(next.payload.sessionId, current.sessionId);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2548:86
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  23:28:22
+   Duration  9.24s (transform 68%, import 26%, tests 5%, setup 1%)
+
+  Transform  transforming modules took 6.19s · 68% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

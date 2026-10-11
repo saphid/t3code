@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/auth-access-subscribe-order
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  23:29:03
+   Duration  9.67s (transform 67%, import 24%, tests 8%, setup 1%)
+
+  Transform  transforming modules took 6.45s · 67% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
