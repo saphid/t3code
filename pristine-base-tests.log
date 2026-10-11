@@ -1,0 +1,34 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order
+
+ ❯ apps/server/src/ws.test.ts (12 tests | 4 failed) 240240ms
+   × preserves settings changes during discovery at the config RPC boundary 60040ms
+   × preserves settings changes during snapshot ACK at the config RPC boundary 60043ms
+   × preserves keybindings changes during discovery at the config RPC boundary 60066ms
+   × preserves keybindings changes during snapshot ACK at the config RPC boundary 60057ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+ FAIL  apps/server/src/ws.test.ts > preserves settings changes during snapshot ACK at the config RPC boundary
+ FAIL  apps/server/src/ws.test.ts > preserves keybindings changes during discovery at the config RPC boundary
+ FAIL  apps/server/src/ws.test.ts > preserves keybindings changes during snapshot ACK at the config RPC boundary
+Error: Test timed out in 60000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ apps/server/src/ws.test.ts:283:12
+    281|       );
+    282|       const initialKeybindings = (yield* keybindings.getSnapshot).keyb…
+    283|       const discoveryStarted = yield* Deferred.make<void>();
+       |            ^
+    284|       const finishDiscovery = yield* Deferred.make<void>();
+    285|       const lateEditors = yield* Deferred.make<readonly ["vscode"]>();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 8 passed (12)
+   Start at  23:34:09
+   Duration  248.47s (tests 97%, transform 2%, import 1%)
+

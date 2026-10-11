@@ -1,0 +1,13 @@
+B-3 validation
+Base: 3f70c831c65f339e71c549a2e1395aaffa9ce17e
+Fix: 5268281362ce91e2763d22a32a547e8a45874ef5
+
+The initial baseline used a behavior-preserving extraction of config stream assembly plus the unused Keybindings scoped acquisition API; baseline-test-seam.patch records it. All four race regressions failed by assertions with 8 existing ws tests passing (before-tests-clean.log).
+
+An independent run used the exact handler from git show 3f70c831c6:apps/server/src/ws.ts, stripping only TypeScript as-const assertions for execution. The temporary pristine-base-harness.test.ts uses real settings/keybinding services and RpcServer.makeNoSerialization, with controlled discovery and stubbed unrelated provider/theme streams. It yielded 4 assertion failures / 8 passes (pristine-base-tests-clean.log). The temporary harness was removed from the worktree before commit.
+
+The fixed committed tests and existing keybinding tests yielded 37 passes / 0 failures (after-tests.log). The final test source matches final-test.ts. Server typecheck passed; lint has only three pre-existing warnings (unused Fiber, Schedule, projectSetupScriptRunner); formatting and diff whitespace checks passed.
+
+The protocol tests use Deferred milestones to publish during discovery and while the initial snapshot remains unacknowledged. A second same-source event causes a deterministic assertion failure on the base without sleeps or timeout-based success. Late editor discovery is released after both updates and must retain their latest values.
+
+Other debug logs are harness development attempts, not the canonical before/after evidence. No live userdata, running app instances, browser, push, or PR was used.

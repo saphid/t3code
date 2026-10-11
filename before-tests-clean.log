@@ -1,0 +1,205 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+[23:32:10.554] ERROR (#71): Error [AssertionError]: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+    at /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order/apps/server/src/ws.test.ts:388:14 {
+  actual: {
+    version: 1,
+    type: 'settingsUpdated',
+    payload: { settings: [Object] }
+  },
+  expected: {
+    version: 1,
+    type: 'settingsUpdated',
+    payload: { settings: [Object] }
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during snapshot ACK at the config RPC boundary
+[23:32:10.630] ERROR (#399): Error [AssertionError]: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+    at /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order/apps/server/src/ws.test.ts:388:14 {
+  actual: {
+    version: 1,
+    type: 'settingsUpdated',
+    payload: { settings: [Object] }
+  },
+  expected: {
+    version: 1,
+    type: 'settingsUpdated',
+    payload: { settings: [Object] }
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.test.ts > preserves keybindings changes during discovery at the config RPC boundary
+[23:32:10.713] ERROR (#727): Error [AssertionError]: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+    at /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order/apps/server/src/ws.test.ts:388:14 {
+  actual: {
+    version: 1,
+    type: 'keybindingsUpdated',
+    payload: { keybindings: [Array], issues: [] }
+  },
+  expected: {
+    version: 1,
+    type: 'keybindingsUpdated',
+    payload: { keybindings: [Array], issues: [] }
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/ws.test.ts > preserves keybindings changes during snapshot ACK at the config RPC boundary
+[23:32:10.803] ERROR (#1056): Error [AssertionError]: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+    at /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order/apps/server/src/ws.test.ts:388:14 {
+  actual: {
+    version: 1,
+    type: 'keybindingsUpdated',
+    payload: { keybindings: [Array], issues: [] }
+  },
+  expected: {
+    version: 1,
+    type: 'keybindingsUpdated',
+    payload: { keybindings: [Array], issues: [] }
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/ws.test.ts (12 tests | 4 failed) 407ms
+   × preserves settings changes during discovery at the config RPC boundary 118ms
+   × preserves settings changes during snapshot ACK at the config RPC boundary 70ms
+   × preserves keybindings changes during discovery at the config RPC boundary 96ms
+   × preserves keybindings changes during snapshot ACK at the config RPC boundary 86ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+ FAIL  apps/server/src/ws.test.ts > preserves settings changes during snapshot ACK at the config RPC boundary
+AssertionError: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+
+- Expected
++ Received
+
+@@ -29,11 +29,11 @@
+        "deviceHosts": [],
+        "deviceOnboardingCompleted": false,
+        "enableAgentBrowserAccess": true,
+        "enableAgentDeviceAccess": false,
+        "enableDeviceSupport": false,
+-       "enableProviderUpdateChecks": true,
++       "enableProviderUpdateChecks": false,
+        "environmentIcon": null,
+        "favorites": null,
+        "newWorktreesStartFromOrigin": true,
+        "observability": {
+          "otlpLogsUrl": "",
+
+ ❯ apps/server/src/ws.test.ts:388:14
+    386|             );
+    387|       const latest = yield* next;
+    388|       assert.deepEqual(yield* Queue.take(responses), expected);
+       |              ^
+    389|       yield* acknowledge;
+    390|       assert.deepEqual(yield* Queue.take(responses), latest);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2548:86
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  apps/server/src/ws.test.ts > preserves keybindings changes during discovery at the config RPC boundary
+ FAIL  apps/server/src/ws.test.ts > preserves keybindings changes during snapshot ACK at the config RPC boundary
+AssertionError: expected { version: 1, …(2) } to deeply equal { version: 1, …(2) }
+
+- Expected
++ Received
+
+@@ -102,25 +102,10 @@
+            },
+            "type": "and",
+          },
+        },
+        {
+-         "command": "terminal.split",
+-         "shortcut": {
+-           "altKey": false,
+-           "ctrlKey": false,
+-           "key": "d",
+-           "metaKey": false,
+-           "modKey": true,
+-           "shiftKey": false,
+-         },
+-         "whenAst": {
+-           "name": "terminalFocus",
+-           "type": "identifier",
+-         },
+-       },
+-       {
+          "command": "terminal.splitVertical",
+          "shortcut": {
+            "altKey": false,
+            "ctrlKey": false,
+            "key": "d",
+@@ -1493,10 +1478,21 @@
+          "command": "terminal.toggle",
+          "shortcut": {
+            "altKey": true,
+            "ctrlKey": false,
+            "key": "y",
++           "metaKey": false,
++           "modKey": true,
++           "shiftKey": false,
++         },
++       },
++       {
++         "command": "terminal.split",
++         "shortcut": {
++           "altKey": true,
++           "ctrlKey": false,
++           "key": "z",
+            "metaKey": false,
+            "modKey": true,
+            "shiftKey": false,
+          },
+        },
+
+ ❯ apps/server/src/ws.test.ts:388:14
+    386|             );
+    387|       const latest = yield* next;
+    388|       assert.deepEqual(yield* Queue.take(responses), expected);
+       |              ^
+    389|       yield* acknowledge;
+    390|       assert.deepEqual(yield* Queue.take(responses), latest);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2548:86
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 8 passed (12)
+   Start at  23:31:59
+   Duration  11.49s (transform 71%, import 25%, tests 4%, setup 1%)
+
+  Transform  transforming modules took 8.05s · 71% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

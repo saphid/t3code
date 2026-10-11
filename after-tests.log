@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order
+
+
+ Test Files  2 passed (2)
+      Tests  37 passed (37)
+   Start at  23:32:28
+   Duration  8.43s (transform 66%, import 27%, tests 5%, setup 1%)
+
+  Transform  transforming modules took 6.43s · 66% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

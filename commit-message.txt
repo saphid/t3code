@@ -1,0 +1,5 @@
+fix(server): preserve config changes while the initial snapshot loads
+
+Subscribe to settings and keybinding changes before loading the initial server config. Buffer changes through discovery and the snapshot ACK wait, then fold them into live updates and late editor snapshots.
+
+Co-Authored-By: GPT-6.1 Sol <noreply@openai.com>

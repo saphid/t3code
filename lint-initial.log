@@ -1,0 +1,4 @@
+note: You are running `vp lint` as a Vite+ built-in command. If you meant to run the lint npm script, use `vpr lint` instead.
+apps/server/src/ws.ts:9:13: warning eslint(no-unused-vars): Identifier 'Fiber' is imported but never used. help: Consider removing this import.
+apps/server/src/ws.ts:16:13: warning eslint(no-unused-vars): Identifier 'Schedule' is imported but never used. help: Consider removing this import.
+apps/server/src/ws.ts:1293:13: warning eslint(no-unused-vars): Variable 'projectSetupScriptRunner' is declared but never used. Unused variables should start with a '_'. help: Consider removing this declaration.

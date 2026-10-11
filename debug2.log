@@ -1,0 +1,47 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/server-config-subscribe-order
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+TRACE const keybindings = yield* Keybindings.Keybindings;
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+TRACE yield* Deferred.await(discoveryStarted);
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+FRAME Chunk
+TRACE const snapshot = yield* Queue.take(responses);
+TRACE yield* acknowledge;
+
+stdout | apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+FRAME Exit
+FRAME ClientEnd
+
+ ❯ apps/server/src/ws.test.ts (12 tests | 1 failed | 11 skipped) 10014ms
+   × preserves settings changes during discovery at the config RPC boundary 10013ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/ws.test.ts > preserves settings changes during discovery at the config RPC boundary
+Error: Test timed out in 10000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ apps/server/src/ws.test.ts:268:12
+    266|   { source: "keybindings", interval: "discovery" },
+    267|   { source: "keybindings", interval: "snapshot ACK" },
+    268| ] as const)(
+       |            ^
+    269|   "preserves $source changes during $interval at the config RPC bounda…
+    270|   ({ source, interval }) =>
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 11 skipped (12)
+   Start at  23:30:53
+   Duration  19.62s (tests 51%, transform 36%, import 12%)
+
+  Transform  transforming modules took 6.95s · 36% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
