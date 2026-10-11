@@ -1,0 +1,23 @@
+The fix is correct and I found no correctness defects. It does leave one quadratic path that the base code also has.
+
+**What I checked**
+- **Same results as base:** I ran 200,000 random strings built from `[]()<>"' a\n` through both the base `matchAll` version and the fixed version. There were 0 mismatches. That fits with how the regex works. In the base pattern `\[[^\]]*]`, every `[` before a given `]` ends its label at that same `]`. So all of them try the same destination match starting at `labelEnd+1`. Picking the leftmost `[` and skipping to `labelEnd+1` when it fails is equivalent. On a match, `cursor = lastIndex` behaves like `matchAll`, and a zero-length match can't happen.
+- **Shared regex:** reusing the module-level sticky regex is safe. The extractor runs synchronously, and `lastIndex` is set before every `exec`.
+- **Tests:** `vp test run packages/shared/src/markdownLinks.test.ts packages/shared/src/threadFindText.test.ts` gave 153 passed.
+
+**Remaining quadratic case (not a regression)**
+- **Where:** `packages/shared/src/markdownLinks.ts:325-326, 340-342`.
+- **What happens:** the label scan is now linear, but the destination regex can still run past the end of its label. The `([^\s)]+)` branch reads until it hits whitespace, `)` or the end of the string. The `<([^>\n]+)>` branch reads until `>` or a newline. When the match fails, the cursor only moves to `labelEnd+1`, so the next label's destination re-reads the same text. Repeated labels with no whitespace and no `)` between them cost O(n²).
+- **Measured (Node, single call):**
+
+| Input | Length | Base | Fixed |
+|---|---|---|---|
+| `"[](a".repeat(16000)` | 64k chars | 2531 ms | 2437 ms |
+| `"[](<a".repeat(16000)` | 80k chars | 4878 ms | 4104 ms |
+| `"[x](https://e.com/".repeat(8000)` | 144k chars | 2796 ms | 2982 ms |
+
+  Doubling `n` roughly quadruples the time in every row.
+- **How likely:** much less likely than the reported cases (bare `[` or unfinished `[label` lines). It needs many `](` pairs with no whitespace or `)`, such as a long minified line in fenced output or a run of unfinished links glued together. It is still the same function and the same synchronous caller (`ChatMarkdown.tsx:2441`), and it is still quadratic.
+- **Possible fix if you want to close it:** when a destination match fails, track how far it scanned. The `)` or `>` it needed doesn't exist anywhere in that stretch, so later labels whose `(` falls inside it could skip straight to failing. Excluding `[` or `]` from `[^\s)]+` would also fix it, but that changes which hrefs get extracted, so it isn't a minimal fix. Shipping C-2 as-is and noting this as a follow-up is also reasonable.
+
+My bench script is at `/tmp/c2review/bench.mjs`.

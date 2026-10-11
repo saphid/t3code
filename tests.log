@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/markdown-link-scan
+
+
+ Test Files  1 passed (1)
+      Tests  140 passed (140)
+   Start at  23:10:07
+   Duration  1.21s (transform 50%, setup 31%, import 9%, tests 8%, worker 2%)
+

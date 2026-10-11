@@ -1,0 +1,28 @@
+Base revision: 3f70c831c65f339e71c549a2e1395aaffa9ce17e
+Final commit: b8083a18e3fbc2084f286e69d13eb2a9c3c3bfb6
+Runtime: Node v24.15.0, direct production TypeScript extractor import; same synchronous helper used by ChatMarkdown and shared thread-find indexing.
+before.log started on unchanged base before editing. after.log reflects the final scanner. Both use one warmup per input and five measured calls, ms per extraction.
+unmatched brackets, size 4000, 4000 characters: median 45.458702 ms before -> 0.008041 ms final.
+unmatched brackets, size 8000, 8000 characters: median 140.246669 ms before -> 0.004369 ms final.
+unmatched brackets, size 16000, 16000 characters: median 588.737852 ms before -> 0.001491 ms final.
+unmatched brackets, size 32000, 32000 characters: median 2203.496565 ms before -> 0.001707 ms final.
+fenced unfinished lines, size 1000, 17011 characters: median 49.087813 ms before -> 0.003003 ms final.
+fenced unfinished lines, size 2000, 34011 characters: median 137.066207 ms before -> 0.002004 ms final.
+fenced unfinished lines, size 4000, 68011 characters: median 559.817923 ms before -> 0.003245 ms final.
+fenced unfinished lines, size 8000, 136011 characters: median 2155.674389 ms before -> 0.004496 ms final.
+Destination-before is the label-only first fix f6e94c7645, independently confirmed to retain the base destination cost. Destination-after is final scanner. Three measured calls per input, ms per extraction.
+'[](a' repeated 1000: median 10.291881 ms intermediate -> 0.848817 ms final.
+'[](a' repeated 2000: median 42.675132 ms intermediate -> 0.483739 ms final.
+'[](a' repeated 4000: median 161.838000 ms intermediate -> 0.830183 ms final.
+'[](a' repeated 8000: median 785.312377 ms intermediate -> 1.467653 ms final.
+'[](<a' repeated 1000: median 20.680377 ms intermediate -> 0.265928 ms final.
+'[](<a' repeated 2000: median 79.083610 ms intermediate -> 0.425978 ms final.
+'[](<a' repeated 4000: median 298.921865 ms intermediate -> 1.349551 ms final.
+'[](<a' repeated 8000: median 1268.679740 ms intermediate -> 2.481631 ms final.
+'[x](https://e.com/' repeated 1000: median 51.364034 ms intermediate -> 0.129810 ms final.
+'[x](https://e.com/' repeated 2000: median 194.386072 ms intermediate -> 0.311037 ms final.
+'[x](https://e.com/' repeated 4000: median 726.261105 ms intermediate -> 0.542477 ms final.
+'[x](https://e.com/' repeated 8000: median 3254.252659 ms intermediate -> 1.142395 ms final.
+Final scaling.log: 100 warmups per input, seven samples of 1000 calls. Final destination-scaling.log: 50 warmups per input, seven samples of 100 calls. See raw logs for medians and sample values; doubling sizes is approximately linear on this shared host.
+Compatibility: final scanner outputs match base regex for 50,000 deterministic generated mixed-link inputs. Focused extraction + thread-find tests:159 passed. Targeted lint and shared typecheck passed; typecheck has an unrelated existing Effect suggestion in symlink.ts.
+Scope: extraction only. No browser/computer use, server startup, live userdata access, push, or PR. Working tree clean after commit.

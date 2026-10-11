@@ -1,0 +1,34 @@
+**No defects found in C-2 round 2 (b8083a18e3).** The new scanners give the same results as the base regex, and adversarial inputs now scale linearly.
+
+**Same results as base**
+- I ported the function to JS exactly and compared it with the base `matchAll` version on 400,000 random strings up to 30 tokens long. The alphabet included `[ ] ( ) < > " '`, space, `\t`, `\n`, non-breaking space and composite tokens like `[a](`, `](`, `(<`. There were 0 mismatches.
+- I also worked it through by hand against the pattern `\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)`:
+  - **No hidden backtracking:** at every step, giving up characters would leave a character the next part can't accept. The `\s*` after `(`, the greedy `[^\s)]+` (backtracking leaves a character that is neither whitespace nor `)`), the angle body, and the `\s+` before a title can each only match one way. So the scanner's single forward pass covers every match the regex could find.
+  - **Fallback and titles:** when the angle form fails, it falls back to the bare form from the same `<`. `<>` correctly fails the angle form and is taken as the bare href `<>`. A title needs at least one whitespace character first (`end === start` rejects it otherwise), and mixed quote types are accepted, as in base.
+  - **Whitespace:** `/\S/`, `/[\s)]/` and `/[>\n]/` use the same JS `\s` definition as the original pattern, so Unicode whitespace is handled the same way.
+  - **Shared `]`:** skipping to `labelEnd + 1` when a destination fails is still correct, because every `[` before that `]` ends its label there. Stopping when no `]` is left is also correct.
+
+**Why it's linear**
+- `markdownRunEndFinder` (`packages/shared/src/markdownLinks.ts:326`) returns the cached result only when the new start falls inside the stretch it already searched, and nothing in that stretch can match.
+- Every finder is called with start positions that only move forward. The loop cursor only increases, and each finder's input comes from that cursor through steps that never go backwards. So searches never overlap and total work is O(n).
+- The angle and bare tails have separate caches, so falling back from one to the other can't send a cache back to an earlier position.
+- Each regex literal is a new object each time the scanner is built, so nothing shared at module level is left behind.
+
+**Timings** (one call each, ms, at 16k / 32k / 64k repeats; each roughly doubles):
+
+| Input | 16k | 32k | 64k |
+|---|---|---|---|
+| `[` | 0.01 | 0.01 | 0.01 |
+| `[](a` | 4.1 | 6.8 | 10.5 |
+| `[](<a` | 2.7 | 5.0 | 10.9 |
+| `[](a "` | 9.6 | 22.6 | 35.2 |
+| `[](<a> "` | 11.7 | 19.9 | 39.5 |
+| `[](<a>b` | 4.5 | 8.9 | 18.0 |
+| `[]( ` | 4.4 | 8.7 | 19.0 |
+| `[](<a> "x" ` | 16.7 | 29.8 | 49.0 |
+
+**Tests:** `vp test run packages/shared/src/markdownLinks.test.ts packages/shared/src/threadFindText.test.ts` gave 159 passed.
+
+**Optional nit:** `packages/shared/src/markdownLinks.test.ts:240`. The `it.each` title has no `%s`/`%j` placeholder, so all 14 cases show up with the same name, which makes a failure harder to pin down.
+
+My fuzz and timing script is at `/tmp/c2r2/t.mjs`.
