@@ -508,7 +508,7 @@ export function startAttachmentUpload(input: {
  * persisted draft upload survives cancellation (an environment switch cancels
  * the old job, and the draft still references that server copy).
  */
-function cancelAttachmentUpload(imageId: string): void {
+function cancelAttachmentUpload(imageId: string, preserveAttachmentId?: string): void {
   const job = jobsByImageId.get(imageId);
   if (!job) {
     return;
@@ -521,7 +521,7 @@ function cancelAttachmentUpload(imageId: string): void {
     queue.splice(queuedIndex, 1);
   }
   job.abort?.();
-  if (job.attachmentId) {
+  if (job.attachmentId && job.attachmentId !== preserveAttachmentId) {
     deletePendingUpload(job.environmentId, job.attachmentId);
   }
   job.resolveSettled();
@@ -540,6 +540,17 @@ export function releaseAttachmentUpload(imageId: string): void {
       deletePendingUpload(upload.previous.environmentId, upload.previous.attachmentId);
     }
   }
+  clearUploadState(imageId);
+}
+
+/**
+ * Release client payloads when undo expires. Ready uploads may still be on the
+ * clipboard, so leave their server copy for the normal pending-upload expiry.
+ */
+export function forgetAttachmentUpload(imageId: string): void {
+  const upload = readAttachmentUpload(imageId);
+  const ready = upload?.status === "ready" ? upload : upload?.previous;
+  cancelAttachmentUpload(imageId, ready?.attachmentId);
   clearUploadState(imageId);
 }
 

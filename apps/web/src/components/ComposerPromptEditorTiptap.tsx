@@ -3,6 +3,7 @@ import { Extension, InputRule, Node, wrappingInputRule, type JSONContent } from 
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import {
   type EditorState,
@@ -86,8 +87,14 @@ import {
   type ComposerChangeKind,
   groupUndoByChangeKind,
   markAsClipboardEdit,
+  resetComposerUndoHistory,
 } from "~/composer-undo-grouping";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import {
+  createComposerContextHistory,
+  updateComposerContextHistory,
+} from "~/composer-context-history";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
@@ -113,6 +120,9 @@ import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
+  resetUndoHistory: () => void;
+  removeContextReferences: (ids: ReadonlyArray<string>) => void;
+  readUndoableContextIds: () => ReadonlySet<string>;
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
@@ -134,6 +144,10 @@ export interface ComposerPromptEditorHandle {
 }
 
 export interface ComposerPromptEditorProps {
+  /** History belongs to one draft/question, even when its prompt is empty. */
+  historyScope?: string;
+  onUndoHistoryReset?: () => void;
+  onUndoableContextIdsChange?: (contextIds: ReadonlySet<string>) => void;
   value: string;
   cursor: number;
   /**
@@ -876,6 +890,33 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   // The editor instance for callbacks created before it exists (paste).
   // Effects flush before any user interaction, so this is always set.
   const editorHolder = useRef<TiptapEditor | null>(null);
+  const historyScopeRef = useRef(props.historyScope);
+  const serializedDocRef = useRef<{
+    doc: ProseMirrorNode;
+    map: ReturnType<typeof serializeEditorDoc>;
+  } | null>(null);
+  const readEditorDocMap = useCallback((doc: ProseMirrorNode) => {
+    if (serializedDocRef.current?.doc === doc) return serializedDocRef.current.map;
+    const map = serializeEditorDoc(doc);
+    serializedDocRef.current = { doc, map };
+    return map;
+  }, []);
+  const contextHistoryRef = useRef(
+    createComposerContextHistory(new Set(collectInlineContextIds(value))),
+  );
+  const undoableContextIdsRef = useRef<ReadonlySet<string>>(contextHistoryRef.current.current);
+  const onUndoableContextIdsChangeRef = useRef(props.onUndoableContextIdsChange);
+  useLayoutEffect(() => {
+    onUndoableContextIdsChangeRef.current = props.onUndoableContextIdsChange;
+  }, [props.onUndoableContextIdsChange]);
+  const onUndoHistoryResetRef = useRef(props.onUndoHistoryReset);
+  useLayoutEffect(() => {
+    onUndoHistoryResetRef.current = props.onUndoHistoryReset;
+  }, [props.onUndoHistoryReset]);
+  useLayoutEffect(() => {
+    onUndoHistoryResetRef.current?.();
+    return () => onUndoHistoryResetRef.current?.();
+  }, []);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -949,7 +990,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   const handleEditorChange = useCallback(
     (updated: TiptapEditor) => {
-      const map = serializeEditorDoc(updated.state.doc);
+      const map = readEditorDocMap(updated.state.doc);
       // Literal answers hold no chips, so reference-shaped text is not a context.
       const contextIds = literalText ? [] : map.contextIds;
       const { from, to } = updated.state.selection;
@@ -1007,7 +1048,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
       onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
     },
-    [clampEditorCursor, literalText],
+    [clampEditorCursor, literalText, readEditorDocMap],
   );
 
   const editorAttributes = useMemo(
@@ -1479,6 +1520,18 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return true;
         },
       },
+      onTransaction: ({ editor: updated, transaction }) => {
+        if (!transaction.docChanged) return;
+        const contextIds = new Set(
+          literalText ? [] : readEditorDocMap(updated.state.doc).contextIds,
+        );
+        undoableContextIdsRef.current = updateComposerContextHistory(contextHistoryRef.current, {
+          contextIds,
+          undoDepth: undoDepth(updated.state),
+          redoDepth: redoDepth(updated.state),
+        });
+        onUndoableContextIdsChangeRef.current?.(undoableContextIdsRef.current);
+      },
       onUpdate: ({ editor: updated }) => {
         handleEditorChange(updated);
       },
@@ -1495,6 +1548,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   useEffect(() => {
     editorHolder.current = editor;
+  }, [editor]);
+
+  const resetUndoHistory = useCallback(() => {
+    if (!editor) return;
+    editor.view.updateState(resetComposerUndoHistory(editor.state));
+    contextHistoryRef.current = createComposerContextHistory(contextHistoryRef.current.current);
+    undoableContextIdsRef.current = contextHistoryRef.current.current;
+    onUndoableContextIdsChangeRef.current?.(undoableContextIdsRef.current);
   }, [editor]);
 
   // Tiptap forwards option changes to the view from a passive effect, so a
@@ -1647,9 +1708,45 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     [clampEditorCursor, editor, expandEditorCursor, literalText],
   );
 
+  // Run after the controlled rewrite so history starts from the new target's
+  // document. Keep the editor DOM (and focus) through draft promotion.
+  useLayoutEffect(() => {
+    if (!editor || historyScopeRef.current === props.historyScope) return;
+    historyScopeRef.current = props.historyScope;
+    resetUndoHistory();
+    onUndoHistoryResetRef.current?.();
+  }, [editor, props.historyScope, resetUndoHistory]);
+
   useImperativeHandle(
     editorRef,
     () => ({
+      resetUndoHistory,
+      removeContextReferences: (ids) => {
+        if (!editor) return;
+        const rejected = new Set(ids);
+        const map = serializeEditorDoc(editor.state.doc);
+        const tr = editor.state.tr.setMeta("addToHistory", false);
+        // Delete only the rejected ranges so earlier text history keeps its mappings.
+        for (const occurrence of collectComposerContextReferences(map.value).reverse()) {
+          if (!rejected.has(occurrence.contextId)) continue;
+          const position = (offset: number) => {
+            const run = map.runs.find(
+              (run) => offset >= run.mdStart && offset < run.mdStart + run.mdLen,
+            );
+            if (!run) return editor.state.doc.content.size - 1;
+            return (
+              run.pmPos + Math.max(0, Math.min(run.docLen, offset - run.mdStart - run.openLen))
+            );
+          };
+          tr.delete(position(occurrence.start), position(occurrence.end));
+        }
+        isApplyingControlledUpdateRef.current = true;
+        editor.view.dispatch(tr);
+        isApplyingControlledUpdateRef.current = false;
+        readSnapshot();
+        setIsEmpty(snapshotRef.current.value.length === 0);
+      },
+      readUndoableContextIds: () => undoableContextIdsRef.current,
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },
@@ -1723,7 +1820,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           : edgeRect.bottom - caretRect.bottom < threshold;
       },
     }),
-    [editor, focusAt, literalText, readSnapshot],
+    [editor, focusAt, literalText, readSnapshot, resetUndoHistory],
   );
 
   const handleCopyCut = useCallback(

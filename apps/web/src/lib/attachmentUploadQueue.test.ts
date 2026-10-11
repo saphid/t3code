@@ -56,6 +56,7 @@ vi.mock("../state/session", () => ({
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  forgetAttachmentUpload,
   readAttachmentUpload,
   releaseAttachmentUpload,
   releaseDraftAttachment,
@@ -164,6 +165,49 @@ function setConnected(environmentId: EnvironmentId, connected: boolean) {
 }
 
 describe("attachmentUploadQueue", () => {
+  it("forgets a ready file without deleting the server copy a cut/paste may reference", async () => {
+    const file = makeFile("clipboard-file");
+    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([file.id]);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await settled;
+    expect(readAttachmentUpload(file.id)?.status).toBe("ready");
+    mocks.runAtomCommand.mockClear();
+    forgetAttachmentUpload(file.id);
+    expect(readAttachmentUpload(file.id)).toBeUndefined();
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+  });
+
+  it("drops a failed job and its retry subscription while preserving the previous clipboard upload", async () => {
+    const file = makeFile("clipboard-retry");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: secondEnvironment,
+          attachmentId: "clipboard-copy",
+        },
+      },
+    });
+    startAttachmentUpload({ environmentId: firstEnvironment, image: file });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([file.id]);
+    TestXmlHttpRequest.requests[0]!.complete(503);
+    await settled;
+    expect(readAttachmentUpload(file.id)?.status).toBe("failed");
+    mocks.runAtomCommand.mockClear();
+    forgetAttachmentUpload(file.id);
+    expect(readAttachmentUpload(file.id)).toBeUndefined();
+    const deletedIds = mocks.runAtomCommand.mock.calls.map((call) => call[2]?.input?.attachmentId);
+    expect(deletedIds).toContain(`pending-environment-1-${file.name}`);
+    expect(deletedIds).not.toContain("clipboard-copy");
+    setConnected(firstEnvironment, false);
+    setConnected(firstEnvironment, true);
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+  });
+
   beforeEach(() => {
     mocks.connectionStateAtom.mockImplementation(connectionStates);
     setConnected(firstEnvironment, true);

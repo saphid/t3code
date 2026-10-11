@@ -1,5 +1,5 @@
 import { getSchema } from "@tiptap/core";
-import { history, undo } from "@tiptap/pm/history";
+import { history, redo, redoDepth, undo, undoDepth } from "@tiptap/pm/history";
 import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { describe, expect, it } from "vite-plus/test";
@@ -9,6 +9,7 @@ import {
   type ComposerChangeKind,
   groupUndoByChangeKind,
   markAsClipboardEdit,
+  resetComposerUndoHistory,
 } from "./composer-undo-grouping";
 
 const schema = getSchema([StarterKit]);
@@ -99,6 +100,30 @@ function composer(text = "") {
 }
 
 describe("composer undo grouping", () => {
+  it("discards undo and redo at a target reset while preserving the draft and selection", () => {
+    let state = EditorState.create({ schema, plugins: [history()] });
+    const dispatch = (tr: Transaction) => {
+      state = state.apply(tr);
+    };
+    dispatch(state.tr.insertText("draft"));
+    dispatch(state.tr.insertText(" more").setTime(Date.now() + 2000));
+    undo(state, dispatch);
+    expect(undoDepth(state)).toBeGreaterThan(0);
+    expect(redoDepth(state)).toBeGreaterThan(0);
+    const doc = state.doc;
+    const selection = state.selection;
+    state = resetComposerUndoHistory(state);
+    expect(state.doc).toBe(doc);
+    expect(state.selection).toBe(selection);
+    expect(undo(state, dispatch)).toBe(false);
+    expect(redo(state, dispatch)).toBe(false);
+    dispatch(state.tr.insertText(" next"));
+    expect(undo(state, dispatch)).toBe(true);
+    expect(state.doc).toEqual(doc);
+    expect(redo(state, dispatch)).toBe(true);
+    expect(state.doc.textContent).toBe("draft next");
+  });
+
   it("keeps a continuous run of typing as one step", () => {
     expect(composer().type("hello world").undo().text()).toBe("");
   });

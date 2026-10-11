@@ -144,6 +144,11 @@ import {
 import { ComposerActivityRow } from "./ComposerActivityStatus";
 import {
   reconcileAttachmentContextReferences,
+  clearRetainedAttachmentContextPayloads,
+  pruneRetainedAttachmentContextPayloads,
+  forgetLiveAttachmentContextPayloads,
+  recreateRetainedImagePreview,
+  removeRejectedAttachmentContextReferences,
   type RetainedAttachmentContextPayloads,
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
@@ -173,6 +178,7 @@ import {
   readAttachmentUpload,
   releaseAttachmentUpload,
   releaseDraftAttachment,
+  forgetAttachmentUpload,
   releasePersistedAttachmentUpload,
   retryAttachmentUpload,
   startAttachmentUpload,
@@ -3718,6 +3724,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     files: new Map(),
     previewAnnotations: new Map(),
   });
+  const releaseRemovedAttachmentPayloads = useCallback(
+    (attachments: ReadonlyArray<ComposerFileAttachment | ComposerImageAttachment>) => {
+      for (const attachment of attachments) {
+        forgetAttachmentUpload(attachment.id);
+        if (attachment.type === "image" && attachment.previewUrl.startsWith("blob:")) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      }
+    },
+    [],
+  );
+  const onUndoHistoryReset = useCallback(() => {
+    releaseRemovedAttachmentPayloads(
+      clearRetainedAttachmentContextPayloads(removedAttachmentContextPayloadsRef.current),
+    );
+    const retained = removedContextPayloadsRef.current;
+    retained.terminals.clear();
+    retained.reviewComments.clear();
+    retained.threads.clear();
+  }, [releaseRemovedAttachmentPayloads]);
+  const onUndoableContextIdsChange = useCallback(
+    (contextIds: ReadonlySet<string>) => {
+      releaseRemovedAttachmentPayloads(
+        pruneRetainedAttachmentContextPayloads(
+          removedAttachmentContextPayloadsRef.current,
+          contextIds,
+        ),
+      );
+    },
+    [releaseRemovedAttachmentPayloads],
+  );
 
   const onPromptChange = useCallback(
     (
@@ -3824,13 +3861,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         images: composerImages,
         previewAnnotations: composerPreviewAnnotations,
         retained: removedAttachmentContextPayloadsRef.current,
+        undoableContextIds: composerEditorRef.current?.readUndoableContextIds(),
       });
       for (const annotationId of attachmentChanges.annotationIdsToRemove) {
         // Keep the upload queue entry alive: undo restores the image that owns it.
         removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId);
       }
       for (const restored of attachmentChanges.annotationsToRestore) {
-        if (restored.image) addComposerDraftImages(attachmentDraftTarget, [restored.image]);
+        if (restored.image) {
+          addComposerDraftImages(attachmentDraftTarget, [
+            recreateRetainedImagePreview(restored.image),
+          ]);
+          if (
+            !getComposerDraft(attachmentDraftTarget)?.images.some(
+              (image) => image.id === restored.image?.id,
+            )
+          )
+            continue;
+        }
         addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation, {
           appendReference: false,
         });
@@ -3842,9 +3890,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (attachmentChanges.filesToRestore.length > 0) {
         addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
       }
-      setComposerCursor(nextCursor);
+      forgetLiveAttachmentContextPayloads(
+        removedAttachmentContextPayloadsRef.current,
+        getComposerDraft(attachmentDraftTarget)?.files ?? [],
+        getComposerDraft(composerDraftTarget)?.previewAnnotations ?? [],
+      );
+      const restoredPrompt = removeRejectedAttachmentContextReferences({
+        prompt: nextPrompt,
+        filesToRestore: attachmentChanges.filesToRestore,
+        annotationsToRestore: attachmentChanges.annotationsToRestore,
+        files: getComposerDraft(attachmentDraftTarget)?.files ?? [],
+        previewAnnotations: getComposerDraft(composerDraftTarget)?.previewAnnotations ?? [],
+      });
+      let finalCursor = nextCursor;
+      let finalExpandedCursor = expandedCursor;
+      if (restoredPrompt.rejectedCount > 0) {
+        composerEditorRef.current?.removeContextReferences(restoredPrompt.rejectedIds);
+        const corrected = composerEditorRef.current?.readSnapshot();
+        restoredPrompt.prompt = corrected?.value ?? restoredPrompt.prompt;
+        finalCursor = corrected?.cursor ?? nextCursor;
+        finalExpandedCursor = corrected?.expandedCursor ?? expandedCursor;
+        promptRef.current = restoredPrompt.prompt;
+        setPrompt(restoredPrompt.prompt);
+        toastManager.add({
+          type: "error",
+          title: "Couldn't restore attachment",
+          description:
+            "This message is full or already contains the attachment. Remove an attachment and undo again, or attach the file again.",
+        });
+      }
+      releaseRemovedAttachmentPayloads(attachmentChanges.releasedAttachments);
+      setComposerCursor(finalCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(restoredPrompt.prompt, finalExpandedCursor),
       );
     },
     [
@@ -3873,6 +3953,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftImages,
       addComposerDraftFiles,
       attachmentDraftTarget,
+      releaseRemovedAttachmentPayloads,
+      getComposerDraft,
     ],
   );
 
@@ -7483,6 +7565,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
+                    historyScope={attachmentTargetKey}
+                    onUndoHistoryReset={onUndoHistoryReset}
+                    onUndoableContextIdsChange={onUndoableContextIdsChange}
                     ariaLabel="Message"
                     suggestionListId={composerSuggestionListId}
                     activeSuggestionId={

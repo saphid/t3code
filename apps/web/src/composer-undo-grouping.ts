@@ -1,5 +1,5 @@
-import { closeHistory, isHistoryTransaction } from "@tiptap/pm/history";
-import type { Transaction } from "@tiptap/pm/state";
+import { closeHistory, history, isHistoryTransaction } from "@tiptap/pm/history";
+import { type EditorState, type Transaction } from "@tiptap/pm/state";
 import { ReplaceStep } from "@tiptap/pm/transform";
 
 /**
@@ -13,6 +13,14 @@ import { ReplaceStep } from "@tiptap/pm/transform";
  * kind of change switched, and after one second without changes.
  */
 export const COMPOSER_UNDO_GROUP_DELAY = 1000;
+
+/** Drop undo/redo without replacing the document, selection, or other plugin state. */
+export function resetComposerUndoHistory(state: EditorState): EditorState {
+  const historyKey = history().spec.key;
+  return state
+    .reconfigure({ plugins: state.plugins.filter((plugin) => plugin.spec.key !== historyKey) })
+    .reconfigure({ plugins: state.plugins });
+}
 
 export type ComposerChangeKind = "insert" | "delete" | "other";
 
