@@ -1,0 +1,28 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/receipt-collision/apps/server
+
+
+ Test Files  3 passed (3)
+      Tests  9 passed (9)
+   Start at  23:08:57
+   Duration  15.38s (transform 48%, import 47%, tests 4%, setup 1%)
+
+     Import  779 modules were evaluated 1968 times · 7.01s total, 47% of tracked time
+             ~4.23s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
+
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/receipt-collision/apps/server
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:11:31
+   Duration  10.47s (transform 70%, import 27%, tests 2%, setup 1%)
+
+  Transform  transforming modules took 7.22s · 70% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

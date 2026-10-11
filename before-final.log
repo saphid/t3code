@@ -1,0 +1,55 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/receipt-collision/apps/server
+
+stdout | src/orchestration-v2/Orchestrator.receipt-race.test.ts > a command id reused concurrently for two threads succeeds for only one
+[23:11:57.855] ERROR (#11): Error [AssertionError]: expected -1 to be at least +0
+    at /home/saphid/.t3/worktrees/t3code/receipt-collision/apps/server/src/orchestration-v2/Orchestrator.receipt-race.test.ts:90:12 {
+  actual: -1,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ src/orchestration-v2/Orchestrator.receipt-race.test.ts (1 test | 1 failed) 134ms
+   × a command id reused concurrently for two threads succeeds for only one 133ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/orchestration-v2/Orchestrator.receipt-race.test.ts > a command id reused concurrently for two threads succeeds for only one
+AssertionError: expected -1 to be at least +0
+
+- Expected
++ Received
+
+- 0
++ -1
+
+ ❯ src/orchestration-v2/Orchestrator.receipt-race.test.ts:90:12
+     88|     const loser = exits.findIndex(Exit.isFailure);
+     89|     assert.isAtLeast(winner, 0);
+     90|     assert.isAtLeast(loser, 0);
+       |            ^
+     91|     const loserExit = exits[loser]!;
+     92|     assert.isTrue(Exit.isFailure(loserExit));
+ ❯ IteratorImpl.~effect/Effect/successCont ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ go ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5181:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  23:11:49
+   Duration  8.10s (transform 71%, import 26%, tests 2%, setup 1%)
+
+  Transform  transforming modules took 5.63s · 71% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
