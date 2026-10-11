@@ -1,0 +1,51 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/shell-item-count
+
+stdout | apps/server/src/orchestration-v2/ProjectionStore.shellItemCounts.test.ts > reads repeated thread and snapshot shell counts without aggregating historical items
+[23:20:42.698] ERROR (#4): Error [AssertionError]: shell refreshes must not recount historical turn items: expected 15 to equal +0
+    at /home/saphid/.t3/worktrees/t3code/shell-item-count/apps/server/src/orchestration-v2/ProjectionStore.shellItemCounts.test.ts:81:12 {
+  actual: 15,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/orchestration-v2/ProjectionStore.shellItemCounts.test.ts (2 tests | 1 failed) 186ms
+   × reads repeated thread and snapshot shell counts without aggregating historical items 103ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/orchestration-v2/ProjectionStore.shellItemCounts.test.ts > reads repeated thread and snapshot shell counts without aggregating historical items
+AssertionError: shell refreshes must not recount historical turn items: expected 15 to equal +0
+
+- Expected
++ Received
+
+- 0
++ 15
+
+ ❯ apps/server/src/orchestration-v2/ProjectionStore.shellItemCounts.test.ts:81:12
+     79|     assert.isAbove(statements.length, 0);
+     80|     const recounts = statements.filter((query) => /COUNT\(\*\)/i.test(…
+     81|     assert.equal(recounts.length, 0, "shell refreshes must not recount…
+       |            ^
+     82|   }).pipe(Effect.provide(layerTest)),
+     83| );
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  23:20:40
+   Duration  2.44s (transform 53%, import 34%, tests 8%, setup 5%)
+

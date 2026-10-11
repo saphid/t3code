@@ -1,0 +1,29 @@
+A-1 shell item count validation
+
+Base: 3f70c831c65f339e71c549a2e1395aaffa9ce17e
+Boundary: real ProjectionStore.getThreadShell with SqlitePersistence.layerMemory.
+Synthetic completed command_execution items in one completed run; counts asserted on every read.
+Each size uses one untimed warmup and 20 measured reads. Durations are milliseconds.
+Median is the average of sorted samples 10 and 11; p95 is sorted sample 19.
+Seeding, migration, and deletion costs are outside the measured interval.
+No browser, live environment, or user database was used.
+
+Items | Base median ms | Fixed median ms | Base p95 ms | Fixed p95 ms
+1000 | 0.594 | 0.631 | 1.039 | 0.773
+10000 | 1.166 | 0.441 | 1.485 | 0.635
+100000 | 8.539 | 0.314 | 9.500 | 0.450
+300000 | 30.389 | 0.291 | 36.458 | 0.355
+
+Reproduce: copy ShellCountBenchmark.test.ts into apps/server/src/orchestration-v2/
+./node_modules/.bin/vp test run apps/server/src/orchestration-v2/ShellCountBenchmark.test.ts
+The scratch test writes benchmark-current.json in this evidence directory.
+Base measurements used the exact base ProjectionStore.ts and Migrations.ts, restored before the fixed run.
+Scratch benchmark was removed from the checkout after measurement; it is not part of the commit.
+
+Regression: ProjectionStore.shellItemCounts.test.ts traced COUNT(*) against historical turn_items on base (15 offending queries across repeated fork/snapshot reads). Base: 1 failed, 1 passed. Fixed: 2 passed.
+Behavior checks: repeated payload and status updates; inserts; run-to-run, runless, and thread moves; deletion; rollback/restore; shell snapshot and per-thread reads.
+Existing ProjectionStore tests cover inherited fork history, nested forks, rolled-back source runs, and v1 imported runless items.
+Migration test covers backfill and transactional insert/delete/move rollback. FoundationPersistence test verifies count equivalence after event-sink replay/rebuild.
+The migration adds one count row per (thread, run), plus one runless row per thread. Ordinary streaming updates do not write counts. Insert/delete/move triggers update counts inside the source transaction.
+Shell count reads now scale with runs, rather than items. Migration backfill scans history once on upgrade.
+Transport contracts, entry points, permissions, and documentation remain accurate: no wire or UI semantics changed.

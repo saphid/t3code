@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/shell-item-count
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  23:19:46
+   Duration  2.07s (transform 53%, import 32%, tests 11%, setup 3%)
+
