@@ -1,0 +1,90 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/dev-electron-cleanup-pattern
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs (9 tests | 6 failed) 19ms
+   ❯ desktop dev process ownership (9)
+     × linux: startup leaves the other worktree running 8ms
+     × linux: ordinary restart stops only the captured app 2ms
+     × linux: forced restart stops only the captured app 1ms
+     × darwin: startup leaves the other worktree running 1ms
+     × darwin: ordinary restart stops only the captured app 1ms
+     × darwin: forced restart stops only the captured app 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: startup leaves the other worktree running
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: startup leaves the other worktree running
+AssertionError: expected [ '-f' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "-f",
++ ]
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:96:14
+     94|       const fixture = await launchFixture(platform);
+     95|       assert.lengthOf(fixture.apps, 1);
+     96|       assert.deepEqual(fixture.otherSignals, []);
+       |              ^
+     97|       assert.deepEqual(fixture.commands, []);
+     98|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: ordinary restart stops only the captured app
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: ordinary restart stops only the captured app
+AssertionError: expected [ '-f', '-f' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "-f",
++   "-f",
++ ]
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:107:16
+    105|         assert.lengthOf(fixture.apps, 2);
+    106|         assert.deepEqual(fixture.apps[1].signals, []);
+    107|         assert.deepEqual(fixture.otherSignals, []);
+       |                ^
+    108|         assert.deepEqual(
+    109|           fixture.commands,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: forced restart stops only the captured app
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: forced restart stops only the captured app
+AssertionError: expected [ '-f', '-f', '-f' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "-f",
++   "-f",
++   "-f",
++ ]
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:107:16
+    105|         assert.lengthOf(fixture.apps, 2);
+    106|         assert.deepEqual(fixture.apps[1].signals, []);
+    107|         assert.deepEqual(fixture.otherSignals, []);
+       |                ^
+    108|         assert.deepEqual(
+    109|           fixture.commands,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 3 passed (9)
+   Start at  23:11:54
+   Duration  234ms (setup 47%, transform 28%, tests 15%, import 5%, worker 4%)
+

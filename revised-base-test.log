@@ -1,0 +1,119 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/dev-electron-cleanup-pattern
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs (12 tests | 9 failed) 332ms
+   ❯ desktop dev process ownership (9)
+     × linux: startup leaves the other worktree running 9ms
+     × darwin: startup leaves the other worktree running 1ms
+     × linux: ordinary restart stops only the captured app 2ms
+     × linux: forced restart stops only the captured app 2ms
+     × darwin: ordinary restart stops only the captured app 3ms
+     × darwin: forced restart stops only the captured app 2ms
+   × native pgrep matches only the exact dev root /tmp/t3-feature.one/apps/desktop 155ms
+   × native pgrep matches only the exact dev root /tmp/t3 [feature](one)+?^${two}|back\slash/apps/desktop 117ms
+   × macOS launcher shell quoting preserves the raw dev-root argument 36ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: startup leaves the other worktree running
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: startup leaves the other worktree running
+AssertionError: expected true to be false
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ assertSweeps apps/desktop/scripts/dev-electron.test.mjs:105:12
+    103|     );
+    104|     assert.isTrue(regex.test("electron --t3code-dev-root=/tmp/t3-featu…
+    105|     assert.isFalse(
+       |            ^
+    106|       regex.test("electron --t3code-dev-root=/tmp/t3-featureXone/apps/…
+    107|     );
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:123:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: ordinary restart stops only the captured app
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > linux: forced restart stops only the captured app
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: ordinary restart stops only the captured app
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > desktop dev process ownership > darwin: forced restart stops only the captured app
+AssertionError: expected true to be false
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ assertSweeps apps/desktop/scripts/dev-electron.test.mjs:105:12
+    103|     );
+    104|     assert.isTrue(regex.test("electron --t3code-dev-root=/tmp/t3-featu…
+    105|     assert.isFalse(
+       |            ^
+    106|       regex.test("electron --t3code-dev-root=/tmp/t3-featureXone/apps/…
+    107|     );
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:138:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > native pgrep matches only the exact dev root /tmp/t3-feature.one/apps/desktop
+AssertionError: expected [ 373379, 373386, 373397, 373404 ] to not include 373397
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:193:12
+    191|     assert.include(matches, children[0].pid);
+    192|     assert.include(matches, children[1].pid);
+    193|     assert.notInclude(matches, children[2].pid);
+       |            ^
+    194|     assert.notInclude(matches, children[3].pid);
+    195|   } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > native pgrep matches only the exact dev root /tmp/t3 [feature](one)+?^${two}|back\slash/apps/desktop
+AssertionError: pgrep: regex error: Invalid preceding regular expression
+: expected 2 to equal +0
+
+- Expected
++ Received
+
+- 0
++ 2
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:189:12
+    187|     }
+    188|     const result = NodeChildProcess.spawnSync("pgrep", ["-f", "--", pa…
+    189|     assert.equal(result.status, 0, result.stderr);
+       |            ^
+    190|     const matches = result.stdout.trim().split(/\s+/).map(Number);
+    191|     assert.include(matches, children[0].pid);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  apps/desktop/scripts/dev-electron.test.mjs > macOS launcher shell quoting preserves the raw dev-root argument
+AssertionError: expected false to be true
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ apps/desktop/scripts/dev-electron.test.mjs:240:14
+    238|       assert.equal(argv[0], `--t3code-dev-root=${desktopRoot}`);
+    239|       const fixture = await launchFixture("darwin", true, desktopRoot);
+    240|       assert.isTrue(new RegExp(fixture.sweeps[0]).test(argv.join(" "))…
+       |              ^
+    241|     } finally {
+    242|       NodeFS.rmSync(directory, { recursive: true, force: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 3 passed (12)
+   Start at  23:20:44
+   Duration  571ms (tests 71%, setup 13%, transform 12%, import 2%, worker 1%)
+

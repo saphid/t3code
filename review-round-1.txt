@@ -1,0 +1,23 @@
+The fix is correct and I found no defects in it. I reviewed commit `072d073551` against base `3f70c831c6` without editing anything.
+
+**Correctness of the removal**
+- **Nothing that used the pattern remains.** No reference to `cleanupStaleDevApps` is left. The `--t3code-dev-root=` string now appears only in launch args (`apps/desktop/scripts/dev-electron.mjs:102`, `electron-launcher.mjs:141`), where nothing matches against it.
+- **Ownership is kept.** `stopApp` still sends SIGTERM and then SIGKILL to the captured `app`, plus `pkill -P <captured pid>` (`dev-electron.mjs:156-165`). `shutdown` still runs `pkill -P process.pid` (`:217`). Both only reach processes this runner spawned, which is what AGENTS.md rule 1 asks for.
+- **The captured PID is the real Electron process on every platform.**
+  - Linux: the launch spawns the Electron binary directly.
+  - macOS: the spawned binary is the bundle's launcher script. It runs `exec` (`electron-launcher.mjs:141`), so the PID stays the same and killing it still works.
+- **The sweep was not simply redundant.** Since commit `07aaf37fd4` it also cleaned up orphaned Electron instances from earlier runs in the same worktree, for example after the runner was SIGKILLed. That cleanup is gone now.
+  - This is an acceptable loss rather than a bug. There is no `requestSingleInstanceLock` anywhere in `apps/desktop/src`, so a leftover orphan can't stop the new app from starting. At worst it leaves an extra dev window open.
+  - Bringing it back the right way would mean recording the PID somewhere, which is out of scope. Escaping the regex would not have been enough anyway: the pattern also matched prefixes, so `/x/apps/desktop` would match `/x/apps/desktop-old/...`. Removing it is the right fix.
+
+**How meaningful the tests are**
+- I re-ran the tests on the fix: 9/9 pass. Your base log confirms the 6 Linux/macOS cases fail for the intended reason (the pattern is applied to the other worktree's argv). They are genuine regression tests.
+- I checked the timing in the restart fixture. `stopping.resolve()` is called inside `kill`, but code waiting on it only resumes after the synchronous executor has registered the forced-shutdown timer. So `timers.shift()` in the forced case gets the right timer, and the forced path really is exercised.
+
+Low-severity notes only, none blocking:
+1. `dev-electron.test.mjs:26-28`: `otherSignals` stores `args[0]`, which is `"-f"`, not a signal, so the name is misleading. It's also redundant, because `assert.deepEqual(fixture.commands, …)` (`:110-119`) already forbids any `-f` call.
+2. `dev-electron.test.mjs:110-119` asserts the exact `pkill -TERM/-KILL -P 1000` sequence. That partly mirrors the implementation, which AGENTS.md discourages. It would be enough to assert that every `pkill` targets `-P <captured pid>`.
+3. The three win32 cases pass on base too, so they don't test this bug. They only show the fix doesn't change Windows.
+4. Running the launcher in a VM after stripping imports with a regex (`:72-75`) is fairly heavy for what is a deletion, and it will break if an import is ever written in a different shape. Whether to keep this test or drop it is the maintainers' call.
+
+I didn't find any docs that mention the stale-app sweep.

@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/dev-electron-cleanup-pattern
+
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  23:21:59
+   Duration  587ms (tests 72%, setup 13%, transform 12%, import 2%, worker 1%)
+

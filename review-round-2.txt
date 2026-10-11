@@ -1,0 +1,17 @@
+No blocking defects in commit `56894cc721`. I reviewed only its two desktop files and edited nothing.
+
+**Checks**
+- **Diff:** `git show HEAD` matches the first 276 lines of `revised-full.diff` exactly. The upstream Muse changes later in that file are not part of this commit.
+- **The fix:** `apps/desktop/scripts/dev-electron.mjs:97-104` escapes every ERE metacharacter in `desktopDir` and wraps the match in `(^| )…( |$)`.
+  - The Windows early return is still there (`:93`).
+  - The orphan sweep still runs at all three sites: startup (`:263`), restart SIGTERM (`:173`) and the forced SIGKILL path (`:182`).
+  - The forced-path sweep sits after the `settled` guard, so it can't fire after the app has already exited. Every sweep runs before the next `startApp()`, so the new app is never in range.
+- **macOS argument:** `electron-launcher.mjs:141` single-quotes `desktopRoot` and then `exec`s. The test (`dev-electron.test.mjs:206-247`) runs the generated script through `/bin/sh` and confirms that argv carries the raw path, including `'`, `[`, `]` and spaces. `writeDevelopmentLauncherScript` passes `desktopDir` as `desktopRoot` (`:164`), so the runner's pattern and the macOS bundle's argv describe the same root.
+- **Re-run:** 12/12 tests pass. The base log shows 9 failed / 3 passed. The 3 that pass on base are the win32 cases, which this bug never affected. Lint is clean. Typecheck shows only the two unrelated existing suggestions.
+- **Test harness:** the `Promise.race` in the native test (`:180-185`) does not leak an unhandled rejection. When the children are SIGTERMed during cleanup, `race` has already attached a handler to the losing exit promise, so the throw is absorbed.
+- **Native coverage:** the Linux `pgrep` test reaches the real procps ERE through the full metacharacter directory. It covers own root followed by a space, own root at end of line, the `Xone` regex sibling and the `-two` suffix sibling, and only ever stops the PIDs it captured.
+
+**Residual notes (low, non-blocking)**
+1. **Space boundary is inherent to `pgrep -f`.** `pgrep -f` matches against argv joined with spaces. So a root that equals this worktree's `desktopDir` plus `" "` plus anything still matches. I confirmed this with two captured harmless Node PIDs: `(^| )--t3code-dev-root=/tmp/q/apps/desktop( |$)` matched both `/tmp/q/apps/desktop` and `/tmp/q/apps/desktop copy/apps/desktop`. Hitting it needs another worktree inside a sibling directory named `desktop <x>` under this worktree's `apps/`. That's contrived, and no pattern can close it, so it's acceptable.
+2. **`\]` and `\}` are not proven on native macOS.** POSIX leaves "backslash + ordinary character" undefined in ERE, and `]` and `}` are ordinary characters outside brackets and braces. glibc treats them as literals (proven by the Linux test). The BSD/TRE `regcomp` behind macOS `pgrep` should too, but only JS `RegExp` checks the macOS pattern (`:246`). This matches the stated limitation that there was no native macOS run.
+3. **The coordinator's `t3-feature.one-two` sibling is a weaker probe than it looks.** The paths split at `/` versus `-` before reaching any boundary, so it would not match even without the suffix anchor. The `${desktopDir}-two` and `apps/desktop-two` cases (`:110-112`, `:166`) are the ones that actually exercise `( |$)`, and they are present.
