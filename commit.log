@@ -1,0 +1,9 @@
+commit 63e37a03085472bf07f4fb9c48696dbd6dde30b2
+Author:     GPT-6.1 Sol <noreply@openai.com>
+AuthorDate: Sun Oct 11 23:09:29 2026 +0000
+Commit:     GPT-6.1 Sol <noreply@openai.com>
+CommitDate: Sun Oct 11 23:09:29 2026 +0000
+
+    fix(provider-acp): force-kill terminal commands that ignore SIGTERM
+    
+    Co-Authored-By: GPT-6.1 Sol <noreply@openai.com>

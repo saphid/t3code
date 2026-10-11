@@ -1,0 +1,12 @@
+~/packages/provider-acp$ tsc --noEmit ⊘ cache disabled
+src/server/AcpSessionRuntime.ts(508,7): suggestion TS377012: This Effect generator contains `try/catch`; in this context, error handling is expressed with Effect APIs such as Effect.try, Effect.tryPromise, Effect.catch, Effect.catchTag). effect(tryCatchInEffectGen)
+src/server/AcpSessionRuntime.ts(518,7): suggestion TS377012: This Effect generator contains `try/catch`; in this context, error handling is expressed with Effect APIs such as Effect.try, Effect.tryPromise, Effect.catch, Effect.catchTag). effect(tryCatchInEffectGen)
+src/server/AcpSessionRuntime.ts(534,7): suggestion TS377012: This Effect generator contains `try/catch`; in this context, error handling is expressed with Effect APIs such as Effect.try, Effect.tryPromise, Effect.catch, Effect.catchTag). effect(tryCatchInEffectGen)
+src/server/AcpSessionRuntime.ts(2094,17): suggestion TS377118: `Effect.fromOption` expresses this Option-to-Effect conversion more directly than `Option.match` or an Option tag conditional. effect(optionMatchToFromOption)
+src/server/AcpSessionRuntime.ts(2142,9): suggestion TS377132: `Effect.andThen` expresses this sequencing more directly than `Effect.flatMap` with a zero-parameter callback. effect(flatMapIgnoredParamToAndThen)
+src/server/AcpSessionRuntime.ts(2358,9): suggestion TS377116: `Effect.catchIf` expresses selective recovery more directly than `Effect.catch` with a conditional `Effect.fail` passthrough. effect(catchConditionalRefailToCatchIf)
+src/server/AcpSessionRuntime.ts(2727,17): suggestion TS377116: `Effect.catchCauseIf` expresses selective recovery more directly than `Effect.catchCause` with a conditional `Effect.failCause` passthrough. effect(catchConditionalRefailToCatchIf)
+src/server/adapter.ts(5040,21): suggestion TS377017: This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)
+src/server/adapter.ts(5755,21): suggestion TS377017: This Effect.gen contains a single return statement. effect(unnecessaryEffectGen)
+src/server/clientTerminals.test.ts(313,32): suggestion TS377113: `Effect.forEach` expresses this effectful array mapping more directly than `Effect.all` over `Array#map`. effect(allOfMapToForEach)
+

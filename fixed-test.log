@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/acp-terminal-force-kill
+
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  23:08:45
+   Duration  3.56s (tests 84%, transform 9%, import 5%, setup 2%)
+

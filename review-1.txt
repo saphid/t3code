@@ -1,0 +1,20 @@
+**No findings.** E-1 is a real bug, and the fix is correct and as small as it can be.
+
+**Root cause.** In the installed `@effect/platform-node-shared@4.0.2`, `kill()` with no options goes through `terminateProcessGroup` (`NodeChildProcessSpawner.ts:487-505`). It sends SIGTERM, waits about 1s, then waits on `exitSignal` with no time limit. A command that ignores SIGTERM therefore leaves `terminal/kill` hanging forever. When `forceKillAfter` is set, it sends SIGKILL after that delay plus a final ~1s wait.
+
+**The fix.** `packages/provider-acp/src/server/clientTerminals.ts:285-287` now sends the same default as the scoped cleanup, which gets `forceKillAfter` from `acpTerminalCommand` (`clientTerminals.ts:160`). Neither path sets `killSignal`, so both start with SIGTERM. Explicit kill and scope disposal now behave the same. Worst case, `terminal/kill` returns in about 6s instead of never.
+
+**Scope.** `makeAcpClientTerminals` is only built in `adapter.ts:1592`, and only when `options.clientTerminals` is set. The change is in shared server code, so it covers all clients and local/remote/tunnel connections.
+
+**Platforms.**
+- **POSIX:** the process group gets SIGKILL, and the test's `{ exitCode: null, signal: "SIGKILL" }` assertion holds.
+- **Windows:** the spawner always calls `taskkill /T /F`, so the old code already killed forcefully there. The fix adds nothing on Windows and does no harm. The test's assertion would probably fail on Windows because the exit status would differ, but CI only runs on Linux and macOS, so this doesn't matter now.
+
+**Test.**
+- It waits on Deferreds for spawn and readiness, not on sleeps. The `Effect.timeout` calls only make the old code fail quickly; the fixed path doesn't depend on them to pass. The real-clock 50ms `forceKillAfter` is what's under test, so `it.live` is justified.
+- Cleanup is sound. The SIGKILL finalizer targets only the child PID captured at spawn, which follows the no-kill-by-pattern rule. It runs before `disposeAll`, and if the child has already exited its error is ignored.
+- Wrapping the handle with `{...child, stdout}` works: `kill`, `isRunning` and `exitCode` survive the spread, since the test passes.
+
+**Verification.** I ran `vp test run packages/provider-acp/src/server/clientTerminals.test.ts` three times: 12/12 passed each time, with no flakes. The spawner source confirms the base failure in `base-regression.log` (TimeoutError, 1 failed / 11 skipped).
+
+One optional nit, not a defect: the `"5 seconds"` default now appears twice (lines 160 and 286). A shared constant would keep them in sync, but that isn't needed for this fix.
