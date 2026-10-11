@@ -1,0 +1,15 @@
+D-1 terminal attachment lifetime validation
+Base: 3f70c831c65f339e71c549a2e1395aaffa9ce17e
+Focused command: ./node_modules/.bin/vp test run packages/client-runtime/src/state/terminal.test.ts
+Base run: production terminal.ts restored to base; final test file unchanged. 0 passed / 5 failed.
+Fixed run: idleTtlMs: 0 for attach and observe; 5 passed / 0 failed.
+Actual runtime boundary: createTerminalEnvironmentAtoms -> createEnvironmentSubscriptionAtomFamily -> registry.followStream -> subscribe -> supervisor.session -> RPC terminalAttach/terminalObserve methods. Only the environment lease and RPC session methods are mocked. AtomRegistry, atom runtime, subscription scanning, session following, interruption and finalizers are real.
+Last-reader active subscriptions: base 1, fixed 0 (one attach case and one observe case).
+Closed-terminal attach calls after replacement session: base 2 with original terminalId and cwd, fixed 1. A separately mounted terminal acknowledges receipt of the replacement session in both runs.
+Multiple-reader control: remaining reader receives output and follows the replacement session; releasing it finalizes the live stream.
+Reverse state: remounting after release starts a fresh subscription on the replacement session, then releases it on unmount.
+No sleeps, polling, live state, browser or server processes used. Tests await queues and Deferred finalizers; Effect.yieldNow yields to queued registry cleanup.
+Source trace: apps/server/src/terminal/Manager.ts closeSession removes sessions at line 2421; openOrAttachForStream checks getSession at line 2746 and calls openLocked with cwd at line 2759. No server change is required: removing the abandoned client subscription prevents this stale request.
+Surfaces: apps/web/src/state/terminal.ts and apps/mobile/src/state/terminal.ts construct the shared family; their useAttachedTerminalSession hooks select attach for operators and observe for read-only users. Desktop uses web. Every terminal entry point that uses these hooks receives the fix. Terminal commands, agent/MCP terminals, scheduled work, contracts and provider adapters need no change because this concerns only live client readers. All providers and local, direct remote, relay, SSH and tunnel modes follow the same supervisor RPC session replacement path. Multi-device registries retain streams independently when their own readers remain.
+Docs checked: docs/internals/terminal-runtime.md and docs/user/terminal.md still accurately describe server-owned processes/history and client reattachment. No documentation change needed.
+Limitations: RPC methods are mocked; no real PTY/server or browser/native-client pass was performed. No CPU/throughput claim or benchmark is made.

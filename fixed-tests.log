@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/terminal-attachment-release
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  23:14:20
+   Duration  2.45s (transform 59%, import 33%, setup 5%, tests 2%)
+

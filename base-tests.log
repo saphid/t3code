@@ -1,0 +1,163 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/terminal-attachment-release
+
+stdout | packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > releases attach when its last reader leaves
+[23:14:11.142] ERROR (#4): Error [AssertionError]: expected 1 to be +0 // Object.is equality
+    at /home/saphid/.t3/worktrees/t3code/terminal-attachment-release/packages/client-runtime/src/state/terminal.test.ts:144:36 {
+  actual: 1,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > releases observe when its last reader leaves
+[23:14:11.151] ERROR (#14): Error [AssertionError]: expected 1 to be +0 // Object.is equality
+    at /home/saphid/.t3/worktrees/t3code/terminal-attachment-release/packages/client-runtime/src/state/terminal.test.ts:144:36 {
+  actual: 1,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > keeps attach live while another reader remains, then releases it
+[23:14:11.157] ERROR (#24): Error [AssertionError]: expected 1 to be +0 // Object.is equality
+    at /home/saphid/.t3/worktrees/t3code/terminal-attachment-release/packages/client-runtime/src/state/terminal.test.ts:193:36 {
+  actual: 1,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > keeps observe live while another reader remains, then releases it
+[23:14:11.162] ERROR (#35): Error [AssertionError]: expected 1 to be +0 // Object.is equality
+    at /home/saphid/.t3/worktrees/t3code/terminal-attachment-release/packages/client-runtime/src/state/terminal.test.ts:193:36 {
+  actual: 1,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > does not reattach a closed terminal after its last reader leaves and the environment reconnects
+[23:14:11.169] ERROR (#46): Error [AssertionError]: expected [ Array(2) ] to deeply equal [ { threadId: 'thread-1', …(2) } ]
+    at /home/saphid/.t3/worktrees/t3code/terminal-attachment-release/packages/client-runtime/src/state/terminal.test.ts:229:93 {
+  actual: [
+    { threadId: 'thread-1', terminalId: 'terminal-1', cwd: '/repo' },
+    { threadId: 'thread-1', terminalId: 'terminal-1', cwd: '/repo' }
+  ],
+  expected: [ { threadId: 'thread-1', terminalId: 'terminal-1', cwd: '/repo' } ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ packages/client-runtime/src/state/terminal.test.ts (5 tests | 5 failed) 55ms
+   ❯ terminal subscription lifecycle (5)
+     × releases attach when its last reader leaves 30ms
+     × releases observe when its last reader leaves 4ms
+     × keeps attach live while another reader remains, then releases it 6ms
+     × keeps observe live while another reader remains, then releases it 5ms
+     × does not reattach a closed terminal after its last reader leaves and the environment reconnects 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > releases attach when its last reader leaves
+ FAIL  packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > releases observe when its last reader leaves
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ packages/client-runtime/src/state/terminal.test.ts:144:36
+    142|           unmount();
+    143|           yield* flushDisposal;
+    144|           expect(harness.active()).toBe(0);
+       |                                    ^
+    145|           yield* Deferred.await(subscription.released);
+    146|           yield* harness.reconnect();
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > keeps attach live while another reader remains, then releases it
+ FAIL  packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > keeps observe live while another reader remains, then releases it
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ packages/client-runtime/src/state/terminal.test.ts:193:36
+    191|           secondReader.unmount();
+    192|           yield* flushDisposal;
+    193|           expect(harness.active()).toBe(0);
+       |                                    ^
+    194|           yield* Deferred.await(replacement.released);
+    195|         }),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  packages/client-runtime/src/state/terminal.test.ts > terminal subscription lifecycle > does not reattach a closed terminal after its last reader leaves and the environment reconnects
+AssertionError: expected [ Array(2) ] to deeply equal [ { threadId: 'thread-1', …(2) } ]
+
+- Expected
++ Received
+
+@@ -2,6 +2,11 @@
+    {
+      "cwd": "/repo",
+      "terminalId": "terminal-1",
+      "threadId": "thread-1",
+    },
++   {
++     "cwd": "/repo",
++     "terminalId": "terminal-1",
++     "threadId": "thread-1",
++   },
+  ]
+
+ ❯ packages/client-runtime/src/state/terminal.test.ts:229:93
+    227|           );
+    228|           yield* flushDisposal;
+    229|           expect(harness.calls.filter(({ terminalId }) => terminalId =…
+       |                                                                                             ^
+    230|             [INPUT],
+    231|           );
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed (5)
+   Start at  23:14:09
+   Duration  1.96s (transform 55%, import 36%, setup 6%, tests 3%)
+
