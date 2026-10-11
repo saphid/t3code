@@ -1,0 +1,58 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/checkpoint-diff-aggregate-cap
+
+stdout | apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts > bounds a filtered query through real checkpoint storage and Git
+{"samples":1,"patchReads":1,"collectedBytes":9999987,"responseBytes":10000000}
+
+stdout | apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts > bounds a filtered query through real checkpoint storage and Git
+[23:14:36.683] ERROR (#11): Error [AssertionError]: expected 1 to equal 2
+    at /home/saphid/.t3code/worktrees/t3code/checkpoint-diff-aggregate-cap/apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts:110:12 {
+  actual: 1,
+  expected: 2,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts (1 test | 1 failed) 993ms
+   × bounds a filtered query through real checkpoint storage and Git 992ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts > bounds a filtered query through real checkpoint storage and Git
+AssertionError: expected 1 to equal 2
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ apps/server/src/checkpointing/CheckpointDiffQuery.integration.test.ts:110:12
+    108|     assert.isTrue(result.diff.endsWith("\n\n[truncated]"));
+    109|     assert.notInclude(result.diff, "upstream.ts");
+    110|     assert.strictEqual(patchReads, 2);
+       |            ^
+    111|     assert.isAtMost(collectedBytes, 9_999_987);
+    112|   }).pipe(Effect.provide(layerTest), Effect.scoped),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  23:14:26
+   Duration  10.40s (transform 63%, import 26%, tests 10%, setup 1%)
+
+  Transform  transforming modules took 6.46s · 63% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

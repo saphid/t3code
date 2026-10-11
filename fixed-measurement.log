@@ -1,0 +1,16 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/sweep-20261012/evidence/F-1/measurement
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:21:05
+   Duration  14.23s (transform 64%, import 26%, tests 10%)
+
+  Transform  transforming modules took 8.96s · 64% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
+
+MEASUREMENT {"samples":1,"patchReads":1,"collectedBytes":9999988,"responseBytes":10000000}
