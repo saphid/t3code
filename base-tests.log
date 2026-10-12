@@ -1,0 +1,136 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/bitbucket-tied-pages
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.test.ts > BitbucketPullRequestApi.layer > advances through tied timestamps before reaching older pull requests
+[22:31:44.672] ERROR (#11): Error [AssertionError]: expected [ 1, 2 ] to deeply equal [ 3, 4 ]
+    at /home/saphid/.t3/worktrees/t3code/bitbucket-tied-pages/packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.test.ts:117:14 {
+  actual: [ 1, 2 ],
+  expected: [ 3, 4 ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.test.ts (49 tests | 1 failed) 86ms
+   ❯ BitbucketPullRequestApi.layer (49)
+     × advances through tied timestamps before reaching older pull requests 18ms
+stdout | apps/server/src/pullRequest/PullRequestService.test.ts > continues Bitbucket listings through tied timestamps and terminates
+[22:31:48.249] ERROR (#5415): Error [AssertionError]: expected [] to deeply equal [ 3, 4 ]
+    at /home/saphid/.t3/worktrees/t3code/bitbucket-tied-pages/apps/server/src/pullRequest/PullRequestService.test.ts:942:12 {
+  actual: [],
+  expected: [ 3, 4 ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/pullRequest/PullRequestService.test.ts > carries a slice on without sending the rows it already sent
+[22:31:56.851] ERROR (#40827): Error [AssertionError]: expected { Object (github.com acme/web) } to deeply equal { Object (github.com acme/web) }
+    at /home/saphid/.t3/worktrees/t3code/bitbucket-tied-pages/apps/server/src/pullRequest/PullRequestService.test.ts:4444:12 {
+  actual: { 'github.com acme/web': '2026-07-02T00:00:00Z|2|3,3,4' },
+  expected: { 'github.com acme/web': '2026-07-02T00:00:00Z|2|3,4' },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/pullRequest/PullRequestService.test.ts (202 tests | 2 failed) 14389ms
+   × continues Bitbucket listings through tied timestamps and terminates 72ms
+   × carries a slice on without sending the rows it already sent 45ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/pullRequest/PullRequestService.test.ts > continues Bitbucket listings through tied timestamps and terminates
+AssertionError: expected [] to deeply equal [ 3, 4 ]
+
+- Expected
++ Received
+
+- [
+-   3,
+-   4,
+- ]
++ []
+
+ ❯ apps/server/src/pullRequest/PullRequestService.test.ts:942:12
+    940|     assert.deepStrictEqual(first.nextCursors, { [key]: `${boundary}|2|…
+    941|     const second = yield* service.list({ state: "open", limit: 2, curs…
+    942|     assert.deepStrictEqual(second.entries.map((entry) => entry.number)…
+       |            ^
+    943|     assert.deepStrictEqual(second.nextCursors, { [key]: `${older}|4|4`…
+    944|     const third = yield* service.list({ state: "open", limit: 2, curso…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5152:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  apps/server/src/pullRequest/PullRequestService.test.ts > carries a slice on without sending the rows it already sent
+AssertionError: expected { Object (github.com acme/web) } to deeply equal { Object (github.com acme/web) }
+
+- Expected
++ Received
+
+  {
+-   "github.com acme/web": "2026-07-02T00:00:00Z|2|3,4",
++   "github.com acme/web": "2026-07-02T00:00:00Z|2|3,3,4",
+  }
+
+ ❯ apps/server/src/pullRequest/PullRequestService.test.ts:4444:12
+    4442|       [4],
+    4443|     );
+    4444|     assert.deepStrictEqual(result.nextCursors, {
+       |            ^
+    4445|       "github.com acme/web": "2026-07-02T00:00:00Z|2|3,4",
+    4446|     });
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5152:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.test.ts > BitbucketPullRequestApi.layer > advances through tied timestamps before reaching older pull requests
+AssertionError: expected [ 1, 2 ] to deeply equal [ 3, 4 ]
+
+- Expected
++ Received
+
+  [
+-   3,
+-   4,
++   1,
++   2,
+  ]
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.test.ts:117:14
+    115|         cursor: { updatedBefore: boundary, delivered: 2, seenAt: [1, 2…
+    116|       });
+    117|       assert.deepStrictEqual(second.items.map((item) => item.number), …
+       |              ^
+    118|       assert.isTrue(second.truncated);
+    119|       const third = yield* api.listPullRequests({
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5681:9
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5759:19
+ ❯ Module.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5778:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 248 passed (251)
+   Start at  22:31:42
+   Duration  18.42s (tests 72%, transform 19%, import 8%, setup 1%)
+
