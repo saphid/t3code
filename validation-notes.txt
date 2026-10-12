@@ -1,0 +1,8 @@
+Base tests executed before editing the homepage: 4 mobile failures, 4 desktop controls passed.
+Final focused tests: 8 passed. These execute real homepage detection/init and assert both hrefs/labels, desktop release call counts and preservation of the Command hint for macOS/iOS.
+Browser evidence uses an isolated Astro marketing server on port 4397, never the T3 dev server. Captured spawned daemon PID 1598750 and stopped only that PID after evidence capture.
+The collaborative Chromium browser uses a 412x915 Pixel 7 viewport (screenshots have device scale factor 2). navigator.userAgent and maxTouchPoints were overridden to simulate mobile detection. This is not native-device verification or an HTTP user-agent emulation.
+Before/after crops were captured by executing the actual TypeScript-stripped base/fixed homepage init against the rendered homepage DOM, with the real release helper. Crop source screenshots were copied/read from app-owned browser artifacts; all sweep artifacts are outside the checkout.
+runtime-results.json compares base 511d20c6f2 and initial fix 777b9ed9f1. The final amendment preserves the decorative iOS Command shortcut hint; routing and button appearance are unchanged. Focused tests and typecheck were rerun after amendment.
+Android buttons intentionally use text only, removing the misleading Linux icon; iOS retains the Apple icon.
+No physical mobile device, actual store installation, or Android tablet with a fully disguised Linux desktop user agent was verified. The latter remains a preexisting UA ambiguity, since Linux touch laptops can also report touch points.

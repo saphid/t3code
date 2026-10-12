@@ -1,0 +1,7 @@
+Coordinator requested a pure-module test refactor after reviewing commit 015fc78cb6.
+Detection is now in platform.ts and tested directly with plain UA/touch inputs. No Astro regex, type-stripping, VM, or DOM stubs remain in committed tests.
+The same eight requested UA cases plus an unknown-UA case pass. Store URL selection is also tested directly, with null returned for desktop platforms.
+Both CTA href/label wiring and early return remain in index.astro. pickAsset and its Mac arm64 comment remain in place. The iOS Command hint fix remains.
+Formatter ran on all three touched files; the store ternary was replaced by getMobileStoreUrl.
+Existing screenshot crops and runtime evidence were retained as requested; no new browser/server was launched for this behavior-preserving refactor.
+Final direct tests: 9 passed. Targeted lint passes. Astro typecheck: 24 files, no diagnostics.

@@ -1,0 +1,9 @@
+~/apps/marketing$ astro check ⊘ cache disabled
+22:33:23 [types] Generated 67ms
+22:33:23 [check] Getting diagnostics for Astro files in /home/saphid/.t3code/worktrees/t3code/marketing-mobile-downloads/apps/marketing...
+Result (23 files): 
+- 0 errors
+- 0 warnings
+- 0 hints
+
+
