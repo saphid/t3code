@@ -1,0 +1,25 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/file-tree-refresh-coalesce
+
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 2 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 2 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 2 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 2 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 2 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+8 folders with 20 overlapping refreshes: 19 total listing requests, peak 4 active queries
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  00:09:23
+   Duration  2.80s (transform 65%, import 29%, setup 3%, tests 3%)
+

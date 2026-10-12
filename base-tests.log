@@ -1,0 +1,115 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/file-tree-refresh-coalesce
+
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 20 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 20 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 20 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 20 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+20 overlapping refreshes: 20 root listing requests
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+8 folders with 20 overlapping refreshes: 189 total listing requests, peak 4 active queries
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx (9 tests | 8 failed) 150ms
+   × coalesces 20 overlapping refreshes (sample 1) 52ms
+   × coalesces 20 overlapping refreshes (sample 2) 9ms
+   × coalesces 20 overlapping refreshes (sample 3) 8ms
+   × coalesces 20 overlapping refreshes (sample 4) 8ms
+   × coalesces 20 overlapping refreshes (sample 5) 7ms
+   × rescans mutations during both the initial listing and the follow-up 5ms
+   × shares the follow-up promise and does not resolve callers before the final listing 3ms
+   × retains the four-query concurrency bound across directories and refreshes 53ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > coalesces 20 overlapping refreshes (sample 1)
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > coalesces 20 overlapping refreshes (sample 2)
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > coalesces 20 overlapping refreshes (sample 3)
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > coalesces 20 overlapping refreshes (sample 4)
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > coalesces 20 overlapping refreshes (sample 5)
+AssertionError: expected [ { path: '', …(1) }, …(20) ] to have a length of 3 but got 21
+
+- Expected
++ Received
+
+- 3
++ 21
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:77:17
+     75|   for (let index = 1; index < calls.length; index++) await settle(inde…
+     76|   console.log(`20 overlapping refreshes: ${calls.length - 1} root list…
+     77|   expect(calls).toHaveLength(3); // Initial load, active refresh, one …
+       |                 ^
+     78|   expect(view.isPending).toBe(false);
+     79| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > rescans mutations during both the initial listing and the follow-up
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:95:26
+     93|   await settle(2, [entry]);
+     94|   expect(view.entries).toEqual([entry]);
+     95|   expect(view.isPending).toBe(false);
+       |                          ^
+     96| });
+     97|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > shares the follow-up promise and does not resolve callers before the final listing
+AssertionError: expected Promise{…} to be Promise{…} // Object.is equality
+
+If it should pass with deep equality, replace "toBe" with "toStrictEqual"
+
+Expected: Promise{…}
+Received: serializes to the same string
+
+
+Compared values have no visual difference.
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:103:18
+    101|   const first = view.load("", true);
+    102|   const second = view.load("", true);
+    103|   expect(second).toBe(first);
+       |                  ^
+    104|   void first.then(() => {
+    105|     completed = true;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > retains the four-query concurrency bound across directories and refreshes
+AssertionError: expected 21 to be less than or equal to 3
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:134:63
+    132|   expect(new Set(calls.map((call) => call.path)).size).toBe(9);
+    133|   for (const path of ["", ...folders.map((folder) => folder.path)]) {
+    134|     expect(calls.filter((call) => call.path === path).length).toBeLess…
+       |                                                               ^
+    135|   }
+    136|   expect(view.isPending).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed (9)
+   Start at  00:09:19
+   Duration  1.93s (transform 50%, import 37%, tests 8%, setup 5%)
+
+
+Exit code: 1
+Base revision: 3f70c831c6
