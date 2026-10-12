@@ -1,0 +1,15 @@
+$ vp test run apps/server/src/orchestration-v2/WireProjection.test.ts apps/server/src/orchestration-v2/threadHistoryPaging.test.ts apps/server/src/orchestration-v2/ThreadStream.test.ts apps/server/src/orchestration-v2/ThreadTransportPerformance.test.ts apps/server/src/orchestration-v2/ShellStream.test.ts apps/server/src/orchestration-v2/CommandPolicy.test.ts apps/server/src/orchestration-v2/runtimeLayer.test.ts apps/server/src/ws.test.ts packages/contracts/src/environmentHttp.test.ts packages/contracts/src/orchestrationV2.test.ts packages/client-runtime/src/operations/commands.test.ts packages/client-runtime/src/operations/commands.performance.test.ts packages/client-runtime/src/state/boundedThreadSnapshotHttp.test.ts packages/client-runtime/src/state/threadHistoryController.test.ts packages/client-runtime/src/state/threadHistoryMerge.test.ts packages/client-runtime/src/state/threadDetail.test.ts packages/client-runtime/src/state/threads-sync.test.ts packages/client-runtime/src/state/shellReducer.test.ts ⊘ cache disabled
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/contracts-single-pass-items
+
+
+ Test Files  18 passed (18)
+      Tests  349 passed (349)
+   Start at  23:39:20
+   Duration  14.02s (transform 58%, import 31%, tests 7%, setup 4%)
+
+  Transform  transforming modules took 40.39s · 58% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
+

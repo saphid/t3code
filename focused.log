@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/contracts-single-pass-items
+
+
+ Test Files  2 passed (2)
+      Tests  148 passed (148)
+   Start at  23:39:19
+   Duration  3.84s (tests 45%, transform 34%, import 18%, setup 4%)
+
+  Transform  transforming modules took 2.18s · 34% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

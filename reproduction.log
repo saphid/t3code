@@ -1,0 +1,35 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/contracts-single-pass-items
+
+ ❯ packages/contracts/src/baseSchemas.test.ts (107 tests | 1 failed) 1510ms
+   ❯ ForwardCompatibleUnionArray (5)
+     × validates each known member once when decoding typed and JSON arrays 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/contracts/src/baseSchemas.test.ts > ForwardCompatibleUnionArray > validates each known member once when decoding typed and JSON arrays
+AssertionError: expected 2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ packages/contracts/src/baseSchemas.test.ts:135:22
+    133|       checks = 0;
+    134|       expect(Schema.decodeUnknownSync(codec)(input)).toEqual([{ kind: …
+    135|       expect(checks).toBe(1);
+       |                      ^
+    136|     }
+    137|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 106 passed (107)
+   Start at  23:34:09
+   Duration  1.88s (tests 85%, import 7%, setup 4%, transform 4%)
+
