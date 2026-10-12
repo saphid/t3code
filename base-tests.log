@@ -1,0 +1,86 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity
+
+stdout | apps/server/src/preview/ServerBrowser.test.ts > concurrent agent opens count pending tabs toward the eight-tab limit
+[00:09:10.805] ERROR (#4): Error [AssertionError]: expected [ { _id: 'Result', …(2) }, …(11) ] to have a length of 7 but got 12
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2137:20)
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/apps/server/src/preview/ServerBrowser.test.ts:1227:69 {
+  actual: 12,
+  expected: 7,
+  showDiff: true,
+  [cause]: undefined
+}
+
+stdout | apps/server/src/preview/ServerBrowser.test.ts > concurrent agents count pending tabs toward the 32-tab server limit
+[00:09:10.849] ERROR (#157): Error [AssertionError]: expected [ { _id: 'Result', …(2) }, …(39) ] to have a length of 31 but got 40
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2137:20)
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/apps/server/src/preview/ServerBrowser.test.ts:1267:69 {
+  actual: 40,
+  expected: 31,
+  showDiff: true,
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts (37 tests | 2 failed | 35 skipped) 101ms
+   × concurrent agent opens count pending tabs toward the eight-tab limit 59ms
+   × concurrent agents count pending tabs toward the 32-tab server limit 41ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > concurrent agent opens count pending tabs toward the eight-tab limit
+AssertionError: expected [ { _id: 'Result', …(2) }, …(11) ] to have a length of 7 but got 12
+
+- Expected
++ Received
+
+- 7
++ 12
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1227:69
+    1225|       gate.resolve();
+    1226|       const results = yield* Effect.forEach(opens, Fiber.join);
+    1227|       expect(results.filter((result) => result._tag === "Success")).to…
+       |                                                                     ^
+    1228|       for (const result of results) {
+    1229|         if (result._tag === "Failure") {
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > concurrent agents count pending tabs toward the 32-tab server limit
+AssertionError: expected [ { _id: 'Result', …(2) }, …(39) ] to have a length of 31 but got 40
+
+- Expected
++ Received
+
+- 31
++ 40
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1267:69
+    1265|       gate.resolve();
+    1266|       const results = yield* Effect.forEach(opens, Fiber.join);
+    1267|       expect(results.filter((result) => result._tag === "Success")).to…
+       |                                                                     ^
+    1268|       for (const result of results) {
+    1269|         if (result._tag === "Failure") expect(result.failure).toMatchO…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 35 skipped (37)
+   Start at  00:09:09
+   Duration  1.78s (transform 61%, import 30%, tests 6%, setup 3%)
+

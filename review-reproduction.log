@@ -1,0 +1,65 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity
+
+stdout | apps/server/src/preview/ServerBrowser.test.ts > failed session and browser launches release capacity, as does closing a tab
+[00:20:01.758] WARN (#79): server preview tab failed to start {
+  cause: Error: Chromium launch failed
+      at /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/apps/server/src/preview/ServerBrowser.test.ts:1307:24
+      at Generator.next (<anonymous>)
+      at IteratorImpl.~effect/Effect/successCont (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:977:28)
+      at FiberImpl.succeedWith (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:506:30)
+      at MatchImpl.~effect/Effect/failureCont (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1581:16)
+      at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:366:30)
+      at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+      at AsyncResource.runInAsyncScope (node:async_hooks:214:14)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+}
+
+stdout | apps/server/src/preview/ServerBrowser.test.ts > failed session and browser launches release capacity, as does closing a tab
+[00:20:01.784] ERROR (#4): Error [AssertionError]: expected [ { …(10) }, { …(10) }, …(6) ] to have a length of 7 but got 8
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2137:20)
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity/apps/server/src/preview/ServerBrowser.test.ts:1310:83 {
+  actual: 8,
+  expected: 7,
+  showDiff: true,
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts (40 tests | 1 failed | 39 skipped) 68ms
+   × failed session and browser launches release capacity, as does closing a tab 67ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > failed session and browser launches release capacity, as does closing a tab
+AssertionError: expected [ { …(10) }, { …(10) }, …(6) ] to have a length of 7 but got 8
+
+- Expected
++ Received
+
+- 7
++ 8
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1310:83
+    1308|       expect(yield* open.pipe(Effect.result)).toMatchObject({ _tag: "F…
+    1309|       // A failed launch must not leave a session a viewer can relaunc…
+    1310|       expect((yield* manager.list({ threadId: scope.thread.threadId })…
+       |                                                                                   ^
+    1311|       contextFailure = null;
+    1312|       expect((yield* open).available).toBe(true);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 39 skipped (40)
+   Start at  00:20:00
+   Duration  1.76s (transform 61%, import 31%, tests 4%, setup 4%)
+

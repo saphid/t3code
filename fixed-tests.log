@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-tab-capacity
+
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  00:20:33
+   Duration  3.33s (transform 45%, tests 28%, import 23%, setup 4%)
+
