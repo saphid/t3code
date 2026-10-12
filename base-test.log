@@ -1,0 +1,52 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/webhook-claim-release
+
+stdout | apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts > a held request retries after its delivery log write fails
+[22:36:36.353] ERROR (#6525): Error [AssertionError]: expected 'duplicate' to equal 'accepted'
+    at /home/saphid/.t3/worktrees/t3code/webhook-claim-release/apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts:593:14 {
+  actual: 'duplicate',
+  expected: 'accepted',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts (33 tests | 1 failed) 2692ms
+   × a held request retries after its delivery log write fails 80ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts > a held request retries after its delivery log write fails
+AssertionError: expected 'duplicate' to equal 'accepted'
+
+Expected: "accepted"
+Received: "duplicate"
+
+ ❯ apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts:593:14
+    591|       const retried = yield* service.triggerWebhook(request);
+    592|       assert.equal(retried._tag, "accepted");
+    593|       assert.equal(retried._tag === "accepted" ? retried.outcome : und…
+       |              ^
+    594|       const launch = yield* Queue.take(launches);
+    595|       assert.include(launch.commandId, request.relayDeliveryId!);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 32 passed (33)
+   Start at  22:36:22
+   Duration  14.80s (transform 59%, import 22%, tests 18%, setup 1%)
+
+  Transform  transforming modules took 8.70s · 59% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

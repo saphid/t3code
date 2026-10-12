@@ -1,0 +1,14 @@
+R2C-2: webhook claim release
+Base: 511d20c6f20c2ed6ff787aba068d7d673e2949b9
+Fix: 7f6946d8b23db1c4c9490d5932fc629e1253905f
+Branch: t3code/sweep/webhook-claim-release
+Base command: ./node_modules/.bin/vp test run apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts
+Base exit: 1; 32 passed, 1 failed. Retrying the same relay ID after injected SQLite delivery-log failure returned duplicate instead of accepted.
+Fixed command: ./node_modules/.bin/vp test run apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts apps/server/src/scheduledTasks/webhookRoute.test.ts
+Fixed exit: 0; 41 passed, 0 failed.
+Lint command: ./node_modules/.bin/vp lint apps/server/src/scheduledTasks/ScheduledTaskService.ts apps/server/src/scheduledTasks/ScheduledTaskService.webhook.test.ts
+Lint exit: 0.
+Typecheck command (cwd apps/server): ../../node_modules/.bin/vp run typecheck
+Typecheck exit: 0.
+Backend validation: real ScheduledTaskService and migrated in-memory SQLite, with mock ThreadLaunchService enqueueing launch inputs. A BEFORE INSERT trigger injects a delivery-log error after the relay claim is acquired. The test removes the trigger and proves the same relay ID is accepted and launches once. Concurrent successful duplicate requests dispatch once. Milestones use Queue.take, no sleeps or polling added.
+Service and storage are real; no live userdata or browser was accessed. No actual relay deployment or provider CLI was launched. No push or PR.
