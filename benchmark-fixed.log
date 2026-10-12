@@ -1,0 +1,13 @@
+{"stage":"fixed","samples":900,"churn":false,"liveProcesses":2,"runsMs":[22.81,11.12,15.48],"medianMs":15.48,"processSummaries":2}
+deepEqual complete history: 900 stable samples PASS
+{"stage":"fixed","samples":900,"churn":true,"liveProcesses":2,"runsMs":[20.37,14.69,13.34],"medianMs":14.69,"processSummaries":901}
+deepEqual complete history: 900 churning samples PASS
+{"stage":"fixed","samples":1800,"churn":false,"liveProcesses":2,"runsMs":[18.52,22.31,24.94],"medianMs":22.31,"processSummaries":2}
+deepEqual complete history: 1800 stable samples PASS
+{"stage":"fixed","samples":1800,"churn":true,"liveProcesses":2,"runsMs":[22.27,20.56,19.86],"medianMs":20.56,"processSummaries":1801}
+deepEqual complete history: 1800 churning samples PASS
+{"stage":"fixed","samples":3600,"churn":false,"liveProcesses":2,"runsMs":[33.05,37.31,40.43],"medianMs":37.31,"processSummaries":2}
+deepEqual complete history: 3600 stable samples PASS
+{"stage":"fixed","samples":3600,"churn":true,"liveProcesses":2,"runsMs":[48.55,39.3,38.37],"medianMs":39.3,"processSummaries":3601}
+deepEqual complete history: 3600 churning samples PASS
+deepEqual complete absent/returning-process history and CPU/I/O deltas PASS

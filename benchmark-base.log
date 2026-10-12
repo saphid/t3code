@@ -1,0 +1,7 @@
+{"stage":"base","samples":900,"churn":false,"liveProcesses":2,"runsMs":[21.49,13.22,17.16],"medianMs":17.16,"processSummaries":2}
+{"stage":"base","samples":900,"churn":true,"liveProcesses":2,"runsMs":[95.47,85.98,79.71],"medianMs":85.98,"processSummaries":901}
+{"stage":"base","samples":1800,"churn":false,"liveProcesses":2,"runsMs":[22.33,23.51,31.77],"medianMs":23.51,"processSummaries":2}
+{"stage":"base","samples":1800,"churn":true,"liveProcesses":2,"runsMs":[288.64,281.19,295.07],"medianMs":288.64,"processSummaries":1801}
+{"stage":"base","samples":3600,"churn":false,"liveProcesses":2,"runsMs":[34.21,39.87,49.17],"medianMs":39.87,"processSummaries":2}
+{"stage":"base","samples":3600,"churn":true,"liveProcesses":2,"runsMs":[1299.02,1170.09,1116.55],"medianMs":1170.09,"processSummaries":3601}
+deepEqual complete absent/returning-process history and CPU/I/O deltas PASS

@@ -1,0 +1,383 @@
+Second independent read-only review of ONE fix R2B-1. Do not edit, commit, re-delegate, or start browsers/servers. Report only concrete defects with path:line, failing scenario, and rationale. Review the CURRENT final diff below; earlier validation and findings are historical context.
+
+Worktree: /home/saphid/.t3code/worktrees/t3code/resource-history-replay
+Branch: t3code/sweep/resource-history-replay
+Base: 511d20c6f2
+Current commit: f160e1572d68af403152621e080f7abf8313adde
+
+Coordinator response after first review: production change is good, but remove the global Map.prototype[Symbol.iterator] spy and traversal-count assertion because they mirror implementation, bypass values()/forEach, and patch a global prototype. Keep the churn fixture as returned-history behavior assertions: process counts, CPU/write deltas, and absent-then-returning baseline retention. Performance proof comes from preserved benchmark-base.log and benchmark-fixed.log.
+
+Changes responding to that review: removed vi import, spy, instrumentation, and traversal assertion. Retained 100-sample churn using a reused PID with changing start time. Assert 102 process summaries (100 separate churning children, server, returning child), server CPU delta 990 and write delta 9900, zero invented deltas for newly seen child identities, and returning child with two samples, CPU delta 250, write delta 4000 after being absent in the intermediate sample. Assert maximum live count 3 and bucket write total 13900. Production Model.ts and ResourceTelemetryHistory.ts are identical to the first review's approved implementation.
+
+Current verification: ./node_modules/.bin/vp test run apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts apps/server/src/resourceTelemetry/ResourceTelemetryHistory.test.ts apps/server/src/resourceTelemetry/Model.test.ts => 28 passed / 0 failed. Targeted vp lint for the three touched files => exit 0. cd apps/server && ../../node_modules/.bin/vp run typecheck => exit 0 (informational Effect suggestions). Targeted vp fmt --check and git diff --check pass. Logs: tests-round-2.log, lint-round-2.log, typecheck-round-2.log under /home/saphid/sweep-20261012/evidence/R2B-1. Original benchmark logs unchanged: median churn 85.98→14.69 ms (900), 288.64→20.56 ms (1800), 1170.09→39.30 ms (3600); complete stable/churn histories and absent-returning fixture deepEqual.
+
+Prior findings and responses:
+1. No blocking production defects in first review.
+2. Pre-existing Model.ts:440 scan for Electron root with no recorded start time: verified against source, normally start time is supplied by desktop metrics. Outside this focused fix; retained as limitation, no scope expansion.
+3. Fragility of iterator-based test: coordinator requested its removal; now resolved by behavior-only test and separate benchmark evidence. No unresolved objection on test instrumentation remains.
+
+Prior review final summary (verbatim):
+No blocking defects. The fix is correct and keeps history results equivalent to the base. The focused suite passes again here (3 files, 28 tests).
+
+**What I checked in the source**
+- **Live path unchanged.** At `Model.ts:579-587`, lifecycle counters are skipped only when `accumulateCounters === false`. `ResourceTelemetry.ts:174` and `ResourceTelemetry.ts:284` don't pass the flag, so they still accumulate.
+- **Skipping counters in history is safe.** History reads only `groups.*.currentCpuPercent`, `currentRssBytes`, `processCount`, and the per-process `merged.deltas` (`ResourceTelemetryHistory.ts:236-265`). It never reads cumulative counters. Deltas are still computed in `mergeProcesses` (`Model.ts:473-566`), which doesn't depend on `applyLifecycleCounters`.
+- **Updating the baseline map in place is safe.**
+  - With `updatePrevious: true`, `merged.previous` is always the fresh `nextPrevious` (`Model.ts:601`), never the input map. So copying it into `previous` never touches the map being read.
+  - `mergeProcesses` only reads `input.previous`, and the map is changed only after the call returns.
+  - `Map.set` on an existing key keeps its position, so iteration order matches the old `new Map([...previous, ...merged.previous])`.
+  - Exited processes keep their baselines, so the absent-then-returning CPU/I/O case still works.
+- **Contracts, clients and live collection** are unaffected.
+
+**Informational (not a defect of this change)**
+1. **One per-sample scan over retained baselines is still there.** `Model.ts:440` runs `[...input.previous.values()].some(...)` for each explicit Electron root that is in the snapshot but has no recorded start time. History always passes `desktopSnapshot: Option.none()` (`ResourceTelemetryHistory.ts:212`), so the `metricsByPid` short-circuit never applies. In that case each sample still scans every retained identity.
+   - In practice the start time is nearly always there: `ResourceTelemetry.ts:158-166` and `ResourceTelemetry.ts:336-345` send `startTimeMs` from the Electron root's own metrics.
+   - Without desktop there are no external processes, so the scan never runs.
+   - So it's a rare edge case that predates this change. Only follow up if Electron roots can be recorded without `startTimeMs`.
+2. **Test blind spot (low).** The regression test (`ResourceTelemetry.test.ts:176-189`) counts traversals by spying on `Map.prototype[Symbol.iterator]`. That catches `for…of` and spread, which is how the original quadratic paths iterated. It would not catch a regression that goes through `.values()`, `.entries()` or `forEach`; the `Model.ts:440` scan above uses `.values()`, for example. It's an acceptable deterministic, timing-free guard, but it is tied to how the code iterates.
+
+Nothing needs to change before merge.
+
+Original brief including finding and full AGENTS.md rules (historical):
+Review ONE focused T3 Code fix, R2B-1. You are read-only: do not edit files, do not commit, do not re-delegate, and do not start browsers or servers. Report concrete defects with path:line, severity, rationale, and the failing scenario. If no defects exist, explicitly say so. Verify findings against actual source rather than speculating.
+
+Worktree: /home/saphid/.t3code/worktrees/t3code/resource-history-replay
+Branch: t3code/sweep/resource-history-replay
+Base: upstream main 511d20c6f2
+
+Finding R2B-1: perf(server): avoid quadratic resource history replay; medium severity; high confidence. ResourceTelemetryHistory.ts:220 and Model.ts:329/577. Request one hour of resource history after many short-lived tool processes ran with telemetry sampled each second. Replay retains every identity ever seen, copies the full map for each snapshot, and scans all exited identities again in applyLifecycleCounters. With one replacement child per sample, work grows quadratically despite only two live processes; synchronous buildResourceTelemetryHistory blocks the event loop, delaying turns and WebSocket traffic. Auditor measured stable/churning identities at 19.4/97.3 ms for 900 snapshots, 33.3/286.5 ms for 1800, and 43.2/1057.5 ms for 3600. A scratch optimized copy took 64.6 versus 1135.7 ms and produced deepEqual full histories, including absent/returning cumulative CPU/I/O. Proposed smallest fix: mutable retained baseline map, only update merged.previous entries, history-only switch skipping unused lifecycle counters while keeping deltas and retained baselines. Existing native Windows collection and command-write PRs do not cover replay.
+
+Implemented: optional accumulateCounters defaults to current live behavior; history disables it and updates retained baselines in place. No contract or UI change. Web/desktop diagnostics share this backend across local, remote/relay, tunnel and multi-environment destinations; mobile benefits from less event-loop blocking. Providers Codex, Claude, Cursor, Grok, OpenCode, Antigravity share this process model. Live starts/exits continue unchanged; no new entry/reverse state/agent API/docs behavior.
+
+Validation: new regression calls real ResourceTelemetry.readHistory service with external NativeTelemetryClient.layerTest and DesktopTelemetryReceiver.layerTest dependencies. It counts traversed ProcessState map entries (no timing assertions, no sleeps/polling). On base it FAILS: 10498 versus <=400 for 100 churn samples and 2 live processes. On fix it passes, with summaries/deltas also checked. Existing absent-process baseline history coverage passes. Full original/fixed histories deepEqual at 900, 1800, 3600 samples, stable and churn; absent/returning fixture deepEqual and expected CPU=250, write bytes=4000. Benchmark invokes actual checkout builder; preserved base modules under evidence import identical Effect runtimes. Medians of three measured runs: churn base 85.98/288.64/1170.09 ms, fixed 14.69/20.56/39.30 ms at 900/1800/3600 samples, bucketMs=120000. Stable base 17.16/23.51/39.87 ms, fixed 15.48/22.31/37.31 ms.
+
+Commands: ./node_modules/.bin/vp test run apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts apps/server/src/resourceTelemetry/ResourceTelemetryHistory.test.ts apps/server/src/resourceTelemetry/Model.test.ts => 28 passed, 0 failed. ./node_modules/.bin/vp lint [the three changed files] => exit 0. cd apps/server && ../../node_modules/.bin/vp run typecheck => exit 0 (existing informational Effect suggestions). vp fmt --check [the three changed files] => pass. git diff --check => pass. Evidence directory: /home/saphid/sweep-20261012/evidence/R2B-1. Backend validation only; no browser, native sidecar, or physical devices needed/used. No push or PR authorized.
+
+AGENTS.md rules (full text):
+# T3 Code
+
+T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity) and serves web, desktop, and mobile clients.
+
+You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
+
+## What makes T3 Code special?
+
+We have over 500,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
+
+### 1. Open at the core
+
+T3 Code is truly open. We share our roadmap, we share how we think about things, and of course we share all our code. A large number of our users run forks. We work in the open, and should strive to stay that way.
+
+### 2. Performance without compromise
+
+Lots of apps have gotten bogged down with bad tech decisions and "slop". We have not, and we're proud of the performance of T3 Code. We regularly audit for performance regressions, often caused by sending too much data over websockets, css animations causing gpu spikes, lists being hard to render, and more. Make sure all changes are considerate of performance impact.
+
+### 3. Remote ready
+
+The architecture of T3 Code's websocket layer (npx t3) enables a lot of awesome remote features. These have become core to the product. Whether users are connecting directly over their local network, using Tailscale, or leaning in fully with T3 Connect (our tunnel solution, also in this repo), we need to make sure new features are properly supported.
+
+### 4. Multi-surface
+
+T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
+
+**Web** is kind of two surfaces, as we have the public facing "app.t3.codes" as well as locally hosting the web app through the `npx t3` command. Both need to be supported by all new features where reasonable.
+
+**Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
+
+**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
+
+## A note from Theo
+
+I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
+
+Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to honor the dev's intent in both a minimal and realistic fashion.
+
+The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
+
+Of note: Most T3 Code contributions will come from T3 Code itself, often controlled remotely. This means you should be careful about accessing data, killing dev servers, and other things that may damage the T3 Code instance that the contributor is using.
+
+## A small glossary
+
+We need to be on the same page with terminology. When communicating, use this language:
+
+- **you** means the agent reading this file and changing T3 Code.
+- **we, us, and maintainers** mean Theo, Julius and the people building T3 Code. These are who you are talking to now.
+- **user** means the person using T3 Code to direct coding agents.
+- **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
+- **provider** means the agent runtime or harness T3 Code talks to, such as Codex, Claude, Cursor, or OpenCode.
+- **client** means the web, desktop, or mobile UI.
+- **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
+- **project** means an environment-local workspace record rooted at a directory.
+- **thread** means the durable conversation and work history for a project.
+- **turn** means one user-to-agent cycle, including follow-up work such as checkpointing.
+- **T3 home** means the base data directory. Runtime state normally lives below its userdata directory.
+
+## The three ways to hurt yourself
+
+1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
+2. **Writing to the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
+3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
+
+## Hit every surface
+
+The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling frontend work done, walk this list and say which entries applied:
+
+- **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
+- **Clients.** Web, desktop (wraps web, adds Electron shell/IPC), and mobile (React Native, separate navigation). Shared logic lives in `packages/client-runtime`
+- **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
+- **Agents.** A capability a user can trigger is usually one an agent should reach through MCP tools, and scheduled tasks run the same paths. That only works when it is a service method, not handler code.
+- **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
+- **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
+- **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
+- **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
+
+## Dev servers
+
+- `vp i` installs. Worktrees get this from the t3.json setup script; if module resolution looks broken, it probably did not run.
+- `vp run dev` starts server and web. In a worktree, state defaults to that worktree's gitignored `.t3`, which deliberately outranks an ambient `T3CODE_HOME` so you cannot land on shared state by accident. An explicit `--home-dir` still wins.
+- Ports derive from the worktree path and are stable across restarts, but read the real ones from the `[dev-runner]` line since occupied ports shift.
+- Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
+- To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
+- Stop what you started, by the PID you tracked. See rule 1.
+
+## Test data
+
+An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
+
+- Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.t3/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data.
+- Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
+- Bring `secrets` and `settings.json` only if the flow under test needs them.
+- Copy in, never symlink. Data flows one way: into your sandbox, never back out.
+
+## Verifying
+
+- Smallest proof that the change works. `vp test run <files>` for the tests you touched, targeted lint and typecheck for the scope you changed.
+- Test meaningful logic or observable behavior. Do not render components to static markup to assert props or attributes, or add tests that merely assert callback wiring or mirror the implementation.
+- **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
+- Backend behavior changes ship with focused tests for that behavior.
+- The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
+- Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
+
+For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
+
+## Pull requests
+
+- Never make a PR unless the developer explicitly asks you to do so.
+- Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
+- Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
+- UI changes need before/after images. Motion or timing needs a short video.
+- Upload PR evidence to GitHub. Never commit PR-only screenshots or assets such as `.github/pr-assets/`.
+- One request is one PR. Split it only when the maintainer asks. Outside contributions follow the stricter [one problem per PR](CONTRIBUTING.md#one-problem) rule.
+- When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when the bots are green on the latest commit.
+
+## Documentation
+
+Most code changes do not need an internal documentation change. Agents can read the code.
+
+- `docs/internals/` is for architectural decisions and their reasons, constraints that span components, and implementation traps that are hard to discover from the source. Before adding a paragraph, ask what a maintainer would get wrong without it. If reading the relevant code answers the question, leave it out.
+- Do not document every feature, enumerate fields or methods, narrate control flow, maintain file catalogs, or append PR summaries. Types, tests, and code already record the implementation. The glossary defines shared vocabulary; it is not a feature index.
+- Keep a local implementation explanation in a nearby code comment. Use an internal doc when the reasoning crosses boundaries or needs context the code cannot carry well. Link to the relevant source instead of copying it.
+- When a documented decision or constraint changes, rewrite or remove the affected text. Do not append another account of the new behavior. A new internal page needs a distinct, durable reason to exist.
+- `docs/user/` helps users accomplish tasks. Give each major feature a concise section explaining what it does, how to start, and anything unintuitive. A settings path is useful; descriptions of visible buttons, icons, layouts, animations, or every UI state are not. Before adding text, ask what task or decision it helps the user with.
+- Keep user docs in the shipped product's voice, without implementation details or contributor tooling. Update the relevant feature section when how to use it changes. A UI tweak does not need a documentation entry, and a new control does not need its own page.
+- `docs/operations/` holds maintainer setup, release, and debugging procedures. Keep instructions for operating an installed T3 Code server in the user guides.
+
+## Plans and work artifacts
+
+- Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.
+- Track active maintainer work in the GitHub issue or project item that owns it. External proposals follow `CONTRIBUTING.md` and belong in Ideas discussions.
+- A merged PR is the implementation record. Close or update its tracking item when the work lands; do not preserve a second checklist in the repository.
+
+## How it works
+
+Clients send typed WebSocket requests. The server turns them into _commands_. The _orchestrator_ (`apps/server/src/orchestration-v2/Orchestrator.ts`) serializes commands and decides _events_ without doing any I/O. The _event sink_ commits those events, the _projections_ the UI reads, the _command receipt_, and _outbox_ effects in one transaction. The _effect worker_ then runs the effects, such as starting a provider turn or capturing a checkpoint, and feeds results back as commands. Provider CLIs run as subprocesses; per-provider _adapters_ translate their native protocols into orchestration events. Each turn ends with a _checkpoint_, a hidden git ref, so the app can diff and restore.
+
+Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
+
+## Where code lives
+
+- `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
+- `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
+- `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
+- `packages/shared` - shared runtime utils, subpath exports, no barrel.
+- `packages/client-runtime` - client code shared by web and mobile.
+- `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
+
+## Taste
+
+- Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
+- Client mutations use `createEnvironmentRpcCommand`. Add protected methods to `CLIENT_GUARDED_RPC_SCOPES` in contracts and use the command's `permissionAtom` for UI availability. Grants are checked at execution against the destination environment; the server remains authoritative. Keep raw RPC clients inside `rpc/`, and extend the permission behavior tests when adding a protected method.
+- Server features are services; transports stay thin. A `ws.ts` RPC handler, HTTP route, or MCP tool decodes input, calls one service method, and maps errors. See [Effect services](docs/internals/effect-services.md).
+- `apps/web/src/components/ui` exports own their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the look is a generic concept, add a variant to the component; a look that belongs to one feature stays in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin, position) belong on the parent. `shadcn/no-restyle` fails lint on violations. See [Web UI](docs/internals/web-ui.md).
+- Inferred types over annotations. `any` is the enemy.
+- Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
+- Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
+- If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
+## Additional tips
+
+- Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
+- Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+
+CURRENT authoritative full git diff 511d20c6f2..HEAD:
+diff --git a/apps/server/src/resourceTelemetry/Model.ts b/apps/server/src/resourceTelemetry/Model.ts
+index 2582d7e9c1..ccffd98757 100644
+--- a/apps/server/src/resourceTelemetry/Model.ts
++++ b/apps/server/src/resourceTelemetry/Model.ts
+@@ -52,6 +52,8 @@ export interface MergeProcessesInput {
+   readonly previous: ReadonlyMap<string, ProcessState>;
+   readonly counters: TelemetryCounters;
+   readonly updatePrevious: boolean;
++  /** History replay needs process deltas, but does not publish lifetime group counters. */
++  readonly accumulateCounters?: boolean;
+ }
+ 
+ export interface MergeProcessesResult {
+@@ -574,14 +576,15 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
+   });
+   const ordered = orderProcessTree(normalized, rootPids);
+ 
+-  const counters = input.updatePrevious
+-    ? applyLifecycleCounters({
+-        counters: input.counters,
+-        deltas: processDeltas,
+-        current: nextPrevious,
+-        previous: input.previous,
+-      })
+-    : input.counters;
++  const counters =
++    input.updatePrevious && input.accumulateCounters !== false
++      ? applyLifecycleCounters({
++          counters: input.counters,
++          deltas: processDeltas,
++          current: nextPrevious,
++          previous: input.previous,
++        })
++      : input.counters;
+   const backendProcesses = ordered.filter(
+     (process) => categoryGroup(process.category) === "backend",
+   );
+diff --git a/apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts b/apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts
+index 5237704fc8..c4273d7336 100644
+--- a/apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts
++++ b/apps/server/src/resourceTelemetry/ResourceTelemetry.test.ts
+@@ -142,6 +142,80 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot
+ }
+ 
+ describe("ResourceTelemetry", () => {
++  it.effect("replays churning history and retains baselines for returning processes", () =>
++    Effect.gen(function* () {
++      const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);
++      const sampleCount = 100;
++      const samples = Array.from({ length: sampleCount }, (_, index) => {
++        const sample = nativeSnapshot({
++          sequence: index + 1,
++          sampledAtUnixMs: readAtMs - (sampleCount - index) * 1_000,
++          childCpuTimeMs: index * 10,
++          childWriteBytes: index * 100,
++        });
++        const processes = sample.processes
++          .filter((entry) => entry.pid === process.pid || entry.pid === 4_242)
++          .map((entry) =>
++            entry.pid === 4_242
++              ? { ...entry, startTimeMs: index }
++              : { ...entry, ioWriteBytes: index * 100 },
++          );
++        if (index === 0 || index === 2) {
++          processes.push(
++            processSample({
++              pid: 4_243,
++              ppid: process.pid,
++              startTimeMs: 500,
++              cpuTimeMs: index === 0 ? 100 : 350,
++              ioWriteBytes: index === 0 ? 1_000 : 5_000,
++            }),
++          );
++        }
++        return { ...sample, processes };
++      });
++      const layerTelemetry = ResourceTelemetry.layer.pipe(
++        Layer.provide(
++          Layer.mergeAll(
++            NativeTelemetryClient.layerTest({ readHistory: () => Effect.succeed(samples) }),
++            DesktopTelemetryReceiver.layerTest(),
++            ResourceAttribution.layer,
++          ),
++        ),
++      );
++
++      yield* Effect.gen(function* () {
++        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
++        const history = yield* telemetry.readHistory({
++          windowMs: sampleCount * 1_000,
++          bucketMs: 10_000,
++        });
++
++        expect(history.topProcesses).toHaveLength(sampleCount + 2);
++        expect(
++          history.topProcesses.find((entry) => entry.identity.pid === process.pid),
++        ).toMatchObject({
++          sampleCount,
++          cpuTimeMs: (sampleCount - 1) * 10,
++          ioWriteBytes: (sampleCount - 1) * 100,
++        });
++        const children = history.topProcesses.filter((entry) => entry.identity.pid === 4_242);
++        expect(children).toHaveLength(sampleCount);
++        for (const child of children) {
++          expect(child).toMatchObject({ sampleCount: 1, cpuTimeMs: 0, ioWriteBytes: 0 });
++        }
++        expect(history.topProcesses.find((entry) => entry.identity.pid === 4_243)).toMatchObject({
++          sampleCount: 2,
++          cpuTimeMs: 250,
++          ioWriteBytes: 4_000,
++        });
++        expect(Math.max(...history.buckets.map((bucket) => bucket.maxProcessCount))).toBe(3);
++        expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(
++          (sampleCount - 1) * 100 + 4_000,
++        );
++      }).pipe(Effect.provide(layerTelemetry));
++    }),
++  );
++
+   it.effect("enables live native and Electron collection only while changes are retained", () =>
+     Effect.gen(function* () {
+       const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
+diff --git a/apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts b/apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts
+index 737a934de2..890683ae8c 100644
+--- a/apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts
++++ b/apps/server/src/resourceTelemetry/ResourceTelemetryHistory.ts
+@@ -15,7 +15,6 @@ import {
+   mergeProcesses,
+   processIdentityKey,
+   type ProcessState,
+-  type TelemetryCounters,
+ } from "./Model.ts";
+ 
+ const MAX_HISTORY_WINDOW_MS = 60 * 60_000;
+@@ -167,8 +166,8 @@ export function buildResourceTelemetryHistory(
+   const aggregateSamples: AggregateSample[] = [];
+   const legacyBackendAggregateSamples: AggregateSample[] = [];
+   const processSamples: ProcessSample[] = [];
+-  let previous: ReadonlyMap<string, ProcessState> = new Map();
+-  let counters: TelemetryCounters = emptyTelemetryCounters();
++  const previous = new Map<string, ProcessState>();
++  const counters = emptyTelemetryCounters();
+   let previousSnapshotAtMs: number | undefined;
+ 
+   for (const snapshot of snapshots) {
+@@ -216,9 +215,12 @@ export function buildResourceTelemetryHistory(
+       previous,
+       counters,
+       updatePrevious: true,
++      accumulateCounters: false,
+     });
+-    previous = new Map([...previous, ...merged.previous]);
+-    counters = merged.counters;
++    // Keep absent identities' baselines without copying every exited process on each sample.
++    for (const [identityKey, state] of merged.previous) {
++      previous.set(identityKey, state);
++    }
+     if (snapshot.sampledAtUnixMs < windowStartMs) {
+       continue;
+     }
