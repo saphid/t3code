@@ -1,0 +1,95 @@
+Host: Linux (headless; native macOS Electron UI not available).
+Base: 3f70c831c6
+Fix: 628155a600d526c0f6773063cfc74351a580580d
+Test boundary: real DesktopClerk and DesktopWebLinks; mocked Electron EventEmitter, webContents IPC send, Clerk bridge; Deferred shell-service probe. Full DesktopApp.program not executed.
+
+apps/desktop/src/main.ts
+231: // Clerk resolves userData before Electron is ready, so it gets the synchronous FileSystem.
+232: const layerDesktopClerk = DesktopClerk.layer.pipe(
+233:   Layer.provide(DesktopPreReadyFileSystem.layer),
+234:   Layer.provideMerge(ElectronShell.layer),
+235:   Layer.provideMerge(layerDesktopEnvironment),
+236:   Layer.provideMerge(NodeServices.layer),
+237:   Layer.provideMerge(ElectronApp.layer),
+238: );
+239: 
+240: const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
+241:   Layer.provideMerge(NodeServices.layer),
+242:   Layer.provideMerge(NodeHttpClient.layerUndici),
+243:   Layer.provideMerge(NetService.layer),
+244:   Layer.provideMerge(layerElectron),
+245: );
+246: 
+247: // Acquire strict pre-ready setup before Clerk. Nothing before the Clerk bridge
+248: // may yield, or Electron can emit ready before Clerk registers its scheme.
+249: const layerDesktopRuntime = layerDesktopClerk.pipe(
+250:   Layer.flatMap((clerkContext) =>
+251:     layerDesktopApplicationRuntime.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
+252:   ),
+253:   Layer.provideMerge(DesktopPreReadyPlatform.layer),
+254: );
+255: 
+256: DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);
+
+apps/desktop/src/app/DesktopApp.ts
+269:   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
+270:   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+271:   const electronApp = yield* ElectronApp.ElectronApp;
+272:   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+273:   const linuxUrlHandler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
+274:   const clerk = yield* DesktopClerk.DesktopClerk;
+275:   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+276:   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+277:   const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+278:   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+279:   const updates = yield* DesktopUpdates.DesktopUpdates;
+280:   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+281:   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
+282: 
+283:   yield* shellEnvironment.installIntoProcess;
+284:   const hasCommandLinePasswordStore =
+285:     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
+286:   const linuxElectronOptions =
+287:     environment.platform === "linux" && !hasCommandLinePasswordStore
+288:       ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess(
+289:           yield* HostProcess.HomeDirectory,
+290:         )
+291:       : preReadyElectronOptions.linux;
+292:   if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {
+293:     if (
+294:       linuxElectronOptions.passwordStore !== null ||
+295:       preReadyElectronOptions.linux?.passwordStore !== null
+296:     ) {
+297:       yield* electronApp.removeCommandLineSwitch("password-store");
+298:     }
+299:     if (linuxElectronOptions.passwordStore !== null) {
+300:       yield* electronApp.appendCommandLineSwitch(
+301:         "password-store",
+302:         linuxElectronOptions.passwordStore,
+303:       );
+304:     }
+305:   }
+306:   const userDataPath = yield* appIdentity.resolveUserDataPath;
+307:   yield* electronApp.setPath("userData", userDataPath);
+308:   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
+309:   yield* desktopSettings.load;
+310: 
+311:   if (linuxElectronOptions !== null) {
+312:     yield* logStartupInfo("linux password store configured", {
+313:       passwordStore: hasCommandLinePasswordStore
+314:         ? "command-line"
+315:         : (linuxElectronOptions.passwordStore ?? "electron-default"),
+316:       xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
+317:       xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+318:     });
+319:   }
+320: 
+321:   yield* appIdentity.configure;
+322:   yield* lifecycle.register;
+323:   yield* clerk.configure;
+324: 
+325:   yield* electronApp.whenReady.pipe(
+326:     Effect.withSpan("desktop.electron.whenReady"),
+327:     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
+328:   );
+

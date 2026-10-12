@@ -1,0 +1,92 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/macos-cold-open-events
+
+stdout | apps/desktop/src/app/DesktopClerk.test.ts > retains open-url during cold startup exactly once
+[00:09:02.064] ERROR (#128): Error [AssertionError]: expected [] to deeply equal [ 'https://example.com/report' ]
+    at /home/saphid/.t3/worktrees/t3code/macos-cold-open-events/apps/desktop/src/app/DesktopClerk.test.ts:544:14 {
+  actual: [],
+  expected: [ 'https://example.com/report' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/desktop/src/app/DesktopClerk.test.ts > retains open-file during cold startup exactly once
+[00:09:02.071] ERROR (#139): Error [AssertionError]: expected [] to deeply equal [ 'file:///tmp/report%20%231.html' ]
+    at /home/saphid/.t3/worktrees/t3code/macos-cold-open-events/apps/desktop/src/app/DesktopClerk.test.ts:544:14 {
+  actual: [],
+  expected: [ 'file:///tmp/report%20%231.html' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/desktop/src/app/DesktopClerk.test.ts (16 tests | 2 failed) 81ms
+   × retains open-url during cold startup exactly once 11ms
+   × retains open-file during cold startup exactly once 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/src/app/DesktopClerk.test.ts > retains open-url during cold startup exactly once
+AssertionError: expected [] to deeply equal [ 'https://example.com/report' ]
+
+- Expected
++ Received
+
+- [
+-   "https://example.com/report",
+- ]
++ []
+
+ ❯ apps/desktop/src/app/DesktopClerk.test.ts:544:14
+    542|         yield* Deferred.await(delivered);
+    543|       }
+    544|       assert.deepEqual(received, [expected]);
+       |              ^
+    545|       assert.equal(event.preventDefault.mock.calls.length, 1);
+    546|       yield* webLinks.setRendererReady(true);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/desktop/src/app/DesktopClerk.test.ts > retains open-file during cold startup exactly once
+AssertionError: expected [] to deeply equal [ 'file:///tmp/report%20%231.html' ]
+
+- Expected
++ Received
+
+- [
+-   "file:///tmp/report%20%231.html",
+- ]
++ []
+
+ ❯ apps/desktop/src/app/DesktopClerk.test.ts:544:14
+    542|         yield* Deferred.await(delivered);
+    543|       }
+    544|       assert.deepEqual(received, [expected]);
+       |              ^
+    545|       assert.equal(event.preventDefault.mock.calls.length, 1);
+    546|       yield* webLinks.setRendererReady(true);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 failed | 18 passed (20)
+   Start at  00:09:00
+   Duration  2.10s (transform 57%, import 32%, setup 6%, tests 4%)
+

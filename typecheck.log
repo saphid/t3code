@@ -1,0 +1,5 @@
+~/apps/desktop$ tsc --noEmit ⊘ cache disabled
+src/app/DesktopClerk.test.ts(299,27): suggestion TS377117: `Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)
+src/app/DesktopClerk.test.ts(515,27): suggestion TS377117: `Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)
+src/app/DesktopWebLinks.test.ts(30,31): suggestion TS377117: `Effect.succeedSome` expresses this Option success value directly. effect(preferSucceedSomeOrNone)
+
