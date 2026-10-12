@@ -1,0 +1,35 @@
+I found one concrete defect in the revised cache. I only read the source and diff; I didn't run tests or start servers.
+
+## G-1 round 2: the cached response can bring back another client's reset
+
+**Severity:** Medium. A setting the user just turned off elsewhere silently comes back on. **Confidence:** high, from tracing the code.
+
+**Where:** `apps/web/src/components/settings/scopedSettings.ts:426-437` together with `:453-460`.
+
+**Why it happens:** the cached response in `pendingSettings` is only checked and released when the next queued scoped write runs. Nothing releases it when the config push catches up. So after the push arrives, `{ settings: R1, stale: [R0] }` can stay in memory for as long as the tab is open.
+
+From then on, the code assumes that if `configValueAtom` is structurally equal to an earlier snapshot, the push hasn't arrived yet. That assumption breaks when another client puts the server back into exactly that earlier state. The two cases can't be told apart by comparing values, and a straight undo or reset of one change is exactly what reproduces the old value.
+
+**Scenario (two clients on one environment, e.g. desktop and app.t3.codes, or two tabs; each has its own registry):**
+1. The stored override for project P is `{ defaultAutoPull: true }` (R0).
+2. Client A turns on Source Control → Remove agent credits at project scope. The response is R1 = `{ defaultAutoPull: true, removeAgentCreditsOnMerge: true }`, and A caches `{ settings: R1, stale: [R0] }`. The R1 push arrives and A's atom is R1. Because there's no queued write, the cache isn't released.
+3. Client B resets "Remove agent credits" for P. `planScopedSettingsClear` deletes the key, so the server is back to R0 exactly. The push reaches A, its atom is R0, and A's UI shows credits OFF.
+4. Any time later, A changes another project setting for P, such as the default thread mode. `current` is R0, which is `stale[0]`, and differs from `pending.settings`. So `:437` plans against R1 and sends the whole entry `{ defaultAutoPull: true, removeAgentCreditsOnMerge: true, defaultThreadEnvMode: … }`.
+5. Credits is ON again on the server and in both UIs, even though A's screen showed it OFF when the user clicked.
+
+**Other ways to hit it:**
+- The same thing happens after an intermediate push. With `stale: [R0, R1]` and `settings: R2`, an external revert to R1 brings R2's edit back.
+- The external change can be a "Reset", or the picker's "Inherit", which also deletes the key at `:262-268`.
+- Environment-scope edits go through the same cache, so their `worktreeCleanup` merge can also be planned against a stale R1. That's a smaller effect.
+
+**Test gap:** "uses fresh server settings after the config push catches up" (`scopedSettings.test.ts:181`) only covers an external write that leaves the server in a new state (`defaultAutoPull: false` against `true`). It never covers an external write that restores an earlier snapshot exactly.
+
+**Possible fix:** release the cache as soon as the push catches up, not on the next write. For example, while a cache entry exists, use `registry.subscribe(configValueAtom(environmentId))`. Drop the entry and unsubscribe once the atom equals `pending.settings` or a value outside `stale`. That limits the ambiguity to the real response-then-push delay, which is the window round 1 was meant to cover. A monotonic settings revision on the wire would remove it entirely, but that would change the contract and is probably more than this fix needs.
+
+## Things I checked that are fine
+- **Equality:** `Equal.equals` compares plain objects structurally in this Effect version. The RPC response and the `settingsUpdated` push both go through `redactServerSettingsForClient`, and `resolveTextGenerationProvider` is applied on both paths. So the response and the push compare equal when the state really is the same. If they ever differed, the cache would just be dropped and you'd get the old behaviour, not lose data.
+- **Atom source:** only the `settingsUpdated` push updates `configValueAtom` (`serverConfigProjection.ts:71`); the RPC response never does. So the lag the cache works around is real.
+- **Failure, pruning and lanes:** failed saves leave the cache alone, `stale` is pruned correctly, and queue cleanup and `find(...)!` are unchanged from round 1 and still sound.
+- **Other writers:** saves that skip the queue (`SourceControlHostSettings`, `DeviceHostsSettings`, `WelcomeWizard`) move the server to a state not in `stale`, so they correctly release the cache. The only risk is an exact revert, as in the scenario above.
+
+No other defects in the revised cache and rebase logic.

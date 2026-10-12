@@ -1,0 +1,15 @@
+[23:10:53.486] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves serverPort=15331 webPort=7291 baseDir=/home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves/.t3
+[23:10:59.955] INFO (#4768): Listening on http://127.0.0.1:15331
+[23:16:05.163] INFO (#4610): Listening on http://127.0.0.1:15331
+[23:16:54.001] INFO (#4619): Listening on http://127.0.0.1:15331
+[23:22:28.185] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves serverPort=15331 webPort=7291 baseDir=/home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves/.t3
+[23:22:34.612] INFO (#4614): Listening on http://127.0.0.1:15331
+[23:24:46.915] INFO (#4614): Listening on http://127.0.0.1:15331
+[23:25:16.589] INFO (#4614): Listening on http://127.0.0.1:15331
+
+Latest implementation: [dev-runner] server=15331 web=7291; isolated worktree .t3; captured PID=3112795
+Stopped latest captured wrapper and its worktree-verified children by exact recorded PID. Confirmed server/web ports closed and all recorded processes exited.
+Final implementation: [dev-runner] server=15331 web=7291, isolated worktree .t3; wrapper PID=3142919; all descendant PIDs captured from spawn ancestry for shutdown.
+Final shutdown: captured remaining node-watch/server PIDs from the original dev launch process group, confirmed cwd belongs to this worktree, and stopped only those PIDs. Both 15331 and 7291 confirmed closed.
+Final round 5: [dev-runner] server=15331 web=7291; worktree .t3; spawn process group=3176683; verified worktree cwd and captured exact descendant PIDs before shutdown.
+Final round 6: [dev-runner] server=15331 web=7291; worktree .t3; group=3185327; captured exact owned PIDs and checked worktree cwd before shutdown.

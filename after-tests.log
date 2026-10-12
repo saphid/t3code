@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+
+ Test Files  1 passed (1)
+      Tests  45 passed (45)
+   Start at  00:10:41
+   Duration  1.46s (transform 55%, import 35%, setup 6%, tests 4%)
+

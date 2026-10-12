@@ -1,0 +1,38 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts (43 tests | 1 failed) 96ms
+   ❯ queued scoped settings writes (21)
+     × preserves another client's edit after a coalesced toggle cycle 32ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > preserves another client's edit after a coalesced toggle cycle
+AssertionError: expected { defaultAutoPull: false, …(1) } to deeply equal { defaultAutoPull: true, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "defaultAutoPull": true,
++   "defaultAutoPull": false,
+    "defaultThreadEnvMode": "local",
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:180:74
+    178|     writes.push(configPush(other.value));
+    179|     await writes.edit({ defaultThreadEnvMode: "local" });
+    180|     expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId…
+       |                                                                          ^
+    181|       defaultAutoPull: true,
+    182|       defaultThreadEnvMode: "local",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 passed (43)
+   Start at  00:08:14
+   Duration  2.09s (transform 52%, import 37%, setup 6%, tests 5%)
+

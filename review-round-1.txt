@@ -1,0 +1,25 @@
+I found no blocking defects in this change. The G-1 fix does what it claims for the three scoped hooks, and I found no regression it introduces. I only read the source and the diff; I didn't run tests or start servers.
+
+**What I checked:**
+- **Rebasing:** each queued write re-runs its planner against the last successful server response for that environment (`scopedSettings.ts:419-436`). The response is redacted the same way as the config atom, so later writes plan against the same view the UI has.
+- **Failure handling:** a failed or rejected save leaves `queue.settings` unchanged and the queue keeps going. If the very first save fails, the next one reads the current atom.
+- **Possible crash in `find(...)!` (`:433`):** rebasing replaces only `serverConfig.settings`. Connection phase, capabilities, scope and entries come from the original snapshot, so the re-planned result always contains a write for that environment and the `!` can't hit `undefined`.
+- **Queue cleanup (`:441-447`):** a queue is deleted only when its tail is still the same `settled` promise. A click arriving in between gets the existing queue object and moves the tail, so cleanup can't drop a pending write.
+- **Ordering:** the per-environment queue sits in front of the existing `configScheduler` serial queue in `updateSettings`, so the two don't conflict, and different environments still save in parallel.
+- **Environment-scope edits:** these now also go through the queue. Their patch only depends on settings for the `worktreeCleanup` merge, and planning that against fresher settings is an improvement.
+- **Hook wiring:** the writer is created once per atom registry and stays stable across renders, so `useCallback` dependencies don't change. The extra planning call in `useRunScopedPlan` (once for `unavailableReason`, once inside the writer) is cheap and has no side effects.
+
+**Low-severity gap that remains (older than this change, now much smaller):**
+- `scopedSettings.ts:445-446` + `useScopedSettings.ts:78`: once a queue empties, the last response is thrown away and the next new queue reads `configValueAtom`. That atom is updated by the `streamChanges` push, which runs `materializeProviderEnvironmentSecrets` (`apps/server/src/serverSettings.ts:1047-1061`) and so can arrive after the RPC response.
+  - **Scenario:** toggle "Automatically pull", let its response arrive, then toggle "Remove agent credits" before the push lands. The second write plans against the old atom and drops `defaultAutoPull: true`.
+  - This needs the click to land inside the server-side delay between response and push, which is usually milliseconds. Before this change the window was the whole round trip plus a render.
+  - **Possible fix:** keep the queue's last response and prefer it only while it is newer than the atom. I wouldn't block on this.
+
+**Outside this concern (not defects in this diff):** some other code writes whole project override entries from a snapshot and bypasses the new queue:
+- `ChatView.tsx:5181`, which spreads the snapshot entry when saving scripts.
+- `useProjectScriptSettings.ts`, the Project Actions settings.
+- `ProviderSettingsPanel.tsx:934`, the provider enable toggle at project scope.
+
+Each has its own save guard but doesn't coordinate with the scoped-settings queue. Racing one of them against a scoped toggle within a single round trip could still drop an edit. That's unlikely because they are separate dialogs or pages, and it matches the scope you described.
+
+Surfaces: this applies to web and desktop through the shared hooks. Mobile is unaffected because it already blocks overlapping saves. Nothing changed in contracts, the server, or docs.

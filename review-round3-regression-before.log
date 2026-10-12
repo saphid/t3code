@@ -1,0 +1,60 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts (37 tests | 2 failed) 47ms
+   ❯ queued scoped settings writes (15)
+     × rebases queued edits on the response after an unrelated push during the save 16ms
+     × respects an external reset after acknowledgement but before the response arrives 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > rebases queued edits on the response after an unrelated push during the save
+AssertionError: expected { removeAgentCreditsOnMerge: true } to deeply equal { defaultAutoPull: true, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "defaultAutoPull": true,
+    "removeAgentCreditsOnMerge": true,
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:178:74
+    176|       writes.edit({ removeAgentCreditsOnMerge: true }),
+    177|     ]);
+    178|     expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId…
+       |                                                                          ^
+    179|       defaultAutoPull: true,
+    180|       removeAgentCreditsOnMerge: true,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > respects an external reset after acknowledgement but before the response arrives
+AssertionError: expected { defaultAutoPull: true, …(2) } to deeply equal { defaultAutoPull: true, …(1) }
+
+- Expected
++ Received
+
+  {
+    "defaultAutoPull": true,
+    "defaultThreadEnvMode": "local",
++   "removeAgentCreditsOnMerge": true,
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:204:74
+    202|       writes.edit({ defaultThreadEnvMode: "local" }),
+    203|     ]);
+    204|     expect(writes.responses.at(-1)?.projectSettingsOverrides[projectId…
+       |                                                                          ^
+    205|       defaultAutoPull: true,
+    206|       defaultThreadEnvMode: "local",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 35 passed (37)
+   Start at  23:40:42
+   Duration  1.57s (transform 53%, import 37%, setup 6%, tests 3%)
+

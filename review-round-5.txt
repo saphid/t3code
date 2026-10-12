@@ -1,0 +1,50 @@
+I found one low-severity defect, and the round-5 change introduced it. I only read the source at `f6788f05e9`; I didn't run tests or start anything.
+
+## Low: a lagging push for one of our own earlier saves can count as acknowledging the current save
+
+**Where:** `apps/web/src/components/settings/scopedSettings.ts:467-484` (the `acknowledged` check and its `release`), together with `:460-463`, which records every push seen during the request in `observed`.
+
+**Why:** the new check accepts any observed push on which the original planner is a no-op. It doesn't check whether that push came before or after our write. A push for one of our own earlier queued saves can pass this check whenever this save's intent was already true at that point:
+- a reset of a key that the earlier state didn't have yet, or
+- a toggle back to a value an earlier state already held.
+
+`release` then drops the whole cache, including the newer responses that were waiting for their pushes. Later writes plan against whatever intermediate push the atom holds next. In round 4, these earlier snapshots went into `stale` and the cache was kept, so round 5 regresses this ordering.
+
+**Scenario (one client, one environment, pushes running two or more responses behind):**
+1. Project P has no override (R0). The user turns on Remove agent credits (W0, response R_a = `{credits}`), then Automatically pull (W1, R_b = `{credits, autoPull}`), then clicks Reset on Automatically pull (W2). No pushes have arrived yet, so the cache is `{settings: R_b, stale: [R0, R_a]}` and W2 correctly plans against R_b.
+2. While W2 is in flight, the push for R_a arrives. The retained subscription trims `stale` to `[R_a]`, and `observed = [R_a]`.
+3. W2's response is R_c = `{credits}`. The check re-plans "clear autoPull" against R_a, which has no autoPull. The resulting patch is a no-op, so `acknowledged` is true and the cache is released.
+4. The lagging push for R_b arrives, so the atom is `{credits, autoPull}` and there is no cache. The next scoped edit for P, queued or clicked shortly after, plans against R_b. It sends `{credits, autoPull, …}`, which brings back the auto-pull the user just reset.
+
+If R_a and R_b arrive as separate pushes during W2's request, a W3 already waiting in the queue hits this with no extra delay: `readSettings` returns R_b at `:448`.
+
+**Unit repro (same harness as `scopedSettings.test.ts`):**
+```ts
+const writes = scopedWriter(DEFAULT_SERVER_SETTINGS);
+await writes.edit({ removeAgentCreditsOnMerge: true });        // R_a, no push
+await writes.edit({ defaultAutoPull: true });                  // R_b, no push
+const [ra, rb] = writes.responses;
+writes.persist.mockImplementationOnce(async (request) => {
+  writes.push(configPush(ra!));                                // lagging push of our own earlier save
+  return writes.commit(request);
+});
+await writes.clear(["defaultAutoPull"]);                       // R_c = { credits }
+writes.push(configPush(rb!));                                  // next lagging push
+await writes.edit({ defaultThreadEnvMode: "local" });
+```
+- **Expected:** `{ removeAgentCreditsOnMerge: true, defaultThreadEnvMode: "local" }`
+- **Actual:** the entry also contains `defaultAutoPull: true`, and `listenerCount()` is already 0 after the reset.
+
+The plain toggle sequence (auto-pull on, off, on) releases the same way when the first push lands during the third save. A following edit then plans against the lagging "off" state.
+
+**Severity: low.** It needs three or more rapid scoped edits on one project, plus `settingsUpdated` pushes lagging behind more than one response and arriving as separate updates. In the window before the next push, the UI also shows the stale value. It is still silent loss of a reset or edit the user made, and it is new since round 4.
+
+**Possible fix (small, no contract change):** don't let a push that matches one of our own known earlier snapshots count as acknowledgement. Skip observed values equal to `base`, `previous.settings` or any entry of `previous.stale`, and let them flow into `stale` as in round 4. The round-4 case still works: the batched push R1Y is never one of our own snapshots, so it is still accepted when it already contains our edit.
+
+## Checked and fine
+- **Fresh state for the re-plan:** the acknowledgement re-plan uses `rebased`, the save-time snapshot with only `settings` swapped. So `find(...)!` at `:478` can't be `undefined`, for the same reason as at `:453`.
+- **Resets are idempotent:** re-applying a reset to an entry that no longer has the key changes nothing. That is why the round-4 batched-reset case is now accepted, and also why the defect above triggers.
+- **Subscription cleanup:** `stopObserving` runs in `finally`. A release while a previous entry exists also unsubscribes that entry. A `null` config still releases.
+- **Unchanged parts:** cleaning up the queue by `tail` identity, failure and rejection handling, parallel saves across environments, immediate client-only patches, and the authorization check inside the queue are as round 4 verified.
+
+No other defects in this commit.

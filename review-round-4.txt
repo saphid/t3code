@@ -1,0 +1,39 @@
+I found one low-severity defect in round 4, and the round-4 change itself introduced it. I only read the source; I didn't run tests or start anything.
+
+## Low: a push for a write that lands after ours is wrongly treated as older, so the response cache is kept and the next edit undoes that write
+
+**Where:** `apps/web/src/components/settings/scopedSettings.ts:464-467` (the `observed` subscription), `:486-489` (`observed` added to `stale`), and `rebase` at `:414-420`.
+
+**Why:** round 4 assumes that any push seen while the save is in flight describes a state from before our write. That only holds if our own push (R1) is also seen as a separate value. When it is, the check at `:472` releases the cache. But the atom does not always see every server state:
+- **Pushes can be merged.** `serverConfigStateChanges` reads `SubscriptionRef.changes`, which is `Stream.fromPubSub` and reads pending items in batches (`.repos/effect-smol/.../SubscriptionRef.ts:160`, `Stream.ts:1173`). Atoms built from a stream only store the last item of each batch (`Atom.ts:902`, `Arr.lastNonEmpty`). The server's `streamChanges` also reads from an unbounded PubSub in batches. If R1 and a following state R1Y arrive together, the atom goes straight from R0 to R1Y.
+- **No-op writes are invisible.** When R1 equals the current atom value, `setValue` skips it, so no listener fires.
+
+In both cases `observed = [R1Y]` without R1. So R1Y goes into `stale` and the cache keeps R1. Atom R1Y then matches `stale`, so `rebase` returns R1. Round 3 released the cache here, because R1Y was in neither `stale` nor `pending.settings`. Round 4 fixed the earlier-push ordering by breaking the later-push ordering.
+
+**Data loss, and it is delayed:** nothing releases the cache after this. Its subscription only releases on a push that is new and different from these values. While the environment stays quiet, the stale cache can live for the rest of the tab session. The loss happens on the user's next scoped edit for that project, which could be minutes later.
+
+**Scenario (one client A, a second writer on the same environment):**
+1. Project P's override is R0 = `{ defaultAutoPull: true }`.
+2. Client A turns on Remove agent credits (W1). The server applies it, giving R1.
+3. Right after that, another client (or a server-side writer) sets P's default thread mode, giving R1Y = `{ defaultAutoPull, removeAgentCreditsOnMerge, defaultThreadEnvMode }`. The server pushes R1 and R1Y close together. A's atom batches them and moves from R0 straight to R1Y, before A has processed W1's response.
+4. A receives R1. `observed = [R1Y]`, which doesn't equal R1, so `stale = [R0, R1Y]` and the cache holds R1. A's UI correctly shows the thread mode as set.
+5. Later, A changes another setting for P. `rebase` sees R1Y in `stale` and plans against R1. The whole entry it sends has no `defaultThreadEnvMode`, so the other writer's change is silently reverted.
+
+**Unit-level repro, using the same harness as `scopedSettings.test.ts`:**
+- Start with `initial` = P `{ defaultAutoPull: true }`.
+- Make `persist.mockImplementationOnce` do this: `r1 = await commit(request)`, then `y = await commit({ input: { patch: { projectSettingsOverrides: { [P]: { ...r1.value.projectSettingsOverrides[P], defaultThreadEnvMode: "local" } } } } })`, then `push(configPush(y.value))` with no push for R1, then return `r1`.
+- Then `await edit({ removeAgentCreditsOnMerge: true })`, followed by `await edit({ defaultThreadEnvMode: "worktree" })`, then edit any other key.
+
+**Expected:** the final entry keeps the other writer's change. **Actual:** the last write is planned against R1, and `listenerCount()` stays at 1.
+
+**Severity: low.** It needs a second writer on the same project entry whose push reaches the client before our response, with our own push batched away or skipped as a no-op. On the server, `serverUpdateSettings` returns right after `emitChange` (`ws.ts:2404-2416`), so the response usually wins. The delay before the loss makes it worse when it does happen.
+
+**Possible fix (cheap, no contract change):** only count an observed push as "before ours" if it doesn't already contain our write. Check `!Equal.equals(applyServerSettingsPatch(settings, write.patch), settings)`. Treat a push that already contains our edit like a matching response and release the cache. That handles both the batching case and the no-op case. A settings revision on the response and the push would remove the ambiguity entirely, but that is the contract change earlier rounds ruled out of scope. Separately, giving the retained cache a time limit or a release when the lane is idle would stop any wrong cache from lasting the whole session.
+
+## Checked and fine
+- **Matching our own push:** with the `observed` subscription in place, a push of our own response that arrives before the response releases the cache. That covers acknowledged-then-reset, and an unrelated earlier push no longer clears a valid cache. Both orderings in the new tests trace correctly.
+- **`previous` combined with `observed`:** if R1's push lands while W2 is in flight, the previous entry's own subscription releases it first. W2 then starts a new entry with `stale = [R1, …observed]`. The order of `stale` stays oldest first, so slicing in `rebase` is still correct.
+- **Subscriptions:** `stopObserving` runs in `finally`, so it also runs on rejection. A null config releases the entry. Unsubscribing inside the callback is still safe, and registering after the `pending` identity check still prevents leaks.
+- **Unchanged parts:** queue cleanup by `tail` identity, both `find(...)!` calls, failure and rejection handling, parallel saves across environments, immediate client-only patches, and the authorization guard before the RPC are as round 3 verified.
+
+No other defects in this commit.

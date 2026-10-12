@@ -1,0 +1,37 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts (40 tests | 2 failed) 61ms
+   ❯ queued scoped settings writes (18)
+     × accepts a batched acknowledgement of an edit that includes another writer's fields 19ms
+     × accepts a batched acknowledgement of an reset that includes another writer's fields 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > accepts a batched acknowledgement of an edit that includes another writer's fields
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > accepts a batched acknowledgement of an reset that includes another writer's fields
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:198:38
+    196|       if (operation === "reset") await writes.clear(["removeAgentCredi…
+    197|       else await writes.edit({ removeAgentCreditsOnMerge: true });
+    198|       expect(writes.listenerCount()).toBe(0);
+       |                                      ^
+    199|       await writes.edit({ defaultAutoPull: false });
+    200|       expect(writes.responses.at(-1)?.projectSettingsOverrides[project…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 38 passed (40)
+   Start at  23:48:28
+   Duration  1.43s (transform 52%, import 37%, setup 6%, tests 5%)
+

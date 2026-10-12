@@ -1,0 +1,33 @@
+I found no defects in the final G-1 source at HEAD `b8467122c6`, and nothing I'd block on. I read the source and traced the RPC paths but didn't run the tests; per the brief I started no processes and edited nothing.
+
+**What the code does now.** None of the earlier cache, snapshot or subscription code is left. `createScopedSettingsWriter` (`apps/web/src/components/settings/scopedSettings.ts:397-446`) keeps one promise chain per environment. Each step waits for the previous save to finish, calls `server.getSettings`, plans the original edit or reset again against that result, then calls `updateSettings`.
+
+**Order and planning**
+- Queue entries are added synchronously in call order, because `persistScopedSettingsPatch` invokes the persist callback inside `serverWrites.map` with no `await` first. So FIFO matches click order.
+- The non-null assertion `find(...)!` at line 431 is safe. Which environments get a write depends only on scope, connection phase, `serverConfig` and capability (`selectScopedSettingsEnvironments` at line 53, `projectOverrideWrites`). It never depends on the settings values being swapped in. Every planner always emits a write for an environment that had one in the first plan.
+- Client-only keys are saved once, from the first plan. The replan's client patch is thrown away. The test at `scopedSettings.test.ts` "persists client preferences immediately" covers this.
+
+**Will the read see the previous save?** Yes. The next step only starts after the previous `updateSettings` response arrives. On the server, `updateAndPersistSettings` runs `Cache.set` under `writeSemaphore` before it responds, and `getSettings` reads that same cache (`apps/server/src/serverSettings.ts:1307-1333, 1457`). The read goes through the same environment supervisor as the write, so this holds for local, relay and tunnel connections. `server.getSettings` has existed since March 2026, so older remote servers support it.
+
+**Authorization**
+- `getSettings` requires `AuthOrchestrationReadScope` on the server (`RpcAuthorization.ts:88`).
+- It isn't in `CLIENT_GUARDED_RPC_SCOPES`, so the client permission check does nothing for it. That's fine for a read.
+- The settings-write scope check in `useScopedSettings.ts` runs on the replanned patch, after the read. Without write permission you now pay one extra read before the same failure; the UI is already gated by `useScopedSettingsWriteAllowed`.
+- The read returns the same redacted settings that `updateSettings` returns, and project override entries contain no secrets.
+
+**All three hooks.** `useUpdateScopedSettings`, `useClearScopedSettings` and `useClearProjectOverrides` all pass a planner to `run`, so all three are replanned on the fresh read. No other caller of `persistScopedSettingsPatch` remains.
+
+**Failures and cleanup**
+- `runAtomCommand` never rejects. The persist wrapper is async, and the queue's continuation swallows both outcomes.
+- A failed read or save fails only that entry, and the next entry plans on true server state. The tests cover both a returned failure and a rejection.
+- The map entry is deleted only if `tail` is still the step that just finished, so a call arriving during cleanup can't be orphaned. Nothing is retained after the queue goes idle.
+- The queue survives the settings component unmounting: `useAtomCommand` isn't tied to component lifecycle.
+
+**Multiple environments, delayed pushes, multiple clients**
+- Queues are keyed by environment, and a slow environment doesn't block others (there's a test for this). A project scope spanning environments only swaps in fresh settings for the environment being saved.
+- Correctness no longer depends on config pushes arriving on time, in batches, or in order. Each write is planned from what the server actually has.
+- One `WeakMap` per `AtomRegistry` covers every hook instance in a tab or window. Separate tabs, windows and clients still have a gap between reading and writing; that's inherent without a revision check and much smaller than before.
+
+**Residual points, none blocking**
+1. The project-scripts writers (`ChatView.tsx:5181`, `useProjectScriptSettings.ts:116`) and `ProviderSettingsPanel.tsx:934` still write whole project entries from the client snapshot through `updateSettings`'s queue, which is separate from this one. Suppose one of those writes is still in flight when a queued scoped write does its read. The scoped write can then rebuild the entry without that change and overwrite it. That already happened before this fix, with an even staler snapshot, so it's no regression, and it matches what earlier rounds called out of scope.
+2. Environment-wide writes (`all`/`environment` scope) also pay the extra read and are serialized, though they mostly send plain partial patches. That's one extra round trip per save, a deliberate and acceptable cost since settings saves are rare.

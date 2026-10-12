@@ -1,0 +1,32 @@
+I found no blocking defects in G-1 round 3. I only read the source; I didn't run tests or start anything. One low-severity gap remains, and the current code didn't introduce it: round 2 behaves the same way.
+
+## Low: an unrelated settings push during a save can release the cached response too early
+
+**Where:** `apps/web/src/components/settings/scopedSettings.ts:409-414`, which `:466-473` reaches at response time (and the subscription callback reaches later).
+
+**Why:** the cache is released whenever the atom holds something that is neither `pending.settings` nor in `stale`. The code reads any such value as "the push has caught up, or someone else changed things after us". But it can also be a push for a write that the server applied before ours, which arrives before our own push.
+
+**Scenario (one client, one environment):**
+1. The atom holds R0 and nothing is cached. The user enables Automatically pull (W1) at project scope, then clicks Remove agent credits (W2) before the first response comes back. W2 waits in the lane.
+2. While W1 is in flight, the server applies an unrelated write X before W1. X can come from another client or from the server itself: `DeviceService.ts:535`, `ProjectSettingsOverrideSweep.ts:51`, the MCP environment tool, or a project delete. The push for X reaches the client, so the atom is now X, which still lacks `defaultAutoPull`.
+3. The server applies W1 and the response R1 arrives before R1's push. At `:471-472` the atom is X, which is not R1 and not in `stale: [R0]`, so `rebase` drops the cache and unsubscribes.
+4. W2 plans against X and sends the whole override entry without `defaultAutoPull`, so the server loses the auto-pull edit. A click shortly after, made before R1's push lands, is lost the same way.
+
+**Severity:** low. It needs the lag between the response and its push, plus an unrelated settings write that lands in that window. The original single-client race is fixed.
+
+**Possible fix:** a comparison of values can't tell "X came before R1" from "X came after R1". The clean answer is a settings revision on the response and the push, which is a contract change and likely out of scope. A cheaper option is to subscribe when the write is sent, not when the response arrives. Then a push that arrives while the save is pending counts as earlier than our write, and only a push equal to the response, or one after it, releases the cache. I'd note this as a known limitation rather than block on it.
+
+## Things I checked that are fine
+- **The subscription itself:**
+  - `AtomRegistry.subscribe` (`.repos/effect-smol/.../AtomRegistry.ts:430`) doesn't call the listener during the subscribe call unless `immediate` is set. Listeners fire from `setValue`/`announce` with the new value already stored, so `rebase` never sees an old value.
+  - Unsubscribing inside the callback is safe: the listeners are a `Set` walked by `runAll`, and deleting the current entry is fine.
+  - The `pendingSettings.get(environmentId) === pending` check at `:469` also covers a callback that fires during the subscribe call.
+  - Unsubscribing schedules node removal, so the atom isn't kept mounted.
+- **Releasing during a save:** the cache can be released (for R1) while W2 is in flight. W2's response then starts a new entry: its `stale` starts as `[R1]`, the settings W2 was planned against, and it gets a new subscription. A push for R2 that arrives before W2's response is caught by the read at `:471`.
+- **Which registry:** `RegistryContext` is supplied with `appAtomRegistry` (`rpc/atomRegistry.ts:8`). So `registry.get` and `subscribe` read the same atoms as the rest of the app, and the `WeakMap` gives one writer per registry.
+- **Atom value vs. response:** only `setValue` notifies, and it skips values that compare equal, so a duplicate push does nothing. A no-op save (R1 equals R0) is released at once by the `:471` check.
+- **The `find(...)!` calls:** whether the planners return a write depends only on connection phase, capabilities and scope members, which come from the click-time snapshot. Rebasing only swaps `settings`, so both `!` at `:453` and `:458` are safe.
+- **Queue and failures:** a failed or rejected save leaves the cache alone and the next write still runs. Cleaning up the lane by comparing `tail` identity is still race-free. Different environments still save in parallel.
+- **Hook wiring:** the extra planner calls are pure and cheap. Client-only patches still apply immediately, and the authorization check still runs inside each lane before the RPC.
+
+**Smaller cleanup point:** if an environment is removed while it still has a cached response, its subscription stays open for the life of the tab. That costs one atom node and no data loss.

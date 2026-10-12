@@ -1,0 +1,36 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts (23 tests | 1 failed) 50ms
+   × preserves both project overrides when two edits use the same client snapshot 21ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > preserves both project overrides when two edits use the same client snapshot
+AssertionError: expected { removeAgentCreditsOnMerge: true } to deeply equal { defaultAutoPull: true, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "defaultAutoPull": true,
+    "removeAgentCreditsOnMerge": true,
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:113:53
+    111|     second.serverWrites[0]!.patch,
+    112|   );
+    113|   expect(saved.projectSettingsOverrides[projectId]).toEqual({
+       |                                                     ^
+    114|     defaultAutoPull: true,
+    115|     removeAgentCreditsOnMerge: true,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 22 passed (23)
+   Start at  23:11:04
+   Duration  2.38s (transform 60%, import 33%, setup 5%, tests 2%)
+

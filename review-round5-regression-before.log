@@ -1,0 +1,61 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/scoped-settings-rapid-saves
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts (42 tests | 2 failed) 66ms
+   ❯ queued scoped settings writes (20)
+     × keeps a rapid reset when an older matching push arrives before its response 22ms
+     × keeps a rapid toggle when an older matching push arrives before its response 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > keeps a rapid reset when an older matching push arrives before its response
+AssertionError: expected { defaultAutoPull: true, …(2) } to deeply equal { …(2) }
+
+- Expected
++ Received
+
+  {
++   "defaultAutoPull": true,
+    "defaultThreadEnvMode": "local",
+    "removeAgentCreditsOnMerge": true,
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:184:76
+    182|       writes.push(configPush(intermediate!));
+    183|       await writes.edit({ defaultThreadEnvMode: "local" });
+    184|       expect(writes.responses.at(-1)?.projectSettingsOverrides[project…
+       |                                                                            ^
+    185|         ...(operation === "reset"
+    186|           ? { removeAgentCreditsOnMerge: true }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/web/src/components/settings/scopedSettings.test.ts > queued scoped settings writes > keeps a rapid toggle when an older matching push arrives before its response
+AssertionError: expected { defaultAutoPull: false, …(1) } to deeply equal { defaultAutoPull: true, …(1) }
+
+- Expected
++ Received
+
+  {
+-   "defaultAutoPull": true,
++   "defaultAutoPull": false,
+    "defaultThreadEnvMode": "local",
+  }
+
+ ❯ apps/web/src/components/settings/scopedSettings.test.ts:184:76
+    182|       writes.push(configPush(intermediate!));
+    183|       await writes.edit({ defaultThreadEnvMode: "local" });
+    184|       expect(writes.responses.at(-1)?.projectSettingsOverrides[project…
+       |                                                                            ^
+    185|         ...(operation === "reset"
+    186|           ? { removeAgentCreditsOnMerge: true }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 40 passed (42)
+   Start at  23:56:47
+   Duration  1.52s (transform 54%, import 35%, setup 6%, tests 5%)
+

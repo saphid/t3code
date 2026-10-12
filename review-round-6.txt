@@ -1,0 +1,54 @@
+I found one low-severity defect, and the round-6 change introduced it. I only read the source at `3a597db345`, compared it with round 5 (`f6788f05e9`) and traced the logic by hand. I didn't run tests or start anything.
+
+## Low: after an on→off toggle, a coalesced push leaves the cache in place, and it later overrides another client's change
+
+**Where:** `apps/web/src/components/settings/scopedSettings.ts:414-418` (`rebase`), together with the stale bookkeeping at `:491-503`.
+
+**What changed:** round 5 released the cache when the atom equalled `pending.settings`. Round 6 dropped that condition so stale matches take priority, which fixed the round-5 case. Now the only ways to release are a push whose value isn't in `stale`, or `null`.
+
+**Why it breaks:** a toggle cycle produces a response equal to an earlier snapshot. After on→off, the cache is `{settings: R2 ≡ R0, stale: [R0, R1]}`.
+- If the atom never shows R1 as its own value, it stays at R0 the whole time, and every `rebase(R0)` hits `stale[0]` and keeps the cache.
+- That happens when the R1 and R2 pushes are coalesced: a stream batch keeps only the last item, and `setValue` skips a value equal to the current one, so no listener fires. It also happens when a reconnect `snapshot` lands at R0 (`serverConfigProjection.ts:29`), which is likely on remote and tunnel connections under latency.
+- From then on, the cache and its subscription can live for the rest of the tab session.
+
+The stale R1 entry then matches the exact state another writer produces by turning the toggle back on. `rebase` returns R2, and the next scoped edit sends a whole entry that reverts that writer. This is the round-2 "external change to an earlier snapshot" bug coming back through value cycles. Round 5 didn't have it: `rebase(R0)` matched `pending.settings` and released the cache.
+
+**Scenario (two clients, or tabs, on one environment):**
+1. Project P has the override `{ defaultAutoPull: false }` (R0).
+2. Client A clicks Automatically pull on, then off, quickly. The responses are R1 `{true}` and R2 `{false}` ≡ R0. The two pushes coalesce, so A's atom stays at R0. A's cache is now `{R2, [R0, R1]}` with a live subscription.
+3. Later, client B turns Automatically pull on, making the server state exactly R1. A receives the push, `rebase` matches `stale[1]` and returns R2, so A's UI correctly shows "on" but the cache now holds "off".
+4. A changes any other project setting for P. The write is planned against R2 and sends `{ defaultAutoPull: false, … }`, which silently reverts B's change.
+
+The on→off→on double toggle hits the same problem when only the last two pushes coalesce: `stale` trims to `[R1, R2]` and is kept. B's later "off" (≡ R2) is then replaced by A's cached "on".
+
+**Unit repro (same harness):**
+```ts
+const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+  projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+});
+const writes = scopedWriter(initial);
+await writes.edit({ defaultAutoPull: true });   // R1, no push
+await writes.edit({ defaultAutoPull: false });  // R2 ≡ R0, no push
+writes.push(configPush(writes.stored()));       // coalesced push lands on R0 (a real atom wouldn't even notify)
+expect(writes.listenerCount()).toBe(0);         // round 5: 0, round 6: 1
+const other = await writes.commit({ input: { patch: {
+  projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } } } });
+writes.push(configPush(other.value));
+await writes.edit({ defaultThreadEnvMode: "local" });
+// expected { defaultAutoPull: true, defaultThreadEnvMode: "local" }; actual defaultAutoPull: false
+```
+
+**Severity: low.** It needs a value-cycling toggle, coalesced pushes or a reconnect snapshot, and then another writer restoring exactly the intermediate state. But the user does nothing unusual, and the loss can come much later.
+
+**Fix direction:** comparing values can't tell this case apart from the round-5 case. There, `R_c ≡ R_a` and the cache must survive a push of R_a; here, `R2 ≡ R0` and the cache must not survive a push of R1. Each rule fixes one and breaks the other. I'd stop iterating on value heuristics and either:
+- record this as a known limitation, or
+- add a monotonic settings revision to the `updateSettings` response and the `settingsUpdated` push. That is the contract change earlier rounds ruled out, and it removes this whole class of bugs.
+
+## Checked and fine
+- **`earlier`:** it is a copy taken before persistence. `base` is either `pending.settings` or the current atom value, so `earlier` covers our own known snapshots. Trimming during the request doesn't change it.
+- **The round-5 scenario now holds:** R_a is excluded from acknowledgement, the stale match beats the equal `pending.settings`, and the R_b push is matched at index 1, not released.
+- **No-op response early return (`:470`):** if `base` is `pending.settings`, the existing cache and its subscription stay in charge. Otherwise the server equals the atom, and there's nothing to cache.
+- **Deduplicated `observed` append:** stale stays ordered oldest first. Duplicate listener calls from other config events (for example `providerStatuses`, which re-fires with the same settings) are harmless in both acknowledgement and `rebase`.
+- **Unchanged parts:** the `find(...)!` calls (`rebased` only swaps `settings`), `stopObserving` in `finally`, queue cleanup by `tail` identity, failure and rejection handling, parallel saves across environments, immediate client-only patches, and the authorization check inside the lane are as previous rounds verified.
+
+No other defects in this commit.
