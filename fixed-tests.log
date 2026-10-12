@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/fork-pr-upstream
+
+
+ Test Files  1 passed (1)
+      Tests  127 passed (127)
+   Start at  23:18:23
+   Duration  81.28s (tests 90%, transform 7%, import 3%)
+

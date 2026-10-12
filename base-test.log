@@ -1,0 +1,53 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/fork-pr-upstream
+
+stdout | apps/server/src/git/GitManager.test.ts > GitManager > preserves an unrelated local branch and upstream that share the fork head name
+[23:18:04.702] ERROR (#31): Error [AssertionError]: expected 'fork-seed/main' to be 'origin/main' // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/fork-pr-upstream/apps/server/src/git/GitManager.test.ts:6263:9 {
+  actual: 'fork-seed/main',
+  expected: 'origin/main',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/git/GitManager.test.ts (127 tests | 1 failed | 126 skipped) 675ms
+   ❯ GitManager (127)
+     × preserves an unrelated local branch and upstream that share the fork head name 659ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/git/GitManager.test.ts > GitManager > preserves an unrelated local branch and upstream that share the fork head name
+AssertionError: expected 'fork-seed/main' to be 'origin/main' // Object.is equality
+
+Expected: "origin/main"
+Received: "fork-seed/main"
+
+ ❯ apps/server/src/git/GitManager.test.ts:6263:9
+    6261|       expect(
+    6262|         (yield* runGit(mainWorktreePath, ["rev-parse", "--abbrev-ref",…
+    6263|       ).toBe("origin/main");
+       |         ^
+    6264|       expect(result.branch).toBe("t3code/pr-94/main");
+    6265|       expect(result.worktreePath).not.toBeNull();
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 126 skipped (127)
+   Start at  23:17:54
+   Duration  10.01s (transform 65%, import 27%, tests 7%, setup 1%)
+
+  Transform  transforming modules took 6.41s · 65% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

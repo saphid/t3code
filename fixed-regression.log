@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/fork-pr-upstream
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 125 skipped (127)
+   Start at  23:19:53
+   Duration  9.82s (transform 57%, import 24%, tests 18%, setup 1%)
+
+  Transform  transforming modules took 5.53s · 57% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

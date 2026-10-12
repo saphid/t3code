@@ -1,0 +1,17 @@
+Base production revision: 3f70c831c65f339e71c549a2e1395aaffa9ce17e
+Fixed commit: 2a4cbfa906bee0bb2e96be491adabf816ce73a08
+Boundary: GitManager.preparePullRequestThread service, real git subprocesses and persisted git branch/upstream configuration.
+Fixtures: scoped temporary repositories and isolated local bare origin/fork remotes. Source-control PR metadata and setup callback are faked. No live T3 userdata, external host network, dev server, or browser was used.
+
+Before: unchanged base production code with the new regression assertions; 1 failed / 126 skipped. main changed upstream from origin/main to fork-seed/main. See base-test.log.
+After: 127 passed / 0 failed in the full GitManager test file. See fixed-tests.log.
+After focused proof: 2 passed / 0 failed / 125 skipped, covering unrelated main upstream preservation and exact dedicated fork PR worktree reuse. See fixed-regression.log.
+Assertions: unrelated main commit and content stay unchanged, upstream remains origin/main; returned worktree differs from main's checkout, has branch t3code/pr-94/main, upstream fork-seed/main, contributor content, isOnPullRequestHead=true, and setup runs on the dedicated PR checkout. Exact dedicated PR worktree is reused and its fork upstream restored.
+
+Targeted lint: ./node_modules/.bin/vp lint apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts; exit 0.
+Server typecheck: cd apps/server && ../../node_modules/.bin/vp run typecheck; exit 0, advisory Effect suggestions only; no errors or suggestions for the touched GitManager files.
+Formatting: ./node_modules/.bin/vp fmt apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts; exit 0.
+git diff --check: exit 0.
+
+Surfaces: web, desktop (including desktop-hosted servers), and mobile all call the shared server service through git.preparePullRequestThread. The fix applies to fork worktree preparation across supported hosts and local/remote/relay/tunnel/multi-device connections. Same-repository branch selection and local checkout mode retain their paths. Codex, Claude, Cursor, Grok, OpenCode, and Antigravity adapters are not involved. Contracts/permissions and entry points are unchanged. No new state or reverse action, no docs change required.
+Gaps: no browser/UI pass or external source-control host integration; isolated real-git service integration verifies the affected boundary.

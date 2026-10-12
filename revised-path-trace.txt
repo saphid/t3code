@@ -1,0 +1,21 @@
+Scope: F-2, preserve the established bare-name worktree reuse contract.
+
+ensureExistingWorktreeUpstream (GitManager.ts:2600) reads the checkout's actual branch through statusDetails and delegates to configurePullRequestHeadUpstream (GitManager.ts:884).
+For a cross-repository PR with a head repository, that method obtains clone URLs, reads remote.origin.url, ensures a fork remote, force-fetches the head into refs/remotes/<fork>/<head>, and calls setBranchUpstream for the actual checked-out branch.
+GitVcsDriverCore.ts:3776 fetches with +refs/heads/<head>:refs/remotes/<remote>/<head>. Its setBranchUpstream at line 3787 runs git branch --set-upstream-to, changing branch.<name>.remote/merge.
+Those side effects contradict the mismatch path's explicit promise to retain somebody else's tracking configuration. None is needed to construct the unchanged return value: resolved PR metadata, expected PR branch, existing worktree path, isOnPullRequestHead=false.
+
+findLocalHeadBranch is restored unchanged, including the fallback from the dedicated fork PR branch to a checked-out bare head branch outside the root checkout. listRefs(refresh=true) refreshes a read-only cache snapshot using for-each-ref, symbolic-ref, worktree list, and remote enumeration (GitVcsDriverCore.ts:3104,3341); it does not fetch.
+The mismatch path returns before materialization, checkout refresh, and setup. The finally block invalidateStatus invalidates caches and the PR lookup epoch, not git refs or config.
+
+Downstream:
+- PullRequestDetailPanel.tsx:1336 and usePullRequestActions.ts:410 point a draft at the returned worktree path and branch; their stale-checkout handling uses isOnPullRequestHead=false (lines 1372/1388 and 444/460). This does not require any fetched PR head or rewritten upstream.
+- PullRequestThreadDialog.tsx:179 forwards branch/path to ChatView.tsx:2921, whose openOrReuseProjectDraftThread stores the draft context (ChatView.tsx:2842). It does not require fork tracking refs or upstream config.
+- Mobile use-thread-outbox-drain.ts:1082 rejects a not-on-PR-head result before binding/sending a queued turn. Removing the tracking mutation preserves this contract.
+- Later Pull calls GitWorkflowService.pullCurrentBranch (GitWorkflowService.ts:354) and GitVcsDriverCore.pullCurrentBranch (line 2490), which reads the actual branch and hasUpstream then runs git pull --ff-only at the returned cwd. It requires the original origin/main upstream, not the fork upstream. The regression exercises this real service path and confirms main is not advanced onto the fork.
+
+Decision: remove the entire ensureExistingWorktreeUpstream call only from the mismatched branch path. Keep exact-branch reuse, including upstream restoration and PR-head refresh, unchanged. Preserve the returned expected branch and isOnPullRequestHead=false contract; changing branch labels or binding is outside this fix.
+
+Verification fixture deliberately makes refs/remotes/fork-seed/main stale after seeding the fork. It compares every refs/remotes ref and object ID before/after preparation, verifies origin/main remains main's upstream, verifies the same bare-name main checkout is reused and untouched with no setup, and pulls through the real GitVcsDriver service. Exact dedicated fork PR reuse coverage remains.
+
+The coordinator rebased the branch onto 83fbbc18f8 before requesting revision (prior fix commit became 8e0be985d4). GitManager source/tests on that parent match original base 3f70c831c6, confirmed by git diff of those files. Revised base reproduction uses the original GitManager.ts with the revised regression and fails on the same upstream assertion.
