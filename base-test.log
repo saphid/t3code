@@ -1,0 +1,44 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/citation-runless-fold
+
+stderr | apps/web/src/components/chat/useAssistantCitationTarget.test.tsx > citation navigation into folded turns > reveals a response in a turn with runId null
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/components/chat/useAssistantCitationTarget.test.tsx (2 tests | 1 failed) 49ms
+   ❯ citation navigation into folded turns (2)
+     × reveals a response in a turn with runId null 39ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/useAssistantCitationTarget.test.tsx > citation navigation into folded turns > reveals a response in a turn with runId null
+AssertionError: expected [] to deeply equal [ 'runless:prompt' ]
+
+- Expected
++ Received
+
+- [
+-   "runless:prompt",
+- ]
++ []
+
+ ❯ apps/web/src/components/chat/useAssistantCitationTarget.test.tsx:112:33
+    110|     act(() => navigation.onListLoad());
+    111|
+    112|     expect([...expandedRunIds]).toEqual([runId ?? "runless:prompt"]);
+       |                                 ^
+    113|     expect(visibleMessageIds).toContain("update");
+    114|     expect(visibleMessageIds).toContain("answer");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  00:06:37
+   Duration  3.79s (transform 59%, import 36%, setup 3%, tests 1%)
+
+  Transform  transforming modules took 2.12s · 59% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

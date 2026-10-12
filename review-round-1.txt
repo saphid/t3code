@@ -1,0 +1,20 @@
+Task: node:delegated-task:command%3Amcp%3A97a8f07d-43f2-4fab-8dc4-60fd9ed61158%3Adelegate-task%3AC-4-review-round-1-5e36483ef2
+Provider: claudeAgent
+Model: claude-opus-5-5 (effort high)
+Status: completed
+
+I found no defects in commit `5e36483ef2` (C-4). I reviewed the source and the diff against base `3f70c831c6` without editing or running anything.
+
+**What I checked:**
+
+- **Fold key.** `useAssistantCitationTarget.ts:124` now asks `getTurnFoldRunId(source.id)` which fold hides the entry, instead of using `source.message.runId`. That calls `timelineTurnFoldRunIdsByEntryId`, which reads the same `deriveTimelineTurnFolds` output that `deriveMessagesTimelineRows` uses to hide entries. So the key returned is the one `expandedRunIds` needs: `runless:<boundary-entry-id>` for imported turns, the real run ID otherwise.
+- **Inputs match the rows.** In `MessagesTimeline.tsx:679-686` the callback passes `{ timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive }`. That is the same set the row projection uses (`MessagesTimeline.tsx:916-927`) and the same set find-in-thread already passes to this helper (`MessagesTimeline.tsx:864-876`, `:1497-1503`). The fold result doesn't depend on expansion state, so expanding can't change the answer and cause a loop.
+- **No extra work.**
+  - The callback gets a new identity whenever `timelineEntries` changes, which is often while streaming. The effect already re-runs on `entries` and `rows`, so this adds no re-runs.
+  - The fold computation only runs when the source isn't in `rows`, which happens only during active citation navigation.
+  - `expandCitedRun` makes no change when the key is already in the set, so repeated effect runs can't cause re-render loops.
+- **Behaviour when no fold is found.** If `getTurnFoldRunId` returns null, the code returns without expanding, the same as the old path when there was no `runId`.
+- **Test.** `useAssistantCitationTarget.test.tsx` checks what the user would see: before navigation the source is hidden; after it, the source and the final answer rows are visible, the target is set, the source is pinned in `alwaysRender`, and positioning clears on `onComplete`. It covers both the runless and run-ID cases, and the runless one is the regression. It doesn't just assert callback wiring or rendered markup.
+- **Reach.** The citation chip and deep links both go through this hook. No contracts, transport or mobile code changed.
+
+The fix doesn't cover one case, and the old code didn't either, so it isn't a regression: a cited response hidden only by a superseded-attempt fold, rather than a turn fold, still stays hidden and positioning is left pending.

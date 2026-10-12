@@ -1,0 +1,710 @@
+$ node scripts/dev-runner.ts dev ⊘ cache disabled
+[00:08:02.795] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3/worktrees/t3code/citation-runless-fold serverPort=14334 webPort=6294 baseDir=/home/saphid/.t3/worktrees/t3code/citation-runless-fold/.t3
+~/apps/web$ vp dev ⊘ cache disabled
+~/apps/server$ node --watch src/bin.ts ⊘ cache disabled
+Failed to resolve dependency: @clerk/clerk-js, present in client 'optimizeDeps.include'
+
+  VITE+ v1.0.0  
+
+  ➜  Local:   http://localhost:6294/
+12:08:05 AM [vite+] (client) [optimizer] scanning dependencies...
+bash: cannot set terminal process group (1088697): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[00:08:10.146] INFO (#4636): Listening on http://127.0.0.1:14334
+[00:08:10.169] INFO (#4635): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:08:10.307] INFO (#4635): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:08:10.341] INFO (#5103): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: http://localhost:6294/pair#token=[redacted]
+12:08:14 AM [vite+] (client) [optimizer] bundling dependencies...
+Restarting 'src/bin.ts'
+[00:08:16.974] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+bash: cannot set terminal process group (1088697): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[00:08:24.764] INFO (#4610): Listening on http://127.0.0.1:14334
+[00:08:24.798] INFO (#4609): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:08:24.818] INFO (#4609): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:08:24.915] INFO (#4970): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: http://localhost:6294/pair#token=[redacted]
+[00:08:42.884] INFO (#5590) http.span=11ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:42.919] INFO (#5591) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:43.054] INFO (#5592) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:43.139] INFO (#5593) http.span=5ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:43.177] INFO (#5594) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:43.195] INFO (#5595) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[00:08:43.199] INFO (#5596) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:43.203] INFO (#5597) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:45.775] INFO (#5600) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:45.783] INFO (#5601) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[00:08:45.785] INFO (#5602) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:45.788] INFO (#5603) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:49.594] INFO (#5604) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:49.602] INFO (#5605) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[00:08:49.604] INFO (#5606) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:49.607] INFO (#5607) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:49.612] INFO (#5608) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:52.514] INFO (#5611) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:55.802] INFO (#5622) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:55.809] INFO (#5623) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[00:08:55.811] INFO (#5624) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:55.814] INFO (#5625) http.span=0ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:55.816] INFO (#5626) http.span=0ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:11.516] INFO (#5635) http.span=10ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/auth/browser-session
+  http.status: 200
+[00:09:11.526] INFO (#5640) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:41.835] INFO (#5671) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:42.971] INFO (#5672) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:09:42.991] INFO (#5673) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:09:43.018] INFO (#5696) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:43.027] INFO (#5698) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:43.260] INFO (#5762) http.span=38ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:09:43.264] INFO (#5868) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:09:44.258] ERROR (#6176) http.span=31ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:44.315] INFO (#6176) http.span=88ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:45.355] INFO (#6247) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:45.618] ERROR (#6250) http.span=7ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:45.649] INFO (#6250) http.span=38ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:46.192] ERROR (#6254) http.span=4ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:46.211] INFO (#6254) http.span=23ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:46.418] INFO (#6258) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:47.259] ERROR (#6261) http.span=5ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:47.276] INFO (#6261) http.span=22ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:47.422] INFO (#6265) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:49.326] ERROR (#6268) http.span=7ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:49.347] INFO (#6268) http.span=28ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:49.460] INFO (#6272) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:51.875] INFO (#6277) http.span=2ms:
+  HttpApiSchemaError: Headers {
+    [cause]: SchemaError: Missing key
+      at ["x-t3-orchestration-protocol"]
+  }
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 400
+[00:09:52.466] INFO (#6278) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:53.407] ERROR (#6281) http.span=6ms: environment api operation failed
+  {
+    reason: 'orchestration_thread_history_failed',
+    traceId: 'ef013851cf1c5cced48f8af32c86ca5e',
+    cause: {
+      _tag: 'OrchestratorProjectionError',
+      threadId: 'c4-citation-runless',
+      cause: {
+        _tag: 'ProjectionStoreReadError',
+        threadId: 'c4-citation-runless',
+        cause: [Object]
+      }
+    }
+  }
+  environment.endpoint: HttpApiEndpoint
+  traceId: ef013851cf1c5cced48f8af32c86ca5e
+[00:09:53.429] INFO (#6281) http.span=28ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 500
+[00:09:53.502] INFO (#6283) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:54.512] INFO (#6288) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:55.523] INFO (#6301) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:58.538] INFO (#6304) http.span=7ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+Restarting 'src/bin.ts'
+[00:09:59.749] INFO (#5674) http.span=16753ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#6316)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[00:09:59.783] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+12:10:00 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+$ node scripts/dev-runner.ts dev ⊘ cache disabled
+[00:10:08.547] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3/worktrees/t3code/citation-runless-fold serverPort=14334 webPort=6294 baseDir=/home/saphid/.t3/worktrees/t3code/citation-runless-fold/.t3
+~/apps/web$ vp dev ⊘ cache disabled
+~/apps/server$ node --watch src/bin.ts ⊘ cache disabled
+
+  VITE+ v1.0.0  
+
+  ➜  Local:   http://localhost:6294/
+bash: cannot set terminal process group (1101750): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[00:10:15.283] INFO (#4614): Listening on http://127.0.0.1:14334
+[00:10:15.304] INFO (#4613): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:10:15.317] INFO (#4613): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:10:15.449] INFO (#4972): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: http://localhost:6294/pair#token=[redacted]
+[00:10:44.516] INFO (#5594) http.span=9ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:11:17.286] INFO (#5635) http.span=20ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:11:17.377] INFO (#5636) http.span=7ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:11:17.514] INFO (#5659) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:11:17.521] INFO (#5660) http.span=5ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:11:18.602] INFO (#5685) http.span=7ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:18.958] INFO (#5732) http.span=57ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:11:18.991] INFO (#5864) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:11:19.020] INFO (#5840) http.span=61ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/c4-citation-runless/bounded
+  http.status: 200
+12:11:20 AM [vite+] (client) [console.warn] [legend-list] recycleItems was not provided, so it defaults to false. Set recycleItems explicitly to true for better performance with recycling-aware rows, or false to preserve remount-on-reuse behavior.
+[00:11:20.816] INFO (#6157) http.span=6ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:22.439] INFO (#6201) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:24.450] INFO (#6204) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:27.457] INFO (#6209) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:30.462] INFO (#6214) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:31.468] INFO (#6219) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+12:11:33 AM [vite+] (client) [console.error] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at PopoverClose (http://localhost:6294/src/components/ui/popover.tsx:278:24)
+    at AssistantCitationChip (http://localhost:6294/src/components/chat/AssistantCitationChip.tsx:339:26)
+    at MarkdownAnchor (http://localhost:6294/src/components/ChatMarkdown.tsx:4206:40)
+    at ChatMarkdown (http://localhost:6294/src/components/ChatMarkdown.tsx:4805:25)
+    at UserMessageBody (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:8525:24)
+    at CollapsibleUserMessageBody (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:8423:30)
+    at UserTimelineRow (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:3037:25)
+    at TimelineRowContent (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:2041:81)
+    at http://localhost:6294/src/components/chat/MessagesTimeline.tsx:1078:30
+    at getRenderedItem (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5869:61)
+    at getRenderedItem (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:6471:29)
+    at http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4266:80
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at Container2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4266:52)
+    at ContainerSlotBase (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4297:38)
+    at ContainerSlot2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4308:38)
+    at Containers2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4460:93)
+    at ListComponent2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5165:282)
+    at LegendListInner2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:6486:110)
+    at LegendList2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5987:102)
+    at ConversationTimeline (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:1142:23)
+    at MessagesTimeline (http://localhost:6294/src/components/chat/MessagesTimeline.tsx:239:24)
+    at ChatView (http://localhost:6294/src/components/ChatView.tsx:9323:37)
+    at ThreadRouteView (http://localhost:6294/src/components/ThreadRouteView.tsx:359:27)
+    at ChatRouteLayout (http://localhost:6294/src/routes/_chat.tsx?tsr-split=component:292:91)
+    at Lazy (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6089:23)
+    at http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6345:63
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at MatchInnerImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6343:27)
+    at MatchView (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6259:54)
+    at MatchImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6203:52)
+    at OutletImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6422:63)
+    at RootRouteView (http://localhost:6294/src/routes/__root.tsx:279:141)
+    at http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6345:63
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at MatchInnerImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6343:27)
+    at MatchView (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6259:54)
+    at MatchImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6203:52)
+    at MatchesInner (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6545:78)
+    at Matches (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6536:140)
+    at RouterProvider (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6722:56)
+    at AppRoot (http://localhost:6294/src/AppRoot.tsx:25:24)
+[00:11:33.478] INFO (#6222) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:36.486] INFO (#6227) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:39.492] INFO (#6230) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:42.497] INFO (#6235) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:43.503] INFO (#6239) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:45.507] INFO (#6252) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:48.513] INFO (#6255) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:51.518] INFO (#6267) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:54.523] INFO (#6270) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:57.529] INFO (#6275) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:00.535] INFO (#6280) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+Restarting 'src/bin.ts'
+[00:12:00.668] INFO (#5637) http.span=43242ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#6292)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[00:12:00.700] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+12:12:01 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:02 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:03 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:03 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:04 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:12:06 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+12:12:11 AM [vite+] (client) hmr update /src/index.css, /src/components/chat/MessagesTimeline.tsx
+12:12:11 AM [vite+] (client) hmr update /src/index.css, /src/components/chat/MessagesTimeline.tsx
+12:12:11 AM [vite+] (client) hmr update /src/index.css
+12:12:14 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14334
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:15 AM [vite+] (client) hmr invalidate /src/components/chat/MessagesTimeline.tsx Could not Fast Refresh ("resolvePreviewAnnotationImage" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:12:15 AM [vite+] (client) hmr update /src/components/ChatView.tsx
+bash: cannot set terminal process group (1101750): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[00:12:17.020] INFO (#4612): Listening on http://127.0.0.1:14334
+[00:12:17.048] INFO (#4611): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:12:17.095] INFO (#4611): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:12:17.158] INFO (#4972): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: http://localhost:6294/pair#token=[redacted]
+[00:12:21.383] INFO (#5580) http.span=15ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:22.175] INFO (#5584) http.span=5ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:12:22.216] INFO (#5585) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:12:22.336] INFO (#5608) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:22.338] INFO (#5609) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+12:12:23 AM [vite+] (client) [console.warn] [legend-list] recycleItems was not provided, so it defaults to false. Set recycleItems explicitly to true for better performance with recycling-aware rows, or false to preserve remount-on-reuse behavior.
+[00:12:23.389] INFO (#5660) http.span=8ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:23.717] INFO (#5750) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:23.719] INFO (#5681) http.span=17ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:12:25.850] INFO (#6004) http.span=10ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:28.859] INFO (#6009) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+12:12:30 AM [vite+] (client) [console.error] Base UI: A component that acts as a button expected a native <button> because the `nativeButton` prop is true. Rendering a non-<button> removes native button semantics, which can impact forms and accessibility. Use a real <button> in the `render` prop, or set `nativeButton` to `false`.
+    at PopoverClose (http://localhost:6294/src/components/ui/popover.tsx:278:24)
+    at AssistantCitationChip (http://localhost:6294/src/components/chat/AssistantCitationChip.tsx:339:26)
+    at MarkdownAnchor (http://localhost:6294/src/components/ChatMarkdown.tsx:4206:40)
+    at ChatMarkdown (http://localhost:6294/src/components/ChatMarkdown.tsx:4805:25)
+    at UserMessageBody (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:8539:24)
+    at CollapsibleUserMessageBody (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:8437:30)
+    at UserTimelineRow (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:3051:25)
+    at TimelineRowContent (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:2055:81)
+    at http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:1092:30
+    at getRenderedItem (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5869:61)
+    at getRenderedItem (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:6471:29)
+    at http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4266:80
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at Container2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4266:52)
+    at ContainerSlotBase (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4297:38)
+    at ContainerSlot2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4308:38)
+    at Containers2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:4460:93)
+    at ListComponent2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5165:282)
+    at LegendListInner2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:6486:110)
+    at LegendList2 (http://localhost:6294/node_modules/.vite/deps/@legendapp_list_react.js?v=b1218fcf:5987:102)
+    at ConversationTimeline (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:1156:23)
+    at MessagesTimeline (http://localhost:6294/src/components/chat/MessagesTimeline.tsx?t=1791763931069:239:24)
+    at ChatView (http://localhost:6294/src/components/ChatView.tsx?t=1791763931069:9323:37)
+    at ThreadRouteView (http://localhost:6294/src/components/ThreadRouteView.tsx?t=1791763931069:359:27)
+    at ChatRouteLayout (http://localhost:6294/src/routes/_chat.tsx?t=1791763931069&tsr-split=component:292:91)
+    at Lazy (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6089:23)
+    at http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6345:63
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at MatchInnerImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6343:27)
+    at MatchView (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6259:54)
+    at MatchImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6203:52)
+    at OutletImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6422:63)
+    at RootRouteView (http://localhost:6294/src/routes/__root.tsx:279:141)
+    at http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6345:63
+    at mountMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:4931:20)
+    at Object.useMemo (http://localhost:6294/node_modules/.vite/deps/client-DPTZy2p6.js?v=b1218fcf:13022:13)
+    at exports.useMemo (http://localhost:6294/node_modules/.vite/deps/react.js?v=b1218fcf:736:31)
+    at MatchInnerImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6343:27)
+    at MatchView (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6259:54)
+    at MatchImpl (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6203:52)
+    at MatchesInner (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6545:78)
+    at Matches (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6536:140)
+    at RouterProvider (http://localhost:6294/node_modules/.vite/deps/@tanstack_react-router.js?v=b1218fcf:6722:56)
+    at AppRoot (http://localhost:6294/src/AppRoot.tsx:25:24)
+[00:12:31.881] INFO (#6012) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:34.915] INFO (#6019) http.span=14ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:37.914] INFO (#6024) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:40.924] INFO (#6027) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
