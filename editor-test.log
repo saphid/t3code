@@ -1,0 +1,38 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-undo-retention
+
+ ❯ apps/web/src/components/ComposerPromptEditor.history.test.tsx (2 tests | 1 failed) 148ms
+   × keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=false) 105ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/ComposerPromptEditor.history.test.tsx > keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=false)
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ apps/web/src/components/ComposerPromptEditor.history.test.tsx:92:37
+     90|       expect(retained.files.size).toBe(1);
+     91|       await act(async () => render("B", ""));
+     92|       expect(oldEditor.isDestroyed).toBe(true);
+       |                                     ^
+     93|       expect(retained.files.size).toBe(0);
+     94|       expect(editor().commands.undo()).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  23:54:07
+   Duration  6.19s (transform 48%, import 33%, environment 16%, tests 2%, setup 1%)
+
+  Transform  transforming modules took 2.93s · 48% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

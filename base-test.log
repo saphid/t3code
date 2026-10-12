@@ -1,0 +1,31 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-undo-retention
+
+stdout | apps/web/src/components/chat/composerContextUndo.test.ts > reconcileAttachmentContextReferences > bounds deleted file payloads over 200 attach/delete cycles
+{"cycles":200,"payloadBytes":1048576,"retainedBytes":209715200}
+
+ ❯ apps/web/src/components/chat/composerContextUndo.test.ts (3 tests | 1 failed) 217ms
+   ❯ reconcileAttachmentContextReferences (3)
+     × bounds deleted file payloads over 200 attach/delete cycles 211ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/composerContextUndo.test.ts > reconcileAttachmentContextReferences > bounds deleted file payloads over 200 attach/delete cycles
+AssertionError: expected 209715200 to be less than or equal to 33554432
+ ❯ apps/web/src/components/chat/composerContextUndo.test.ts:70:19
+     68|     const bytes = [...retained.files.values()].reduce((sum, entry) => …
+     69|     console.log(JSON.stringify({ cycles: 200, payloadBytes: 1024 * 102…
+     70|     expect(bytes).toBeLessThanOrEqual(32 * 1024 * 1024);
+       |                   ^
+     71|   });
+     72|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  23:39:27
+   Duration  1.55s (transform 47%, import 32%, tests 15%, setup 6%)
+

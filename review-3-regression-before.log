@@ -1,0 +1,48 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-undo-retention
+
+stderr | apps/web/src/components/ComposerPromptEditor.history.test.tsx > keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=false)
+flushSync was called from inside a lifecycle method. React cannot flush when React is already rendering. Consider moving this call to a scheduler task or micro task.
+flushSync was called from inside a lifecycle method. React cannot flush when React is already rendering. Consider moving this call to a scheduler task or micro task.
+
+stderr | apps/web/src/components/ComposerPromptEditor.history.test.tsx > keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=true)
+flushSync was called from inside a lifecycle method. React cannot flush when React is already rendering. Consider moving this call to a scheduler task or micro task.
+flushSync was called from inside a lifecycle method. React cannot flush when React is already rendering. Consider moving this call to a scheduler task or micro task.
+
+ ❯ apps/web/src/components/ComposerPromptEditor.history.test.tsx (2 tests | 2 failed) 309ms
+   × keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=false) 181ms
+   × keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=true) 127ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/ComposerPromptEditor.history.test.tsx > keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=false)
+ FAIL  apps/web/src/components/ComposerPromptEditor.history.test.tsx > keeps valid attachment undo/redo and releases history on an A-to-B switch (rich=true)
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ apps/web/src/components/ComposerPromptEditor.history.test.tsx:112:35
+    110|       await act(async () => { expect(oldEditor.commands.undo()).toBe(t…
+    111|       expect(files).toEqual([]);
+    112|       expect(retained.files.size).toBe(2);
+       |                                   ^
+    113|       await act(async () => { expect(oldEditor.commands.redo()).toBe(t…
+    114|       expect(files.map((file) => file.file)).toEqual(largeFiles.map((f…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  00:43:23
+   Duration  5.22s (transform 49%, import 32%, environment 11%, tests 6%, setup 1%)
+
+  Transform  transforming modules took 2.51s · 49% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
