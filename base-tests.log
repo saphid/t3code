@@ -1,0 +1,59 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/tool-row-nested-keys
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with "Enter"
+Warning: useRouter must be used inside a <RouterProvider> component!
+Warning: useRouter must be used inside a <RouterProvider> component!
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with "Enter"
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with "Enter"
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with " "
+Warning: useRouter must be used inside a <RouterProvider> component!
+Warning: useRouter must be used inside a <RouterProvider> component!
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with " "
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+stderr | apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with " "
+Warning: useRouter must be used inside a <RouterProvider> component!
+
+ ❯ apps/web/src/components/chat/MessagesTimeline.test.tsx (90 tests | 2 failed | 88 skipped) 6864ms
+   ❯ MessagesTimeline (80)
+     × leaves nested tool actions usable with "Enter" 180ms
+     × leaves nested tool actions usable with " " 30ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with "Enter"
+ FAIL  apps/web/src/components/chat/MessagesTimeline.test.tsx > MessagesTimeline > leaves nested tool actions usable with " "
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/web/src/components/chat/MessagesTimeline.test.tsx:578:38
+    576|       expect(button).toBeDefined();
+    577|       const event = await pressKey(button);
+    578|       expect(event.defaultPrevented).toBe(false);
+       |                                      ^
+    579|       expect(button.isConnected).toBe(true);
+    580|       expect(row.getAttribute("aria-expanded")).toBe("true");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 88 skipped (90)
+   Start at  22:54:03
+   Duration  9.17s (tests 76%, transform 10%, environment 7%, import 6%, setup 1%)
+
