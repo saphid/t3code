@@ -1,0 +1,15 @@
+I found no concrete defects in G-2 (commit `ca5ab4a413`, compared against `3f70c831c6`). This was a read-only review: I traced the code paths and did not re-run the focused test, lint or typecheck.
+
+**Fix**
+- `useProjectScriptSettings.ts:139-141`: a retained action whose shortcut is `undefined` now skips the shortcut step completely. Only edits that leave the shortcut alone reach this path. The editor at `projectScriptEditor.tsx:249-250,287-289` adds a `keybinding` only for a new action or a changed shortcut, so a command-only or name-only edit passes `undefined`. That was the cause of the reported bug, and the fix addresses it directly.
+- **Explicit clear:** setting the shortcut to `null` on a retained action still goes through the old path and removes it, provided it isn't used elsewhere. The test covers this.
+- **Replacing a shortcut:** a new string still gets upserted with `replace: previous`. The test covers this.
+- **Deleting an action:** `ProjectActionsSettings.tsx:228` passes `id, null`, and the deleted id isn't in `effectiveScripts`, so the skip never applies. Cleanup works as before.
+- **Resetting an override:** `ProjectActionsSettings.tsx:144` calls `persist(() => null)` with `keybinding` left `undefined`. Any shortcut it touches belongs to a script removed by the reset, so none of them is in `effectiveScripts` and all are still cleaned up. Nothing regressed here, though no test covers it.
+- **New actions and imports:** creating an action with `undefined` was already a no-op, since there was no previous shortcut and the new value decoded to null. The import at `:112-123` passes `null` for a new id, so it is still a no-op.
+- **G-3 browser writes:** the `if (!isElectron) continue;` gate at `:133` is unchanged, so the browser path is unaffected.
+- **Minimality:** the change is 3 lines in a single loop and touches no contracts or other surfaces.
+
+**Regression tests**
+- `useProjectScriptSettings.test.ts` covers command and name edits on both project-scoped and default actions, which are the 4 cases that failed on the base. It also covers explicit null clear, replacement and deletion. The harness it relies on (`apps/web/src/test/reactHookHarness.ts`) exists in the tree.
+- **Optional, not a defect:** the override-reset path (`persist(() => null)`) has no test of its own. It is unaffected because the reset scripts are never in `effectiveScripts`.

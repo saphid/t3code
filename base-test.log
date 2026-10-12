@@ -1,0 +1,52 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/action-shortcut-preserve
+
+ ❯ apps/web/src/components/settings/useProjectScriptSettings.test.ts (7 tests | 4 failed) 14ms
+   ❯ project action shortcut edits (7)
+     × preserves an omitted shortcut for project command edit 8ms
+     × preserves an omitted shortcut for project rename 1ms
+     × preserves an omitted shortcut for default command edit 1ms
+     × preserves an omitted shortcut for default rename 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/settings/useProjectScriptSettings.test.ts > project action shortcut edits > preserves an omitted shortcut for project command edit
+ FAIL  apps/web/src/components/settings/useProjectScriptSettings.test.ts > project action shortcut edits > preserves an omitted shortcut for project rename
+ FAIL  apps/web/src/components/settings/useProjectScriptSettings.test.ts > project action shortcut edits > preserves an omitted shortcut for default command edit
+ FAIL  apps/web/src/components/settings/useProjectScriptSettings.test.ts > project action shortcut edits > preserves an omitted shortcut for default rename
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "environmentId": "shortcut-test",
+        "input": Object {
+          "command": "script.test.run",
+          "key": "mod+shift+t",
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ apps/web/src/components/settings/useProjectScriptSettings.test.ts:47:42
+     45|         const scripts = projectScoped ? patch.projectSettingsOverrides…
+     46|         expect(scripts).toEqual([expect.objectContaining({ id: "test",…
+     47|         expect(rpc.removeKeybinding).not.toHaveBeenCalled();
+       |                                          ^
+     48|         expect(rpc.upsertKeybinding).not.toHaveBeenCalled();
+     49|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 3 passed (7)
+   Start at  23:42:06
+   Duration  2.16s (transform 58%, import 37%, setup 4%, tests 1%)
+

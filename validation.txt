@@ -1,0 +1,8 @@
+Base: 3f70c831c6. Seeded worktree-local state using requested read-only snapshot script before starting server. No live-state writes.
+Runtime: vp run dev, retained terminal session 75922, server port 14487, web port 6447; worktree .t3 base directory confirmed by dev-runner.
+T3 preview: background tab, viewport 1280x800. Temporarily forced apps/web/src/env.ts isElectron=true to exercise the desktop shortcut-writing branch in the real web client and real server; restored before commit.
+Flow: Settings > project scope server > Project > Add action. Name Shortcut preservation, command echo before, shortcut mod+shift+t. Edit action command to echo edited without touching shortcut.
+Base: shortcut label disappeared and script.shortcut-preservation.run was removed from worktree-local keybindings.json.
+Fixed: same flow and viewport, Ctrl+Shift+T remained visible and keybindings.json retained {key:mod+shift+t,command:script.shortcut-preservation.run}.
+Native Electron IPC and remote/relay/tunnel transport were not directly exercised.
+Server stopped through Ctrl+C in retained terminal session; ports 6447/14487 no longer listening.
