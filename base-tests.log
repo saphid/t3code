@@ -1,0 +1,122 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/file-tree-cache-release
+
+stderr | apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > releases removed children even when their in-flight refresh fails
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > ignores a removed child's late success after the same path is recreated
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > ignores a removed child's late failure after the same path is recreated
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > prunes nested caches and errors while preserving folders with similar names
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > bounds retained caches over repeated create, expand, and delete cycles
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx (6 tests | 5 failed) 49ms
+   ❯ directory cache lifetime (6)
+     × releases removed children even when their in-flight refresh fails 29ms
+     × ignores a removed child's late success after the same path is recreated 4ms
+     × ignores a removed child's late failure after the same path is recreated 2ms
+     × prunes nested caches and errors while preserving folders with similar names 4ms
+     × bounds retained caches over repeated create, expand, and delete cycles 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > releases removed children even when their in-flight refresh fails
+AssertionError: expected [ '', 'generated', 'generated' ] to deeply equal [ '' ]
+
+- Expected
++ Received
+
+  [
+    "",
++   "generated",
++   "generated",
+  ]
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:98:29
+     96|     await settle(3, new Error("Folder missing"));
+     97|     expect(view.entries).toEqual([]);
+     98|     expect(retainedPaths()).toEqual([""]);
+       |                             ^
+     99|     expect(view.error).toBeNull();
+    100|     expect(view.isPending).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > ignores a removed child's late success after the same path is recreated
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > ignores a removed child's late failure after the same path is recreated
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:110:56
+    108|       await load("", true);
+    109|       await settle(2, []);
+    110|       expect(view.loadingDirectories.has("generated")).toBe(false);
+       |                                                        ^
+    111|       await load("", true);
+    112|       await settle(3, [directory("generated")]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > prunes nested caches and errors while preserving folders with similar names
+AssertionError: expected [ '', 'temp', 'temp/failed', …(2) ] to deeply equal [ '', 'template' ]
+
+- Expected
++ Received
+
+  [
+    "",
++   "temp",
++   "temp/failed",
++   "temp/nested",
+    "template",
+  ]
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:139:36
+    137|     await load("", true);
+    138|     await settle(5, [file("temp"), directory("template")]);
+    139|     expect(retainedPaths().sort()).toEqual(["", "template"]);
+       |                                    ^
+    140|     expect(view.entries).toEqual([file("temp"), directory("template"),…
+    141|     expect(view.error).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  apps/web/src/components/files/useDirectoryEntries.test.tsx > directory cache lifetime > bounds retained caches over repeated create, expand, and delete cycles
+AssertionError: expected [ '', 'generated-0' ] to deeply equal [ '' ]
+
+- Expected
++ Received
+
+  [
+    "",
++   "generated-0",
+  ]
+
+ ❯ apps/web/src/components/files/useDirectoryEntries.test.tsx:174:31
+    172|       await load("", true);
+    173|       await settle(calls.length - 1, []);
+    174|       expect(retainedPaths()).toEqual([""]);
+       |                               ^
+    175|       expect(view.entries).toEqual([]);
+    176|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 1 passed (6)
+   Start at  00:15:38
+   Duration  1.73s (transform 52%, import 39%, setup 5%, tests 3%)
+

@@ -1,0 +1,32 @@
+(node:1124222) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+visible entries: 0 ; retained deleted entries: 10000
+✖ successfully refreshed root should release deleted folder child arrays (30.34368ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 185.314175
+
+✖ failing tests:
+
+test at ../../../../sweep-20261012/evidence/L-3/directory-audit.cjs:60:1
+✖ successfully refreshed root should release deleted folder child arrays (30.34368ms)
+  AssertionError [ERR_ASSERTION]: deleted directory contents remain retained in hook state
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/home/saphid/sweep-20261012/evidence/L-3/directory-audit.cjs:73:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

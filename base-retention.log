@@ -1,0 +1,111 @@
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+(node:1134207) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+{
+  "source": "/home/saphid/sweep-20261012/evidence/L-3/base-useDirectoryEntries.ts",
+  "samples": 10,
+  "cyclesPerSample": 10,
+  "filesPerCycle": 10000,
+  "units": "counts of retained entries and paths after deletion and completion of child refresh",
+  "results": [
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    },
+    {
+      "visibleEntries": 0,
+      "retainedEntries": 100000,
+      "cachedDirectories": 11,
+      "errors": 10,
+      "loadedPaths": 1,
+      "requestedPaths": 11,
+      "inFlightRequests": 0
+    }
+  ]
+}
