@@ -1,0 +1,57 @@
+(node:1656401) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+[23:18:09.164] INFO (#4): Migrations ran successfully {
+  migrations: [
+    '1_OrchestrationEvents',
+    '2_OrchestrationCommandReceipts',
+    '3_CheckpointDiffBlobs',
+    '4_ProviderSessionRuntime',
+    '5_Projections',
+    '6_ProjectionThreadSessionRuntimeModeColumns',
+    '7_ProjectionThreadMessageAttachments',
+    '8_ProjectionThreadActivitySequence',
+    '9_ProviderSessionRuntimeMode',
+    '10_ProjectionThreadsRuntimeMode',
+    '11_OrchestrationThreadCreatedRuntimeMode',
+    '12_ProjectionThreadsInteractionMode',
+    '13_ProjectionThreadProposedPlans',
+    '14_ProjectionThreadProposedPlanImplementation',
+    '15_ProjectionTurnsSourceProposedPlan',
+    '16_CanonicalizeModelSelections',
+    '17_ProjectionThreadsArchivedAt',
+    '18_ProjectionThreadsArchivedAtIndex',
+    '19_ProjectionSnapshotLookupIndexes',
+    '20_AuthAccessManagement',
+    '21_AuthSessionClientMetadata',
+    '22_AuthSessionLastConnectedAt',
+    '23_ProjectionThreadShellSummary',
+    '24_BackfillProjectionThreadShellSummary',
+    '25_CleanupInvalidProjectionPendingApprovals',
+    '26_CanonicalizeModelSelectionOptions',
+    '27_ProviderSessionRuntimeInstanceId',
+    '28_ProjectionThreadSessionInstanceId',
+    '29_ProjectionThreadDetailOrderingIndexes',
+    '30_ProjectionThreadShellArchiveIndexes',
+    '31_AuthAuthorizationScopes',
+    '32_AuthPairingProofKeyThumbprint',
+    '33_ProjectionThreadsSettled',
+    '34_ProjectionThreadsSnoozed',
+    '35_ProjectionThreadTitleRegeneration',
+    '36_ProjectionThreadsPinned',
+    '37_ProjectionTurnsKeysetIndex',
+    '38_ProjectionThreadsPinOrderKey',
+    '39_ProjectionProjectsDefaultThreadEnvMode',
+    '40_ProjectionProjectFaviconPath',
+    '41_AuthSessionClientConnection',
+    '42_ProjectionThreadLinkedPullRequest',
+    '43_ProjectionThreadsUnsettledAt',
+    '44_ClearAutomaticProjectModelDefaults',
+    '45_ProjectionProjectsAutoPull'
+  ]
+}
+{"analyzed":true,"node":"v22.23.0","sqlite":{"version":"3.51.3"},"threads":500,"turns":49900,"samples":3}
+base plan: [{"id":4,"parent":0,"notused":105,"detail":"SCAN thread"},{"id":9,"parent":0,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 8"},{"id":14,"parent":9,"notused":38,"detail":"SEARCH orchestration_events USING INDEX idx_orch_events_stream_sequence (aggregate_kind=? AND stream_id=?)"},{"id":70,"parent":0,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 7"},{"id":75,"parent":70,"notused":38,"detail":"SEARCH orchestration_events USING INDEX idx_orch_events_stream_sequence (aggregate_kind=? AND stream_id=?)"},{"id":101,"parent":70,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 6"},{"id":104,"parent":101,"notused":0,"detail":"CO-ROUTINE activity_timestamps"},{"id":105,"parent":104,"notused":0,"detail":"COMPOUND QUERY"},{"id":106,"parent":105,"notused":0,"detail":"LEFT-MOST SUBQUERY"},{"id":108,"parent":106,"notused":115,"detail":"SCAN projection_thread_messages"},{"id":119,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":121,"parent":119,"notused":167,"detail":"SCAN projection_turns USING COVERING INDEX idx_projection_turns_thread_requested"},{"id":130,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":132,"parent":130,"notused":172,"detail":"SCAN projection_turns"},{"id":143,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":145,"parent":143,"notused":167,"detail":"SCAN projection_turns USING COVERING INDEX idx_projection_turns_thread_checkpoint_completed"},{"id":159,"parent":101,"notused":181,"detail":"SCAN activity"},{"id":185,"parent":101,"notused":0,"detail":"USE TEMP B-TREE FOR ORDER BY"}]
+base times_ms: [16539.708429,16191.603008000002,14802.337060999998] median_ms: 16191.603008000002
+candidate plan: [{"id":4,"parent":0,"notused":105,"detail":"SCAN thread"},{"id":9,"parent":0,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 8"},{"id":14,"parent":9,"notused":38,"detail":"SEARCH orchestration_events USING INDEX idx_orch_events_stream_sequence (aggregate_kind=? AND stream_id=?)"},{"id":70,"parent":0,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 7"},{"id":75,"parent":70,"notused":38,"detail":"SEARCH orchestration_events USING INDEX idx_orch_events_stream_sequence (aggregate_kind=? AND stream_id=?)"},{"id":101,"parent":70,"notused":0,"detail":"CORRELATED SCALAR SUBQUERY 6"},{"id":104,"parent":101,"notused":0,"detail":"CO-ROUTINE activity_timestamps"},{"id":105,"parent":104,"notused":0,"detail":"COMPOUND QUERY"},{"id":106,"parent":105,"notused":0,"detail":"LEFT-MOST SUBQUERY"},{"id":109,"parent":106,"notused":44,"detail":"SEARCH projection_thread_messages USING INDEX idx_projection_thread_messages_thread_created_id (thread_id=?)"},{"id":124,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":126,"parent":124,"notused":78,"detail":"SEARCH projection_turns USING COVERING INDEX idx_projection_turns_thread_requested (thread_id=?)"},{"id":138,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":141,"parent":138,"notused":90,"detail":"SEARCH projection_turns USING INDEX idx_projection_turns_thread_checkpoint_completed (thread_id=?)"},{"id":156,"parent":105,"notused":0,"detail":"UNION ALL"},{"id":158,"parent":156,"notused":78,"detail":"SEARCH projection_turns USING COVERING INDEX idx_projection_turns_thread_checkpoint_completed (thread_id=?)"},{"id":175,"parent":101,"notused":91,"detail":"SCAN activity"},{"id":201,"parent":101,"notused":0,"detail":"USE TEMP B-TREE FOR ORDER BY"}]
+candidate times_ms: [96.93456199999491,113.63537599999836,119.27021299999615] median_ms: 113.63537599999836
+PASS: identical full thread/event rows; manual, no activity, later activity, invalid timestamps, offset ordering; four indexed thread searches.
