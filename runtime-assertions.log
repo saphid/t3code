@@ -1,0 +1,4 @@
+BASE: 7 of 9 reduced-motion assertions fail (7 active animation objects); 2 existing guarded indicators pass.
+FIX: 9 of 9 reduced-motion assertions pass (0 active animation objects).
+NO PREFERENCE: 9 of 9 indicators animate on both revisions, 2s infinite. One observation per indicator per mode per revision.
+Compiled stepped status keyframes unchanged. No GPU/CPU measurement claimed.

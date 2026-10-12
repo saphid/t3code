@@ -1,0 +1,16 @@
+apps/web/src/components/ChatView.tsx:7627:            presentation.waiting && "motion-safe:animate-status-pulse",
+apps/web/src/components/preview/AgentBrowserCursor.tsx:90:          className="absolute left-0.5 top-0.5 size-4 animate-status-ping rounded-full bg-primary/25 motion-reduce:animate-none"
+apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx:498:                    ? "bg-destructive motion-safe:animate-status-pulse"
+apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx:506:                  <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
+apps/web/src/components/preview/PreviewChromeRow.tsx:278:                <span className="absolute right-0.5 top-0.5 size-1.5 motion-safe:animate-status-pulse rounded-full bg-destructive" />
+apps/web/src/components/LegacySidebar.tsx:2461:                      projectStatus.pulse ? "motion-safe:animate-status-pulse" : ""
+apps/web/src/components/ConnectionStatusDot.tsx:42:            "absolute inline-flex h-full w-full motion-safe:animate-status-ping rounded-full",
+apps/web/src/components/ThreadStatusIndicators.tsx:831:          className="size-3.5 motion-safe:animate-status-pulse"
+apps/web/src/components/ThreadStatusIndicators.tsx:895:              status.pulse ? "motion-safe:animate-status-pulse" : ""
+apps/web/src/components/ThreadStatusIndicators.tsx:917:            status.pulse ? "motion-safe:animate-status-pulse" : ""
+apps/web/src/components/ThreadStatusIndicators.tsx:1074:              className={`size-3 ${terminalStatus.pulse ? "motion-safe:animate-status-pulse" : ""}`}
+apps/web/src/components/ServerUpdateAction.tsx:201:        className="size-1.5 shrink-0 motion-safe:animate-status-pulse rounded-full bg-foreground"
+apps/web/src/index.css:219:  --animate-status-pulse: status-pulse 2s infinite;
+apps/web/src/index.css:220:  --animate-status-ping: status-ping 2s infinite;
+apps/web/src/components/ServerUpdateAction.test.tsx:506:    expect(markup).toContain("animate-status-pulse");
+apps/web/src/components/ServerUpdateAction.test.tsx:541:    expect(markup).not.toContain("animate-status-pulse");

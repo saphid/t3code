@@ -1,0 +1,51 @@
+{
+  "stage": "before",
+  "cases": [
+    {
+      "file": "ConnectionStatusDot.tsx",
+      "line": 42,
+      "className": "animate-status-ping"
+    },
+    {
+      "file": "ThreadStatusIndicators.tsx",
+      "line": 831,
+      "className": "motion-safe:animate-status-pulse"
+    },
+    {
+      "file": "ThreadStatusIndicators.tsx",
+      "line": 895,
+      "className": "animate-status-pulse"
+    },
+    {
+      "file": "ThreadStatusIndicators.tsx",
+      "line": 917,
+      "className": "animate-status-pulse"
+    },
+    {
+      "file": "ThreadStatusIndicators.tsx",
+      "line": 1074,
+      "className": "motion-safe:animate-status-pulse"
+    },
+    {
+      "file": "ServerUpdateAction.tsx",
+      "line": 201,
+      "className": "animate-status-pulse"
+    },
+    {
+      "file": "LegacySidebar.tsx",
+      "line": 2461,
+      "className": "animate-status-pulse"
+    },
+    {
+      "file": "ChatView.tsx",
+      "line": 7627,
+      "className": "animate-status-pulse"
+    },
+    {
+      "file": "preview/PreviewChromeRow.tsx",
+      "line": 278,
+      "className": "animate-status-pulse"
+    }
+  ],
+  "cssBytes": 73028
+}

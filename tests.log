@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/reduced-motion-status
+
+
+ Test Files  3 passed (3)
+      Tests  81 passed (81)
+   Start at  22:33:45
+   Duration  5.27s (transform 55%, import 42%, setup 2%, tests 1%)
+
+  Transform  transforming modules took 7.29s · 55% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
