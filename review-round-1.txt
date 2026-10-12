@@ -1,0 +1,15 @@
+I found no defects in R2H-3 at dfe1fe598a. I made no edits; the scratch script I ran is deleted.
+
+**Checks:**
+- **Path matching between the parsed patch and `omittedFileStats`.** I ran header-only patches through `@pierre/diffs` `parsePatchFiles`, the parser behind `buildReviewParsedDiff`. Each case gave a file named exactly like the host's stat `path`:
+  - **GitHub deleted file** (`+++ /dev/null`): the name is the file's own path, which matches `value.filename`.
+  - **GitHub renamed file** (`gitHubPullRequestJson.ts:3259`): the name is the new path, which is the path the stat is stored under.
+  - **GitCafe withheld file** (`gitCafePullRequestJson.ts:519`): the patch is a bare `diff --git` line with no `---`/`+++` lines. It still parses as a file with no hunks named `file.path`, even when a normal file follows it in the same patch.
+  - **Quoted paths with spaces**: the quotes are stripped, so the name matches the stat.
+- **Counts can't be double-counted.** Both hosts only add a stat for a file that has no hunks, so replacing that file's parsed counts with the stat is safe. Totals per page and across combined pages are recomputed from the patched files.
+- **Cache and IDs.** The cache is keyed by the result object. When metadata refreshes but the patch is unchanged, `retainPullRequestDiffPage` creates a new page object, so that page is parsed again with the new counts. IDs come from the patch text and cursor scope, so they don't change, and the other pages keep their cached objects.
+- **Unavailable notice.** It still appears because both hosts set `truncated: true` whenever they withhold a file.
+- **Coverage.** `combinePullRequestDiffPages` has one caller, `usePullRequestDiff.ts:75`. The other `buildReviewParsedDiff` callers (guide excerpts, comment cards, thread review) don't receive `PullRequestDiffResult`, so the fix covers every mobile pull request diff view.
+- **Raw pages.** A page that comes back as raw keeps no stats, which is the same as before the fix.
+
+One cosmetic nit, not a defect: `pullRequestDiffPages.test.ts` has no blank line between the new second `it(...)` block and the existing `"retains file order and IDs…"` test.

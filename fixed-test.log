@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-omitted-diff-stats
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  23:08:38
+   Duration  322ms (setup 44%, transform 38%, tests 8%, import 7%, worker 3%)
+

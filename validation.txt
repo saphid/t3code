@@ -1,0 +1,6 @@
+R2H-3: mobile logic boundary verification
+Base: 511d20c6f20c2ed6ff787aba068d7d673e2949b9
+Fix: dfe1fe598ae89d90f4a64d1c0cb699a09f5d16ee
+The new tests invoke the production mobile combinePullRequestDiffPages and real buildReviewParsedDiff/patch parser with a server-shaped PullRequestDiffResult. The base returned +0/-0 for large.ts instead of supplied +3000/-1800; two regression cases failed. Fixed implementation passes all four tests, including cache reuse, mixed pagination, metadata refresh with unchanged patch, unchanged file IDs and notice.
+No backend implementation changed. Native UI verification is assigned to the coordinator; no simulator/browser/dev server was started.
+Surfaces: both iOS and Android use this shared mobile function through usePullRequestDiff for Files and Code screens, per-commit diffs and review guide. GitHub and GitCafe both return omittedFileStats; matching is per-page by the parsed current path. Web/desktop already apply omittedFileStats. Existing contracts/RPC and local/remote/relay/tunnel routes are unchanged. Provider agent adapters, scheduler/MCP entry points, settings/keybindings, reverse actions and docs do not apply to this display-only correction.
