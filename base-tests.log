@@ -1,0 +1,133 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/sweep-20261012/scratch/R2I-1
+
+ ❯ composer-thread-transfer.test.ts (4 tests | 3 failed) 191ms
+   × copies only selected thread records alongside terminal context and restores provider identity 85ms
+   × stashes all thread records alongside terminal context and restores provider identity 42ms
+   × clears source thread records after successfully writing the stash 36ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  composer-thread-transfer.test.ts > copies only selected thread records alongside terminal context and restores provider identity
+AssertionError: expected [ { version: 1, …(8) } ] to deep equally contain { version: 1, kind: 'thread', …(5) }
+
+- Expected:
+{
+  "contextId": "thread_reference",
+  "environmentId": "env",
+  "kind": "thread",
+  "label": "Reference",
+  "threadId": "reference",
+  "title": "Reference",
+  "version": 1,
+}
+
++ Received:
+[
+  {
+    "contextId": "terminal_terminal-selection",
+    "kind": "terminal",
+    "label": "Shell lines 1-2",
+    "lineEnd": 2,
+    "lineStart": 1,
+    "terminalId": "terminal-1",
+    "terminalLabel": "Shell",
+    "text": "output",
+    "version": 1,
+  },
+]
+
+ ❯ composer-thread-transfer.test.ts:67:28
+     65|   const raw = callback('buildContextClipboardFragment', bindings())([t…
+     66|   const fragment = decodeComposerContextFragment(raw)!;
+     67|   expect(fragment.records).toContainEqual(thread);
+       |                            ^
+     68|   expect(fragment.records).not.toContainEqual(unselected);
+     69|   expect(fragment.records).toContainEqual(terminalRecord);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  composer-thread-transfer.test.ts > stashes all thread records alongside terminal context and restores provider identity
+AssertionError: expected [ { version: 1, …(8) } ] to deep equally contain { version: 1, kind: 'thread', …(5) }
+
+- Expected:
+{
+  "contextId": "thread_reference",
+  "environmentId": "env",
+  "kind": "thread",
+  "label": "Reference",
+  "threadId": "reference",
+  "title": "Reference",
+  "version": 1,
+}
+
++ Received:
+[
+  {
+    "contextId": "terminal_terminal-selection",
+    "kind": "terminal",
+    "label": "Shell lines 1-2",
+    "lineEnd": 2,
+    "lineStart": 1,
+    "terminalId": "terminal-1",
+    "terminalLabel": "Shell",
+    "text": "output",
+    "version": 1,
+  },
+]
+
+ ❯ composer-thread-transfer.test.ts:75:25
+     73|   await callback('stashCurrentPrompt', bindings())();
+     74|   const entry = usePromptStashStore.getState().entries[0];
+     75|   expect(entry.records).toContainEqual(thread);
+       |                         ^
+     76|   expect(entry.records).toContainEqual(unselected);
+     77|   expect(entry.records).toContainEqual(terminalRecord);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  composer-thread-transfer.test.ts > clears source thread records after successfully writing the stash
+AssertionError: expected [ { version: 1, …(6) }, …(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "contextId": "thread_reference",
++     "environmentId": "env",
++     "kind": "thread",
++     "label": "Reference",
++     "threadId": "reference",
++     "title": "Reference",
++     "version": 1,
++   },
++   {
++     "contextId": "thread_other",
++     "environmentId": "env",
++     "kind": "thread",
++     "label": "Other",
++     "threadId": "other",
++     "title": "Other",
++     "version": 1,
++   },
++ ]
+
+ ❯ composer-thread-transfer.test.ts:83:39
+     81|   await callback('stashCurrentPrompt', bindings())();
+     82|   const draft = useComposerDraftStore.getState().getComposerDraft(from…
+     83|   expect(draft?.threadContexts ?? []).toEqual([]);
+       |                                       ^
+     84|   expect(draft?.prompt ?? '').toBe('');
+     85| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 1 passed (4)
+   Start at  23:18:26
+   Duration  2.93s (import 52%, transform 41%, tests 7%)
+
