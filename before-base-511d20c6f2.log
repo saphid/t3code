@@ -1,0 +1,49 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/workspace-write-symlink-escape
+
+stdout | apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes through a file symlink that resolves outside the workspace root
+[22:37:48.969] ERROR (#51): [Error: {"relativePath":"linked.txt"}] {
+  relativePath: 'linked.txt',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes through a dangling symlink that points outside the workspace root
+[22:37:48.974] ERROR (#52): [Error: {"relativePath":"dangling.txt"}] {
+  relativePath: 'dangling.txt',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes below a directory symlink that resolves outside the workspace root
+[22:37:48.981] ERROR (#53): [Error: {"relativePath":"linked/new/deep.txt"}] {
+  relativePath: 'linked/new/deep.txt',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/workspace/WorkspaceFileSystem.test.ts (21 tests | 3 failed) 189ms
+   ❯ WorkspaceFileSystemLive (21)
+     ❯ writeFile (9)
+       × rejects writes through a file symlink that resolves outside the workspace root 16ms
+       × rejects writes through a dangling symlink that points outside the workspace root 4ms
+       × rejects writes below a directory symlink that resolves outside the workspace root 7ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes through a file symlink that resolves outside the workspace root
+{ relativePath: 'linked.txt', stacks: [] }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes through a dangling symlink that points outside the workspace root
+{ relativePath: 'dangling.txt', stacks: [] }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  apps/server/src/workspace/WorkspaceFileSystem.test.ts > WorkspaceFileSystemLive > writeFile > rejects writes below a directory symlink that resolves outside the workspace root
+{ relativePath: 'linked/new/deep.txt', stacks: [] }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 18 passed (21)
+   Start at  22:37:46
+   Duration  2.06s (transform 54%, import 32%, tests 10%, setup 4%)
+
