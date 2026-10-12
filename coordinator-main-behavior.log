@@ -1,0 +1,2 @@
+queries.ts matches main exactly apart from exposing searchedTarget.
+onComposerCommandKey matches main byte for byte.

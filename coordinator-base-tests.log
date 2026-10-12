@@ -1,0 +1,93 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-stale-file-suggestions
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via click
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via Enter
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via Tab
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via click
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via Enter
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via Tab
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via click
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via Enter
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via Tab
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/lib/composerPathSearchState.test.tsx (9 tests | 9 failed) 57ms
+   × keeps stale entries visible but rejects selection after a query change via click 31ms
+   × keeps stale entries visible but rejects selection after a query change via Enter 4ms
+   × keeps stale entries visible but rejects selection after a query change via Tab 3ms
+   × keeps stale entries visible but rejects selection after a workspace change via click 2ms
+   × keeps stale entries visible but rejects selection after a workspace change via Enter 2ms
+   × keeps stale entries visible but rejects selection after a workspace change via Tab 3ms
+   × keeps stale entries visible but rejects selection after a environment change via click 2ms
+   × keeps stale entries visible but rejects selection after a environment change via Enter 3ms
+   × keeps stale entries visible but rejects selection after a environment change via Tab 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via click
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via Enter
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a query change via Tab
+AssertionError: expected '[alpha.ts](alpha.ts) ' to be '@beta' // Object.is equality
+
+Expected: "@beta"
+Received: "[alpha.ts](alpha.ts) "
+
+ ❯ apps/web/src/lib/composerPathSearchState.test.tsx:209:47
+    207|     expect(latest.isPending).toBe(true);
+    208|     expect(latest.entries).toBe(entries);
+    209|     expect(select(action, staleItem, target)).toBe(`@${target.query}`);
+       |                                               ^
+    210|     expect(searches.size).toBe(1);
+    211|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via click
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via Enter
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a workspace change via Tab
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via click
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via Enter
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > keeps stale entries visible but rejects selection after a environment change via Tab
+AssertionError: expected '[alpha.ts](alpha.ts) ' to be '@alpha' // Object.is equality
+
+Expected: "@alpha"
+Received: "[alpha.ts](alpha.ts) "
+
+ ❯ apps/web/src/lib/composerPathSearchState.test.tsx:209:47
+    207|     expect(latest.isPending).toBe(true);
+    208|     expect(latest.entries).toBe(entries);
+    209|     expect(select(action, staleItem, target)).toBe(`@${target.query}`);
+       |                                               ^
+    210|     expect(searches.size).toBe(1);
+    211|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed (9)
+   Start at  23:09:29
+   Duration  3.60s (transform 61%, import 36%, setup 2%, tests 2%)
+
+  Transform  transforming modules took 2.12s · 61% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

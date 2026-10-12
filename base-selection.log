@@ -1,0 +1,25 @@
+FAIL Enter: query changed before React render; expected="@beta", actual="[alpha.ts](alpha.ts) "
+FAIL Tab: query changed before React render; expected="@beta", actual="[alpha.ts](alpha.ts) "
+FAIL click: query changed before React render; expected="@beta", actual="[alpha.ts](alpha.ts) "
+FAIL Enter: workspace switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL Tab: workspace switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL click: workspace switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL Enter: environment switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL Tab: environment switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL click: environment switched; expected="@alpha", actual="[alpha.ts](alpha.ts) "
+FAIL Enter: trigger changed to slash command; expected="/alpha", actual="[alpha.ts](alpha.ts) "
+FAIL Tab: trigger changed to slash command; expected="/alpha", actual="[alpha.ts](alpha.ts) "
+FAIL click: trigger changed to slash command; expected="/alpha", actual="[alpha.ts](alpha.ts) "
+PASS Enter: current alpha result; prompt="[alpha.ts](alpha.ts) "
+PASS Tab: current alpha result; prompt="[alpha.ts](alpha.ts) "
+PASS click: current alpha result; prompt="[alpha.ts](alpha.ts) "
+PASS Enter: resolved beta result; prompt="[beta.ts](beta.ts) "
+PASS Tab: resolved beta result; prompt="[beta.ts](beta.ts) "
+PASS click: resolved beta result; prompt="[beta.ts](beta.ts) "
+FAIL Enter: empty path menu debouncing; consumed=true, submissions=1
+FAIL Tab: empty path menu debouncing; consumed=false, submissions=0
+FAIL Enter: empty path menu request pending; consumed=true, submissions=1
+FAIL Tab: empty path menu request pending; consumed=false, submissions=0
+PASS Enter: empty path menu bare @ debouncing; consumed=true, submissions=1
+PASS Tab: empty path menu bare @ debouncing; consumed=false, submissions=0
+8 passed / 16 failed; revision=511d20c6f2

@@ -1,0 +1,52 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-stale-file-suggestions
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new query debounces and loads
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new workspace debounces and loads
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new environment debounces and loads
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/lib/composerPathSearchState.test.tsx (3 tests | 3 failed) 28ms
+   × hides old file suggestions while a new query debounces and loads 22ms
+   × hides old file suggestions while a new workspace debounces and loads 2ms
+   × hides old file suggestions while a new environment debounces and loads 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new query debounces and loads
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new workspace debounces and loads
+ FAIL  apps/web/src/lib/composerPathSearchState.test.tsx > hides old file suggestions while a new environment debounces and loads
+AssertionError: expected [ { path: 'alpha.ts', kind: 'file' } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "kind": "file",
++     "path": "alpha.ts",
++   },
++ ]
+
+ ❯ apps/web/src/lib/composerPathSearchState.test.tsx:91:26
+     89|   await render(target);
+     90|   expect(latest.isPending).toBe(true);
+     91|   expect(latest.entries).toEqual([]);
+       |                          ^
+     92|   expect(searches.size).toBe(1);
+     93|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  22:37:56
+   Duration  3.43s (transform 56%, import 39%, setup 4%, tests 1%)
+

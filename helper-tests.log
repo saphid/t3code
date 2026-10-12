@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/composer-stale-file-suggestions
+
+
+ Test Files  2 passed (2)
+      Tests  98 passed (98)
+   Start at  23:22:01
+   Duration  4.54s (transform 57%, import 36%, setup 4%, tests 2%)
+
+  Transform  transforming modules took 3.62s · 57% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
