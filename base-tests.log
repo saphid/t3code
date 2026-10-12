@@ -1,0 +1,93 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/disabled-backend-update-recovery
+
+stdout | apps/desktop/src/updates/DesktopUpdates.test.ts > DesktopUpdates > keeps the disabled primary stopped when quitAndInstall fails
+[23:43:50.009] ERROR (#617): Error [AssertionError]: expected [ 'quitAndInstall', 'startBackend' ] to deeply equal [ 'quitAndInstall' ]
+    at /home/saphid/.t3code/worktrees/t3code/disabled-backend-update-recovery/apps/desktop/src/updates/DesktopUpdates.test.ts:686:16 {
+  actual: [ 'quitAndInstall', 'startBackend' ],
+  expected: [ 'quitAndInstall' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/desktop/src/updates/DesktopUpdates.test.ts > DesktopUpdates > restores only desired-running instances after an installer error event
+[23:43:50.017] ERROR (#649): Error [AssertionError]: expected [ 'primary', 'wsl:default' ] to deeply equal [ 'wsl:default' ]
+    at /home/saphid/.t3code/worktrees/t3code/disabled-backend-update-recovery/apps/desktop/src/updates/DesktopUpdates.test.ts:739:16 {
+  actual: [ 'primary', 'wsl:default' ],
+  expected: [ 'wsl:default' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/desktop/src/updates/DesktopUpdates.test.ts (30 tests | 2 failed) 143ms
+   ❯ DesktopUpdates (30)
+     × keeps the disabled primary stopped when quitAndInstall fails 10ms
+     × restores only desired-running instances after an installer error event 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/desktop/src/updates/DesktopUpdates.test.ts > DesktopUpdates > keeps the disabled primary stopped when quitAndInstall fails
+AssertionError: expected [ 'quitAndInstall', 'startBackend' ] to deeply equal [ 'quitAndInstall' ]
+
+- Expected
++ Received
+
+  [
+    "quitAndInstall",
++   "startBackend",
+  ]
+
+ ❯ apps/desktop/src/updates/DesktopUpdates.test.ts:686:16
+    684|         const result = yield* updates.install;
+    685|         assert.equal(result.state.errorContext, "install");
+    686|         assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+       |                ^
+    687|         assert.isFalse((yield* (yield* pool.primary).snapshot).desired…
+    688|       }),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/desktop/src/updates/DesktopUpdates.test.ts > DesktopUpdates > restores only desired-running instances after an installer error event
+AssertionError: expected [ 'primary', 'wsl:default' ] to deeply equal [ 'wsl:default' ]
+
+- Expected
++ Received
+
+  [
++   "primary",
+    "wsl:default",
+  ]
+
+ ❯ apps/desktop/src/updates/DesktopUpdates.test.ts:739:16
+    737|         assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).e…
+    738|
+    739|         assert.deepEqual(starts, [wsl.id]);
+       |                ^
+    740|         assert.isFalse((yield* primary.snapshot).desiredRunning);
+    741|         assert.isTrue((yield* wsl.snapshot).desiredRunning);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 28 passed (30)
+   Start at  23:43:48
+   Duration  1.87s (transform 58%, import 31%, tests 8%, setup 3%)
+
