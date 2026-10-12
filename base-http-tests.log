@@ -1,0 +1,119 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check
+
+stdout | apps/server/src/auth/McpOAuth.test.ts > denies and refuses codes bound to another client's key or without the scopes it grants
+[23:59:25.158] INFO (#14): Migrations ran successfully {
+  migrations: [
+    '1_OrchestrationEvents',
+    '2_OrchestrationCommandReceipts',
+    '3_CheckpointDiffBlobs',
+    '4_ProviderSessionRuntime',
+    '5_Projections',
+    '6_ProjectionThreadSessionRuntimeModeColumns',
+    '7_ProjectionThreadMessageAttachments',
+    '8_ProjectionThreadActivitySequence',
+    '9_ProviderSessionRuntimeMode',
+    '10_ProjectionThreadsRuntimeMode',
+    '11_OrchestrationThreadCreatedRuntimeMode',
+    '12_ProjectionThreadsInteractionMode',
+    '13_ProjectionThreadProposedPlans',
+    '14_ProjectionThreadProposedPlanImplementation',
+    '15_ProjectionTurnsSourceProposedPlan',
+    '16_CanonicalizeModelSelections',
+    '17_ProjectionThreadsArchivedAt',
+    '18_ProjectionThreadsArchivedAtIndex',
+    '19_ProjectionSnapshotLookupIndexes',
+    '20_AuthAccessManagement',
+    '21_AuthSessionClientMetadata',
+    '22_AuthSessionLastConnectedAt',
+    '23_ProjectionThreadShellSummary',
+    '24_BackfillProjectionThreadShellSummary',
+    '25_CleanupInvalidProjectionPendingApprovals',
+    '26_CanonicalizeModelSelectionOptions',
+    '27_ProviderSessionRuntimeInstanceId',
+    '28_ProjectionThreadSessionInstanceId',
+    '29_ProjectionThreadDetailOrderingIndexes',
+    '30_ProjectionThreadShellArchiveIndexes',
+    '31_AuthAuthorizationScopes',
+    '32_AuthPairingProofKeyThumbprint',
+    '33_ProjectionThreadsSettled',
+    '34_ProjectionThreadsSnoozed',
+    '35_ProjectionThreadTitleRegeneration',
+    '36_ProjectionThreadsPinned',
+    '37_ProjectionTurnsKeysetIndex',
+    '38_ProjectionThreadsPinOrderKey',
+    '39_ProjectionProjectsDefaultThreadEnvMode',
+    '40_ProjectionProjectFaviconPath',
+    '41_AuthSessionClientConnection',
+    '42_ProjectionThreadLinkedPullRequest',
+    '43_ProjectionThreadsUnsettledAt',
+    '44_ClearAutomaticProjectModelDefaults',
+    '45_ProjectionProjectsAutoPull',
+    '46_RepairAutomaticSettlementTimestamps',
+    '47_ProjectionProjectIcon',
+    '48_ProjectionThreadBranchPullRequest',
+    '49_ProjectionThreadsActiveOrderKey',
+    '50_ProjectionThreadPullRequests',
+    '51_ProjectionThreadMessageContext',
+    '52_ProjectionThreadTitleState',
+    '53_PullRequestFilesViewed',
+    '54_ProjectionThreadsAutoSettleDisabledAt',
+    '55_OrchestrationV2',
+    '56_RemoveRedundantProjectionIndexes',
+    '57_ScheduledTaskWebhooks',
+    '58_WebhookRelayDeliveries',
+    '59_McpAppModelContext',
+    '60_ThreadSnapshotWindowIndexes',
+    '61_PullRequestReviewGuides'
+  ]
+}
+
+stdout | apps/server/src/auth/McpOAuth.test.ts > denies and refuses codes bound to another client's key or without the scopes it grants
+[23:59:25.218] ERROR (#11): Error [AssertionError]: expected 'That pairing code is unknown, expired…' to contain 'cannot grant this access'
+    at /home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/McpOAuth.test.ts:460:38 {
+  actual: 'That pairing code is unknown, expired, or already used.',
+  expected: 'cannot grant this access',
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/auth/McpOAuth.test.ts (8 tests | 1 failed | 7 skipped) 200ms
+   × denies and refuses codes bound to another client's key or without the scopes it grants 198ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/auth/McpOAuth.test.ts > denies and refuses codes bound to another client's key or without the scopes it grants
+AssertionError: expected 'That pairing code is unknown, expired…' to contain 'cannot grant this access'
+
+Expected: "cannot grant this access"
+Received: "That pairing code is unknown, expired, or already used."
+
+ ❯ apps/server/src/auth/McpOAuth.test.ts:460:38
+    458|         });
+    459|         expect(readOnlyFull.status).toBe(400);
+    460|         expect(readOnlyFull.message).toContain("cannot grant this acce…
+       |                                      ^
+    461|         const operator = yield* auth.issuePairingCredential({
+    462|           scopes: ["orchestration:read", "orchestration:operate"],
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  23:59:09
+   Duration  15.43s (transform 69%, import 28%, setup 2%, tests 1%)
+
+  Transform  transforming modules took 10.38s · 69% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

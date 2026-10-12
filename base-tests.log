@@ -1,0 +1,112 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check
+
+stdout | apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a read-only pairing code after rejecting full-access MCP approval
+[23:58:11.223] ERROR (#3351): Error [ServerAuthMcpApprovalCodeError]: That pairing code is unknown, expired, or already used.
+    at Object.ServerAuthInvalidCredentialError (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1273:23)
+    at file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1447:27
+    at EnvironmentAuth.consumeMcpApprovalCode (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1284:14) {
+  _tag: 'ServerAuthMcpApprovalCodeError',
+  reason: 'unknown_or_used',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing orchestration:read pairing code after rejecting full-access MCP approval
+[23:58:11.290] ERROR (#3653): Error [AssertionError]: expected [] to include '663f0ddc-0986-4369-8cc1-ad9020cc5400'
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2067:15)
+    at Proxy.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.test.ts:464:79 {
+  actual: [],
+  expected: undefined,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing orchestration:operate pairing code after rejecting full-access MCP approval
+[23:58:11.361] ERROR (#3955): Error [ServerAuthMcpApprovalCodeError]: That pairing code is unknown, expired, or already used.
+    at Object.ServerAuthInvalidCredentialError (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1273:23)
+    at file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1447:27
+    at EnvironmentAuth.consumeMcpApprovalCode (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1284:14) {
+  _tag: 'ServerAuthMcpApprovalCodeError',
+  reason: 'unknown_or_used',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing settings:write pairing code after rejecting full-access MCP approval
+[23:58:11.426] ERROR (#4257): Error [ServerAuthMcpApprovalCodeError]: That pairing code is unknown, expired, or already used.
+    at Object.ServerAuthInvalidCredentialError (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1273:23)
+    at file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1447:27
+    at EnvironmentAuth.consumeMcpApprovalCode (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1284:14) {
+  _tag: 'ServerAuthMcpApprovalCodeError',
+  reason: 'unknown_or_used',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing source-control:write pairing code after rejecting full-access MCP approval
+[23:58:11.491] ERROR (#4559): Error [ServerAuthMcpApprovalCodeError]: That pairing code is unknown, expired, or already used.
+    at Object.ServerAuthInvalidCredentialError (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1273:23)
+    at file:///home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:1447:27
+    at EnvironmentAuth.consumeMcpApprovalCode (/home/saphid/.t3code/worktrees/t3code/pairing-code-scope-check/apps/server/src/auth/EnvironmentAuth.ts:1284:14) {
+  _tag: 'ServerAuthMcpApprovalCodeError',
+  reason: 'unknown_or_used',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/auth/EnvironmentAuth.test.ts (24 tests | 5 failed) 1471ms
+   ❯ EnvironmentAuth.layer (24)
+     × preserves a read-only pairing code after rejecting full-access MCP approval 64ms
+     × preserves a missing orchestration:read pairing code after rejecting full-access MCP approval 66ms
+     × preserves a missing orchestration:operate pairing code after rejecting full-access MCP approval 71ms
+     × preserves a missing settings:write pairing code after rejecting full-access MCP approval 65ms
+     × preserves a missing source-control:write pairing code after rejecting full-access MCP approval 65ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a read-only pairing code after rejecting full-access MCP approval
+ FAIL  apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing orchestration:operate pairing code after rejecting full-access MCP approval
+ FAIL  apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing settings:write pairing code after rejecting full-access MCP approval
+ FAIL  apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing source-control:write pairing code after rejecting full-access MCP approval
+ServerAuthMcpApprovalCodeError: That pairing code is unknown, expired, or already used.
+ ❯ Object.ServerAuthInvalidCredentialError apps/server/src/auth/EnvironmentAuth.ts:1273:23
+    1271|       Effect.catchTags({
+    1272|         ServerAuthInvalidCredentialError: () =>
+    1273|           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "un…
+       |                       ^
+    1274|         ServerAuthScopeNotGrantedError: () =>
+    1275|           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "in…
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3107:43
+ ❯ OnFailureImpl.~effect/Effect/failureCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:2949:14
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:607:20
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Effect.ts:25970:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  apps/server/src/auth/EnvironmentAuth.test.ts > EnvironmentAuth.layer > preserves a missing orchestration:read pairing code after rejecting full-access MCP approval
+AssertionError: expected [] to include '663f0ddc-0986-4369-8cc1-ad9020cc5400'
+ ❯ apps/server/src/auth/EnvironmentAuth.test.ts:464:79
+    462|         });
+    463|       } else {
+    464|         expect((yield* serverAuth.listPairingLinks()).map((link) => li…
+       |                                                                               ^
+    465|       }
+    466|     }).pipe(Effect.provide(layerEnvironmentAuth())),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 19 passed (24)
+   Start at  23:58:08
+   Duration  3.83s (transform 40%, tests 40%, import 18%, setup 2%)
+
