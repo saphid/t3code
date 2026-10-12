@@ -1,0 +1,17 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-viewed-files-set
+
+stdout | apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > measures two lookup passes with 500 server records
+{"loadedFiles":500,"serverRecords":500,"passes":2,"warmupSamples":5,"samples":31,"medianMs":0.06763099999989208,"minMs":0.040152000000034604,"maxMs":0.15054300000019794,"runtime":"v24.15.0"}
+{"loadedFiles":3000,"serverRecords":500,"passes":2,"warmupSamples":5,"samples":31,"medianMs":0.7389450000000579,"minMs":0.6793790000001536,"maxMs":1.7817929999996522,"runtime":"v24.15.0"}
+
+ ✓ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > resolves server states, optimistic marks, repeated toggles, and refreshed answers 20ms
+ ✓ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > reads server paths once per answer rather than once per rendered file 43ms
+ ✓ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > measures two lookup passes with 500 server records 43ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  23:23:43
+   Duration  2.13s (transform 41%, environment 27%, import 24%, tests 5%, setup 3%)
+

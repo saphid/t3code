@@ -1,0 +1,33 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-viewed-files-set
+
+ ✓ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > resolves server states, optimistic marks, repeated toggles, and refreshed answers 25ms
+stdout | apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > measures two lookup passes with 500 server records
+{"loadedFiles":500,"serverRecords":500,"passes":2,"warmupSamples":5,"samples":31,"medianMs":6.321276000000125,"minMs":5.6977499999998145,"maxMs":10.504044000000249,"runtime":"v24.15.0"}
+{"loadedFiles":3000,"serverRecords":500,"passes":2,"warmupSamples":5,"samples":31,"medianMs":33.01582999999982,"minMs":26.906316999999945,"maxMs":51.87796300000036,"runtime":"v24.15.0"}
+
+ × apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > reads server paths once per answer rather than once per rendered file 268ms
+   → expected 3000500 to be less than or equal to 500
+ ✓ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > measures two lookup passes with 500 server records 1537ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx > reads server paths once per answer rather than once per rendered file
+AssertionError: expected 3000500 to be less than or equal to 500
+ ❯ apps/mobile/src/features/pull-requests/usePullRequestFilesViewed.test.tsx:120:21
+    118|     await view.toggle("file-0");
+    119|   });
+    120|   expect(pathReads).toBeLessThanOrEqual(500);
+       |                     ^
+    121| });
+    122|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  23:23:39
+   Duration  3.93s (tests 48%, transform 22%, import 15%, environment 14%, setup 1%)
+

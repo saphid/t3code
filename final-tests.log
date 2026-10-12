@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-viewed-files-set
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  23:25:16
+   Duration  2.38s (transform 38%, environment 31%, import 25%, tests 3%, setup 3%)
+
