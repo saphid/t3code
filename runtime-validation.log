@@ -1,0 +1,146 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/ssh-tunnel-stderr-drain
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.658] INFO (#95): ssh.environment.ensure.start {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  issuePairingToken: false
+}
+[23:00:40.659] INFO (#95): ssh.remoteServer.launch.start {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  runner: 'archive',
+  archiveVersion: '1.2.3-preview.20260911.4',
+  stateKey: '6a175896758606e2'
+}
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.661] INFO (#95): ssh.remoteServer.launch.ready {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  remotePort: 3773,
+  remoteServerKind: null,
+  stateKey: '6a175896758606e2'
+}
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.669] INFO (#95): ssh.tunnel.ready {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  command: [
+    'ssh',
+    '-o',
+    'BatchMode=no',
+    '-o',
+    'ConnectTimeout=10',
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-o',
+    'ControlMaster=no',
+    '-o',
+    'ControlPath=none',
+    '-o',
+    'ControlPersist=no',
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=3',
+    '-n',
+    '-N',
+    '-L',
+    '41773:127.0.0.1:3773',
+    'devbox'
+  ],
+  pid: 1637110,
+  localPort: 41773,
+  remotePort: 3773,
+  httpBaseUrl: 'http://127.0.0.1:41773/'
+}
+[23:00:40.669] INFO (#95): ssh.environment.ensure.succeeded {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  key: 'devbox\x00devbox\x00\x00',
+  localPort: 41773,
+  remotePort: 3773,
+  remoteServerKind: null,
+  issuedPairingToken: false
+}
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.705] INFO (#95): ssh.environment.disconnect.start { alias: 'devbox', hostname: 'devbox', username: null, port: null }
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.711] INFO (#95): ssh.tunnel.close.succeeded {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  key: 'devbox\x00devbox\x00\x00',
+  localPort: 41773,
+  remotePort: 3773
+}
+[23:00:40.711] INFO (#95): ssh.remoteServer.stop.start {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  stateKey: '6a175896758606e2'
+}
+
+stdout | packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness
+[23:00:40.713] INFO (#95): ssh.remoteServer.stop.succeeded {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  stateKey: '6a175896758606e2'
+}
+[23:00:40.714] INFO (#95): ssh.environment.disconnect.succeeded {
+  alias: 'devbox',
+  hostname: 'devbox',
+  username: null,
+  port: null,
+  key: 'devbox\x00devbox\x00\x00'
+}
+
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > installs and runs the release archive without Node, npm, or npx
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > rejects archive versions that are not a single exact version segment
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > refuses to build a runner with neither an archive version nor a node script
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > does not hard-code a remote node engine range
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > builds the remote t3 runner with a node script override
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > embeds the runner in the launch script byte for byte
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > uses the remote t3 runner for launch and pairing scripts
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > accepts launch JSON after remote shell startup noise
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > allows cold remote launches to exceed the default SSH command timeout
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > gives cold archive launches a larger budget than node-script launches
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > allows the remote port picker to run without a state file path
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > bounds each HTTP readiness probe so retries cannot hang on one request
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > preserves primitive readiness reason values in diagnostic output
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > accepts pretty-printed pairing JSON from the remote CLI
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > accepts pretty-printed pairing JSON after remote shell startup noise
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > closes the tunnel scope and starts fresh after a successful stop
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > closes the tunnel scope and starts fresh after a failed stop
+ ✓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > keeps the stderr reader alive until disconnect 36ms
+ ✓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > retains a bounded diagnostic tail when the tunnel exits before readiness 10ms
+ ✓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > drains diagnostics beyond pipe capacity after readiness 58ms
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > waits for local tunnel shutdown before reconnecting the same target
+ ↓ packages/ssh/src/tunnel.test.ts > ssh tunnel scripts > waits for remote server shutdown before reconnecting the same target
+ ↓ packages/ssh/src/tunnel.test.ts > archive runner script > installs once when several launches race, and reclaims stale locks
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 20 skipped (23)
+   Start at  23:00:40
+   Duration  615ms (import 35%, transform 32%, tests 21%, setup 11%, worker 1%)
+

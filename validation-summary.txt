@@ -1,0 +1,39 @@
+R2E-2: SSH stderr drain lifetime
+Worktree: /home/saphid/.t3code/worktrees/t3code/ssh-tunnel-stderr-drain
+Base: 511d20c6f2
+Commit: 32d50f6a388734e5f71497fb745d60caf392ecc6
+
+Base reproduction (implementation unchanged; regression tests added):
+./node_modules/.bin/vp test run packages/ssh/src/tunnel.test.ts -t 'stderr reader|pipe capacity'
+Result: 2 failed, 20 skipped. The reader was finalized on readiness; a real subprocess's
+post-readiness 2,097,152-byte stderr write never reached its completion callback and hit
+the 5-second failure guard. Cleanup stopped only the child spawned by the test.
+
+Fixed suite:
+./node_modules/.bin/vp test run packages/ssh/src/tunnel.test.ts
+Result: 23 passed, 0 failed.
+
+Focused backend boundary validation:
+./node_modules/.bin/vp test run packages/ssh/src/tunnel.test.ts -t 'stderr reader|pipe capacity|bounded diagnostic' --reporter verbose
+Result: 3 passed, 20 skipped. The actual installed Node ChildProcessSpawner pipe
+completed the 2 MiB stderr write and emitted a stdout marker after readiness.
+The entire real-process test took 58 ms (one validation sample; no throughput claim).
+The process remained alive, then disconnect stopped it and released the stderr reader.
+The separate lifecycle test proves exactly one reader remains active after readiness
+and is finalized on disconnect. Startup exit coverage checks the 16,384-character tail
+and UTF-8 decoding across chunks.
+
+Targeted lint:
+./node_modules/.bin/vp lint packages/ssh/src/tunnel.ts packages/ssh/src/tunnel.test.ts
+Result: passed, no warnings.
+
+Targeted typecheck:
+cd packages/ssh && ../../node_modules/.bin/vp run typecheck
+Result: passed.
+
+git diff --check: passed. Working tree clean after commit.
+No browser, dev server, live SSH host, live user database, push, or PR used.
+Shared tunnel manager currently consumed by desktop SSH service; all web/desktop/mobile
+clients and providers using that forwarded connection benefit. Managed and external
+remote servers use the same drain. Direct, Tailscale, and cloud tunnels are separate.
+Contracts, frontend entry points, provider adapters and user docs need no changes.
