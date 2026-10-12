@@ -1,0 +1,97 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > shares one scan between concurrent identical requests
+[22:36:45.092] ERROR (#11): Error [AssertionError]: expected { contractVersion: 6, …(8) } to deeply equal { contractVersion: 6, …(8) }
+    at /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff/apps/server/src/usage/UsageService.test.ts:1894:16 {
+  actual: {
+    contractVersion: 6,
+    readAt: '2026-10-12T22:36:45.082Z',
+    timeZone: 'UTC',
+    sinceDay: '2026-07-31',
+    untilDay: '2026-08-02',
+    buckets: [ [Object] ],
+    sources: [ [Object], [Object], [Object], [Object], [Object], [Object] ],
+    pricing: {
+      status: 'unavailable',
+      source: 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json',
+      fetchedAt: null,
+      knownModels: 0
+    },
+    scanDurationMs: 41
+  },
+  expected: {
+    contractVersion: 6,
+    readAt: '2026-10-12T22:36:45.083Z',
+    timeZone: 'UTC',
+    sinceDay: '2026-07-31',
+    untilDay: '2026-08-02',
+    buckets: [ [Object] ],
+    sources: [ [Object], [Object], [Object], [Object], [Object], [Object] ],
+    pricing: {
+      status: 'unavailable',
+      source: 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json',
+      fetchedAt: null,
+      knownModels: 0
+    },
+    scanDurationMs: 41
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/usage/UsageService.test.ts (35 tests | 1 failed | 34 skipped) 72ms
+   ❯ UsageService (35)
+     × shares one scan between concurrent identical requests 71ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/usage/UsageService.test.ts > UsageService > shares one scan between concurrent identical requests
+AssertionError: expected { contractVersion: 6, …(8) } to deeply equal { contractVersion: 6, …(8) }
+
+- Expected
++ Received
+
+@@ -25,11 +25,11 @@
+      "fetchedAt": null,
+      "knownModels": 0,
+      "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+      "status": "unavailable",
+    },
+-   "readAt": "2026-10-12T22:36:45.083Z",
++   "readAt": "2026-10-12T22:36:45.082Z",
+    "scanDurationMs": 41,
+    "sinceDay": "2026-07-31",
+    "sources": [
+      {
+        "distinctSessions": 1,
+
+ ❯ apps/server/src/usage/UsageService.test.ts:1894:16
+    1892|           { concurrency: 2 },
+    1893|         );
+    1894|         assert.deepStrictEqual(first, second);
+       |                ^
+    1895|         assert.strictEqual(homeProbes, 1);
+    1896|
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ go node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5181:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 skipped (35)
+   Start at  22:36:40
+   Duration  5.07s (transform 67%, import 30%, tests 1%, setup 1%)
+
+  Transform  transforming modules took 3.34s · 67% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

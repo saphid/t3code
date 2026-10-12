@@ -1,0 +1,16 @@
+I found no defects in round 2. Last round's test defect is fixed, and nothing in production code changed after the earlier review.
+
+**The scan-sharing test now detects separate scans** (`apps/server/src/usage/UsageService.test.ts:1866-1906`):
+- **What it counts:** calls to `fileSystem.exists(dir)` for the Claude transcript directory. Only `scanTranscriptDir` makes that call (`UsageService.ts:605`), and only once per scan. Resolving which directories to scan uses `realPath`, not `exists` (`UsageService.ts:394`), so nothing else adds to the count. The pricing backoff has nothing to do with this count, which was the problem last round.
+- **Same pattern as an existing test:** it matches the custom-price race test (`UsageService.test.ts:1805-1863`), including the `realpath` comparison. It expects 1 for the two concurrent reads and 2 after appending to the transcript, so a cached answer can't pass the second check.
+- **Mutation evidence:** the mutation log shows the test fails when it bypasses the `inflightScans` entry. It fails on `deepStrictEqual(first, second)` before the probe count is checked, so two separate scans don't return identical summaries after all. That corrects what I said last round. The probe count is still a sound second check: two scans would make two probes.
+
+**Production change, re-checked and still correct** (`UsageService.ts:89-91, 255, 295, 303-310`):
+- The time is read inside the lock, so queued callers see the latest success and failure times.
+- A failure keeps the old table and its `fetchedAt`. The status becomes `cached` if an old table exists and stays `unavailable` otherwise.
+- An empty 200 response now counts as a failure.
+- A success clears the failure time. The 24h TTL and the explicit-refresh floor behave as before.
+
+**Verification:** I re-ran `UsageService.test.ts` and all 35 tests passed. The lint and typecheck logs from round 2 are in the evidence directory; I didn't re-run those.
+
+I accept the response to the round-1 nits: keeping the success and failure floors as separate constants is reasonable. No objections remain.

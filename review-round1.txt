@@ -1,0 +1,18 @@
+I found one defect, in the tests. The production change in `UsageService.ts` looks correct.
+
+**Defect: the test "shares one scan between concurrent identical requests" no longer proves that requests share a scan** (`apps/server/src/usage/UsageService.test.ts:1866-1890`).
+
+- **What the test relied on:** it used the LiteLLM fetch count as its only evidence that one scan ran. The default rates document is `{}`, which counts as a failed fetch, so before this change every scan that called `ensureRates(false)` (`UsageService.ts:760`) made its own HTTP request. The removed comment at `UsageService.test.ts:147-148` said this outright: the fetch count was a "boundary-level observation of how many scans ran".
+- **Why it is vacuous now:** suppose two scans run instead of one. The first fetches, fails, and sets `ratesLastFailedAtMs`. The second waits on `ratesLock`, then sees the time is inside `RATES_RETRY_FLOOR_MS` and returns early (`UsageService.ts:295`). The count is still 1. `deepStrictEqual(first, second)` doesn't help either, because two separate scans give equal summaries.
+- **Consequence:** if the `inflightScans` sharing in `readSummary` (`UsageService.ts:887-926`) were removed or keyed wrongly, this test would still pass. The diff only fixed the "later request" half (append to the transcript, expect 12 tokens), which still works. The concurrent half lost its coverage without anyone noticing.
+- **Suggested fix:** observe scan count some other way. For example, gate the shared scan with a `Deferred` or count scan entries at a boundary the scan alone touches. Or give this test a valid rates document plus a clock past the TTL, so each scan would fetch.
+
+**Checked and correct:**
+- `now` is read inside the permit (`withPermit(loadRates)`), so queued callers check against the latest success and failure times.
+- A failure leaves `rates` and `ratesFetchedAtMs` alone. The status becomes `cached` when an old table exists and stays `unavailable` otherwise.
+- A success clears `ratesLastFailedAtMs`, and the 24h TTL and explicit-refresh behaviour are unchanged.
+- An empty 200 response now counts as a failure and starts the backoff. Before this change it returned without recording anything, so every caller retried.
+- With no in-memory table, each queued caller re-reads the disk cache before the backoff check. That is a cheap local read, not the 10s network cost.
+- No other test uses `onRatesFetch` to count scans. The TTL test uses a valid document, so it's unaffected.
+
+**Nit, not a defect:** `RATES_RETRY_FLOOR_MS` has the same value as `RATES_REFRESH_FLOOR_MS`, and the new test's `Effect.logInfo` line adds noise to test output.

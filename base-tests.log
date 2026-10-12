@@ -1,0 +1,104 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=false)
+[12:00:00.000] INFO (#11): pricing failure=503 cached=false: 5 concurrent refreshes, 5 HTTP requests
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=false)
+[22:33:52.745] ERROR (#11): Error [AssertionError]: expected 5 to equal 1
+    at /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff/apps/server/src/usage/UsageService.test.ts:1962:14 {
+  actual: 5,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=false)
+[12:00:00.000] INFO (#41): pricing failure=empty table cached=false: 5 concurrent refreshes, 5 HTTP requests
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=false)
+[22:33:52.762] ERROR (#41): Error [AssertionError]: expected 5 to equal 1
+    at /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff/apps/server/src/usage/UsageService.test.ts:1962:14 {
+  actual: 5,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=true)
+[12:00:00.000] INFO (#86): pricing failure=503 cached=true: 5 concurrent refreshes, 5 HTTP requests
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=true)
+[22:33:52.771] ERROR (#86): Error [AssertionError]: expected 5 to equal 1
+    at /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff/apps/server/src/usage/UsageService.test.ts:1962:14 {
+  actual: 5,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=true)
+[12:00:00.000] INFO (#117): pricing failure=empty table cached=true: 5 concurrent refreshes, 5 HTTP requests
+
+stdout | apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=true)
+[22:33:52.780] ERROR (#117): Error [AssertionError]: expected 5 to equal 1
+    at /home/saphid/.t3code/worktrees/t3code/pricing-fetch-backoff/apps/server/src/usage/UsageService.test.ts:1962:14 {
+  actual: 5,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/usage/UsageService.test.ts (35 tests | 4 failed | 31 skipped) 73ms
+   ❯ UsageService (35)
+     × backs off failed pricing fetches (503, cached=false) 40ms
+     × backs off failed pricing fetches (empty table, cached=false) 14ms
+     × backs off failed pricing fetches (503, cached=true) 9ms
+     × backs off failed pricing fetches (empty table, cached=true) 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=false)
+ FAIL  apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=false)
+ FAIL  apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (503, cached=true)
+ FAIL  apps/server/src/usage/UsageService.test.ts > UsageService > backs off failed pricing fetches (empty table, cached=true)
+AssertionError: expected 5 to equal 1
+
+- Expected
++ Received
+
+- 1
++ 5
+
+ ❯ apps/server/src/usage/UsageService.test.ts:1962:14
+    1960|         `pricing failure=${failure} cached=${cached}: 5 concurrent ref…
+    1961|       );
+    1962|       assert.strictEqual(requests, 1);
+       |              ^
+    1963|       for (const pricing of refreshed) {
+    1964|         assert.strictEqual(pricing.status, cached ? "cached" : "unavai…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ go node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5181:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 31 skipped (35)
+   Start at  22:33:44
+   Duration  8.30s (transform 68%, import 31%, tests 1%, setup 1%)
+
+  Transform  transforming modules took 5.49s · 68% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
