@@ -1,0 +1,92 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/relay-held-hooks-clear
+
+stdout | infra/relay/src/hooks/HookInboxStore.test.ts > HookInboxStore > stops a prefetched batch cleared during a delivered send
+[23:09:09.300] ERROR (#1): Error [AssertionError]: expected [ 'first', 'second', 'third' ] to deeply equal [ 'first' ]
+    at /home/saphid/.t3/worktrees/t3code/relay-held-hooks-clear/infra/relay/src/hooks/HookInboxStore.test.ts:72:24 {
+  actual: [ 'first', 'second', 'third' ],
+  expected: [ 'first' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | infra/relay/src/hooks/HookInboxStore.test.ts > HookInboxStore > stops a prefetched batch cleared during a unreachable send
+[23:09:09.313] ERROR (#53): Error [AssertionError]: expected 10000 to be null
+    at /home/saphid/.t3/worktrees/t3code/relay-held-hooks-clear/infra/relay/src/hooks/HookInboxStore.test.ts:74:26 {
+  actual: 10000,
+  expected: null,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ infra/relay/src/hooks/HookInboxStore.test.ts (16 tests | 2 failed) 401ms
+   ❯ HookInboxStore (16)
+     × stops a prefetched batch cleared during a delivered send 31ms
+     × stops a prefetched batch cleared during a unreachable send 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  infra/relay/src/hooks/HookInboxStore.test.ts > HookInboxStore > stops a prefetched batch cleared during a delivered send
+AssertionError: expected [ 'first', 'second', 'third' ] to deeply equal [ 'first' ]
+
+- Expected
++ Received
+
+  [
+    "first",
++   "second",
++   "third",
+  ]
+
+ ❯ infra/relay/src/hooks/HookInboxStore.test.ts:72:24
+     70|           yield* Deferred.succeed(released, undefined);
+     71|           const nextAt = yield* Fiber.join(run);
+     72|           expect(sent).toEqual(["first"]);
+       |                        ^
+     73|           // The alarm must not be rescheduled, even if the in-flight …
+     74|           expect(nextAt).toBeNull();
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  infra/relay/src/hooks/HookInboxStore.test.ts > HookInboxStore > stops a prefetched batch cleared during a unreachable send
+AssertionError: expected 10000 to be null
+
+- Expected:
+null
+
++ Received:
+10000
+
+ ❯ infra/relay/src/hooks/HookInboxStore.test.ts:74:26
+     72|           expect(sent).toEqual(["first"]);
+     73|           // The alarm must not be rescheduled, even if the in-flight …
+     74|           expect(nextAt).toBeNull();
+       |                          ^
+     75|           const sql = yield* SqlClient.SqlClient;
+     76|           expect(yield* sql`SELECT id FROM held_hooks`).toEqual([]);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 14 passed (16)
+   Start at  23:09:08
+   Duration  1.12s (tests 42%, transform 27%, import 18%, setup 12%, worker 1%)
+
