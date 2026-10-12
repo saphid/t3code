@@ -1,0 +1,37 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/timeline-active-tools-push
+
+ ❯ apps/web/src/components/chat/MessagesTimeline.active-tools.test.ts (2 tests | 2 failed) 43ms
+   ❯ long active tool groups (2)
+     × preserves order without prepend shifts, expanded=false 31ms
+     × preserves order without prepend shifts, expanded=true 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/MessagesTimeline.active-tools.test.ts > long active tool groups > preserves order without prepend shifts, expanded=false
+ FAIL  apps/web/src/components/chat/MessagesTimeline.active-tools.test.ts > long active tool groups > preserves order without prepend shifts, expanded=true
+AssertionError: expected 499500 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 499500
+
+ ❯ apps/web/src/components/chat/MessagesTimeline.active-tools.test.ts:61:31
+     59|       expect(details[0]?.groupedEntries).toEqual(live?.groupedEntries);
+     60|     }
+     61|     expect(shiftedReferences).toBe(0);
+       |                               ^
+     62|   });
+     63| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:25:38
+   Duration  1.72s (transform 56%, import 37%, setup 4%, tests 3%)
+

@@ -1,0 +1,16 @@
+R2J-1 actual timeline projector benchmark
+Base: 511d20c6f2; fixed: 17a1ffa1a21347963ff9253886c9bf9b3b2f1a2d
+Each case: 3 warmups, 7 measured projections, milliseconds. No instrumentation in timed samples.
+Mixed contiguous reasoning and command entries, final command in progress.
+Complete serialized rows asserted identical to base for all six cases.
+Historical instrumented reproduction: 499500 shifted references per 1000 entries. Prototype instrumentation was removed at coordinator request; final tests assert observable behavior only.
+count expanded base_median_ms fixed_median_ms
+1000 False 1.6882 1.5133
+1000 True 2.0900 2.0201
+16000 False 36.8485 23.7693
+16000 True 35.6873 20.3136
+32000 False 101.3629 37.8026
+32000 True 104.6281 40.7000
+Synthetic projector runtime measurements; browser paint and frame timing were not measured.
+
+Amended commit: 5b83c1557a7f3aed99ca6b6ed02e5f6b46823b2b. Production fix unchanged since timed runs. Focused tests 162 passed; targeted lint and web typecheck passed. Second cross-provider review found no defects.
