@@ -1,0 +1,138 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/relay-credential-rotation-race/infra/relay
+
+stdout | src/environments/EnvironmentCredentials.test.ts > EnvironmentCredentials > reports the credential creation persistence stage and rolls back the new credential
+[22:51:14.504] ERROR (#1): Error [AssertionError]: expected [ { …(7) }, { …(7) } ] to deeply equal [ ObjectContaining{…} ]
+    at /home/saphid/.t3code/worktrees/t3code/relay-credential-rotation-race/infra/relay/src/environments/EnvironmentCredentials.test.ts:130:28 {
+  actual: [
+    {
+      credentialId: 'a07ea61768ce4071a93088dbe4a170daae7192746cd24e2097576962cc734b20',
+      environmentId: 'env_test',
+      environmentPublicKey: 'sensitive-public-key-material',
+      credentialHash: 'W0NZKishgaeEz5SceW1eVEwIU8tlIgSjIsCTO71NN9s',
+      revokedAt: null,
+      createdAt: '1970-01-01T00:00:00.000Z',
+      updatedAt: '1970-01-01T00:00:00.000Z'
+    },
+    {
+      credentialId: '00271889ddf04b4686ea336656d8cbfd8254b16002694dbb8c2fc14a6e114de1',
+      environmentId: 'env_test',
+      environmentPublicKey: 'sensitive-public-key-material',
+      credentialHash: '7lbpP-Y6tu2z_qDhGEULuxOPsiUK9jhpTqUgdNxMbHg',
+      revokedAt: null,
+      createdAt: '1970-01-01T00:00:00.000Z',
+      updatedAt: '1970-01-01T00:00:00.000Z'
+    }
+  ],
+  expected: [
+    ObjectContaining {
+      sample: [Object],
+      inverse: false,
+      '$$typeof': Symbol(jest.asymmetricMatcher)
+    }
+  ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | src/environments/EnvironmentCredentials.test.ts > EnvironmentCredentials > keeps the newest credential valid when links rotate concurrently
+[22:51:14.511] ERROR (#6): Error [AssertionError]: expected [] to deeply equal [ ObjectContaining{…} ]
+    at /home/saphid/.t3code/worktrees/t3code/relay-credential-rotation-race/infra/relay/src/environments/EnvironmentCredentials.test.ts:177:66 {
+  actual: [],
+  expected: [
+    ObjectContaining {
+      sample: [Object],
+      inverse: false,
+      '$$typeof': Symbol(jest.asymmetricMatcher)
+    }
+  ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ src/environments/EnvironmentCredentials.test.ts (5 tests | 2 failed) 30ms
+   ❯ EnvironmentCredentials (5)
+     × reports the credential creation persistence stage and rolls back the new credential 19ms
+     × keeps the newest credential valid when links rotate concurrently 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/environments/EnvironmentCredentials.test.ts > EnvironmentCredentials > reports the credential creation persistence stage and rolls back the new credential
+AssertionError: expected [ { …(7) }, { …(7) } ] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+@@ -6,6 +6,15 @@
+      "environmentId": "env_test",
+      "environmentPublicKey": "sensitive-public-key-material",
+      "revokedAt": null,
+      "updatedAt": "1970-01-01T00:00:00.000Z",
+    },
++   {
++     "createdAt": "1970-01-01T00:00:00.000Z",
++     "credentialHash": "7lbpP-Y6tu2z_qDhGEULuxOPsiUK9jhpTqUgdNxMbHg",
++     "credentialId": "00271889ddf04b4686ea336656d8cbfd8254b16002694dbb8c2fc14a6e114de1",
++     "environmentId": "env_test",
++     "environmentPublicKey": "sensitive-public-key-material",
++     "revokedAt": null,
++     "updatedAt": "1970-01-01T00:00:00.000Z",
++   },
+  ]
+
+ ❯ src/environments/EnvironmentCredentials.test.ts:130:28
+    128|         expect(error.cause).toBe(cause);
+    129|         expect(error).not.toHaveProperty("environmentPublicKey");
+    130|         expect(store.rows).toEqual([
+       |                            ^
+    131|           expect.objectContaining({ credentialId: credentialIdOf(previ…
+    132|         ]);
+ ❯ IteratorImpl.~effect/Effect/successCont ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5681:9
+ ❯ ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5759:19
+ ❯ Module.<anonymous> ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5778:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/environments/EnvironmentCredentials.test.ts > EnvironmentCredentials > keeps the newest credential valid when links rotate concurrently
+AssertionError: expected [] to deeply equal [ ObjectContaining{…} ]
+
+- Expected
++ Received
+
+- [
+-   ObjectContaining {
+-     "credentialId": "75c5fe997b994524943dba0149ce000a86c99307ffd142a9a23ee134efa391dc",
+-   },
+- ]
++ []
+
+ ❯ src/environments/EnvironmentCredentials.test.ts:177:66
+    175|
+    176|       expect(credentialIdOf(firstToken)).toBe(firstCredentialId);
+    177|       expect(store.rows.filter((row) => row.revokedAt === null)).toEqu…
+       |                                                                  ^
+    178|         expect.objectContaining({ credentialId: credentialIdOf(secondT…
+    179|       ]);
+ ❯ IteratorImpl.~effect/Effect/successCont ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate ../../node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  22:51:12
+   Duration  2.03s (import 91%, transform 4%, setup 3%, tests 2%)
+
