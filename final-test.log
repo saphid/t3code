@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-prompt-reply
+
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  00:00:31
+   Duration  541ms (setup 48%, transform 41%, import 5%, tests 3%, worker 2%)
+

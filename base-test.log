@@ -1,0 +1,51 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-prompt-reply
+
+ ❯ apps/mobile/src/features/browser/previewPromptText.test.ts (7 tests | 2 failed) 16ms
+   ❯ browser prompt response (7)
+     × preserves a typed response across repeated control broadcasts 9ms
+     × preserves an intentionally empty response 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/features/browser/previewPromptText.test.ts > browser prompt response > preserves a typed response across repeated control broadcasts
+AssertionError: expected 'Guest' to be 'Alice' // Object.is equality
+
+Expected: "Alice"
+Received: "Guest"
+
+ ❯ apps/mobile/src/features/browser/previewPromptText.test.ts:9:63
+      7|
+      8|   it("preserves a typed response across repeated control broadcasts", …
+      9|     expect(previewPromptText(prompt, { ...prompt }, "Alice")).toBe("Al…
+       |                                                               ^
+     10|   });
+     11|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/mobile/src/features/browser/previewPromptText.test.ts > browser prompt response > preserves an intentionally empty response
+AssertionError: expected 'Guest' to be '' // Object.is equality
+
+- Expected
++ Received
+
++ Guest
+
+ ❯ apps/mobile/src/features/browser/previewPromptText.test.ts:13:58
+     11|
+     12|   it("preserves an intentionally empty response", () => {
+     13|     expect(previewPromptText(prompt, { ...prompt }, "")).toBe("");
+       |                                                          ^
+     14|   });
+     15|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+   Start at  23:58:26
+   Duration  337ms (setup 51%, transform 31%, tests 8%, import 7%, worker 2%)
+

@@ -1,0 +1,19 @@
+I found one low-severity defect. Everything else in the fix checks out.
+
+**Defect: `dialogRef` is not cleared when the stream reconnects** (`apps/mobile/src/features/browser/PreviewStreamWebView.tsx:420-423`, with the ref declared at `:260`)
+
+When a `status: "connecting"` message arrives, the view calls `setControl(null)` and `onControl?.(null)` but leaves `dialogRef.current` set to the last dialog. The web client clears its equivalent ref on disconnect (`apps/web/src/browser/ServerBrowserSurface.tsx:441-444`, `controlRef.current = null`), so after a reconnect it treats any dialog as newly opened. Mobile now doesn't.
+
+- **How it goes wrong:** a prompt "Your name?" with default "Guest" is open, and the mobile user (who has control) types "Alice" without submitting. The mobile socket drops. While it is down, the agent or another viewer answers the prompt, and the page opens an identical prompt again (for example, a validation re-prompt). On reconnect the server sends the new dialog. `previewPromptText(previousDialog = stale, next = identical, "Alice")` keeps "Alice", so the reopened prompt shows a stale draft instead of "Guest", and Accept would submit it. The close/reopen guarantee only holds when this view actually sees the `dialog: null` broadcast, which it can't while disconnected.
+- **Base behaviour:** this scenario reset correctly before the change, so it's a small regression. Mobile and web also now disagree after a reconnect.
+- **Fix:** add `dialogRef.current = null;` next to `setControl(null)` in the `connecting` branch. `fail()` doesn't need it: it is terminal for this mount, and a retry remounts through ``key={`${attempt}:${configuration}`}`` (`:191`), which recreates the ref.
+- **Trade-off:** keeping the draft across your own reconnect is arguably nicer when it's the same prompt instance. But the client can't tell a missed close/reopen apart from the same prompt, and matching web is the safer default.
+
+**Checked with no defects found:**
+- **React updater and ref:** `previousDialog` and `message.dialog` are captured eagerly before `setPromptText` runs, and the ref is advanced synchronously in message order. The updater is pure over its captured values, so StrictMode's double call is harmless. Several control messages batched into one render chain correctly: each updater sees the previous updater's draft, paired with the right previous/next dialog.
+- **Guard:** including `type` is a strict superset of web's message/default guard, which is fine. A confirm or alert with the same message resets the draft, and that draft isn't submitted anyway because `promptText` is only sent for `type === "prompt"` (`:482`).
+- **Server and client-runtime paths:** viewer attach/detach and take/release (`ServerBrowser.ts:2266`, `:2273`, `:2354`, `:2361`) all broadcast the unchanged dialog, and the helper now keeps the draft across those. When control moves to another viewer and back, the draft is kept, which is reasonable.
+- **Import:** `@t3tools/client-runtime/preview/server-browser-stream` matches the component's existing import and the package export.
+- **Other surfaces:** web already has the guard, and desktop wraps web. No contract or server changes were needed.
+
+I didn't run the native UI.

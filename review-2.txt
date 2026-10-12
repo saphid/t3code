@@ -1,0 +1,24 @@
+I found no blocking defects in the full diff, which includes both the original fix and the reconnect correction. I re-ran the focused test file myself: 8 of 8 pass. I didn't rerun lint or typecheck, and I didn't run the native UI.
+
+**Checked and correct**
+- **Reconnect correction:** `dialogRef.current = null` now sits in the `connecting` branch (`apps/mobile/src/features/browser/PreviewStreamWebView.tsx:421-422`), next to `setControl(null)`. That matches web, which nulls its equivalent ref on disconnect (`apps/web/src/browser/ServerBrowserSurface.tsx:443`). After a reconnect, the next control message has `previous = null`, so the draft resets to `defaultValue`. The new "resets a stale draft after reconnecting" test covers this.
+- **Other ways out:**
+  - `fail()` doesn't clear the ref, but that's fine: it ends this mount. A retry, or a fresh ticket after `unauthorized`, changes the ``key={`${attempt}:${configuration}`}`` (`:191`), so the view remounts with a new ref.
+  - `gone` and `hostSetup` both go through `fail()`.
+- **Helper:** `previewPromptText.ts` compares all three dialog fields in the contract schema: `type`, `message` and `defaultValue` (`packages/contracts/src/previewAutomation.ts:105-107`). The dialog has no other identity field, so this is as precise as the client can be.
+  - A closed dialog (`next = null`) returns `""`.
+  - When both dialogs are `null`, the draft passes through, and it's already empty after the close.
+- **React behaviour:** `previousDialog` and `message.dialog` are captured before the updater runs, and the ref advances in message order. The updater is pure, so StrictMode's double call and batched updates are both safe.
+- **Prompt text:** it's only sent when `type === "prompt"` (`:482`), so a draft kept on a confirm or alert dialog can't leak out.
+- **Test file:** it follows the mobile convention: `vite-plus/test` import, sitting next to the source file.
+
+**One note, not blocking and not caused by this diff**
+
+The page script only posts `connecting` when the socket drops after the first frame has been painted. The check is `if (streaming) reportStatus("connecting")` in `apps/mobile/src/features/browser/preview-stream.browser.ts:233`. If a connection delivers a control message carrying a dialog and then drops before its first frame, neither the ref nor the existing `setControl(null)` gets cleared.
+
+For this to keep a stale draft, all of these would have to happen:
+1. The disconnect lands in the gap between the control message and the first frame.
+2. The user types into the prompt during that gap.
+3. An identical dialog closes and reopens while the socket is down.
+
+That chain is extremely unlikely. The gap itself predates this change, and it affects control state generally, not just the draft. Closing it would mean posting `connecting` on every disconnect, which is out of scope for H-2.
