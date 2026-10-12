@@ -39,6 +39,7 @@ import {
   OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadProjectionJson,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
@@ -46,6 +47,14 @@ import {
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
+const isHistoryPage = Schema.is(OrchestrationV2ThreadHistoryPage);
+const encodeHistoryPageJson = Schema.encodeSync(
+  Schema.toCodecJson(OrchestrationV2ThreadHistoryPage),
+);
+const encodeHistoryPage = Schema.encodeSync(OrchestrationV2ThreadHistoryPage);
+const decodeTypedHistoryPage = Schema.decodeUnknownSync(OrchestrationV2ThreadHistoryPage);
+const encodeProjectionJson = Schema.encodeSync(OrchestrationV2ThreadProjectionJson);
+const encodeProjectionWire = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2ThreadProjection));
 function emptyThreadProjection() {
   return {
     thread: {
@@ -348,6 +357,54 @@ describe("orchestration V2 contracts", () => {
         },
       ]),
     ).toThrow();
+
+    const page = {
+      snapshotSequence: 1,
+      items: [projected(0, future), projected(1, known)],
+      nextCursor: null,
+      hasMoreHistory: false,
+    };
+    const decodedPage = decodeHistoryPage(page);
+    expect(DateTime.isDateTime(decodedPage.items[0]?.item.updatedAt)).toBe(true);
+    expect(isHistoryPage(decodedPage)).toBe(true);
+    expect(OrchestrationV2ThreadHistoryPage.make(decodedPage)).toEqual(decodedPage);
+    expect(encodeHistoryPageJson(decodedPage)).toEqual({ ...page, items: [projected(1, known)] });
+    const typedPage = encodeHistoryPage(decodedPage);
+    expect(decodeTypedHistoryPage(typedPage)).toEqual(decodedPage);
+
+    const decodeProjectionJson = Schema.decodeUnknownSync(OrchestrationV2ThreadProjectionJson);
+    expect(decodeProjectionJson(projection)).toEqual(snapshot.projection);
+    expect(encodeProjectionJson(snapshot.projection)).toEqual(
+      encodeProjectionWire(snapshot.projection),
+    );
+
+    for (const turnItem of [known, future]) {
+      for (const invalid of [
+        { position: -1 },
+        { visibility: "future" },
+        { sourceThreadId: " " },
+        { sourceItemId: null },
+      ]) {
+        const row = { ...projected(0, turnItem), ...invalid };
+        expect(() => decodeHistoryPage({ ...page, items: [row] })).toThrow();
+        expect(() => decodeProjectionJson({ ...projection, visibleTurnItems: [row] })).toThrow();
+        expect(() =>
+          decodeWireItems([
+            {
+              kind: "snapshot",
+              snapshotSequence: 1,
+              projection: { ...projection, visibleTurnItems: [row] },
+            },
+          ]),
+        ).toThrow();
+      }
+    }
+    for (const invalidItem of [broken, { type: 42 }, {}, null]) {
+      expect(() =>
+        decodeHistoryPage({ ...page, items: [projected(0, { id: "bad", ...invalidItem })] }),
+      ).toThrow();
+      expect(() => decodeProjectionJson({ ...projection, turnItems: [invalidItem] })).toThrow();
+    }
   });
 
   it("negotiates bounded socket snapshots as an optional capability", () => {

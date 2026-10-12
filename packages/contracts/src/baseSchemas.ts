@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
+import * as SchemaParser from "effect/SchemaParser";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const TrimmedString = Schema.String.pipe(
@@ -257,6 +259,67 @@ export const isUnknownUnionMember = <A>(
   value: A,
 ): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
 
+interface ValidatedArray<Element extends Schema.Top> extends Schema.Bottom<
+  ReadonlyArray<Element["Type"]>,
+  ReadonlyArray<Element["Type"]>,
+  never,
+  never,
+  SchemaAST.Declaration,
+  ValidatedArray<Element>,
+  ReadonlyArray<Element["~type.make.in"]>
+> {}
+
+/**
+ * Filter an already decoded array without validating retained elements again.
+ * `compatible` must decode each retained value through `element`'s schema.
+ */
+export const filterDecodedArray = <Element extends Schema.Top, Compatible extends Schema.Top>(
+  element: Element,
+  compatible: Compatible,
+  keep: (value: Compatible["Type"]) => boolean,
+) => {
+  const filtering = SchemaTransformation.transform<
+    ReadonlyArray<Element["Type"]>,
+    ReadonlyArray<Compatible["Type"]>
+  >({
+    decode: (values) => values.filter(keep) as ReadonlyArray<Element["Type"]>,
+    encode: (values) => values,
+  });
+  const identity = SchemaTransformation.transform<
+    ReadonlyArray<Element["Type"]>,
+    ReadonlyArray<Element["Type"]>
+  >({
+    decode: (values) => values,
+    encode: (values) => values,
+  });
+  const declaration = Schema.declareConstructor<ReadonlyArray<Element["Type"]>>()(
+    [Schema.Array(Schema.toType(element))],
+    ([array]) => {
+      const decode = SchemaParser.decodeUnknownEffect(array);
+      return (value, ast, options) => {
+        // Only our links have already validated the retained elements.
+        // `toType` removes them for is/make and the encoding input, which
+        // must still validate the plain known-element array.
+        const transformation = ast.encoding?.[0]?.transformation;
+        return transformation === filtering || transformation === identity
+          ? Effect.succeed(value as ReadonlyArray<Element["Type"]>)
+          : decode(value, options);
+      };
+    },
+    {
+      toCodec: ([array]) => Schema.link<ReadonlyArray<Element["Type"]>>()(array, identity),
+      // Construction must recurse through the array's constructor parser so
+      // member defaults and class constructors keep their ordinary behavior.
+      "~constructor": ([array]: ReadonlyArray<SchemaAST.AST>) => ({
+        isConstructed: () => false,
+        link: new SchemaAST.Link(array!, identity),
+      }),
+    },
+  );
+  const validated = Schema.make<ValidatedArray<Element>>(declaration.ast);
+  return Schema.Array(compatible).pipe(Schema.decodeTo(validated, filtering));
+};
+
 /**
  * An array of a growing tagged union that drops members this build does not
  * know. Known members decode through their own schema and still fail when
@@ -269,20 +332,10 @@ export const ForwardCompatibleUnionArray = <
   members: Members,
   tag: Tag,
 ) =>
-  Schema.Array(ForwardCompatibleUnion(members, tag)).pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.toType(Schema.Union(members))),
-      SchemaTransformation.transform<
-        ReadonlyArray<Members[number]["Type"]>,
-        ReadonlyArray<Members[number]["Type"] | UnknownUnionMember<Tag>>
-      >({
-        decode: (values) =>
-          values.filter((value) => !isUnknownUnionMember(value)) as ReadonlyArray<
-            Members[number]["Type"]
-          >,
-        encode: (values) => values,
-      }),
-    ),
+  filterDecodedArray(
+    Schema.Union(members),
+    ForwardCompatibleUnion(members, tag),
+    (value) => !isUnknownUnionMember(value),
   );
 
 const knownTags = (

@@ -10,6 +10,7 @@ import {
   ForwardCompatibleArray,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
+  filterDecodedArray,
   isUnknownUnionMember,
   TrimmedNonEmptyString,
   UnknownUnionMember,
@@ -116,6 +117,26 @@ describe("ForwardCompatibleUnion", () => {
 });
 
 describe("ForwardCompatibleUnionArray", () => {
+  it("validates each known member once when decoding typed and JSON arrays", () => {
+    let checks = 0;
+    const Counted = Schema.Struct({
+      kind: Schema.Literal("counted"),
+      count: Schema.Number.check(
+        Schema.makeFilter(() => {
+          checks++;
+          return true;
+        }),
+      ),
+    });
+    const array = ForwardCompatibleUnionArray([Counted], "kind");
+    const input = [{ kind: "future" }, { kind: "counted", count: 1 }];
+    for (const codec of [array, Schema.toCodecJson(array)]) {
+      checks = 0;
+      expect(Schema.decodeUnknownSync(codec)(input)).toEqual([{ kind: "counted", count: 1 }]);
+      expect(checks).toBe(1);
+    }
+  });
+
   it("keeps a known member however its fields are named", () => {
     const Flagged = Schema.Struct({
       kind: Schema.Literal("flag"),
@@ -148,6 +169,117 @@ describe("ForwardCompatibleUnionArray", () => {
     );
     const square = { kind: "square" as const, side: 2 };
     expect(encode([square])).toEqual([square]);
+  });
+
+  it("preserves transformations, defaults, validation and both encodings", () => {
+    const WithDefault = Schema.Struct({
+      kind: Schema.Literal("dated"),
+      at: Schema.DateTimeUtc,
+      name: TrimmedNonEmptyString,
+      count: Schema.optionalKey(Schema.Number).pipe(
+        Schema.withDecodingDefaultKey(Effect.succeed(7)),
+      ),
+    });
+    const array = ForwardCompatibleUnionArray([WithDefault], "kind");
+    const plain = Schema.Array(WithDefault);
+    const typedInput = [{ kind: "dated", at: DateTime.makeUnsafe(at), name: "  a  " }];
+    const jsonInput = [{ ...typedInput[0], at }];
+    for (const [codec, ordinary, input] of [
+      [array, plain, typedInput],
+      [Schema.toCodecJson(array), Schema.toCodecJson(plain), jsonInput],
+    ] as const) {
+      const decoded = Schema.decodeUnknownSync(codec)([{ kind: "future" }, ...input]);
+      expect(decoded).toEqual(Schema.decodeUnknownSync(ordinary)(input));
+      expect(decoded[0]).toEqual({
+        kind: "dated",
+        at: DateTime.makeUnsafe(at),
+        name: "a",
+        count: 7,
+      });
+      expect(Schema.encodeSync(codec)(decoded)).toEqual(Schema.encodeSync(ordinary)(decoded));
+      expect(Schema.is(codec)(decoded)).toBe(true);
+      expect(codec.make(decoded)).toEqual(decoded);
+      const sparse = [...decoded];
+      sparse.length++;
+      for (const invalid of [
+        [{ kind: "future" }],
+        [new UnknownUnionMember("kind", "future")],
+        [{ ...decoded[0], count: "bad" }],
+        [{ ...decoded[0], at }],
+        [undefined],
+        sparse,
+      ]) {
+        expect(Schema.is(codec)(invalid)).toBe(Schema.is(ordinary)(invalid));
+        expect(() => codec.make(invalid as never)).toThrow();
+        expect(() => Schema.encodeUnknownSync(codec)(invalid)).toThrow();
+      }
+    }
+    const typed = Schema.toType(array);
+    // Composing another source must still validate the declared target.
+    const wrapped = Schema.Unknown.pipe(Schema.decodeTo(typed));
+    expect(() => Schema.decodeUnknownSync(wrapped)([{ kind: "future" }])).toThrow();
+    const jsonTyped = Schema.toCodecJson(typed);
+    expect(fromWire(jsonTyped)([{ kind: "dated", at, name: "a", count: 7 }])).toEqual([
+      { kind: "dated", at: DateTime.makeUnsafe(at), name: "a", count: 7 },
+    ]);
+    expect(() => fromWire(jsonTyped)([{ kind: "future" }])).toThrow();
+  });
+
+  it("preserves member constructor defaults without accepting them in is or decoding", () => {
+    const Defaulted = Schema.Struct({
+      kind: Schema.Literal("defaulted"),
+      count: Schema.Number.pipe(Schema.withConstructorDefault(Effect.succeed(7))),
+    });
+    const array = ForwardCompatibleUnionArray([Defaulted], "kind");
+    const plain = Schema.Array(Defaulted);
+    expect(array.make([{ kind: "defaulted" }])).toEqual(plain.make([{ kind: "defaulted" }]));
+    expect(Schema.is(array)([{}])).toBe(false);
+    expect(() => Schema.decodeUnknownSync(array)([{ kind: "defaulted" }])).toThrow();
+    expect(array.make([{ kind: "defaulted", count: 2 }])).toEqual(
+      plain.make([{ kind: "defaulted", count: 2 }]),
+    );
+  });
+
+  it("validates projected envelopes and known payloads once, including skipped rows", () => {
+    let envelopeChecks = 0;
+    let itemChecks = 0;
+    const Item = Schema.Struct({
+      kind: Schema.Literal("known"),
+      value: Schema.Number.check(
+        Schema.makeFilter(() => {
+          itemChecks++;
+          return true;
+        }),
+      ),
+    });
+    const Row = Schema.Struct({
+      position: Schema.Number.check(
+        Schema.makeFilter(() => {
+          envelopeChecks++;
+          return true;
+        }),
+      ),
+      item: Item,
+    });
+    const rows = filterDecodedArray(
+      Row,
+      Row.mapFields((fields) => ({ ...fields, item: ForwardCompatibleUnion([Item], "kind") })),
+      (row) => !isUnknownUnionMember(row.item),
+    );
+    for (const codec of [rows, Schema.toCodecJson(rows)]) {
+      envelopeChecks = itemChecks = 0;
+      expect(
+        Schema.decodeUnknownSync(codec)([
+          { position: 0, item: { kind: "future" } },
+          { position: 1, item: { kind: "known", value: 1 } },
+        ]),
+      ).toEqual([{ position: 1, item: { kind: "known", value: 1 } }]);
+      expect(envelopeChecks).toBe(2);
+      expect(itemChecks).toBe(1);
+      expect(() =>
+        Schema.decodeUnknownSync(codec)([{ position: "bad", item: { kind: "future" } }]),
+      ).toThrow();
+    }
   });
 });
 

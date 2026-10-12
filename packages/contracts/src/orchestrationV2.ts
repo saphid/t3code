@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
-import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   CheckpointId,
@@ -18,6 +17,7 @@ import {
   NodeId,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
+  filterDecodedArray,
   hasUnknownUnionTag,
   isUnknownUnionMember,
   NonNegativeInt,
@@ -1685,17 +1685,10 @@ const projectedTurnItemArray = <Row extends Schema.Top, Item extends Schema.Top>
   row: Row,
   rowWithUnknownItem: Item,
 ) =>
-  Schema.Array(rowWithUnknownItem).pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.toType(row)),
-      SchemaTransformation.transform<ReadonlyArray<Row["Type"]>, ReadonlyArray<Item["Type"]>>({
-        decode: (rows) =>
-          rows.filter(
-            (projected) => !isUnknownUnionMember((projected as { readonly item: unknown }).item),
-          ) as ReadonlyArray<Row["Type"]>,
-        encode: (rows) => rows,
-      }),
-    ),
+  filterDecodedArray(
+    row,
+    rowWithUnknownItem,
+    (projected) => !isUnknownUnionMember((projected as { readonly item: unknown }).item),
   );
 
 export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
