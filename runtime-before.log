@@ -1,0 +1,60 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete
+
+(node:436709) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+stdout | apps/server/src/mcp/McpHttpServer.test.ts > one-shot ACP calls release their real HTTP sessions
+ACP session retention: calls=20 (10 success, 10 failure), initialized=20, DELETEs=0, retained=20 sessions
+
+stdout | apps/server/src/mcp/McpHttpServer.test.ts > one-shot ACP calls release their real HTTP sessions
+[00:18:10.236] ERROR (#12): Error [AssertionError]: expected 20 to be +0 // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete/apps/server/src/mcp/McpHttpServer.test.ts:921:24 {
+  actual: 20,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/mcp/McpHttpServer.test.ts (24 tests | 1 failed | 23 skipped) 399ms
+   × one-shot ACP calls release their real HTTP sessions 397ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/mcp/McpHttpServer.test.ts > one-shot ACP calls release their real HTTP sessions
+AssertionError: expected 20 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 20
+
+ ❯ apps/server/src/mcp/McpHttpServer.test.ts:921:24
+    919|       console.info(`ACP session retention: calls=20 (10 success, 10 fa…
+    920|       expect(sessions).toHaveLength(20);
+    921|       expect(retained).toBe(0);
+       |                        ^
+    922|       expect(deletes).toBe(20);
+    923|     }),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 23 skipped (24)
+   Start at  00:17:56
+   Duration  13.96s (transform 67%, import 30%, tests 3%, setup 1%)
+
+  Transform  transforming modules took 9.15s · 67% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

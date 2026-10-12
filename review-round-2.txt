@@ -1,0 +1,26 @@
+I found two defects in round 2, and both block the change. The round-1 fixes for the stalled DELETE and the 204 assertion hold up. The SIGINT/SIGTERM fix is only partly complete: signals now trigger cleanup during the tool call, but not during initialization.
+
+**1. A signal during `initialize` is now ignored until the server replies.** `apps/server/src/mcp/AcpMcpStdioBridge.ts:113`
+- `Effect.acquireRelease(request, …)` runs its acquire step uninterruptibly. You can see this in effect-smol `internal/effect.ts:4140-4145`: `restore(acquire)` only applies with `{ interruptible: true }`.
+- So when the signal handler aborts the controller during the initialize POST, nothing reaches the fetch. Its abort signal is never fired, and the fiber waits for the initialize response with no time limit.
+- The `process.once` handlers also replace Node's default handling for that first signal. On the base commit, SIGINT/SIGTERM ended the process at once. Now, if the server stalls on initialize, the first signal does nothing.
+- I confirmed this with a throwaway script outside the worktree. With a fetch that hangs on initialize and the controller aborted after 50ms, the `runPromise` was still pending after 1s, and the init fetch signal was never aborted.
+- Fix: `Effect.acquireRelease(request, release, { interruptible: true })`. If the call is interrupted mid-initialize, no session id has arrived, so there is nothing to DELETE anyway.
+
+**2. The new CLI signal tests hang in CI.** `apps/server/src/mcp/AcpMcpStdioBridge.test.ts` (the `NodeChildProcess.spawn` call in "terminates the session when the CLI receives %s")
+- `NodePath.resolve("apps/server/src/bin.ts")` resolves against the working directory. The CI server job (`.github/workflows/ci.yml:265`, `vp run --filter t3 test`) runs from `apps/server`, so the path becomes `apps/server/apps/server/src/bin.ts`.
+- There, the child exits at once and `Deferred.await(calling)` waits until the 120s `testTimeout` in `apps/server/vite.config.ts:144`.
+- I reproduced it:
+  - from `apps/server`, `vp test run src/mcp/AcpMcpStdioBridge.test.ts -t "CLI receives"` was still running after 90s (`timeout` exit 124);
+  - the same command from the repo root passes in 761ms.
+- Your validation ran from the repo root, which is why it passed.
+- Fix: resolve relative to the test file, e.g. `NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url))`, as `DesktopBrowserChannel.test.ts` does. Also race `Deferred.await(calling)` against the child's `exit`, so a child that dies early fails fast instead of hanging.
+
+**Checked and correct:**
+- **Cleanup still runs when the call is interrupted.** It looked like it might not: the `Effect.interruptible` wrapper on the release would normally fail at once on a fiber that is already interrupted (`setFiberInterruptible`, `internal/effect.ts:4572-4575`). But `Effect.timeout` uses `raceFirst`, which runs the DELETE on a forked child fiber that isn't interrupted, so the request is sent and its 2s limit still applies. This works, but it depends on that detail of `timeout`. If you change it, a short comment there would help.
+- **`runPromise` with `{ signal }` waits for finalizers.** It interrupts the fiber and only settles when the fiber exits (`internal/effect.ts:5682-5689`, `5751-5760`), so the DELETE finishes before the process exits with 130 or 143.
+- **The stalled-DELETE test is sound.** TestClock reaches the forked timeout fiber, and the DELETE signal is aborted.
+- **The integration test's status check now counts.** It asserts the DELETE statuses outside the ignored cleanup, and the `keepalive` override is gone.
+- **Signal listeners are removed in `finally`.** A second signal during the 2s cleanup falls back to Node's default and kills the process, which is acceptable.
+
+My checks used throwaway scripts in `/tmp`, which I have deleted. No worktree files changed and no processes were left running.

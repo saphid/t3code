@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete/apps/server
+
+
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+   Start at  00:31:45
+   Duration  1.67s (tests 69%, import 14%, transform 11%, setup 5%)
+

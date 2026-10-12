@@ -1,0 +1,28 @@
+I found three defects in K-5: one functional gap, one robustness risk and one test assertion that can't fail. Success and failure cleanup work as intended. I only read code for this review; I did not re-run your validation.
+
+**1. Interrupting the real CLI still leaks the session.** `apps/server/src/mcp/AcpMcpStdioBridge.ts:383`
+- `runAcpMcpCliFastPath` calls `callAcpMcpTool` with a bare `Effect.runPromise`. It has no SIGINT or SIGTERM handling.
+- When an agent cancels or times out a terminal tool call, it signals the process. Node's default handler then exits right away without interrupting the fiber, so the `acquireRelease` finalizer never runs and no DELETE is sent.
+- The new interruption test (`AcpMcpStdioBridge.test.ts`, "terminates the session when the tool call is interrupted") only covers `Fiber.interrupt` inside Effect. Nothing in the real CLI path ever interrupts that way.
+- So the "interruption" part of the requested fix doesn't hold in production, and cancelled or timed-out calls are probably the most common leak.
+- Fix: in the `acp-mcp-call` branch, start the effect with `Effect.runFork`, register one-shot `SIGINT`/`SIGTERM` handlers that interrupt the fiber, then set the exit code. SIGKILL can't be handled, which is acceptable.
+
+**2. A stalled DELETE blocks the call with no limit.** `apps/server/src/mcp/AcpMcpStdioBridge.ts:112-129`
+- The release step is uninterruptible, as `acquireRelease` finalizers are, and its DELETE has no timeout.
+- `Effect.tryPromise({ try: () => fetchImplementation(...) })` ignores the abort signal, so even an outer timeout couldn't cancel the request.
+- If the server accepts the connection but is slow to answer DELETE (heavy load, half-open socket), the CLI waits forever before writing its result or error. That breaks "preserve the original outcome", and once finding 1 is fixed it would also make the process impossible to interrupt.
+- Fix: use `try: (signal) => fetchImplementation(endpoint, { method: "DELETE", signal, ... })` and add a short `Effect.timeout` (around 1–2s) before `Effect.ignoreCause`.
+
+**3. The 204 assertion in the real-HTTP test can never fail.** `apps/server/src/mcp/McpHttpServer.test.ts:898`
+- `expect(response.status).toBe(204)` runs inside `fetchImplementation`. On the DELETE path, a failed `expect` throws, `bridgeError` turns it into an error, and `Effect.ignoreCause` swallows it.
+- `deletes++` (line 897) runs before the check, so `deletes === 20` passes whatever status comes back. Only `retained === 0` actually proves the cleanup worked.
+- Fix: collect the statuses into an array and assert on it after the loop.
+
+Minor: `keepalive: false` at `McpHttpServer.test.ts:891` doesn't control connection reuse in Node's fetch. It's harmless, but it reads as if it does something here.
+
+Everything else looks correct:
+- The release is registered before the body is parsed, so initialize body-parse failures are covered.
+- The DELETE reads `protocolVersion` when it runs, so it sends the negotiated version, or the default if initialize failed.
+- The cleanup response body is discarded.
+- A rejected DELETE doesn't change the original success or failure.
+- No new imports were added to the fast path.

@@ -1,0 +1,16 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete
+
+(node:436009) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 23 skipped (24)
+   Start at  00:17:33
+   Duration  11.95s (transform 66%, import 30%, tests 4%, setup 1%)
+
+  Transform  transforming modules took 7.78s · 66% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

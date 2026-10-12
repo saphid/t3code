@@ -1,0 +1,89 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete
+
+stdout | apps/server/src/mcp/AcpMcpStdioBridge.test.ts > AcpMcpStdioBridge > terminates the session when the CLI receives SIGINT
+[00:24:04.647] ERROR (#1): Error [AssertionError]: expected null to be 130 // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete/apps/server/src/mcp/AcpMcpStdioBridge.test.ts:335:55 {
+  actual: null,
+  expected: 130,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/AcpMcpStdioBridge.test.ts > AcpMcpStdioBridge > terminates the session when the CLI receives SIGTERM
+[00:24:04.868] ERROR (#6): Error [AssertionError]: expected null to be 143 // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/acp-mcp-session-delete/apps/server/src/mcp/AcpMcpStdioBridge.test.ts:335:55 {
+  actual: null,
+  expected: 143,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/mcp/AcpMcpStdioBridge.test.ts (18 tests | 2 failed | 16 skipped) 471ms
+   ❯ AcpMcpStdioBridge (18)
+     × terminates the session when the CLI receives SIGINT 251ms
+     × terminates the session when the CLI receives SIGTERM 218ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/mcp/AcpMcpStdioBridge.test.ts > AcpMcpStdioBridge > terminates the session when the CLI receives SIGINT
+AssertionError: expected null to be 130 // Object.is equality
+
+- Expected:
+130
+
++ Received:
+null
+
+ ❯ apps/server/src/mcp/AcpMcpStdioBridge.test.ts:335:55
+    333|           yield* Deferred.await(calling);
+    334|           child.kill(signal);
+    335|           expect(yield* Effect.promise(() => exited)).toBe(signal === …
+       |                                                       ^
+    336|           expect(stderr).toBe("");
+    337|           expect(cleanups).toHaveLength(1);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1092:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/server/src/mcp/AcpMcpStdioBridge.test.ts > AcpMcpStdioBridge > terminates the session when the CLI receives SIGTERM
+AssertionError: expected null to be 143 // Object.is equality
+
+- Expected:
+143
+
++ Received:
+null
+
+ ❯ apps/server/src/mcp/AcpMcpStdioBridge.test.ts:335:55
+    333|           yield* Deferred.await(calling);
+    334|           child.kill(signal);
+    335|           expect(yield* Effect.promise(() => exited)).toBe(signal === …
+       |                                                       ^
+    336|           expect(stderr).toBe("");
+    337|           expect(cleanups).toHaveLength(1);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1092:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 16 skipped (18)
+   Start at  00:24:03
+   Duration  982ms (tests 57%, import 22%, transform 13%, setup 8%)
+

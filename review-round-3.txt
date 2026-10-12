@@ -1,0 +1,18 @@
+I found no defects in K-5 at `71e71846bb`. Both round-2 findings are fixed and nothing else blocks the change. I didn't edit anything in the worktree; `git status` is clean.
+
+**Round-2 fixes**
+- **A signal during `initialize` now aborts it.** `AcpMcpStdioBridge.ts:113-137` passes `{ interruptible: true }`. In effect-smol, `acquireRelease` (`internal/effect.ts:4134-4150`) runs only the acquire step through `restore(acquire)`. The `tap` that registers the release stays inside the uninterruptible region. So if the initialize POST is interrupted, its fetch signal is aborted. If the POST succeeds, the finalizer is still registered atomically, before the body is read.
+- **The CLI signal tests no longer depend on the working directory.** The child's entry point now comes from `NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url))`. The readiness wait races `Deferred.await(calling)` against the child's `exit`, so a child that dies early fails fast with its stderr.
+  - From `apps/server` (the CI working directory), `vp test run src/mcp/AcpMcpStdioBridge.test.ts` passed 3 times in a row, 20/20 each time.
+  - CI uses Node `^24.13.1`, which runs `.ts` files natively. The fast path imports only effect core and `@t3tools/shared/mcpResponsePayloads`.
+- **The integration test still holds.** From the repo root, `vp test run apps/server/src/mcp/McpHttpServer.test.ts -t "one-shot ACP"` passed.
+
+**Behaviour I checked**
+- **No session id means no DELETE.** The release returns early when `mcp-session-id` is missing, for example on an initialize that fails with 401.
+- **A non-OK initialize that returns an id is still cleaned up.** The finalizer is registered before the `!response.ok` check.
+- **A signal during the cleanup DELETE after a successful call** is held off until the release finishes. Exit code 130/143 is set either way. Stdout may or may not get the result, and both outcomes are acceptable.
+- **A signal that races a real failure** gets swallowed by `if (!controller.signal.aborted) throw cause`, and the exit code becomes 130/143. That's acceptable.
+
+**Known limits (not defects)**
+- **Interrupt in the instant the initialize response lands.** If the signal arrives after the server has created the session but before the client has its response headers, that session leaks. The client never learned the id, so it can't DELETE it, and the server will hold it until restart. Nothing on the client side can fix this.
+- **The cleanup relies on how `Effect.timeout` is built.** The interruptible release only works because the timeout runs it on a forked fiber. The comment at lines 117-118 records that; just keep it if the release is ever refactored.
