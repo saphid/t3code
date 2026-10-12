@@ -1,0 +1,974 @@
+$ node scripts/dev-runner.ts dev ⊘ cache disabled
+[00:07:39.210] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3code/worktrees/t3code/diff-orphaned-comment-drafts serverPort=14431 webPort=6391 baseDir=/home/saphid/.t3code/worktrees/t3code/diff-orphaned-comment-drafts/.t3
+~/apps/web$ vp dev ⊘ cache disabled
+~/apps/server$ node --watch src/bin.ts ⊘ cache disabled
+Failed to resolve dependency: @clerk/clerk-js, present in client 'optimizeDeps.include'
+
+  VITE+ v1.0.0  
+
+  ➜  Local:   http://localhost:6391/
+12:07:42 AM [vite+] (client) [optimizer] scanning dependencies...
+bash: cannot set terminal process group (3210700): Inappropriate ioctl for device
+bash: no job control in this shell
+:4: command not found
+[00:07:46.738] INFO (#4619): Listening on http://127.0.0.1:14431
+[00:07:46.749] INFO (#4618): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:07:46.872] INFO (#4618): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:07:46.906] INFO (#5073): Authentication required. Open T3 Code using the pairing URL.
+<pairing URL redacted>
+12:07:52 AM [vite+] (client) [optimizer] bundling dependencies...
+[00:08:17.099] INFO (#5171) http.span=7ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:17.232] INFO (#5172) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:17.248] INFO (#5173) http.span=10ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/auth/browser-session
+  http.status: 200
+[00:08:17.304] INFO (#5178) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:17.310] INFO (#5179) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:17.315] INFO (#5181) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:17.353] INFO (#5182) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:17.689] INFO (#5183) http.span=122ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 101
+[00:08:48.524] INFO (#5235) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:49.823] INFO (#5236) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:49.845] INFO (#5237) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:08:49.863] INFO (#5257) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:49.867] INFO (#5258) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:50.039] INFO (#5314) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:08:50.040] INFO (#5305) http.span=12ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:08:51.358] INFO (#5532) http.span=7ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:08:52.366] INFO (#5747) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:08:53.371] INFO (#5750) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:08:56.377] INFO (#5753) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:08:59.400] INFO (#5758) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:02.408] INFO (#5763) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:05.413] INFO (#5768) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:08.419] INFO (#5773) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:11.425] INFO (#5776) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:14.431] INFO (#5781) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:15.436] INFO (#5785) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:17.441] INFO (#5798) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:20.446] INFO (#5801) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:23.453] INFO (#5854) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:26.462] INFO (#5857) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:29.473] INFO (#5862) http.span=5ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:32.487] INFO (#5867) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:35.496] INFO (#5870) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:38.509] INFO (#5875) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:40.518] INFO (#5879) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:41.539] INFO (#5882) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:44.550] INFO (#5887) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+12:09:44 AM [vite+] (client) [console.warn] [legend-list] recycleItems was not provided, so it defaults to false. Set recycleItems explicitly to true for better performance with recycling-aware rows, or false to preserve remount-on-reuse behavior.
+[00:09:45.563] INFO (#5891) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:47.568] INFO (#5907) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:50.575] INFO (#5910) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:51.585] INFO (#5914) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:53.595] INFO (#5967) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:56.607] INFO (#5970) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:09:59.613] INFO (#5975) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:01.639] INFO (#5979) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:03.311] INFO (#6250) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:03.340] WARN (#6167) http.span=73489ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:10:04.681] INFO (#6353) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:05.689] INFO (#6357) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:06.696] INFO (#6360) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:09.702] INFO (#6365) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:12.714] INFO (#6370) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:13.722] INFO (#6374) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:15.727] INFO (#6377) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:18.733] INFO (#6390) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:21.738] INFO (#6393) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:24.744] INFO (#6398) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:27.816] INFO (#6403) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:30.822] INFO (#6407) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:33.611] WARN (#6413) http.span=103760ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:10:33.828] INFO (#6502) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:36.836] INFO (#6505) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:39.841] INFO (#6510) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:42.847] INFO (#6515) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:45.853] INFO (#6518) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:48.859] INFO (#6534) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:51.864] INFO (#6537) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:54.870] INFO (#6542) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:55.878] INFO (#6546) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:10:57.899] INFO (#6551) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:00.908] INFO (#6554) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:03.681] WARN (#6562) http.span=133830ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:11:03.915] INFO (#6604) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:06.921] INFO (#6607) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:09.927] INFO (#6612) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:12.934] INFO (#6617) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:15.995] INFO (#6620) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:19.002] INFO (#6633) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:20.007] INFO (#6637) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:22.014] INFO (#6642) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:25.024] INFO (#6662) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:28.057] INFO (#6667) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:30.679] INFO (#6706) http.span=31ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/L-4-fixture-thread/bounded
+  http.status: 200
+[00:11:30.811] INFO (#6726) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:32.538] INFO (#6750) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:33.887] WARN (#6754) http.span=164036ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:11:34.547] INFO (#6843) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:36.941] INFO (#6846) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:38.131] INFO (#6906) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:40.137] INFO (#6909) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:43.142] INFO (#6914) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:45.149] INFO (#6918) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:46.154] INFO (#6921) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:49.161] INFO (#6948) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:52.167] INFO (#6953) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:55.695] INFO (#6956) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:11:58.703] INFO (#6961) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:01.709] INFO (#6964) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:03.974] WARN (#6972) http.span=194123ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:12:04.715] INFO (#7014) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:07.722] INFO (#7019) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:12:10.733] INFO (#7023) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+Restarting 'src/bin.ts'
+[00:12:11.898] INFO (#5238) http.span=202047ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#7035)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[00:12:11.928] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+12:12:12 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:13 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:12:14 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:12:14 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:12:15 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:12:16 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:12:24 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (3210700): Inappropriate ioctl for device
+bash: no job control in this shell
+:4: command not found
+[00:12:26.747] INFO (#4613): Listening on http://127.0.0.1:14431
+[00:12:26.793] INFO (#4612): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:12:26.809] INFO (#4612): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:12:26.903] INFO (#4978): Authentication required. Open T3 Code using the pairing URL.
+<pairing URL redacted>
+[00:12:40.479] INFO (#5151) http.span=7ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:12:40.590] INFO (#5175) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:40.645] INFO (#5176) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:40.913] INFO (#5254) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:12:40.914] INFO (#5239) http.span=11ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:12:41.719] WARN (#5474) http.span=1156ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:13:12.302] WARN (#5819) http.span=31739ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:13:19.568] INFO (#5910) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:22.582] INFO (#5915) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:25.595] INFO (#5919) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:28.602] INFO (#5950) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:31.612] INFO (#5953) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+12:13:32 AM [vite+] (client) hmr update /src/index.css, /src/components/diffs/AnnotatableCodeView.tsx
+[00:13:33.508] INFO (#5152) http.span=52945ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 101
+[00:13:36.640] INFO (#5963) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:13:37.938] INFO (#5966) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:13:38.015] INFO (#5967) http.span=9ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:13:38.116] INFO (#5987) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:13:38.125] INFO (#5988) http.span=8ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:13:39.299] INFO (#6001) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:39.570] INFO (#6037) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:13:39.573] INFO (#6020) http.span=23ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:13:41.538] INFO (#6229) http.span=5ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:44.548] INFO (#6236) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:47.560] INFO (#6241) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:50.572] INFO (#6244) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:53.592] INFO (#6249) http.span=12ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:55.599] INFO (#6305) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:56.606] INFO (#6308) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:13:59.629] INFO (#6321) http.span=9ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:02.648] INFO (#6326) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:03.656] INFO (#6330) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:05.662] INFO (#6333) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:08.668] INFO (#6338) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:09.752] WARN (#6342) http.span=31676ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:14:11.673] INFO (#6431) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:14.679] INFO (#6436) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:18.054] INFO (#6441) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:20.059] INFO (#6444) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:23.079] INFO (#6449) http.span=7ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:26.080] INFO (#6452) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:29.091] INFO (#6483) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:32.098] INFO (#6488) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:35.103] INFO (#6491) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:38.108] INFO (#6496) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:39.922] WARN (#6500) http.span=61846ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:14:41.118] INFO (#6542) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:44.127] INFO (#6549) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:47.136] INFO (#6554) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:50.147] INFO (#6557) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:53.153] INFO (#6562) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:54.158] INFO (#6566) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:55.191] INFO (#6607) http.span=5ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:56.195] INFO (#6626) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:14:59.209] INFO (#6639) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:02.217] INFO (#6644) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:05.230] INFO (#6647) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+12:15:05 AM [vite+] (client) hmr update /src/index.css
+[00:15:08.246] INFO (#6652) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:10.006] WARN (#6656) http.span=91930ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:15:11.251] INFO (#6698) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:14.256] INFO (#6756) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:17.269] INFO (#6761) http.span=5ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:18.295] INFO (#6765) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:20.314] INFO (#6768) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:23.322] INFO (#6773) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:26.356] INFO (#6796) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:27.386] INFO (#6859) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:29.423] INFO (#6862) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:32.429] INFO (#6867) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:35.436] INFO (#6870) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:38.442] INFO (#6875) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:40.183] WARN (#6879) http.span=122107ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:15:41.448] INFO (#6968) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:43.455] INFO (#6976) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:44.466] INFO (#6979) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:47.470] INFO (#6984) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:50.476] INFO (#6987) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:53.481] INFO (#6992) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:56.486] INFO (#6995) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:15:59.492] INFO (#7008) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:16:02.498] INFO (#7013) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+Restarting 'src/bin.ts'
+[00:16:05.073] INFO (#5968) http.span=146997ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#7025)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[00:16:05.090] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+12:16:05 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:16:06 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:16:07 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+12:16:07 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:16:08 AM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:16:10 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+12:16:16 AM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:14431
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (3210700): Inappropriate ioctl for device
+bash: no job control in this shell
+:4: command not found
+[00:16:18.052] INFO (#4615): Listening on http://127.0.0.1:14431
+[00:16:18.065] INFO (#4614): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[00:16:18.075] INFO (#4614): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[00:16:18.126] INFO (#4976): Authentication required. Open T3 Code using the pairing URL.
+<pairing URL redacted>
+[00:16:30.107] INFO (#5149) http.span=7ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[00:16:30.188] INFO (#5173) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:16:30.245] INFO (#5174) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:16:30.574] INFO (#5235) http.span=76ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[00:16:30.577] INFO (#5249) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[00:16:31.199] WARN (#5436) http.span=1032ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+                                                                                                               [00:17:01.511] WARN (#5709) http.span=31344ms: PR lookup failed.
+  operation: lookupStatusPr
+  branch: master
+  errorTag: SourceControlProviderError
+  provider: unknown
+  providerOperation: listChangeRequests
+  errorDetail: No unknown source control provider is registered.
+[00:17:11.213] INFO (#5802) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:17:14.219] INFO (#5807) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:17:17.225] INFO (#5810) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:17:20.231] INFO (#5841) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:17:23.237] INFO (#5847) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[00:17:24.899] INFO (#5150) http.span=54732ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#5859)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[00:17:24.938] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }

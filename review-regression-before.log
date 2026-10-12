@@ -1,0 +1,33 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/diff-orphaned-comment-drafts
+
+stderr | apps/web/src/components/diffs/AnnotatableCodeView.test.tsx > diff comment drafts > preserves a draft while its file's patch reloads
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/components/diffs/AnnotatableCodeView.test.tsx (3 tests | 1 failed) 56ms
+   ❯ diff comment drafts (3)
+     × preserves a draft while its file's patch reloads 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/diffs/AnnotatableCodeView.test.tsx > diff comment drafts > preserves a draft while its file's patch reloads
+Error: No instances found with node type: "diff-comment"
+ ❯ expectOne node_modules/.pnpm/react-test-renderer@19.2.6_react@19.2.6/node_modules/react-test-renderer/cjs/react-test-renderer.development.js:15161:13
+ ❯ ReactTestInstance.process.env.NODE_ENV._proto.findByType node_modules/.pnpm/react-test-renderer@19.2.6_react@19.2.6/node_modules/react-test-renderer/cjs/react-test-renderer.development.js:17211:18
+ ❯ apps/web/src/components/diffs/AnnotatableCodeView.test.tsx:145:26
+    143|     act(() => renderer.update(view([file("a.ts", 2), file("b.ts")], "s…
+    144|
+    145|     expect(renderer.root.findByType(DiffCommentAnnotation).props.text)…
+       |                          ^
+    146|     expect(viewer().selectedLines).toEqual({ id: "a.ts", range });
+    147|     expect(viewer().options.enableGutterUtility).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  00:18:45
+   Duration  2.48s (transform 47%, import 47%, setup 3%, tests 2%)
+

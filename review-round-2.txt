@@ -1,0 +1,21 @@
+I found no defects in the round-2 fix (d51442274f, reviewed against base 3f70c831c6). I ran nothing; this comes from reading the code.
+
+**The round-1 finding is fixed.**
+- When the diff hash changes in lazy mode, `useReviewFilePatches.ts:174-195` turns every not-yet-loaded file in `source.files` into a placeholder whose `cacheKey` ends in `:pending`. It does this for all files, not only indices 0–3.
+- Because of that, `pendingFilePaths` (`DiffPanel.tsx:557-563`) covers every file that is still in the diff but whose patch hasn't loaded. That includes files whose patch failed, which also stay as placeholders.
+- The check at `AnnotatableCodeView.tsx:142-150` now clears the draft only when its file is neither loaded under the same key nor pending. A routine refresh therefore keeps it.
+
+**Edge cases I checked, all fine:**
+- **New, deleted or renamed files:** the file key is built from `prevPath\0path\0type` (`diffRendering.ts:223`), so a placeholder's key can differ from the loaded file's key. The check falls back to the file path, and `draft.filePath` and the placeholder path both come from `resolveFileDiffPath` (new name for renames), so they match.
+- **Non-lazy refresh:** the preview `cacheKey`s end in `:ignore-whitespace` or `:compact-partial`, never `:pending`. Small diffs therefore keep the round-1 behaviour.
+- **A file that comes back with a different identity** (for example a change that becomes a deletion): the draft is cancelled once the patch loads. That's correct, because the old draft would be invisible.
+- **Calling setState during render:** the condition is false on the immediate re-render, so it can't loop. This is fine under StrictMode.
+
+**One existing limitation, not a defect in this change:**
+- **Trigger:** in lazy mode, the user drafts on a file at index 4 or later that they loaded with "load more", then the diff hash changes.
+- **Consequence:** the requested files reset to `[0..3]`, so that file stays pending. The draft is kept but nothing renders it. Since a draft is open, line selection and the gutter button stay off for all visible files until the user clicks "load more" enough times to reach the file again.
+- **Why it isn't a defect here:**
+  - The base commit behaves the same way.
+  - The user can recover through the visible loading footer.
+  - Fixing it would undo the "keep text while the file is still changed" requirement.
+- **If you want it gone:** a follow-up could automatically request the draft's file index when the hash changes. That belongs outside L-4.

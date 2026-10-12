@@ -1,0 +1,22 @@
+I found one defect.
+
+**`apps/web/src/components/diffs/AnnotatableCodeView.tsx:138`: an ordinary refresh can throw away a draft whose file is still in the diff**
+
+The new check treats "this file's key is missing from `files`" as "this file left the diff". That holds for the small, non-lazy diff path. It doesn't hold for large (truncated) uncommitted or branch diffs, which load each file's patch lazily:
+
+- `DiffPanel.tsx:535-551` only passes a file to `files` once its patch has loaded (it filters on `readyFilePaths`).
+- The loader's `scope` key (`useReviewFilePatches.ts:38-50`) includes `source.diffHash`. The server computes that hash over the whole working-tree diff (`GitVcsDriverCore.ts:2912-2940`), so it changes whenever *any* file changes.
+- When `scope` changes, the loaded-file indices go back to `[0, 1, 2, 3]` (`useReviewFilePatches.ts:46-50`). Every file query also gets a new cache key, so each patch starts at `Initial` and its file drops out of `readyFilePaths` until it reloads.
+- `AnnotatableCodeView` stays mounted through all of this, because it's keyed by `collapseScopeKey` and `filePatchScope` only changes the inner viewer key.
+
+**How it triggers:** a large diff is in lazy mode. The user starts typing a comment on a.ts. Then b.ts changes, say from an agent edit, and the diff refreshes on focus or through the workspace-mutation refresh. The diff hash changes. On the next render a.ts isn't in `files` yet, even though it's still changed, and the new block calls `setDraft(null)`, `setDraftText("")` and `setSelectedLines(null)`.
+
+**Consequence:** the comment text is lost without warning on a routine refresh.
+- If a.ts is among the first four files, its patch comes back moments later but the draft is already gone.
+- If a.ts is at index 4 or later (loaded with "load more"), it isn't requested again until the user loads more, so the draft is gone for certain.
+
+On the base commit the draft stayed in state and came back once a.ts reloaded. Your retention test only covers a non-lazy file list where a.ts never disappears, so it doesn't reach this path.
+
+**Possible fix:** decide whether a file is gone using the full diff file set, not the ready subset. For example, pass `diffFileKeys` (built from `renderableFileEntries`, which still lists not-yet-loaded files as pending placeholders) or a separate "known file keys" prop. Clear the draft only when its key is missing from that set.
+
+I found nothing else wrong. Calling setState during render is safe here because the condition is false on the immediate re-render, so it can't loop. The non-lazy refresh path behaves as you described.

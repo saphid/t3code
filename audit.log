@@ -1,0 +1,11 @@
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+surviving item annotations: 0 ; line selection enabled: true ; gutter enabled: true
+✔ removing the file with a draft should leave surviving diff files selectable (26.237872ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 510.043219

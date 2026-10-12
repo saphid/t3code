@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/diff-orphaned-comment-drafts
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  00:20:07
+   Duration  2.86s (transform 49%, import 45%, setup 4%, tests 1%)
+
