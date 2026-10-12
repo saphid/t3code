@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh
+
+
+ Test Files  1 passed (1)
+      Tests  76 passed (76)
+   Start at  23:07:50
+   Duration  14.50s (transform 54%, tests 24%, import 21%, setup 1%)
+
+  Transform  transforming modules took 7.78s · 54% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

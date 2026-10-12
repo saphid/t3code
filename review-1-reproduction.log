@@ -1,0 +1,68 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh
+
+stdout | apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: fingerprint deadline
+[23:07:29.699] ERROR (#2478): Error [AssertionError]: expected 2 to equal 1
+    at /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh/apps/server/src/orchestration-v2/runtimeLayer.test.ts:3080:18 {
+  actual: 2,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: changed remarks
+[23:07:29.726] ERROR (#2517): Error [AssertionError]: expected 2 to equal 1
+    at /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh/apps/server/src/orchestration-v2/runtimeLayer.test.ts:3080:18 {
+  actual: 2,
+  expected: 1,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/orchestration-v2/runtimeLayer.test.ts (76 tests | 2 failed | 73 skipped) 319ms
+   ❯ OrchestrationV2LayerLive lifecycle (40)
+     × refreshes edited cached review replies: fingerprint deadline 62ms
+     × refreshes edited cached review replies: changed remarks 22ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: fingerprint deadline
+ FAIL  apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: changed remarks
+AssertionError: expected 2 to equal 1
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ apps/server/src/orchestration-v2/runtimeLayer.test.ts:3080:18
+    3078|           yield* reactor.sweep;
+    3079|           assert.equal(activityReads, 3);
+    3080|           assert.equal(pagesRead, 1);
+       |                  ^
+    3081|         }
+    3082|         const readsBeforeEdit = activityReads;
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed | 73 skipped (76)
+   Start at  23:07:19
+   Duration  10.79s (transform 70%, import 26%, tests 3%, setup 1%)
+
+  Transform  transforming modules took 7.47s · 70% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

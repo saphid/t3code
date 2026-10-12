@@ -1,0 +1,82 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh
+
+stdout | apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: fingerprint deadline
+[22:55:31.759] ERROR (#2478): Error [AssertionError]: expected [] to deeply equal [ '#12: new comments' ]
+    at /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh/apps/server/src/orchestration-v2/runtimeLayer.test.ts:3086:16 {
+  actual: [],
+  expected: [ '#12: new comments' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: changed remarks
+[22:55:31.786] ERROR (#2518): Error [AssertionError]: expected [] to deeply equal [ '#12: new comments' ]
+    at /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh/apps/server/src/orchestration-v2/runtimeLayer.test.ts:3086:16 {
+  actual: [],
+  expected: [ '#12: new comments' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: without fingerprint
+[22:55:31.805] ERROR (#2540): Error [AssertionError]: expected [] to deeply equal [ '#12: new comments' ]
+    at /home/saphid/.t3/worktrees/t3code/pr-watch-tail-refresh/apps/server/src/orchestration-v2/runtimeLayer.test.ts:3086:16 {
+  actual: [],
+  expected: [ '#12: new comments' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/orchestration-v2/runtimeLayer.test.ts (76 tests | 3 failed | 73 skipped) 326ms
+   ❯ OrchestrationV2LayerLive lifecycle (40)
+     × refreshes edited cached review replies: fingerprint deadline 70ms
+     × refreshes edited cached review replies: changed remarks 21ms
+     × refreshes edited cached review replies: without fingerprint 19ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: fingerprint deadline
+ FAIL  apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: changed remarks
+ FAIL  apps/server/src/orchestration-v2/runtimeLayer.test.ts > OrchestrationV2LayerLive lifecycle > refreshes edited cached review replies: without fingerprint
+AssertionError: expected [] to deeply equal [ '#12: new comments' ]
+
+- Expected
++ Received
+
+- [
+-   "#12: new comments",
+- ]
++ []
+
+ ❯ apps/server/src/orchestration-v2/runtimeLayer.test.ts:3086:16
+    3084|         assert.equal(activityReads, mode === "without fingerprint" ? 4…
+    3085|         const { messages } = yield* orchestrator.getThreadRecords(thre…
+    3086|         assert.deepEqual(
+       |                ^
+    3087|           messages.map((message) => message.notification?.summary),
+    3088|           ["#12: new comments"],
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 73 skipped (76)
+   Start at  22:55:15
+   Duration  16.35s (transform 69%, import 28%, tests 2%, setup 1%)
+
+  Transform  transforming modules took 11.07s · 69% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

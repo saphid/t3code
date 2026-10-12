@@ -1,0 +1,63 @@
+R2M-2 backend validation
+Base: 511d20c6f20c2ed6ff787aba068d7d673e2949b9
+The auditor scratch test was absent; equivalent regressions were added to runtimeLayer.test.ts.
+The tests execute the actual PullRequestWatchReactor, OrchestratorV2 command dispatch, event sink,
+SQLite-backed projection store, and persisted message reads. Only the source-control host reads
+are mocked; the reactor reads the real projection filtered to the test thread to isolate shared
+runtime fixtures. Sweeps await their command receipts. TestClock advances logical time; no sleeps
+or polling are used by the tests.
+
+Base command:
+./node_modules/.bin/vp test run apps/server/src/orchestration-v2/runtimeLayer.test.ts -t 'refreshes edited cached review replies'
+Result: 3 failed, 73 skipped. Each failure expected one persisted '#12: new comments' wake
+but received none after editing reply 11 without changing its thread's 11-comment count.
+Scenarios: unchanged fingerprint at the 30-minute forced reread; changed remarks fingerprint;
+no host fingerprint with activity reads at 5 and 10 minutes while a check remains pending.
+
+Fixed command: same command
+Result: 3 passed, 73 skipped. Each scenario fetches its tail twice, persists one wake containing
+'Edited feedback.', advances remarksThrough to editedAt, and emits no duplicate on the next sweep.
+Immediate activity rereads reuse the tail before the refresh deadline.
+
+Scope: one server cache fix; no API/contract/UI/provider-adapter changes. The common reactor
+produces wake messages and notifications for web (hosted/local), desktop, and mobile, all agent
+providers, and local/remote/relay/tunnel connections. Hosts with review-reply pagination use
+the fix; hosts without paginated replies have no cached tail to change. Both fingerprint and
+non-fingerprint read plans are covered. Existing pagination/failure/recovery tests remain in
+runtimeLayer.test.ts. No browser or live-host validation is necessary for this cache behavior;
+no live userdata was accessed and no external processes were stopped.
+
+Complete touched-file validation:
+./node_modules/.bin/vp test run apps/server/src/orchestration-v2/runtimeLayer.test.ts
+Result: 76 passed, 0 failed; log fixed-runtime-tests.log.
+Targeted lint: exit 0; log lint.log.
+Server package typecheck: exit 0, existing non-error Effect suggestions; log typecheck.log.
+Local commit: ca527a56f79e0abf29c8c3dcc7404d134b6e347a
+Commit title: fix(server): refresh cached PR review replies
+No push or PR. Independent Claude Opus 5.5 review requested with high effort.
+
+Independent review round 1:
+No correctness defects in the edited-tail fix. Reviewer raised low-severity excess paging on
+fingerprint recovery/unknown previous reads and a test-coverage gap for actual activity rereads
+with unchanged reply counts on fingerprinted hosts. Verified against source: the original
+last?.remarks comparison treated undefined/null as a changed known fingerprint. Added actual
+activity rereads during temporary fingerprint loss/recovery; on the original fix, these gave
+2 failed / 1 passed / 73 skipped (review-1-reproduction.log). The failures expected one tail
+fetch but got two after fingerprint recovery.
+
+Revision: only invalidate tails when both previous/current remark fingerprints are known and
+differ. Retained intentional refresh on known remark changes per the provided finding; deadline
+handles GitHub tail-only edits invisible to fingerprints. Tightened the comment accordingly.
+Expanded tests prove unchanged-tail reuse during real activity reads on fingerprinted hosts,
+including fingerprint loss/recovery, and on non-fingerprinted hosts. No new concern was added.
+
+Final validation after review response:
+./node_modules/.bin/vp test run apps/server/src/orchestration-v2/runtimeLayer.test.ts
+76 passed, 0 failed; final-runtime-tests.log.
+Targeted lint exit 0; final-lint.log.
+Server package typecheck exit 0 (existing non-error suggestions); final-typecheck.log.
+git diff --check passed.
+
+Final commit: 9190c01cf03368a1946360bb127042921d3f1be8
+Round 2: completed, no defects; all round-1 findings resolved or explicitly accepted.
+Result: ready. Worktree clean; no push or PR.
