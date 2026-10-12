@@ -1,0 +1,25 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-assignment-release
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+[00:14:26.230] INFO (#4): { sessions: 100, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions 162ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+[00:14:26.623] INFO (#215): { sessions: 500, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions 390ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host 11ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host 7ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > keeps a live session's host and current tab across credential liveness refreshes 5ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  00:14:23
+   Duration  3.25s (transform 49%, import 28%, tests 20%, setup 3%)
+

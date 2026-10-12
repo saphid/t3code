@@ -1,0 +1,191 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-assignment-release
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+{"sessions":100,"scannedAssignments":4950,"probeScannedAssignments":100}
+[00:08:28.458] ERROR (#4): Error [AssertionError]: expected 100 to be +0 // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:104:40 {
+  actual: 100,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+{"sessions":500,"scannedAssignments":124750,"probeScannedAssignments":500}
+[00:08:28.935] ERROR (#220): Error [AssertionError]: expected 500 to be +0 // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:104:40 {
+  actual: 500,
+  expected: 0,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host
+[00:08:28.951] ERROR (#1236): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host
+[00:08:28.955] ERROR (#1257): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host
+[00:08:28.962] ERROR (#1278): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host
+[00:08:28.967] ERROR (#1299): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host
+[00:08:28.970] ERROR (#1320): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host
+[00:08:28.974] ERROR (#1341): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts (9 tests | 8 failed) 824ms
+   × releases preview assignments across 100 revoked sessions 308ms
+   × releases preview assignments across 500 revoked sessions 471ms
+   × releases assignments on provider without disconnecting a host 16ms
+   × releases assignments on thread without disconnecting a host 5ms
+   × releases assignments on all without disconnecting a host 7ms
+   × releases assignments on expiry-resolve without disconnecting a host 4ms
+   × releases assignments on expiry-issue without disconnecting a host 4ms
+   × releases assignments on expiry-touch without disconnecting a host 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+AssertionError: expected 100 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 100
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts:104:40
+    102|     const measured = yield* harness.invokeMeasured(probe);
+    103|     console.log(JSON.stringify({ sessions, scannedAssignments, probeSc…
+    104|     expect(measured.retainedKeys.size).toBe(0);
+       |                                        ^
+    105|     expect(scannedAssignments).toBe(0);
+    106|   })).pipe(Effect.provide(NodeServices.layer)),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯
+
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+AssertionError: expected 500 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 500
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts:104:40
+    102|     const measured = yield* harness.invokeMeasured(probe);
+    103|     console.log(JSON.stringify({ sessions, scannedAssignments, probeSc…
+    104|     expect(measured.retainedKeys.size).toBe(0);
+       |                                        ^
+    105|     expect(scannedAssignments).toBe(0);
+    106|   })).pipe(Effect.provide(NodeServices.layer)),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯
+
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts:142:48
+    140|     // Inspect the very next routing operation, before another resolve…
+    141|     const probe = yield* harness.invokeMeasured(sibling);
+    142|     expect(probe.retainedKeys.has(retiredKey)).toBe(false);
+       |                                                ^
+    143|     expect(probe.retainedKeys.has(siblingKey)).toBe(reason !== "all");
+    144|     expect(harness.routed.at(-1)).toEqual(reason === "all"
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed (9)
+   Start at  00:08:24
+   Duration  4.54s (transform 52%, import 25%, tests 20%, setup 3%)
+
+  Transform  transforming modules took 2.18s · 52% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

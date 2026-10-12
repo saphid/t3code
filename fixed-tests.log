@@ -1,0 +1,156 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-assignment-release
+
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > atomically registers a connected host and correlates its response 35ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > targets multiple tabs explicitly while retaining a default tab 11ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps an older target stable while a newer explicit tab responds (implicit: true) 6ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps an older target stable while a newer explicit tab responds (implicit: false) 6ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tracks the tab returned by a targeted recording stop 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not let a no-tab response suppress an earlier tab decision 7ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > announces a live replacement stream before delivering requests 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a server-host open alive for installation without extending other operations 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves bounded request and remote selector diagnostics 7ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > classifies a remote non-editable target without collapsing it to execution 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingTransferError 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingDesktopUpdateRequiredError 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingTooLargeError 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingDeadlineExpiredError 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tells the agent why its own server browser failed (server-browser) 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tells the agent why its own server browser failed (client-1) 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > distinguishes malformed remote failures 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > rejects calls when no connected host exists 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not create host state from focus updates without a live stream 1ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > removes host availability when the authoritative request stream disconnects 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > routes requests for background threads through an environment-level host 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > never routes a provider session to a host from another environment 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > pins a provider session to its initial host despite later focus changes 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > prefers the live tab owner for new sessions without moving existing leases 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > prefers a focused host over unrelated extra capabilities for a new session 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not route new operations to legacy hosts that did not advertise support 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > routes resize to a capable host instead of a newer legacy connection 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not move a live legacy assignment to another runtime for resize 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > ignores stale focus updates for a different environment 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > fails over a pinned provider session only after its host disconnects 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > lets the browser host resolve an active tab locally 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a replacement stream authoritative when the old stream finalizes 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not carry a tab id across a replacement automation stream 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > fails requests assigned to the stream that is replaced 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > accepts responses only from the host that received the request 13ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > discards buffered actions before completing an evicted host stream 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > rejects a routed action when its generation is evicted before delivery 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a host whose operation timeout arrives just after the budget 6ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps the host connected when a background status read times out 3ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > stores only a token hash, resolves the bearer token, and revokes by thread 21ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > always grants pull-requests and gates browser and device access independently 8ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > builds MCP endpoints from the bound server host 14ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > expires credentials once their session stops showing signs of life 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > keeps a credential alive across turns that never touch an MCP tool 8ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.test.ts > does not keep credentials of other threads alive 4ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+[00:13:08.563] INFO (#4): { sessions: 100, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions 224ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+[00:13:09.135] INFO (#215): { sessions: 500, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions 558ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host 12ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host 7ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > keeps a live session's host and current tab across credential liveness refreshes 5ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 opens independent sessions concurrently 243ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 closes every live session for a provider instance 112ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 records provider session and turn metrics 107ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 opens a duplicate session only once 80ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 starts a thread's session without its last agent's OOM kill 92ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 cleans up an open interrupted mid-handshake 89ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 cleans up an interrupted open whose scope close hangs 88ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 releases an idle session whose turn start was stopped 88ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a shared session busy when another thread's start is stopped early 107ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a shared session busy when a stopped start still ends its turn 83ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 stops a session still opening when its layer shuts down 66ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 releases live sessions when its layer shuts down 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 closes event subscriptions normally on server shutdown 90ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 drains subscribers when the provider stops 91ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 issues MCP credentials before opening and revokes them on close 95ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 withholds the preview capability when agent browser access is off 87ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 honors a project browser-access opt-out 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 honors a project browser-access opt-in 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 fails browser access closed for a missing project 95ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 fails browser access closed for a missing thread 100ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 revokes MCP credentials when release persistence fails 102ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a thread attached when an earlier attach of it is interrupted 106ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a replacement session's attachment when a stale attach is interrupted 104ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 revokes a reused credential after a resume stopped while checking it 80ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 duplicate detach preserves replacement MCP credentials 96ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 detach of a superseded live session preserves replacement MCP credentials 92ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a thread's MCP credential stable across detach and re-attach on a shared session 131ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 revokes a rotated credential despite a stale record on another live session 93ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 protects a reused credential from a predecessor release during open 93ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 terminal detach revokes the thread's MCP credential 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 releases idle sessions without sweeping all sessions 86ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 persists release when session scope close hangs 85ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 defers idle release while background work is pending 86ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 releases pinned idle sessions once the pin cap expires 96ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps pinned work that reports progress 112ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 does not idle-release a session that turns busy during the pending-work check 83ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 does not apply a stale idle pin to a replacement session 85ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps active sessions alive until the provider turn terminates 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 uses the same release path for runtime failures 81ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 releases sessions when provider event streams fail 103ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 marks pending runtime requests non-live on release 91ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 retries release records that failed to persist 94ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 release retries leave a replacement session alone 98ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps each failed release's cleanup 97ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 settles a request the event pump persists during release 94ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 terminalizes a pending input transcript item on release 97ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 persists session-scoped runtime requests without a run 101ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 preserves item identity during eager native session activation 94ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps a multi-thread session alive until all turns finish 93ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently 99ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 re-attaching a thread waits for its in-flight unload, then reloads it 96ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 unloads a shared-runtime thread left idle, and reloads it on its next turn 110ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 keeps an idle shared-runtime thread loaded while its background work runs 89ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive 82ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > rejects a missing workspace before opening a provider session 80ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > rejects a file workspace before opening a provider session 84ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > rejects a deleted workspace before reusing a live session without changing its state 86ms
+ ✓ apps/server/src/orchestration-v2/ProviderSessionManager.test.ts > ProviderSessionManagerV2 applies project device access independently of browser access 171ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > normalizes empty successful notification responses to accepted 3ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns bounded structural preview snapshot failures 0 72ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns bounded structural preview snapshot failures 1 20ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > tells the agent to open a tab when the snapshot has none {} 17ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > tells the agent to open a tab when the snapshot has none { tabId: 'tab-mcp-alternate' } 14ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > tells the agent how to recover when no preview host can run the snapshot 14ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns fresh default snapshots on repeated MCP calls 37ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns fresh explicit image snapshots on repeated MCP calls 22ms
+ ✓ apps/server/src/mcp/toolkits/worktree/registration.test.ts > production mcp layer lists worktree tools over http 269ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns fresh text only snapshots on repeated MCP calls 26ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > refuses preview tools to a client outside a thread before they run 18ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > rejects non-boolean snapshot image options before selecting a browser host 20ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > saves the snapshot PNG on request and reports its path 19ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > reports a tagged error when the screenshot cannot be saved 18ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > registers the pull request toolkit and surfaces a missing capability as a tool error 23ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > returns server ARIA refs to agents in text and structured results 12ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > bounds large ARIA trees without dropping every server locator 15ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > keeps the snapshot text under the agent's output ceiling 14ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > bounds the snapshot text even when nothing but logs and the title are large 21ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > bounds page text made of wide characters before dropping locators 16ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > sheds log entries before locators when every list is full 24ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > terminates HTTP MCP sessions with DELETE 78ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > registers annotated tools and preserves authenticated request context 29ms
+ ✓ apps/server/src/mcp/McpHttpServer.test.ts > admits provider and OAuth client credentials and points only clients at OAuth 33ms
+
+ Test Files  6 passed (6)
+      Tests  136 passed (136)
+   Start at  00:13:04
+   Duration  14.90s (transform 56%, import 28%, tests 14%, setup 3%)
+
+  Transform  transforming modules took 29.99s · 56% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

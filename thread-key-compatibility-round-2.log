@@ -1,0 +1,67 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-assignment-release
+
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > atomically registers a connected host and correlates its response 26ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > targets multiple tabs explicitly while retaining a default tab 10ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps an older target stable while a newer explicit tab responds (implicit: true) 7ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps an older target stable while a newer explicit tab responds (implicit: false) 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tracks the tab returned by a targeted recording stop 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not let a no-tab response suppress an earlier tab decision 5ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > announces a live replacement stream before delivering requests 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a server-host open alive for installation without extending other operations 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves bounded request and remote selector diagnostics 6ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > classifies a remote non-editable target without collapsing it to execution 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingTransferError 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingDesktopUpdateRequiredError 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingTooLargeError 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > preserves recording failure PreviewAutomationRecordingDeadlineExpiredError 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tells the agent why its own server browser failed (server-browser) 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > tells the agent why its own server browser failed (client-1) 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > distinguishes malformed remote failures 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > rejects calls when no connected host exists 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not create host state from focus updates without a live stream 1ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > removes host availability when the authoritative request stream disconnects 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > routes requests for background threads through an environment-level host 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > never routes a provider session to a host from another environment 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > pins a provider session to its initial host despite later focus changes 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > prefers the live tab owner for new sessions without moving existing leases 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > prefers a focused host over unrelated extra capabilities for a new session 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not route new operations to legacy hosts that did not advertise support 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > routes resize to a capable host instead of a newer legacy connection 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not move a live legacy assignment to another runtime for resize 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > ignores stale focus updates for a different environment 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > fails over a pinned provider session only after its host disconnects 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > lets the browser host resolve an active tab locally 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a replacement stream authoritative when the old stream finalizes 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > does not carry a tab id across a replacement automation stream 3ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > fails requests assigned to the stream that is replaced 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > accepts responses only from the host that received the request 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > discards buffered actions before completing an evicted host stream 4ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > rejects a routed action when its generation is evicted before delivery 9ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps a host whose operation timeout arrives just after the budget 2ms
+ ✓ apps/server/src/mcp/PreviewAutomationBroker.test.ts > keeps the host connected when a background status read times out 2ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+[00:23:02.978] INFO (#4): { sessions: 100, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions 125ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+[00:23:03.337] INFO (#215): { sessions: 500, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions 355ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (before-first-request) 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (after-completion) 3ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not restore a revoked assignment when an in-flight action reads its status 3ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host 7ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host 3ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > keeps a live session's host and current tab across credential liveness refreshes 3ms
+
+ Test Files  2 passed (2)
+      Tests  51 passed (51)
+   Start at  00:23:00
+   Duration  2.41s (transform 45%, import 33%, tests 18%, setup 4%)
+

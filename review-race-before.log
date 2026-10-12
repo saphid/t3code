@@ -1,0 +1,117 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-assignment-release
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions
+[00:21:11.978] INFO (#4): { sessions: 100, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 100 revoked sessions 122ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions
+[00:21:12.439] INFO (#215): { sessions: 500, scannedAssignments: 0, probeScannedAssignments: 0 }
+
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases preview assignments across 500 revoked sessions 458ms
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (before-first-request)
+[00:21:12.452] ERROR (#1226): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:159:55 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (after-completion)
+[00:21:12.463] ERROR (#1244): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:159:55 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not restore a revoked assignment when an in-flight action reads its status
+[00:21:12.467] ERROR (#1264): Error [AssertionError]: expected true to be false // Object.is equality
+    at /home/saphid/.t3code/worktrees/t3code/preview-assignment-release/apps/server/src/mcp/McpSessionRegistry.preview.test.ts:195:53 {
+  actual: true,
+  expected: false,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ × apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (before-first-request) 18ms
+   → expected true to be false // Object.is equality
+ × apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (after-completion) 5ms
+   → expected true to be false // Object.is equality
+ × apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not restore a revoked assignment when an in-flight action reads its status 4ms
+   → expected true to be false // Object.is equality
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on provider without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on thread without disconnecting a host 4ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on all without disconnecting a host 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-resolve without disconnecting a host 5ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-issue without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > releases assignments on expiry-touch without disconnecting a host 6ms
+ ✓ apps/server/src/mcp/McpSessionRegistry.preview.test.ts > keeps a live session's host and current tab across credential liveness refreshes 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (before-first-request)
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not retain a stale scope routed after revocation (after-completion)
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts:159:55
+    157|         const live = yield* harness.issue(ThreadId.make("thread-live")…
+    158|         const measured = yield* harness.invokeMeasured(live);
+    159|         expect(measured.retainedKeys.has(retiredKey)).toBe(false);
+       |                                                       ^
+    160|         expect(yield* harness.registry.resolve(retired.token)).toBeUnd…
+    161|       }),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  apps/server/src/mcp/McpSessionRegistry.preview.test.ts > does not restore a revoked assignment when an in-flight action reads its status
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/server/src/mcp/McpSessionRegistry.preview.test.ts:195:53
+    193|       const live = yield* harness.issue(ThreadId.make("thread-live"));
+    194|       const measured = yield* harness.invokeMeasured(live);
+    195|       expect(measured.retainedKeys.has(retiredKey)).toBe(false);
+       |                                                     ^
+    196|       expect(yield* harness.registry.resolve(retired.token)).toBeUndef…
+    197|     }),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1690:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 9 passed (12)
+   Start at  00:21:09
+   Duration  2.73s (transform 47%, tests 26%, import 24%, setup 3%)
+
