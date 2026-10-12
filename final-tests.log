@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound
+
+
+ Test Files  1 passed (1)
+      Tests  28 passed (28)
+   Start at  23:22:28
+   Duration  14.73s (transform 60%, import 21%, tests 19%, setup 1%)
+
+  Transform  transforming modules took 8.69s · 60% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

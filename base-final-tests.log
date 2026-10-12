@@ -1,0 +1,92 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound
+
+stdout | apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from passive subscriptions while retaining recently read entries
+[23:18:29.523] ERROR (#11): Error [AssertionError]: expected 1001 to equal 1002
+    at /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound/apps/server/src/vcs/VcsStatusBroadcaster.test.ts:196:16 {
+  actual: 1001,
+  expected: 1002,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from status reads while retaining recently read entries
+[23:18:29.905] ERROR (#25): Error [AssertionError]: expected 1001 to equal 1002
+    at /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound/apps/server/src/vcs/VcsStatusBroadcaster.test.ts:196:16 {
+  actual: 1001,
+  expected: 1002,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from local refreshes while retaining recently read entries
+[23:18:30.225] ERROR (#2039): Error [AssertionError]: expected 1001 to equal 1002
+    at /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound/apps/server/src/vcs/VcsStatusBroadcaster.test.ts:196:16 {
+  actual: 1001,
+  expected: 1002,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from full refreshes while retaining recently read entries
+[23:18:30.599] ERROR (#2053): Error [AssertionError]: expected 1001 to equal 1002
+    at /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound/apps/server/src/vcs/VcsStatusBroadcaster.test.ts:196:16 {
+  actual: 1001,
+  expected: 1002,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/vcs/VcsStatusBroadcaster.test.ts (26 tests | 4 failed) 1991ms
+   ❯ VcsStatusBroadcaster (26)
+     × bounds historical snapshots from passive subscriptions while retaining recently read entries 633ms
+     × bounds historical snapshots from status reads while retaining recently read entries 377ms
+     × bounds historical snapshots from local refreshes while retaining recently read entries 320ms
+     × bounds historical snapshots from full refreshes while retaining recently read entries 375ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from passive subscriptions while retaining recently read entries
+ FAIL  apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from status reads while retaining recently read entries
+ FAIL  apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from local refreshes while retaining recently read entries
+ FAIL  apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > bounds historical snapshots from full refreshes while retaining recently read entries
+AssertionError: expected 1001 to equal 1002
+
+- Expected
++ Received
+
+- 1002
++ 1001
+
+ ❯ apps/server/src/vcs/VcsStatusBroadcaster.test.ts:196:16
+    194|           broadcaster.streamStatus({ cwd: "/visited-repo-0", includeRe…
+    195|         );
+    196|         assert.equal(state.localStatusCalls, localCalls + 1);
+       |                ^
+    197|       }).pipe(Effect.provide(layerTestFor(state)));
+    198|     },
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 22 passed (26)
+   Start at  23:18:21
+   Duration  9.57s (transform 55%, import 23%, tests 21%, setup 1%)
+
+  Transform  transforming modules took 5.19s · 55% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

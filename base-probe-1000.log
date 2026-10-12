@@ -1,0 +1,9 @@
+{
+  "sampleCount": 1000,
+  "filesPerSnapshot": 100,
+  "workflowReads": 1000,
+  "retainedSnapshots": 1000,
+  "retainedFileRecords": 100000,
+  "heapGrowthBytes": 20425888,
+  "elapsedMs": 259.095816
+}

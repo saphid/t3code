@@ -1,0 +1,80 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound
+
+stdout | apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > refreshes a watched PR after eviction with fetching disabled and background work enabled=true
+[23:22:18.049] ERROR (#11): Error [AssertionError]: expected null to deeply equal { hasUpstream: true, …(3) }
+    at /home/saphid/.t3/worktrees/t3code/vcs-status-cache-bound/apps/server/src/vcs/VcsStatusBroadcaster.test.ts:242:18 {
+  actual: null,
+  expected: {
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: {
+      number: 2978,
+      title: '[codex] Rewrite client connection architecture',
+      url: 'https://github.com/pingdotgg/t3code/pull/2978',
+      baseRef: 'main',
+      headRef: 'codex/connection-state-audit',
+      state: 'open'
+    }
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/vcs/VcsStatusBroadcaster.test.ts (28 tests | 1 failed | 26 skipped) 556ms
+   ❯ VcsStatusBroadcaster (28)
+     × refreshes a watched PR after eviction with fetching disabled and background work enabled=true 315ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/vcs/VcsStatusBroadcaster.test.ts > VcsStatusBroadcaster > refreshes a watched PR after eviction with fetching disabled and background work enabled=true
+AssertionError: expected null to deeply equal { hasUpstream: true, …(3) }
+
+- Expected:
+{
+  "aheadCount": 0,
+  "behindCount": 0,
+  "hasUpstream": true,
+  "pr": {
+    "baseRef": "main",
+    "headRef": "codex/connection-state-audit",
+    "number": 2978,
+    "state": "open",
+    "title": "[codex] Rewrite client connection architecture",
+    "url": "https://github.com/pingdotgg/t3code/pull/2978",
+  },
+}
+
++ Received:
+null
+
+ ❯ apps/server/src/vcs/VcsStatusBroadcaster.test.ts:242:18
+    240|         const refreshed = yield* broadcaster.refreshPullRequestStatus(…
+    241|         if (backgroundWorkEnabled) {
+    242|           assert.deepStrictEqual(refreshed, remoteStatusWithPr);
+       |                  ^
+    243|           assert.equal(state.remoteStatusCalls, remoteCalls + 1);
+    244|           assert.deepStrictEqual(yield* Deferred.await(remoteUpdated),…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Effect.ts:25968:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 26 skipped (28)
+   Start at  23:22:09
+   Duration  8.47s (transform 65%, import 28%, tests 7%, setup 1%)
+
+  Transform  transforming modules took 5.38s · 65% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
