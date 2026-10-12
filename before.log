@@ -1,0 +1,3 @@
+revision=3f70c831c6; runtime=v24.15.0; defaultLocale=en-US; files=10000; samples=5 per sort; units=ms
+lazy: samples=[865.7,875.6,783.4,780.5,912.7]; median=865.7 ms; identical ordering on all runs and numeric/case/accent/deletion fixtures
+preview: samples=[710.4,719.6,692.8,748.7,801.9]; median=719.6 ms; identical ordering on all runs and numeric/case/accent/deletion fixtures

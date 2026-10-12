@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/diff-sort-collator
+
+
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+   Start at  00:06:39
+   Duration  3.65s (import 52%, transform 43%, setup 4%, tests 1%)
+
