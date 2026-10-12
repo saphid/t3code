@@ -1,0 +1,40 @@
+// Scratch steady-state retention measurement for B-1 review round 1. Not committed.
+import { it } from "@effect/vitest";
+import type { TerminalAttachStreamEvent } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { terminalOutputStream as fixed } from "./OutputProtocol.ts";
+import { terminalOutputStream as round1 } from "./zzOldOutputProtocol.ts";
+
+type L = (e: TerminalAttachStreamEvent) => Effect.Effect<void>;
+const run = (mode: "round1" | "fixed") =>
+  Effect.gen(function* () {
+    const listeners = new Set<L>();
+    const subscribe = (l: L) => Effect.sync(() => { listeners.add(l); return () => { listeners.delete(l); }; }).pipe(Effect.tap(() => l({ type: "closed", threadId: "t", terminalId: "default" })));
+    const make = mode === "fixed" ? fixed : round1;
+    const pull = yield* Stream.toPull(make(subscribe));
+    yield* pull; // subscribes
+    let n = 0;
+    const publish = () => {
+      const event: TerminalAttachStreamEvent = { type: "output", threadId: "t", terminalId: "default", data: Buffer.alloc(4096, 97 + (n++ % 26)).toString("latin1") };
+      return Effect.forEach(listeners, (l) => l(event), { discard: true });
+    };
+    for (let i = 0; i < 64; i++) yield* publish(); // ~256 KiB standing backlog
+    globalThis.gc?.();
+    const before = process.memoryUsage().heapUsed;
+    let delivered = 0;
+    for (let cycle = 0; cycle < 5000; cycle++) {
+      const batch = yield* pull;
+      delivered += batch.length;
+      for (let i = 0; i < batch.length; i++) yield* publish();
+    }
+    globalThis.gc?.();
+    const retainedMiB = (process.memoryUsage().heapUsed - before) / 1024 / 1024;
+    require("node:fs").appendFileSync("/home/saphid/sweep-20261012/evidence/B-1/steady-state-retention.jsonl",
+      JSON.stringify({ mode, cycles: 5000, deliveredEvents: delivered, deliveredMiB: +(delivered * 4096 / 1048576).toFixed(1), standingBacklogEvents: 64, retainedHeapMiB: +retainedMiB.toFixed(1), stillSubscribed: listeners.size }) + "\n");
+  }).pipe(Effect.scoped);
+
+for (const sample of [1, 2, 3]) {
+  it.live(`round1 ${sample}`, () => run("round1"), 120_000);
+  it.live(`fixed ${sample}`, () => run("fixed"), 120_000);
+}

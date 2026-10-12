@@ -1,0 +1,81 @@
+// Scratch before/after measurement for B-1. Not committed.
+import { it } from "@effect/vitest";
+import {
+  type TerminalAttachStreamEvent,
+  TerminalAttachStreamEvent as Schema_,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import { Rpc, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import { terminalOutputStream, withTerminalOutputWindow } from "./OutputProtocol.ts";
+
+const tag = WS_METHODS.terminalAttach;
+const snapshot = (history: string): TerminalAttachStreamEvent => ({
+  type: "snapshot",
+  snapshot: { threadId: "t", terminalId: "default", cwd: "/r", worktreePath: null, status: "running", pid: 1, history, exitCode: null, exitSignal: null, label: "bash", updatedAt: "2026-01-01T00:00:00.000Z" },
+});
+type L = (e: TerminalAttachStreamEvent) => Effect.Effect<void>;
+
+const run = (mode: "base" | "fix", events: number, size: number) =>
+  Effect.gen(function* () {
+    const listeners = new Set<L>();
+    const subscribe = (l: L) => Effect.sync(() => { listeners.add(l); return () => { listeners.delete(l); }; });
+    const attach = (history: string) => (l: L) => subscribe(l).pipe(Effect.tap(() => l(snapshot(history))));
+    const handler =
+      mode === "base"
+        ? () => Stream.callback<TerminalAttachStreamEvent>((queue) =>
+            Effect.acquireRelease(attach("")((e) => Queue.offer(queue, e)), (u) => Effect.sync(u)))
+        : () => terminalOutputStream(attach(""), attach("fresh"));
+    const group = RpcGroup.make(Rpc.make(tag, { success: Schema_, stream: true }));
+    const responses = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
+    const receive = yield* Deferred.make<Parameters<RpcServer.Protocol["Service"]["run"]>[0]>();
+    const protocol = yield* RpcServer.Protocol.make((write) => Effect.gen(function* () {
+      yield* Deferred.succeed(receive, write);
+      const serialization = yield* RpcSerialization.RpcSerialization;
+      return { disconnects: yield* Queue.unbounded<number>(), send: (_c, r) => Queue.offer(responses, r), end: () => Effect.void, clientIds: Effect.succeed(new Set([0])), initialMessage: Effect.succeedNone, supportsAck: true, supportsTransferables: false, supportsSpanPropagation: false, supportsNotifications: true, codecFor: serialization.codecFor };
+    }));
+    yield* RpcServer.make(group).pipe(Effect.provide(group.toLayerHandler(tag, handler)), Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)), Effect.forkScoped);
+    const write = yield* Deferred.await(receive);
+    yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
+    yield* Effect.yieldNow;
+    yield* Queue.clear(responses);
+    globalThis.gc?.();
+    const heapBefore = process.memoryUsage().heapUsed;
+    const data = "x".repeat(size);
+    let sentBeforeStall = 0;
+    const trace: string[] = [];
+    for (let i = 0; i < events; i++) {
+      const event: TerminalAttachStreamEvent = { type: "output", threadId: "t", terminalId: "default", data: Buffer.alloc(size, 97 + (i % 26)).toString("latin1") };
+      yield* Effect.forEach(listeners, (l) => l(event), { discard: true });
+      if (i % 64 === 0) yield* Effect.yieldNow;
+      if (i % 1000 === 0) trace.push(`${i}:${listeners.size}`);
+    }
+    yield* Effect.yieldNow;
+    sentBeforeStall = (yield* Queue.clear(responses)).length;
+    globalThis.gc?.();
+    const listenersWhileStalled = listeners.size;
+    const retainedHeapMiB = (process.memoryUsage().heapUsed - heapBefore) / 1024 / 1024;
+    const started = performance.now();
+    yield* write(0, { _tag: "Ack", requestId: "1" });
+    const next = yield* Queue.take(responses);
+    const ackToChunkMs = performance.now() - started;
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    const nextChunkBytes = Buffer.byteLength(JSON.stringify(next));
+    const result = {
+      mode, events, eventBytes: size, publishedMiB: +((events * size) / 1024 / 1024).toFixed(1),
+      chunksSentBeforeStall: sentBeforeStall, listenersWhileStalled, listenersAfterAck: listeners.size,
+      retainedHeapMiB: +retainedHeapMiB.toFixed(1),
+      nextChunkValues: next._tag === "Chunk" ? next.values.length : 0,
+      nextChunkBytes, nextChunkFirstType: next._tag === "Chunk" ? (next.values[0] as TerminalAttachStreamEvent).type : next._tag,
+      ackToChunkMs: +ackToChunkMs.toFixed(1), trace: trace.join(" "),
+    };
+    require("node:fs").appendFileSync("/home/saphid/sweep-20261012/evidence/B-1/bench-raw.jsonl", JSON.stringify(result) + "\n");
+  }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped);
+
+for (const sample of [1, 2, 3]) {
+  it.live(`base sample ${sample}`, () => run("base", 10_000, 4096), 120_000);
+  it.live(`fix sample ${sample}`, () => run("fix", 10_000, 4096), 120_000);
+}

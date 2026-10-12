@@ -1,0 +1,5 @@
+[00:06:18.269] ERROR (#22): Error [AssertionError]: expected [ { type: 'output', …(4) }, …(1) ] to match object [ { type: 'output', data: 'after\n' } ]
+     × does not repeat output in flight while a stalled stream resyncs 74ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected [ { type: 'output', …(4) }, …(1) ] to match object [ { type: 'output', data: 'after\n' } ]
+      Tests  1 failed | 93 skipped (94)

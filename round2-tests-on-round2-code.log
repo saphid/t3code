@@ -1,0 +1,11 @@
+[00:00:25.426] ERROR (#22): Error [AssertionError]: expected [ { type: 'snapshot', …(1) }, …(2) ] to have a length of 1 but got 3
+  expected: 1,
+     × resyncs after a close and reopen queued on the thread lock 426ms
+[00:00:26.060] ERROR (#4): Error [AssertionError]: expected 1 to equal +0
+  expected: 0,
+     × charges snapshot history but never overflows on one snapshot 12ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected [ { type: 'snapshot', …(1) }, …(2) ] to have a length of 1 but got 3
+AssertionError: expected 1 to equal +0
+ Test Files  2 failed (2)
+      Tests  2 failed | 101 skipped (103)
