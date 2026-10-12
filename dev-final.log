@@ -1,0 +1,496 @@
+$ node scripts/dev-runner.ts dev ⊘ cache disabled
+[23:33:02.041] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert serverPort=16049 webPort=8009 baseDir=/home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/.t3
+~/apps/web$ vp dev ⊘ cache disabled
+~/apps/server$ node --watch src/bin.ts ⊘ cache disabled
+
+  VITE+ v1.0.0  
+
+  ➜  Local:   http://localhost:8009/
+bash: cannot set terminal process group (2701196): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:33:10.156] INFO (#4610): Listening on http://127.0.0.1:16049
+[23:33:10.178] INFO (#4609): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:33:10.200] INFO (#4609): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:33:10.258] INFO (#4970): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:33:32.392] WARN (#6426) http.span=8ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 14a9cc561ae470f0e10dab424e3bbf34
+  reason: Unknown session token.
+[23:33:32.399] INFO (#6426) http.span=15ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:32.459] WARN (#6428) http.span=2ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 22fbd6ca8ad894b808b5c67939d0fb93
+  reason: Unknown session token.
+[23:33:32.459] INFO (#6428) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:32.532] WARN (#6429) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: e25cb346a4f26b3d5d5a32bcd6aee184
+  reason: Unknown session token.
+[23:33:32.533] INFO (#6429) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:32.554] INFO (#6430) http.span=5ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:32.577] INFO (#6431) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:32.599] WARN (#6432) http.span=2ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: d31ceac9fcfcb731c4fa86e35f1a8dc3
+  reason: Unknown session token.
+[23:33:32.599] INFO (#6432) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:32.602] WARN (#6433) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 2c1b907eee49d91d835d80390ac1aff0
+  reason: Unknown session token.
+[23:33:32.603] INFO (#6433) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:32.627] WARN (#6434) http.span=2ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:33:32.628] INFO (#6434) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:33:36.102] WARN (#6437) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: ec29cb532d50c863eb81e8eb646c970b
+  reason: Unknown session token.
+[23:33:36.103] INFO (#6437) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:36.164] WARN (#6438) http.span=2ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: d35a6fbca53c5733b7daecc1e8f31be7
+  reason: Unknown session token.
+[23:33:36.165] INFO (#6438) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:36.207] WARN (#6439) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 2b151666c63a433c577433cab3ffab5a
+  reason: Unknown session token.
+[23:33:36.208] INFO (#6439) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:36.225] INFO (#6440) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:36.248] INFO (#6441) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:36.270] WARN (#6442) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 485c88d1720ac3a0b4cf7718f319cda6
+  reason: Unknown session token.
+[23:33:36.271] INFO (#6442) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:36.275] WARN (#6443) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: de26fefe96d6a57c37d203fb62f38870
+  reason: Unknown session token.
+[23:33:36.276] INFO (#6443) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:36.297] WARN (#6444) http.span=1ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:33:36.297] INFO (#6444) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:33:38.515] INFO (#6445) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:38.522] WARN (#6446) http.span=0ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 59cf5094f58e9e77459e64ba0b7b6c09
+  reason: Unknown session token.
+[23:33:38.523] INFO (#6446) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:38.526] WARN (#6447) http.span=0ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 5ab843ceecfee9e5a911d3ccad587462
+  reason: Unknown session token.
+[23:33:38.527] INFO (#6447) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:38.529] WARN (#6448) http.span=0ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 5ab843ceecfee9e5a911d3ccad587462
+  reason: Unknown session token.
+[23:33:38.530] INFO (#6448) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:38.555] WARN (#6449) http.span=2ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:33:38.555] INFO (#6449) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:33:42.032] INFO (#6460) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:42.039] WARN (#6461) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: fa02027d73d642103856b723cd46ea9d
+  reason: Unknown session token.
+[23:33:42.039] INFO (#6461) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:42.043] WARN (#6462) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: bc3a2d9324e1a515274aa0b17d214384
+  reason: Unknown session token.
+[23:33:42.043] INFO (#6462) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:42.059] WARN (#6463) http.span=1ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:33:42.060] INFO (#6463) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:33:48.227] INFO (#6468) http.span=5ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:33:48.248] WARN (#6469) http.span=2ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: b572ac71851aff83a851fcf3e54b1d54
+  reason: Unknown session token.
+[23:33:48.249] INFO (#6469) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:48.254] WARN (#6470) http.span=2ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: af8cf5bf62f28ad095ca5ad8aafc40f1
+  reason: Unknown session token.
+[23:33:48.254] INFO (#6470) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:33:48.277] WARN (#6471) http.span=1ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:33:48.277] INFO (#6471) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:33:53.821] WARN (#6474) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 2a8968edc51aa678219ab1f5a07fabc6
+  reason: Unknown session token.
+[23:33:53.822] INFO (#6474) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:02.461] INFO (#6479) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:34:02.469] WARN (#6480) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 1dfd4b1047935656b1ae41e15549e3be
+  reason: Unknown session token.
+[23:34:02.470] INFO (#6480) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:02.475] WARN (#6481) http.span=1ms: Rejected authenticated session credential.
+  environment.endpoint: HttpApiEndpoint
+  traceId: 956f00ec3d222bea2da094b0f2df2426
+  reason: Unknown session token.
+[23:34:02.475] INFO (#6481) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:02.516] WARN (#6482) http.span=1ms: Rejected authenticated session credential.
+  reason: Unknown session token.
+[23:34:02.517] INFO (#6482) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 401
+[23:34:18.980] INFO (#7062) http.span=13ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/auth/browser-session
+  http.status: 200
+[23:34:18.989] INFO (#7067) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:38.230] INFO (#7078) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:44.077] INFO (#7089) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:44.849] INFO (#7090) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:34:44.913] INFO (#7091) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:34:44.970] INFO (#7092) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:44.978] INFO (#7093) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:45.899] INFO (#7244) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:34:45.939] INFO (#7184) http.span=89ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[23:34:47.668] INFO (#7759) http.span=8ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:48.764] INFO (#7969) http.span=28ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/threads/thread%3Aproject%3Aed1176ae-513f-4746-8540-aaae2c17dee3%3A7e0ff56d-7f9a-43a7-b3db-3facc0699501/bounded
+  http.status: 200
+[23:34:49.112] INFO (#8105) http.span=7ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:50.368] INFO (#8307) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:51.380] INFO (#8310) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:54.387] INFO (#8313) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:57.450] INFO (#8318) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:58.455] INFO (#8321) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:34:59.459] INFO (#8324) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:00.464] INFO (#8329) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:03.470] INFO (#8332) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:05.484] INFO (#8337) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:06.496] INFO (#8340) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:09.505] INFO (#8343) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:10.510] INFO (#8357) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:12.515] INFO (#8360) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:13.796] INFO (#8635) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:14.918] INFO (#8646) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:16.000] INFO (#8799) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:18.005] INFO (#8967) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:21.013] INFO (#9020) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:24.019] INFO (#9023) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:26.024] INFO (#9028) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:27.029] INFO (#9033) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:30.035] INFO (#9036) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:33.041] INFO (#9041) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:36.049] INFO (#9047) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:39.055] INFO (#9050) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:42.060] INFO (#9063) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:43.066] INFO (#9233) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:44.071] INFO (#9249) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:45.075] INFO (#9252) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:48.080] INFO (#9257) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:51.085] INFO (#9310) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:54.090] INFO (#9313) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:35:57.095] INFO (#9318) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:36:00.102] INFO (#9321) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:36:01.107] INFO (#9327) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:36:03.113] INFO (#9330) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:36:06.118] INFO (#9335) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+                                   [23:36:08.189] INFO (#7094) http.span=82980ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#9347)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[23:36:08.229] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+bash: cannot set terminal process group (2701196): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:36:28.959] INFO (#4611): Listening on http://127.0.0.1:16049
+[23:36:29.000] INFO (#4610): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:36:29.031] INFO (#4610): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:36:29.114] INFO (#4968): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:36:50.790] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }

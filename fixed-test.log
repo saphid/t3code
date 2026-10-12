@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert
+
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  23:30:39
+   Duration  5.13s (transform 37%, import 31%, environment 23%, setup 4%, tests 4%)
+

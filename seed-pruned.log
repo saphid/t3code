@@ -1,0 +1,18 @@
+$ node apps/server/scripts/migrate-dev-db.ts --source /tmp/R2L-2-fixture-source.sqlite --projects 8 --threads-per-project 8 ⊘ cache disabled
+Copying visible threads from /tmp/R2L-2-fixture-source.sqlite (read-only)...
+Running migrations on the snapshot...
+Pruning to 8 projects, 8 stopped threads each...
+Compacting into /home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/.t3/userdata/statev2.sqlite...
+
+Dev database ready: /home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/.t3/userdata/statev2.sqlite (50.5 MB)
+  server: 1 threads
+  qwenVision: 0 threads
+  SlopKindle: 0 threads
+  StoryShelf — legacy work: 0 threads
+  StoryShelf: 0 threads
+  t3code-8c898c90: 0 threads
+  Fleet: 0 threads
+  t3code: 19 threads
+  5397 orchestration events kept
+  Migrations: already current (no new migrations in this checkout)
+

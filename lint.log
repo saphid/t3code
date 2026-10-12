@@ -1,0 +1,2 @@
+note: You are running `vp lint` as a Vite+ built-in command. If you meant to run the lint npm script, use `vpr lint` instead.
+apps/web/src/components/ui/sidebar.tsx:496:6: warning react(exhaustive-effect-dependencies): Found missing effect dependencies help: Missing dependencies can cause an effect to fire less often than it should

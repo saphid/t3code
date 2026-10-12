@@ -1,0 +1,1199 @@
+$ node scripts/dev-runner.ts dev ⊘ cache disabled
+[23:24:44.744] INFO (#1): [dev-runner] mode=dev source=worktree /home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert serverPort=16049 webPort=8009 baseDir=/home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/.t3
+~/apps/web$ vp dev ⊘ cache disabled
+~/apps/server$ node --watch src/bin.ts ⊘ cache disabled
+
+  VITE+ v1.0.0  
+
+  ➜  Local:   http://localhost:8009/
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:24:53.665] WARN (#51): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+[23:24:54.650] INFO (#4612): Listening on http://127.0.0.1:16049
+[23:24:54.763] INFO (#4611): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:24:54.883] INFO (#4611): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:24:55.209] INFO (#5014): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:24:57.135] WARN (#5523): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:24:58.033] WARN (#6790): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+Restarting 'src/bin.ts'
+[23:24:59.287] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:25:16.847] WARN (#51): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+[23:25:18.392] INFO (#4612): Listening on http://127.0.0.1:16049
+[23:25:18.613] INFO (#4611): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:25:18.840] INFO (#4611): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:25:19.491] INFO (#5016): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:25:22.973] WARN (#5527): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:25:24.181] WARN (#5853): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+[23:25:34.945] INFO (#10553) http.span=9ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:03.814] INFO (#10577) http.span=7ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:26:03.863] INFO (#10578) http.span=4ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:26:03.908] INFO (#10601) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:03.918] INFO (#10603) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:04.229] INFO (#10738) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:04.297] INFO (#10669) http.span=147ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[23:26:08.290] INFO (#11123) http.span=241ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/assets/eyJ2ZXJzaW9uIjoxLCJraW5kIjoicHJvamVjdC1mYXZpY29uIiwid29ya3NwYWNlUm9vdCI6Ii9ob21lL3NhcGhpZC9wcm9qZWN0cy90M2NvZGUiLCJyZWxhdGl2ZVBhdGgiOiJhc3NldHMvZGV2L2JsdWVwcmludC13ZWItYXBwbGUtdG91Y2gtMTgwLnBuZyIsImV4cGlyZXNBdCI6MTc5MTg0OTYwMDAwMH0.ag3Ve2MEp0ea_RT8dmrFUmPk_v018tWwJ7onvxzJF0Y/v4943ac41cc004f826c95d6da34e0b04c387cf54982fc424ba3da8b68dc4598db-blueprint-web-apple-touch-180.png
+  http.status: 200
+[23:26:08.851] INFO (#11317) http.span=57ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:11.107] INFO (#11625) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:12.113] INFO (#11682) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:15.119] INFO (#11754) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:18.125] INFO (#11757) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:21.130] INFO (#11858) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:24.138] INFO (#11865) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:25.003] INFO (#10579) http.span=21125ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 101
+[23:26:28.063] INFO (#11873) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:32.723] INFO (#12658) http.span=166ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:26:32.984] WARN (#11889): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:26:33.080] INFO (#12834) http.span=135ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:26:33.265] INFO (#13010) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:33.353] INFO (#13061) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:33.397] INFO (#13078) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:33.996] WARN (#12439): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+[23:26:34.263] INFO (#13428) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:26:34.537] INFO (#13607) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:35.098] INFO (#13329) http.span=1097ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[23:26:35.599] INFO (#14299) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:36.606] INFO (#14427) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:39.611] INFO (#14432) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:42.618] INFO (#14435) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:45.625] INFO (#14440) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:48.631] INFO (#14443) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:51.636] INFO (#14456) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:54.641] INFO (#14461) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:26:57.648] INFO (#14465) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:00.653] INFO (#14470) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:03.658] INFO (#14473) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:06.663] INFO (#14478) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:09.674] INFO (#14483) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:12.681] INFO (#14486) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:15.692] INFO (#14491) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:18.699] INFO (#14494) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:21.708] INFO (#14595) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:22.723] INFO (#14601) http.span=5ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:24.730] INFO (#14606) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:27.736] INFO (#14609) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:30.747] INFO (#14614) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:33.755] INFO (#14617) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:35.886] WARN (#14849): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+[23:27:36.803] INFO (#15742) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:37.302] WARN (#15310): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:27:38.814] INFO (#16834) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:41.823] INFO (#16890) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:44.827] INFO (#16895) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:47.840] INFO (#16899) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:27:50.847] INFO (#16912) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+11:27:53 PM [vite+] (client) hmr update /src/index.css, /src/components/ui/sidebar.tsx
+[23:27:54.109] INFO (#16915) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+11:27:54 PM [vite+] (client) hmr invalidate /src/components/ui/sidebar.tsx Could not Fast Refresh ("useSidebar" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+11:27:54 PM [vite+] (client) hmr update /src/components/AppSidebarLayout.tsx, /src/components/LegacySidebar.tsx, /src/components/Sidebar.tsx, /src/components/settings/SettingsSidebarNav.tsx, /src/components/sidebar/SidebarChrome.tsx, /src/components/sidebar/SidebarThreadHeader.tsx, /src/components/sidebar/SidebarUpdatePill.tsx, /src/routes/_chat.index.tsx?tsr-split=component, /src/components/ThreadRouteView.tsx, /src/components/NoProjectsHero.tsx, /src/components/NoActiveThreadState.tsx, /src/routes/settings.tsx?tsr-split=component and 1 more
+[23:27:57.714] INFO (#16920) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+11:27:57 PM [vite+] (client) hmr invalidate /src/components/sidebar/SidebarUpdatePill.tsx Could not Fast Refresh ("handleSidebarUpdateReleaseNotesPopoverOpenChange" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+11:27:57 PM [vite+] (client) hmr update /src/components/sidebar/SidebarChrome.tsx
+[23:28:00.725] INFO (#16925) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:03.731] INFO (#16928) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:06.736] INFO (#16933) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:09.747] INFO (#16938) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:12.754] INFO (#16942) http.span=0ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:15.760] INFO (#16947) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:16.905] INFO (#12985) http.span=103671ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 101
+[23:28:19.092] INFO (#16963) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:28:19.693] INFO (#16966) http.span=3ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:28:19.820] INFO (#16967) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:28:20.067] INFO (#16987) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:28:20.114] INFO (#16988) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:28:20.433] INFO (#17148) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:28:20.494] INFO (#17046) http.span=148ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[23:28:20.750] INFO (#17241) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:21.805] INFO (#17269) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:22.815] INFO (#17360) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:25.827] INFO (#17367) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:28.839] INFO (#17370) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:31.852] INFO (#17375) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:34.866] INFO (#17380) http.span=4ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:37.860] WARN (#17610): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+[23:28:37.903] INFO (#17733) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:39.855] WARN (#18409): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:28:40.916] INFO (#19597) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:43.930] INFO (#19650) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:45.938] INFO (#19656) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:46.947] INFO (#19659) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:49.956] INFO (#19672) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:52.962] INFO (#19675) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:55.967] INFO (#19680) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:28:58.973] INFO (#19683) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:01.978] INFO (#19688) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:04.985] INFO (#19693) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:07.991] INFO (#19696) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:09.996] INFO (#19702) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:11.006] INFO (#19705) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:14.013] INFO (#19708) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:17.018] INFO (#19713) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:20.026] INFO (#19726) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:23.033] INFO (#19729) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:26.038] INFO (#19825) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:29.048] INFO (#19828) http.span=2ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:32.061] INFO (#19833) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:35.068] INFO (#19839) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:38.073] INFO (#19844) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:38.822] WARN (#20072): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+11:29:40 PM [vite+] (client) hmr update /src/index.css, /src/components/ui/sidebar.tsx
+11:29:40 PM [vite+] (client) hmr update /src/index.css, /src/components/AppSidebarLayout.tsx, /src/components/LegacySidebar.tsx, /src/components/Sidebar.tsx, /src/components/settings/SettingsSidebarNav.tsx, /src/components/sidebar/SidebarChrome.tsx, /src/components/sidebar/SidebarThreadHeader.tsx, /src/components/sidebar/SidebarUpdatePill.tsx, /src/routes/_chat.index.tsx?tsr-split=component, /src/components/ThreadRouteView.tsx, /src/components/NoProjectsHero.tsx, /src/components/NoActiveThreadState.tsx and 2 more
+[23:29:40.636] INFO (#16968) http.span=80580ms: Sent HTTP response
+  http.method: GET
+  http.url: /ws
+  http.status: 101
+[23:29:43.053] WARN (#20875): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:29:43.399] INFO (#21885) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:29:43.916] INFO (#22058) http.span=6ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:29:44.029] INFO (#22059) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:29:44.273] INFO (#22083) http.span=0ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:29:44.325] INFO (#22084) http.span=2ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:29:44.589] INFO (#22244) http.span=1ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/auth/session
+  http.status: 200
+[23:29:44.652] INFO (#22140) http.span=141ms: Sent HTTP response
+  http.method: GET
+  http.url: /api/orchestration/shell
+  http.status: 200
+[23:29:44.903] INFO (#22412) http.span=3ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:45.909] INFO (#22417) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+[23:29:47.914] INFO (#22420) http.span=1ms: Sent HTTP response
+  http.method: POST
+  http.url: /api/observability/v1/traces
+  http.status: 204
+Restarting 'src/bin.ts'
+[23:29:48.305] INFO (#22064) http.span=4041ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#22432)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[23:29:48.403] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+11:29:48 PM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:49 PM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:50 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:50 PM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:51 PM [vite+] http proxy error: /api/observability/v1/traces
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:52 PM [vite+] (client) hmr update /src/index.css, /src/components/ui/sidebar.tsx
+Restarting 'src/bin.ts'
+11:29:52 PM [vite+] (client) hmr invalidate /src/components/ui/sidebar.tsx Could not Fast Refresh ("useSidebar" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+11:29:52 PM [vite+] (client) hmr update /src/components/AppSidebarLayout.tsx, /src/components/LegacySidebar.tsx, /src/components/Sidebar.tsx, /src/components/settings/SettingsSidebarNav.tsx, /src/components/sidebar/SidebarChrome.tsx, /src/components/sidebar/SidebarThreadHeader.tsx, /src/components/sidebar/SidebarUpdatePill.tsx, /src/routes/_chat.index.tsx?tsr-split=component, /src/components/ThreadRouteView.tsx, /src/components/NoProjectsHero.tsx, /src/components/NoActiveThreadState.tsx, /src/routes/settings.tsx?tsr-split=component and 1 more
+Restarting 'src/bin.ts'
+11:29:57 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:29:57 PM [vite+] (client) hmr invalidate /src/components/sidebar/SidebarUpdatePill.tsx Could not Fast Refresh ("handleSidebarUpdateReleaseNotesPopoverOpenChange" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+11:29:57 PM [vite+] (client) hmr update /src/components/sidebar/SidebarChrome.tsx
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+11:30:04 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+Restarting 'src/bin.ts'
+11:30:14 PM [vite+] (client) hmr update /src/index.css
+11:30:15 PM [vite+] (client) hmr update /src/index.css
+Restarting 'src/bin.ts'
+11:30:17 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:18 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:18 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:19 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:19 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:20 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:20 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:21 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:21 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:22 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Restarting 'src/bin.ts'
+11:30:22 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+Waiting for graceful termination...
+11:30:23 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+Gracefully restarted 'src/bin.ts'
+11:30:23 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:24 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:24 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:25 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:25 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:26 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:26 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:27 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:27 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:28 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:28 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:30:29.789] WARN (#51): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+[23:30:30.765] INFO (#4611): Listening on http://127.0.0.1:16049
+[23:30:30.839] INFO (#4610): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:30:30.958] INFO (#4610): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:30:31.310] INFO (#5010): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:30:33.357] WARN (#5511): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:30:34.559] WARN (#6955): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+Restarting 'src/bin.ts'
+[23:30:57.077] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+11:30:58 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:59 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:30:59 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:00 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:00 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:01 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:01 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:02 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:02 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+[23:31:03.564] WARN (#51): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+[23:31:04.247] INFO (#4610): Listening on http://127.0.0.1:16049
+[23:31:04.304] INFO (#4609): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:31:04.393] INFO (#4609): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:31:04.714] INFO (#5012): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:31:06.460] WARN (#5523): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:31:07.252] WARN (#5843): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+Restarting 'src/bin.ts'
+[23:31:29.812] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+11:31:29 PM [vite+] http proxy error: /api/auth/session
+Error: socket hang up
+    at Socket.socketOnEnd (node:_http_client:617:25)
+    at Socket.emit (node:events:521:24)
+    at endReadableNT (node:internal/streams/readable:1729:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+11:31:29 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:29 PM [vite+] (client) [console.error] PrimaryEnvironmentRequestError
+    at PrimaryEnvironmentRequestError.fromCause (http://localhost:8009/src/environments/primary/auth.ts:28:10)
+    at http://localhost:8009/src/environments/primary/auth.ts:101:41
+    at async retryTransientBootstrap (http://localhost:8009/src/environments/primary/auth.ts:170:11)
+    at async bootstrapServerAuth (http://localhost:8009/src/environments/primary/auth.ts:197:25)
+    at async Object.beforeLoad (http://localhost:8009/src/routes/__root.tsx?t=1791847792192:72:25)
+    at async loadMatches (http://localhost:8009/node_modules/.vite/deps/@tanstack_react-router.js?v=2a6c2983:2111:31)
+    at async http://localhost:8009/node_modules/.vite/deps/@tanstack_react-router.js?v=2a6c2983:3375:7
+
+The above error occurred in the <MatchInnerImpl> component.
+
+React will try to recreate this component tree from scratch using the error boundary you provided, CatchBoundaryImpl.
+
+11:31:29 PM [vite+] (client) [console.warn] Warning: Error in route match: __root__/
+11:31:29 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:30 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:30 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:31 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:31 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:32 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:32 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:32 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:33 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:34 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:34 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:35 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:35 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+11:31:36 PM [vite+] http proxy error: /.well-known/t3/environment
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+bash: cannot set terminal process group (2660476): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /home/saphid/.openclaw/completions/openclaw.bash: No such file or directory
+:4: command not found
+11:31:36 PM [vite+] http proxy error: /api/auth/session
+Error: connect ECONNREFUSED 127.0.0.1:16049
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[23:31:36.128] WARN (#51): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+[23:31:36.785] INFO (#4610): Listening on http://127.0.0.1:16049
+[23:31:36.943] INFO (#4609): agent activity publishing standby; waiting for T3 Connect link reconciliation
+[23:31:37.092] INFO (#4609): V2 orchestration recovery completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }
+[23:31:37.474] INFO (#5005): Authentication required. Open T3 Code using the pairing URL.
+  pairingUrl: [redacted]
+[23:31:39.143] INFO (#6899) http.span=79ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:31:39.260] WARN (#5518): thread branch pull request lookup failed
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:203:28)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:355:5)\n' +
+      '    at ThreadPullRequestServiceV2.synchronize (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadPullRequestService.ts:142:30)'
+  }
+[23:31:39.305] INFO (#7027) http.span=94ms: Sent HTTP response
+  http.method: GET
+  http.url: /.well-known/t3/environment
+  http.status: 200
+[23:31:40.372] WARN (#6940): automatic thread settlement skipped
+  {
+    threadIds: [
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-1-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-2-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-3-20261012',
+      'thread:delegated-task:command%3Amcp%3A0d91043b-726d-4dad-9fd1-27062464439c%3Adelegate-task%3Ac3-review-round-4-20261012',
+      'thread:project:5826f097-53cd-4cac-ae1b-80c02cecd96a:2d0d7e77-2c40-4a69-a3c6-ba3b65e223d1'
+    ],
+    cause: 'GitCommandError: Git command failed in GitManager.branchPullRequest.remotes (/home/saphid/.t3/worktrees/t3code/composer-undo-retention): Git command exited with a non-zero status. (not_a_repository)\n' +
+      '    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1051:25\n' +
+      '    at runGitCommand (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1070:25)\n' +
+      '    at runGitCommand (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:960:36)\n' +
+      '    at GitManager.branchPullRequest.remotes (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/vcs/GitVcsDriverCore.ts:1104:14)\n' +
+      '    at branchPullRequest (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:516:25)\n' +
+      '    at branchPullRequest (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/git/GitManager.ts:2360:80)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:523:38)\n' +
+      '    at ThreadSettlementServiceV2.pullRequestFor (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:453:35)\n' +
+      '    at ThreadSettlementServiceV2.sweep (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:546:5)\n' +
+      '    at ThreadSettlementServiceV2.sweep (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/src/orchestration-v2/ThreadSettlementService.ts:313:24)'
+  }
+[23:31:58.890] INFO (#7152) http.span=19522ms:
+  InterruptError: All fibers interrupted without error {
+    [cause]: InterruptCause: The fiber was interrupted by:
+        at fiber (#10694)
+  }
+  http.method: GET
+  http.url: /ws
+  http.status: 503
+[23:31:58.933] INFO (#11): V2 orchestration shutdown reconciliation completed
+  {
+    terminalizedRuns: 0,
+    stoppedSessions: 0,
+    closedRequests: 0,
+    retiredEffects: 0,
+    requeuedEffects: 0
+  }

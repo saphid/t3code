@@ -1,0 +1,15 @@
+$ node apps/server/scripts/migrate-dev-db.ts --projects 8 --threads-per-project 8 ⊘ cache disabled
+Copying visible threads from /home/saphid/.t3/userdata/statev2.sqlite (read-only)...
+Running migrations on the snapshot...
+[23:24:47.011] WARN (#4): Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name. {
+  divergent: [
+    '52:ProjectionUsageLimitResume (this build: ProjectionThreadTitleState)'
+  ]
+}
+[23:24:47.197] ERROR (#4): MigrateDevDbSlotCollisionError: Migration slot collision at 52: this checkout registers 'ProjectionThreadTitleState' but the database already applied 'ProjectionUsageLimitResume' in that slot. Renumber the new migration to a free slot.
+    at file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/scripts/migrate-dev-db.ts:465:21
+    at verifyMigrationSlots (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/scripts/migrate-dev-db.ts:560:12)
+    at verifyMigrationSlots (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/scripts/migrate-dev-db.ts:457:37)
+    at runMigrateDevDb (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/scripts/migrate-dev-db.ts:647:29)
+    at runMigrateDevDb (definition) (file:///home/saphid/.t3/worktrees/t3code/collapsed-sidebar-inert/apps/server/scripts/migrate-dev-db.ts:470:39)
+

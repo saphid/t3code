@@ -1,0 +1,16 @@
+No defects found in R2L-2 (`c3d36a1cb2` against `511d20c6f2`). I didn't run the tests; this review comes from reading the code and its callers.
+
+What I checked:
+
+- **Where focus goes.** On collapse, focus moves to the first sidebar trigger in the provider wrapper that sits outside the sidebar subtree (`apps/web/src/components/ui/sidebar.tsx:220-233`). The only provider is in `AppSidebarLayout.tsx:316`. The trigger inside the sidebar (`SidebarChrome.tsx:61`, hidden at desktop width) is skipped, so focus lands on the visible "Toggle main sidebar" button. That holds for the current thread sidebar, the legacy one and Settings, since all three render inside the same `<Sidebar>`.
+- **Order of operations.** Focus is moved before `inert` is set, inside a layout effect, so it doesn't fall back to `<body>`.
+- **Expanding.** `toggleAttribute("inert", false)` restores normal access. If the sidebar starts collapsed, the effect runs on mount and sets `inert`.
+- **Mobile Sheet is unchanged.** It never gets the ref, so the effect returns early, and `offcanvasCollapsed` is false whenever `isMobile` is true. The ref is also missing when `collapsible` is `"none"`. Switching between mobile and desktop width while collapsed always changes `offcanvasCollapsed`, so the effect re-runs on the newly mounted desktop element. A fresh element can't keep a stale `inert`.
+- **The resize rail loses nothing.** It already has `pointer-events-none` when the offcanvas sidebar is collapsed (`sidebar.tsx:546`), so `inert` takes away no mouse access.
+- **Shortcuts that open the sidebar and then focus inside it still work.** Settings "/" calls `setOpen(true)` and then focuses in `requestAnimationFrame` (`SettingsSidebarNav.tsx:173-177`). React commits that update and removes `inert` before the frame callback runs. The thread search focus in `SidebarThreadHeader.tsx:116` only happens from inside the visible sidebar.
+- **Tests.** They exercise real behaviour rather than static markup, which meets the AGENTS.md rule. They don't check Tab-order exclusion, and jsdom may not implement it anyway; your browser pass covered that.
+
+Minor non-defects:
+
+- Moving focus to the toggle by code after a keyboard action may show its tooltip because of focus-visible. That's arguably helpful.
+- Popups portaled out of the sidebar keep focus when it collapses, as they did before; nothing changed there.
