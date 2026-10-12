@@ -1,0 +1,75 @@
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/shell-batch-merge
+
+stdout | packages/client-runtime/src/state/shell-sync.test.ts > environment shell synchronization > batches Infinity events (existing: true)
+[00:01:53.792] ERROR (#27): Error [AssertionError]: expected 5200 to be less than or equal to 550
+    at /home/saphid/.t3/worktrees/t3code/shell-batch-merge/packages/client-runtime/src/state/shell-sync.test.ts:266:27 {
+  actual: 5200,
+  expected: 550,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/client-runtime/src/state/shell-sync.test.ts > environment shell synchronization > batches 16 events (existing: true)
+[00:01:53.804] ERROR (#46): Error [AssertionError]: expected 5200 to be less than or equal to 700
+    at /home/saphid/.t3/worktrees/t3code/shell-batch-merge/packages/client-runtime/src/state/shell-sync.test.ts:266:27 {
+  actual: 5200,
+  expected: 700,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ packages/client-runtime/src/state/shell-sync.test.ts (16 tests | 2 failed) 108ms
+   ❯ environment shell synchronization (16)
+     × batches Infinity events (existing: true) 10ms
+     × batches 16 events (existing: true) 5ms
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 14 passed (16)
+   Start at  00:01:52
+   Duration  1.70s (transform 56%, import 33%, tests 7%, setup 4%)
+
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/client-runtime/src/state/shell-sync.test.ts > environment shell synchronization > batches Infinity events (existing: true)
+AssertionError: expected 5200 to be less than or equal to 550
+ ❯ packages/client-runtime/src/state/shell-sync.test.ts:266:27
+    264|       if (existingRows) {
+    265|         // Index each received batch once; distinct updates must not r…
+    266|         expect(rowVisits).toBeLessThanOrEqual(50 * (expectedSequences.…
+       |                           ^
+    267|       }
+    268|       const snapshots = states.map((state) => Option.getOrThrow(state.…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  packages/client-runtime/src/state/shell-sync.test.ts > environment shell synchronization > batches 16 events (existing: true)
+AssertionError: expected 5200 to be less than or equal to 700
+ ❯ packages/client-runtime/src/state/shell-sync.test.ts:266:27
+    264|       if (existingRows) {
+    265|         // Index each received batch once; distinct updates must not r…
+    266|         expect(rowVisits).toBeLessThanOrEqual(50 * (expectedSequences.…
+       |                           ^
+    267|       }
+    268|       const snapshots = states.map((state) => Option.getOrThrow(state.…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:617:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

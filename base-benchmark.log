@@ -1,0 +1,4 @@
+{"threads":1000,"updates":1000,"medianMs":31.72,"rangeMs":[29.6,35]}
+{"threads":2000,"updates":2000,"medianMs":115.18,"rangeMs":[106.66,125.8]}
+{"threads":4000,"updates":4000,"medianMs":202.79,"rangeMs":[175.54,429.07]}
+{"threads":8000,"updates":8000,"medianMs":662.75,"rangeMs":[650.61,693.35]}

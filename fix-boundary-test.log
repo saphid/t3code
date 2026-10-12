@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/shell-batch-merge
+
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  23:59:16
+   Duration  1.61s (transform 56%, import 34%, tests 6%, setup 4%)
+

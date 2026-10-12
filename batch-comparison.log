@@ -1,0 +1,4 @@
+{"threads":1000,"updates":1000,"batchSize":16,"samples":5,"baseThreadArrays":1000,"batchThreadArrays":63,"existingMedianMs":31.22,"oneMergePerBatchMedianMs":6.67}
+{"threads":2000,"updates":2000,"batchSize":16,"samples":5,"baseThreadArrays":2000,"batchThreadArrays":125,"existingMedianMs":111.72,"oneMergePerBatchMedianMs":20.83}
+{"threads":4000,"updates":4000,"batchSize":16,"samples":5,"baseThreadArrays":4000,"batchThreadArrays":250,"existingMedianMs":183.77,"oneMergePerBatchMedianMs":78.29}
+{"threads":8000,"updates":8000,"batchSize":16,"samples":5,"baseThreadArrays":8000,"batchThreadArrays":500,"existingMedianMs":733.22,"oneMergePerBatchMedianMs":375.64}
