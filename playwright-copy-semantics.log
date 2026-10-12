@@ -1,0 +1,23 @@
+      }
+      async pathAfterFinished(params2, progress2) {
+        const path59 = await this._object.localPathAfterFinished(progress2);
+        return { value: path59 };
+      }
+      async saveAs(params2, progress2) {
+        return await progress2.race(new Promise((resolve, reject) => {
+          this._object.saveAs(progress2, async (localPath, error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            try {
+              await mkdirIfNeeded(params2.path);
+              await import_fs35.default.promises.copyFile(localPath, params2.path);
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          });
+        }));
+      }
+      async saveAsStream(params2, progress2) {

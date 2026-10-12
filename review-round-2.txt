@@ -1,0 +1,18 @@
+I found no defects in K-3 at `2d4c871b98`. The race from the first review is fixed. I read the code and didn't run the tests again.
+
+**Order in `finally`** (`apps/server/src/preview/ServerBrowser.ts:1008-1013`): `settleAbortedNavigation` now runs before `await download.delete().catch(constVoid)`. The shown-in-place decision (`:995-997`) and the settle again have no await between them. A navigation that starts while `delete()` is pending can't skip the settle any more, and the file offer is no longer lost.
+
+**Every exit path still releases the original:**
+- `failure()` returning early, a tab that is closing, an oversized file, and the catch path all reach `delete()` through `finally`.
+- If `delete()` rejects (closed context or crashed browser), the error is swallowed. The status is already settled by then, so nothing is lost.
+- `saveDownload` is still the only `download` handler (`:894`), so popup tabs, every client and MCP all go through it.
+
+**Copies and retention are unchanged:** the saved copy, `tab.downloads`, the eviction loop and the size limit (`DOWNLOAD_MAX_BYTES = 1 GiB`, `:380`) work as before.
+
+**The tests are deterministic:**
+- The new test "a file navigation settles before artifact deletion can start another navigation" fails under the old order. There, the `request` event from `delete()` changes the navigation's generation number, so the settle never sends the `failed` event, and the loop exits on the newer navigation's Loading event with no `failed` event received. Under the new order, `failed` is sent before `delete()` is called.
+- The `toHaveBeenCalledOnce()` checks run straight after taking the viewer or event message. That is safe: `delete()` is called in the same synchronous run, right after the push or report. The waiting test fiber resumes later, because effect-smol schedules the release of `Queue` takers through `dispatcher.scheduleTask` (`.repos/effect-smol/packages/effect/src/Queue.ts:1962-1970`). It doesn't resume inline.
+- The byte checks wait on `deleted.promise`, which is resolved in a `finally` inside the mock, so the "delete failed" case also resolves. Nothing depends on sleeps or polling.
+- The sparse `truncate` to 1 GiB + 1 byte goes over the real limit.
+
+There are no wire, UI or docs changes, and none are needed.

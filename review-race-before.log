@@ -1,0 +1,127 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-download-originals
+
+stdout | apps/server/src/preview/ServerBrowser.test.ts > a file navigation settles before artifact deletion can start another navigation
+[00:23:00.764] ERROR (#4): Error [AssertionError]: expected [ { type: 'opened', …(6) }, …(1) ] to deep equally contain ObjectContaining{…}
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1154:24 {
+  actual: [
+    {
+      type: 'opened',
+      threadId: 'browser-test-thread',
+      tabId: 'tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657',
+      createdAt: '2026-10-12T00:23:00.739Z',
+      serverEpoch: '79bcd4cd-71c8-42cc-a3c4-78ab3e448657',
+      revision: 1,
+      snapshot: [Object]
+    },
+    {
+      type: 'navigated',
+      threadId: 'browser-test-thread',
+      tabId: 'tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657',
+      createdAt: '2026-10-12T00:23:00.747Z',
+      snapshot: [Object],
+      revision: 2,
+      serverEpoch: '79bcd4cd-71c8-42cc-a3c4-78ab3e448657'
+    }
+  ],
+  expected: ObjectContaining {
+    sample: { type: 'failed', download: [Object] },
+    inverse: false,
+    '$$typeof': Symbol(jest.asymmetricMatcher)
+  },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts (40 tests | 1 failed | 39 skipped) 50ms
+   × a file navigation settles before artifact deletion can start another navigation 49ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a file navigation settles before artifact deletion can start another navigation
+AssertionError: expected [ { type: 'opened', …(6) }, …(1) ] to deep equally contain ObjectContaining{…}
+
+- Expected:
+ObjectContaining {
+  "download": {
+    "fileName": "report.csv",
+    "id": Any<String>,
+  },
+  "type": "failed",
+}
+
++ Received:
+[
+  {
+    "createdAt": "2026-10-12T00:23:00.739Z",
+    "revision": 1,
+    "serverEpoch": "79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+    "snapshot": {
+      "canGoBack": false,
+      "canGoForward": false,
+      "navStatus": {
+        "_tag": "Idle",
+      },
+      "runtime": "server",
+      "tabId": "tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+      "threadId": "browser-test-thread",
+      "updatedAt": "2026-10-12T00:23:00.739Z",
+      "viewport": {
+        "_tag": "fill",
+      },
+    },
+    "tabId": "tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+    "threadId": "browser-test-thread",
+    "type": "opened",
+  },
+  {
+    "createdAt": "2026-10-12T00:23:00.747Z",
+    "revision": 2,
+    "serverEpoch": "79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+    "snapshot": {
+      "canGoBack": false,
+      "canGoForward": false,
+      "navStatus": {
+        "_tag": "Loading",
+        "title": "",
+        "url": "https://example.com/next",
+      },
+      "runtime": "server",
+      "tabId": "tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+      "threadId": "browser-test-thread",
+      "updatedAt": "2026-10-12T00:23:00.747Z",
+      "viewport": {
+        "_tag": "fill",
+      },
+    },
+    "tabId": "tab_1_79bcd4cd-71c8-42cc-a3c4-78ab3e448657",
+    "threadId": "browser-test-thread",
+    "type": "navigated",
+  },
+]
+
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1154:24
+    1152|         received.push(event);
+    1153|       } while (event.type !== "navigated" || event.snapshot.navStatus.…
+    1154|       expect(received).toContainEqual(
+       |                        ^
+    1155|         expect.objectContaining({
+    1156|           type: "failed",
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Module.doneUnsafe node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Deferred.ts:1707:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 39 skipped (40)
+   Start at  00:22:59
+   Duration  1.73s (transform 62%, import 31%, setup 4%, tests 3%)
+

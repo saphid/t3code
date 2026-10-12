@@ -1,0 +1,129 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-download-originals
+
+[00:18:01.896] WARN (#974): server preview tab failed to start {
+  cause: Error: first launch failed
+      at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:997:24
+      at Generator.next (<anonymous>)
+      at IteratorImpl.~effect/Effect/successCont (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:977:28)
+      at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+      at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+      at AsyncResource.runInAsyncScope (node:async_hooks:214:14)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+      at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:726:13)
+      at MixedSchedulerDispatcher.runTasks (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/Scheduler.js:172:17)
+}
+[00:18:01.927] WARN (#977): server preview tab failed to start {
+  cause: {
+    _tag: 'ServerBrowserTabNotFoundError',
+    threadId: 'browser-test-thread',
+    tabId: 'tab_m_4a13c737-e4ad-4975-85ea-43d1dd0388f5'
+  }
+}
+[00:18:01.953] ERROR (#1034): Error [AssertionError]: expected "vi.fn()" to be called once, but got 0 times
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1071:30 {
+  actual: 0,
+  expected: 1,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+[00:18:01.962] INFO (#1078): download artifact measurement { outcome: 'saved', originalBytes: 3 }
+[00:18:01.966] ERROR (#1078): Error [AssertionError]: expected "vi.fn()" to be called once, but got 0 times
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1161:32 {
+  actual: 0,
+  expected: 1,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+[00:18:01.973] INFO (#1119): download artifact measurement { outcome: 'oversized', originalBytes: 1073741825 }
+[00:18:01.977] ERROR (#1119): Error [AssertionError]: expected "vi.fn()" to be called once, but got 0 times
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1161:32 {
+  actual: 0,
+  expected: 1,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+[00:18:01.983] WARN (#1187): server preview download failed {
+  cause: Error: save interrupted
+      at Object.saveAs (/home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1145:50)
+      at saveDownload (/home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.ts:973:7)
+}
+[00:18:01.990] INFO (#1160): download artifact measurement { outcome: 'save failed', originalBytes: 3 }
+[00:18:01.994] ERROR (#1160): Error [AssertionError]: expected "vi.fn()" to be called once, but got 0 times
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1161:32 {
+  actual: 0,
+  expected: 1,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+[00:18:02.000] INFO (#1202): download artifact measurement { outcome: 'delete failed', originalBytes: 3 }
+[00:18:02.004] ERROR (#1202): Error [AssertionError]: expected "vi.fn()" to be called once, but got 0 times
+    at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1161:32 {
+  actual: 0,
+  expected: 1,
+  showDiff: false,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+ ❯ apps/server/src/preview/ServerBrowser.test.ts (39 tests | 5 failed) 719ms
+   × a page download is saved, offered to the controller, and listed for the agent 16ms
+   × a saved download releases its original without losing the saved copy or status 12ms
+   × a oversized download releases its original without losing the saved copy or status 11ms
+   × a save failed download releases its original without losing the saved copy or status 17ms
+   × a delete failed download releases its original without losing the saved copy or status 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a page download is saved, offered to the controller, and listed for the agent
+AssertionError: expected "vi.fn()" to be called once, but got 0 times
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1071:30
+    1069|       let offered = yield* Queue.take(viewer.output);
+    1070|       while (offered._tag !== "download") offered = yield* Queue.take(…
+    1071|       expect(deleteOriginal).toHaveBeenCalledOnce();
+       |                              ^
+    1072|       yield* Effect.promise(() => deleted.promise);
+    1073|       expect(yield* fs.exists(source)).toBe(false);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2548:86
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Object.resume node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a saved download releases its original without losing the saved copy or status
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a oversized download releases its original without losing the saved copy or status
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a save failed download releases its original without losing the saved copy or status
+ FAIL  apps/server/src/preview/ServerBrowser.test.ts > a delete failed download releases its original without losing the saved copy or status
+AssertionError: expected "vi.fn()" to be called once, but got 0 times
+ ❯ apps/server/src/preview/ServerBrowser.test.ts:1161:32
+    1159|           originalBytes: retainedBytes,
+    1160|         });
+    1161|         expect(deleteOriginal).toHaveBeenCalledOnce();
+       |                                ^
+    1162|         expect(retainedBytes).toBe(outcome === "delete failed" ? 3 : 0…
+    1163|         const accepted = outcome === "saved" || outcome === "delete fa…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Effect.ts:25970:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 34 passed (39)
+   Start at  00:17:58
+   Duration  3.69s (transform 53%, import 22%, tests 21%, setup 4%)
+

@@ -1,0 +1,39 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/preview-download-originals
+
+[00:23:21.812] WARN (#974): server preview tab failed to start {
+  cause: Error: first launch failed
+      at /home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:997:24
+      at Generator.next (<anonymous>)
+      at IteratorImpl.~effect/Effect/successCont (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:977:28)
+      at ExitPrimitive.~effect/Effect/evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/core.js:326:30)
+      at FiberImpl.runLoop (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:451:97)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:400:23)
+      at AsyncResource.runInAsyncScope (node:async_hooks:214:14)
+      at FiberImpl.evaluate (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:394:27)
+      at Array.<anonymous> (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/internal/effect.js:726:13)
+      at MixedSchedulerDispatcher.runTasks (file:///home/saphid/.t3code/worktrees/t3code/preview-download-originals/node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/dist/Scheduler.js:172:17)
+}
+[00:23:21.843] WARN (#977): server preview tab failed to start {
+  cause: {
+    _tag: 'ServerBrowserTabNotFoundError',
+    threadId: 'browser-test-thread',
+    tabId: 'tab_m_8d3c37ea-e579-4dea-836d-f706564be3dd'
+  }
+}
+[00:23:21.876] INFO (#1123): download artifact measurement { outcome: 'saved', originalBytes: 0 }
+[00:23:21.885] INFO (#1167): download artifact measurement { outcome: 'oversized', originalBytes: 0 }
+[00:23:21.894] WARN (#1238): server preview download failed {
+  cause: Error: save interrupted
+      at Object.saveAs (/home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.test.ts:1214:50)
+      at saveDownload (/home/saphid/.t3code/worktrees/t3code/preview-download-originals/apps/server/src/preview/ServerBrowser.ts:973:7)
+}
+[00:23:21.900] INFO (#1211): download artifact measurement { outcome: 'save failed', originalBytes: 0 }
+[00:23:21.909] INFO (#1256): download artifact measurement { outcome: 'delete failed', originalBytes: 3 }
+
+ Test Files  1 passed (1)
+      Tests  40 passed (40)
+   Start at  00:23:19
+   Duration  2.80s (transform 46%, tests 27%, import 24%, setup 3%)
+

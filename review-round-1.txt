@@ -1,0 +1,24 @@
+I found one concrete defect in K-3: deleting the original before settling the navigation adds a new await, and a navigation in that gap can drop the download offer.
+
+**Defect: `apps/server/src/preview/ServerBrowser.ts:1010` (with `:995` and `:947`)**
+
+`await download.delete()` now runs before `settleAbortedNavigation`. Before this change, nothing was awaited between the `shownInTab` decision and the settle. Now a full Playwright round trip sits between them.
+
+How it fails:
+1. A blank tab is opened straight to a file. `saveAs` finishes.
+2. At `:995`, `shownInTab` is true, because the generation still matches and the page is `about:blank`. So the try block returns without pushing the `download` offer to the controller, expecting the settle to show the file in the tab.
+3. While `delete()` is pending, the person starts a new navigation. The request handler at `:819` increments `tab.navigationGeneration`.
+4. In `finally`, `settleAbortedNavigation` returns early at `:947` because the generation no longer matches.
+
+The result: the file is saved and appears in agent status, but the person driving the page is never offered it, and the tab never shows it. The existing test "a file a blank tab opened is offered to download if the tab moves on while it saves" (`ServerBrowser.test.ts:813`) protects exactly this behaviour, but only for a navigation during `saveAs`. Nothing tests a navigation during `delete()`, so the regression is hidden.
+
+**Smallest fix:** in `finally`, call `settleAbortedNavigation` first (keeping its `!tab.closing` guard), then `await download.delete().catch(constVoid)`. A fire-and-forget `void download.delete().catch(constVoid)` also works. Either way, the release stays best-effort and the decision and the settle happen with no await between them again.
+
+**Test impact if you fix it that way:** the new `it.live.each` test reads `retainedBytes` right after the `failed` event. Its comment says "status settles in finally, after artifact cleanup", so it depends on the current delete-before-settle order. Once delete runs after the settle, that read races the cleanup. The test should instead wait on a deferred resolved inside the `deleteOriginal` mock, as the updated single-download test already does at `ServerBrowser.test.ts:~1058` with `deleted.promise`.
+
+Everything else checks out:
+- **Rejections:** a rejecting `delete()` (closed context, crashed browser) is swallowed and still reaches the settle.
+- **All exit paths:** the early returns for `failure()`, `tab.closing` and oversized files, and the catch path, all reach `delete()` via `finally`.
+- **Retention:** saved copies and download eviction are unchanged.
+- **Coverage:** `saveDownload` is the only download handler (`:894`), so popup tabs and all clients and MCP share this path.
+- **Test mocks:** the other updated mocks add `delete` consistently.
