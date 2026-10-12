@@ -1,0 +1,106 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation
+
+stdout | apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed summary read for a shared merge request
+[23:33:40.006] ERROR (#90): Error [AssertionError]: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+    at /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation/apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:580:20 {
+  actual: [],
+  expected: [ 'readable-checkout', 'same-readable-project' ],
+  showDiff: true,
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed stack read for a shared merge request
+[23:33:40.014] ERROR (#109): Error [AssertionError]: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+    at /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation/apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:580:20 {
+  actual: [],
+  expected: [ 'readable-checkout', 'same-readable-project' ],
+  showDiff: true,
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > refreshes closed links through the reactor's project after reopening elsewhere
+[23:33:40.025] ERROR (#167): Error [AssertionError]: expected 1 to equal 2
+    at /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation/apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:674:18 {
+  actual: 1,
+  expected: 2,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts (21 tests | 3 failed) 124ms
+   ❯ PullRequestSyncReactor (21)
+     × isolates a project's failed summary read for a shared merge request 14ms
+     × isolates a project's failed stack read for a shared merge request 4ms
+     × refreshes closed links through the reactor's project after reopening elsewhere 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed summary read for a shared merge request
+ FAIL  apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed stack read for a shared merge request
+AssertionError: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "readable-checkout",
+-   "same-readable-project",
+- ]
++ []
+
+ ❯ apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:580:20
+    578|             const reactor = yield* startAndSweep(fixture);
+    579|             const commands = yield* Ref.get(fixture.syncCommands);
+    580|             assert.sameMembers(
+       |                    ^
+    581|               commands.map((command) => command.threadId),
+    582|               [ThreadId.make("readable-checkout"), ThreadId.make("same…
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:970:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Object.resume node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ releaseTakers node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2506:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > refreshes closed links through the reactor's project after reopening elsewhere
+AssertionError: expected 1 to equal 2
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:674:18
+    672|         yield* Effect.gen(function* () {
+    673|           const reactor = yield* startAndSweep(fixture);
+    674|           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).le…
+       |                  ^
+    675|           yield* reactor.requestSync({
+    676|             host: "github.com",
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:970:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Object.resume node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ releaseTakers node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2506:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 18 passed (21)
+   Start at  23:33:29
+   Duration  10.37s (transform 70%, import 28%, tests 1%, setup 1%)
+
+  Transform  transforming modules took 7.14s · 70% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

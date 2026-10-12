@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation
+
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  23:36:36
+   Duration  12.10s (transform 71%, import 26%, setup 1%, tests 1%)
+
+  Transform  transforming modules took 8.48s · 71% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

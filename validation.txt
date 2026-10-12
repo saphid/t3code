@@ -1,0 +1,16 @@
+R2M-3 backend validation
+Base: 511d20c6f2
+Fix: 2895b32bc592760780d8c36fe6a15834ce241be0
+Boundary: actual PullRequestSyncReactor and drainable worker, with mocked external services and orchestration dispatch receipts. No sleeps or polling in tests.
+Regression: two projects share gitlab.com/owner/repository merge request 42. Missing-checkout project's summary or stack read fails; readable project has two threads.
+Before: no sync commands reach readable project's threads.
+After: both readable threads get merged snapshots; one summary read for their project; next sweep retries only failed project.
+Explicit refresh regression: closed PR shared across two projects requires invalidating each project's cache to observe reopening.
+Final baseline suite: 18 passed / 3 failed (base-final-tests.log).
+Final fixed suite after review cleanup: 21 passed / 0 failed (fixed-review-tests.log).
+Targeted lint: exit 0, two pre-existing no-unused-vars warnings (lint-review.log).
+Server package typecheck: exit 0, non-fatal Effect suggestions (typecheck-review.log).
+Review round 1: no correctness defects; verified redundant generation counter finding and replaced request maps with sets. Round 2 completed with no correctness defects; three optional wording nits left unchanged to keep scope focused.
+Source trace: PullRequestService persisted repository identities skip filesystem re-resolution and summary passes project.workspaceRoot to provider; GitLabCli passes cwd to glab process.run.
+Coverage: shared server flow updates PR snapshots and automatic settlement inputs for web, desktop, mobile, all agent adapters and connection modes. No wire contract or entry point changes.
+Limit: live glab spawning, persisted settlement and clients were not run; regression proof is at the real reactor's orchestration command boundary.

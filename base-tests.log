@@ -1,0 +1,69 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation
+
+stdout | apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed summary read for a shared merge request
+[23:32:21.362] ERROR (#90): Error [AssertionError]: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+    at /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation/apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:575:20 {
+  actual: [],
+  expected: [ 'readable-checkout', 'same-readable-project' ],
+  showDiff: true,
+  [cause]: undefined
+}
+
+stdout | apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed stack read for a shared merge request
+[23:32:21.371] ERROR (#109): Error [AssertionError]: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+    at /home/saphid/.t3/worktrees/t3code/pr-sync-project-isolation/apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:575:20 {
+  actual: [],
+  expected: [ 'readable-checkout', 'same-readable-project' ],
+  showDiff: true,
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts (21 tests | 2 failed) 141ms
+   ❯ PullRequestSyncReactor (21)
+     × isolates a project's failed summary read for a shared merge request 15ms
+     × isolates a project's failed stack read for a shared merge request 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed summary read for a shared merge request
+ FAIL  apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts > PullRequestSyncReactor > isolates a project's failed stack read for a shared merge request
+AssertionError: expected [] to have the same members as [ 'readable-checkout', …(1) ]
+
+- Expected
++ Received
+
+- [
+-   "readable-checkout",
+-   "same-readable-project",
+- ]
++ []
+
+ ❯ apps/server/src/orchestration-v2/PullRequestSyncReactor.test.ts:575:20
+    573|             const reactor = yield* startAndSweep(fixture);
+    574|             const commands = yield* Ref.get(fixture.syncCommands);
+    575|             assert.sameMembers(commands.map((command) => command.threa…
+       |                    ^
+    576|               ThreadId.make("readable-checkout"),
+    577|               ThreadId.make("same-readable-project"),
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:970:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Object.resume node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ releaseTakers node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Queue.ts:2506:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 19 passed (21)
+   Start at  23:32:12
+   Duration  9.10s (transform 72%, import 26%, tests 2%, setup 1%)
+
+  Transform  transforming modules took 6.47s · 72% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
