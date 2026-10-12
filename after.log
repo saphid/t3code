@@ -1,0 +1,28 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-composer-thread-suggestions
+
+{
+  hasThread: true,
+  updatesPerEnvironment: 100,
+  localRenders: 0,
+  remoteRenders: 0,
+  visibleItems: 0
+}
+{
+  hasThread: false,
+  updatesPerEnvironment: 100,
+  localRenders: 0,
+  remoteRenders: 0,
+  visibleItems: 0
+}
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  23:24:41
+   Duration  3.05s (transform 51%, import 28%, environment 14%, setup 3%, tests 3%)
+
+  Transform  transforming modules took 2.43s · 51% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

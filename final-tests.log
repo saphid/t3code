@@ -1,0 +1,38 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-composer-thread-suggestions
+
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > mobile slash commands > keeps native /plan with legacy mode enabled=false 4ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > mobile slash commands > keeps native /plan with legacy mode enabled=true 1ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > mobile slash commands > does not offer a native command inside the message 0ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > mobile slash commands > still applies the T3 plan command for supported providers 0ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > retries partial commands after the cooldown without editing the draft 24ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > does not poll a healthy pi workspace without discovery 3ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > does not poll a healthy acpRegistry workspace without discovery 2ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > arms the remaining cooldown when a concurrent scan publishes partial commands 3ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > does not retry when a concurrent scan publishes a complete workspace 3ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > retries a rejected refresh while published discovery remains pending 2ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > cancels the old workspace retry and does not duplicate an in-flight request 2ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.test.ts > workspace command discovery retry > cancels a scheduled retry when the composer unmounts 2ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > scopes shell lists to enabled environments and reuses unchanged shells 10ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > preserves ordered reference arrays when a middle thread changes 2ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > keeps navigation stable on hidden subagent updates and retains user forks 2ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > leaves switched-off environments out of navigation 2ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > shares point and list values without retaining an atom for every listed thread 6ms
+ ✓ packages/client-runtime/src/state/threadShell.test.ts > v2 thread shell lists > preserves project memberships on updates and keeps the same thread separate per environment 2ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=true 22ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=false 3ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > keeps open suggestions live and unsubscribes when closed, hasThread=true 33ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > keeps open suggestions live and unsubscribes when closed, hasThread=false 14ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > switches environments and stops reading shells with no environment or caret trigger 13ms
+ ✓ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > does not subscribe to thread suggestions for a bare @ 2ms
+
+ Test Files  3 passed (3)
+      Tests  24 passed (24)
+   Start at  23:28:11
+   Duration  4.77s (transform 53%, import 28%, environment 13%, setup 4%, tests 1%)
+
+  Transform  transforming modules took 5.90s · 53% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

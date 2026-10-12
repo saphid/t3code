@@ -1,0 +1,77 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-composer-thread-suggestions
+
+stdout | apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=true
+{
+  hasThread: true,
+  updatesPerEnvironment: 100,
+  localRenders: 100,
+  remoteRenders: 100,
+  visibleItems: 0
+}
+
+stdout | apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=false
+{
+  hasThread: false,
+  updatesPerEnvironment: 100,
+  localRenders: 100,
+  remoteRenders: 100,
+  visibleItems: 0
+}
+
+ ❯ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx (4 tests | 4 failed) 81ms
+   ❯ composer thread suggestion subscriptions (4)
+     × ignores shell updates with closed autocomplete, hasThread=true 42ms
+     × ignores shell updates with closed autocomplete, hasThread=false 18ms
+     × keeps open suggestions live and unsubscribes when closed, hasThread=true 10ms
+     × keeps open suggestions live and unsubscribes when closed, hasThread=false 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=true
+ FAIL  apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > ignores shell updates with closed autocomplete, hasThread=false
+AssertionError: expected 100 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 100
+
+ ❯ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx:100:26
+     98|     console.log({ hasThread, updatesPerEnvironment: 100, localRenders,…
+     99|     expect(menu.items).toEqual([]);
+    100|     expect(localRenders).toBe(0);
+       |                          ^
+    101|     expect(remoteRenders).toBe(0);
+    102|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > keeps open suggestions live and unsubscribes when closed, hasThread=true
+ FAIL  apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx > composer thread suggestion subscriptions > keeps open suggestions live and unsubscribes when closed, hasThread=false
+AssertionError: expected 100 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 100
+
+ ❯ apps/mobile/src/features/threads/use-composer-command-menu.subscriptions.test.tsx:107:47
+    105|     render({ draftMessage: "@Other", hasThread });
+    106|     expect(menu.items.map((item) => item.label)).toEqual(["Other task"…
+    107|     expect(updateShells(remoteEnvironmentId)).toBe(0);
+       |                                               ^
+    108|     act(() => registry.update(snapshotAtom(environmentId), (snapshot) …
+    109|       ...snapshot, threads: snapshot.threads.map((thread) => thread.id…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  23:23:28
+   Duration  2.31s (transform 47%, environment 24%, import 23%, tests 4%, setup 2%)
+
