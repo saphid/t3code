@@ -1,0 +1,14 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/palette-focus-restore
+
+
+ Test Files  2 passed (2)
+      Tests  36 passed (36)
+   Start at  23:29:21
+   Duration  6.34s (transform 54%, import 30%, environment 10%, tests 4%, setup 2%)
+
+  Transform  transforming modules took 5.18s · 54% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
