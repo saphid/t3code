@@ -1,0 +1,34 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-queued-save-typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts (1 test | 1 failed) 21ms
+   ❯ queued-message save (1)
+     × preserves text typed while the edit RPC is pending 19ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > preserves text typed while the edit RPC is pending
+AssertionError: expected '' to be 'version sent plus newer typing' // Object.is equality
+
+- Expected
++ Received
+
+- version sent plus newer typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:86:53
+     84|     await act(async () => { response.resolve({ _tag: "Success" }); awa…
+     85|     expect(mocks.edit.mock.calls[0]?.[0].input.text).toBe("version sen…
+     86|     expect(getComposerDraftSnapshot(draftKey).text).toBe("version sent…
+       |                                                     ^
+     87|     expect(getQueuedRunEdit(threadKey)).not.toBeNull();
+     88|     expect(state.isSavingQueuedEdit).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  23:17:22
+   Duration  2.02s (transform 44%, environment 28%, import 24%, setup 2%, tests 1%)
+

@@ -1,0 +1,88 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-queued-save-typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts (9 tests | 5 failed) 37ms
+   ❯ queued-message save (9)
+     × preserves text typed while the edit RPC is pending 20ms
+     × preserves typing during attachment preparation 2ms
+     × retains attachment removals made while saving 3ms
+     × retains newer attachments while saving 2ms
+     × retains newer context while saving 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > preserves text typed while the edit RPC is pending
+AssertionError: expected '' to be 'version sent plus newer typing' // Object.is equality
+
+- Expected
++ Received
+
+- version sent plus newer typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:165:53
+    163|     });
+    164|     expect(mocks.edit.mock.calls[0]?.[0].input.text).toBe("version sen…
+    165|     expect(getComposerDraftSnapshot(draftKey).text).toBe("version sent…
+       |                                                     ^
+    166|     expect(getQueuedRunEdit(threadKey)).not.toBeNull();
+    167|     expect(state.isSavingQueuedEdit).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > preserves typing during attachment preparation
+AssertionError: expected '' to be 'newer typing' // Object.is equality
+
+- Expected
++ Received
+
+- newer typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:190:53
+    188|     });
+    189|     expect(mocks.edit.mock.calls[0]?.[0].input.text).toBe("version sen…
+    190|     expect(getComposerDraftSnapshot(draftKey).text).toBe("newer typing…
+       |                                                     ^
+    191|     expect(getQueuedRunEdit(threadKey)).not.toBeNull();
+    192|     expect(state.isSavingQueuedEdit).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > retains attachment removals made while saving
+AssertionError: expected undefined to deeply equal []
+
+- Expected:
+[]
+
++ Received:
+undefined
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:242:62
+    240|     });
+    241|     expect(mocks.edit.mock.calls[0]?.[0].input.edit.attachments).toHav…
+    242|     expect(getQueuedRunEdit(threadKey)?.existingAttachments).toEqual([…
+       |                                                              ^
+    243|     expect(getComposerDraftSnapshot(draftKey).text).toBe("version sent…
+    244|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > retains newer attachments while saving
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > retains newer context while saving
+AssertionError: expected null not to be null
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:299:45
+    297|       await saving;
+    298|     });
+    299|     expect(getQueuedRunEdit(threadKey)).not.toBeNull();
+       |                                             ^
+    300|     expect(
+    301|       content === "attachments"
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  5 failed | 9 passed (14)
+   Start at  23:19:37
+   Duration  2.24s (transform 52%, import 28%, environment 16%, setup 3%, tests 1%)
+

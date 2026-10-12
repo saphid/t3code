@@ -1,0 +1,12 @@
+I found no defects in commit 59473d55d7. The round-1 Medium finding is fixed. This was a code reading only: I did not run the tests, typecheck, lint, a simulator or a browser, and I made no edits.
+
+**Why the fix holds** (`apps/mobile/src/state/use-thread-composer-state.ts:548-558`):
+- **Upload stamping no longer blocks closing.** `setComposerDraftAttachmentUpload` (`use-composer-drafts.ts:1470-1500`) keeps every attachment `id` and the order. It only changes `uploadedAttachmentId` and `uploadEnvironmentId`, so the new length-plus-ordered-id check passes. It also keeps the draft's `context` object, so the identity check on `context` is still safe.
+- **Nothing else rewrites the draft during a save.** `prepareTurnAttachments` (`lib/attachmentUpload.ts:324`) never writes to drafts. The upload worker at `composer-attachment-uploads.ts:94` is the only other writer.
+- **Real context edits are still caught, and unchanged typing doesn't trip it.** `referencedComposerContext` (`lib/composerContext.ts:186`) returns the same object when no records change. So typing that leaves context alone won't keep edit mode open, and any actual context change still will.
+- **Leftover typing can't bring back stale content.** Queued-edit drafts are left out of persisted storage (`use-composer-drafts.ts:668`), so reloading saved drafts can't overwrite the edit draft.
+- **The other checks still work.** `removeQueuedRunEditAttachment` creates a new edit object, so `getQueuedRunEdit(threadKey) !== edit` still catches removals. Cancel and the run-started effect both exit early while `savingQueuedEditRef` is set, and the `finally` block still clears saving state on every path.
+
+**Not caused by this diff, and not blocking:** when a background upload stamps an attachment during a save and the save then closes the edit, `scheduleUnusedComposerAttachmentCleanup(draft.attachments)` (line 560) gets the attachment list captured before the upload finished. That list has no `uploadedAttachmentId`, so the cleanup code that releases leftover uploads (`use-composer-drafts.ts:881-890`) never releases the background worker's upload. The base commit behaves the same way. Passing `currentDraft.attachments` instead would fix it, but that belongs in a separate change.
+
+**Optional tidy-up:** `use-composer-drafts.ts:1138` already has a `sameDraftAttachmentIds` helper that does the same length-plus-ordered-id comparison as the new inline check. It isn't exported.

@@ -1,0 +1,40 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-queued-save-typing
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts (10 tests | 1 failed) 40ms
+   ❯ queued-message save (10)
+     × closes an unchanged save when a background upload stamps attachment metadata 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/state/use-thread-composer-state.test.ts > queued-message save > closes an unchanged save when a background upload stamps attachment metadata
+AssertionError: expected { runId: 'run', …(3) } to be null
+
+- Expected:
+null
+
++ Received:
+{
+  "existingAttachments": [],
+  "messageId": "message",
+  "originalText": "version sent",
+  "runId": "run",
+}
+
+ ❯ apps/mobile/src/state/use-thread-composer-state.test.ts:324:41
+    322|     });
+    323|     await act(async () => { response.resolve({ _tag: "Success" }); awa…
+    324|     expect(getQueuedRunEdit(threadKey)).toBeNull();
+       |                                         ^
+    325|     expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]).toBeUnde…
+    326|     expect(state.isSavingQueuedEdit).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 passed (10)
+   Start at  23:21:44
+   Duration  2.32s (transform 44%, import 26%, environment 25%, setup 2%, tests 2%)
+

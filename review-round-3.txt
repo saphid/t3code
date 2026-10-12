@@ -1,0 +1,23 @@
+I found no defects in round 3. I only read the code: I didn't edit anything, run any checks or start a simulator.
+
+**The helper (`queued-run-edit.ts:108`).** Its semantics are right.
+- It compares text exactly (untrimmed), attachment count, attachment ids in order, and the context object by identity.
+- It ignores upload metadata, which is what we want. When an upload finishes during a save, `setComposerDraftAttachmentUpload` (`use-composer-drafts.ts:1470`) replaces the attachments array but keeps the ids, their order and the context object. `getComposerDraftSnapshot` and `normalizeDraft` (`use-composer-drafts.ts:542-555`) also keep the same context object, so an unchanged draft compares equal.
+- Comparing context by identity can occasionally report a change when the content is the same. That only leaves the composer open, which is the safe direction: no newer typing is lost.
+
+**The call site (`use-thread-composer-state.ts:549-551`).** It behaves correctly.
+- **Identity check:** `getQueuedRunEdit(threadKey) !== edit` keeps the composer open in two cases:
+  - The user removed an existing server attachment during the RPC. `removeQueuedRunEditAttachment` replaces the edit object, and the payload that was sent still included that attachment, so a second Save is needed.
+  - `beginQueuedRunEdit` swapped in a different run. Returning without ending avoids clearing the new edit's state.
+- **Snapshot comparison:** it passes the same `draft` that was sent, compared with a fresh snapshot under the same draft key. That's correct.
+- **Cancel during save:** it's blocked by `savingQueuedEditRef`, so the edit can't disappear underneath the save. The only other `endQueuedRunEdit` call sites are at lines 461 and 477.
+- **When nothing changed:** `endQueuedRunEdit` and `scheduleUnusedComposerAttachmentCleanup(draft.attachments)` run as before. On the early return, cleanup is skipped correctly because the attachments are still in the draft.
+
+**Tests.** They're proportionate and correct: seven pure cases in the existing suite, with no module mocks. They cover:
+- an unchanged draft
+- upload metadata only
+- newer text
+- an attachment added, removed or reordered
+- a replaced context object
+
+`toReversed()` is already used in `threadListV2.test.ts`, so it's supported here. The identity check on the queued edit has no unit test, but it's a one-line comparison and doesn't justify bringing back the heavy hook test.
