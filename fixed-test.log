@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/disabled-provider-health-skip
+
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  23:34:48
+   Duration  1.77s (transform 63%, import 27%, setup 5%, tests 5%)
+

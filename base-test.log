@@ -1,0 +1,68 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/disabled-provider-health-skip
+
+stdout | packages/provider-core/src/server/managedProvider.test.ts > makeManagedServerProvider > skips disabled periodic checks with generic demand but keeps settings and manual refresh
+[23:34:43.956] ERROR (#4): Error [AssertionError]: expected { probes: 2, publications: 2 } to deeply equal { probes: +0, publications: +0 }
+    at /home/saphid/.t3/worktrees/t3code/disabled-provider-health-skip/packages/provider-core/src/server/managedProvider.test.ts:196:18 {
+  actual: { probes: 2, publications: 2 },
+  expected: { probes: 0, publications: 0 },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+stdout | packages/provider-core/src/server/managedProvider.test.ts > makeManagedServerProvider > skips disabled periodic checks with instance demand but keeps settings and manual refresh
+[23:34:43.965] ERROR (#25): Error [AssertionError]: expected { probes: 2, publications: 2 } to deeply equal { probes: +0, publications: +0 }
+    at /home/saphid/.t3/worktrees/t3code/disabled-provider-health-skip/packages/provider-core/src/server/managedProvider.test.ts:196:18 {
+  actual: { probes: 2, publications: 2 },
+  expected: { probes: 0, publications: 0 },
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ packages/provider-core/src/server/managedProvider.test.ts (14 tests | 2 failed) 113ms
+   ❯ makeManagedServerProvider (14)
+     × skips disabled periodic checks with generic demand but keeps settings and manual refresh 31ms
+     × skips disabled periodic checks with instance demand but keeps settings and manual refresh 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/provider-core/src/server/managedProvider.test.ts > makeManagedServerProvider > skips disabled periodic checks with generic demand but keeps settings and manual refresh
+ FAIL  packages/provider-core/src/server/managedProvider.test.ts > makeManagedServerProvider > skips disabled periodic checks with instance demand but keeps settings and manual refresh
+AssertionError: expected { probes: 2, publications: 2 } to deeply equal { probes: +0, publications: +0 }
+
+- Expected
++ Received
+
+  {
+-   "probes": 0,
+-   "publications": 0,
++   "probes": 2,
++   "publications": 2,
+  }
+
+ ❯ packages/provider-core/src/server/managedProvider.test.ts:196:18
+    194|           yield* TestClock.adjust("5 minutes");
+    195|           yield* TestClock.adjust("5 minutes");
+    196|           assert.deepStrictEqual(
+       |                  ^
+    197|             {
+    198|               probes: (yield* Ref.get(checkCalls)) - 1,
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:970:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1024:13
+ ❯ MixedSchedulerDispatcher.runTasks node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/Scheduler.ts:245:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 12 passed (14)
+   Start at  23:34:42
+   Duration  1.77s (transform 56%, import 32%, tests 7%, setup 5%)
+
