@@ -1,0 +1,1048 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/stash-shortcut-scope
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after shortcut deletion with editorDisabled=false
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after shortcut deletion with editorDisabled=true
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after button deletion with editorDisabled=false
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after button deletion with editorDisabled=true
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx (20 tests | 4 failed) 620ms
+   × keeps drawer navigation after shortcut deletion with editorDisabled=false 28ms
+   × keeps drawer navigation after shortcut deletion with editorDisabled=true 21ms
+   × keeps drawer navigation after button deletion with editorDisabled=false 20ms
+   × keeps drawer navigation after button deletion with editorDisabled=true 25ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after shortcut deletion with editorDisabled=false
+AssertionError: expected <body style><div>…(3)</div></body> to be <button type="button" …(3)></button> // Object.is equality
+
+- Expected
++ Received
+
++ <body
++   style=""
++ >
++   <div>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       >
++         Draft
++       </div>
++       <input
++         aria-label="Other composer field"
++       />
+        <button
++         data-prompt-stash-badge="true"
++         type="button"
++       >
++         Stash
++       </button>
++     </form>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       />
++     </form>
++     <div
++       class="[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))] dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))] [html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)] relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent] [--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))] dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))] [html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28] [--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline) before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation) before:shadow-composer dark:before:shadow-composer-dark dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface) min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)] @container [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl [&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl"
++       data-composer-banner-surface="attached"
++       data-composer-banner-width="fill"
++       data-composer-stash-drawer="true"
++       data-slot="composer-banner"
++       data-variant="default"
++     >
++       <button
++         aria-expanded="true"
++         aria-label="Close stash"
++         class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring"
++         data-composer-banner-layout="inline"
++         data-composer-banner-row="true"
++         type="button"
++       >
++         <span
++           aria-hidden="true"
++           class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++           data-slot="composer-banner-icon"
++         >
++           <svg
++             aria-hidden="true"
++             class="lucide lucide-bookmark"
++             fill="none"
++             height="24"
++             stroke="currentColor"
++             stroke-linecap="round"
++             stroke-linejoin="round"
++             stroke-width="2"
++             viewBox="0 0 24 24"
++             width="24"
++             xmlns="http://www.w3.org/2000/svg"
++           >
++             <path
++               d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"
++             />
++           </svg>
++         </span>
++         <span
++           class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5 text-muted-foreground"
++           data-slot="composer-banner-content"
++         >
++           Stash
++         </span>
++         <span
++           class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++           data-slot="composer-banner-actions"
++         >
++           <span
++             class="inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums"
++           >
++             1
++           </span>
++           <span
++             aria-hidden="true"
++             class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent pointer-events-none"
++             data-slot="button"
++             tabindex="-1"
++           >
++             <svg
++               aria-hidden="true"
++               class="lucide lucide-chevron-down size-3.5"
++               fill="none"
++               height="24"
++               stroke="currentColor"
++               stroke-linecap="round"
++               stroke-linejoin="round"
++               stroke-width="2"
++               viewBox="0 0 24 24"
++               width="24"
++               xmlns="http://www.w3.org/2000/svg"
++             >
++               <path
++                 d="m6 9 6 6 6-6"
++               />
++             </svg>
++           </span>
++         </span>
++       </button>
++       <div
++         class="relative size-full min-h-0 overflow-hidden rounded-none h-auto max-h-[min(24rem,40dvh)]"
++         role="presentation"
++         style="position: relative; --scroll-area-corner-height: 0px; --scroll-area-corner-width: 0px;"
++       >
++         <div
++           class="h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] focus-visible:mask-none [--fade-size:1.5rem] scroll-p-[var(--fade-size)] base-ui-disable-scrollbar"
++           data-id="base-ui-_r_h_-viewport"
++           data-slot="scroll-area-viewport"
++           role="presentation"
++           style="overflow: scroll;"
++           tabindex="-1"
++         >
++           <div
++             class="[[data-has-overflow-y]>&]:pe-2"
++           >
++             <ul
++               aria-label="Stashed prompts"
++               class="grid gap-px [&_[data-composer-banner-row]]:min-h-5"
++               role="list"
++             >
++               <li
++                 class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring relative rounded-sm bg-accent text-accent-foreground"
++                 data-composer-banner-layout="inline"
++                 data-composer-banner-row="true"
++                 data-highlighted="true"
++                 data-stash-entry="second"
++               >
++                 <span
++                   aria-hidden="true"
++                   class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++                   data-slot="composer-banner-icon"
++                 >
++                   <svg
++                     aria-hidden="true"
++                     class="lucide lucide-file-text"
++                     fill="none"
++                     height="24"
++                     stroke="currentColor"
++                     stroke-linecap="round"
++                     stroke-linejoin="round"
++                     stroke-width="2"
++                     viewBox="0 0 24 24"
++                     width="24"
++                     xmlns="http://www.w3.org/2000/svg"
++                   >
++                     <path
++                       d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
++                     />
++                     <path
++                       d="M14 2v5a1 1 0 0 0 1 1h5"
++                     />
++                     <path
++                       d="M10 9H8"
++                     />
++                     <path
++                       d="M16 13H8"
++                     />
++                     <path
++                       d="M16 17H8"
++                     />
++                   </svg>
++                 </span>
++                 <span
++                   class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5"
++                   data-slot="composer-banner-content"
++                 >
++                   <button
+                      aria-label="Restore stashed prompt: second prompt"
+                      class="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                      data-stash-restore="second"
+                      type="button"
+                    >
+                      second prompt
++                   </button>
++                 </span>
++                 <span
++                   class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++                   data-slot="composer-banner-actions"
++                 >
++                   <time
++                     class="shrink-0 text-muted-foreground tabular-nums max-sm:hidden"
++                     datetime="1970-01-01T00:00:00.000Z"
++                   >
++                     20738d ago
++                   </time>
++                   <button
++                     aria-label="Delete stashed prompt"
++                     class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent z-10"
++                     data-slot="button"
++                     type="button"
++                   >
++                     <svg
++                       aria-hidden="true"
++                       class="lucide lucide-x size-3.5"
++                       fill="none"
++                       height="24"
++                       stroke="currentColor"
++                       stroke-linecap="round"
++                       stroke-linejoin="round"
++                       stroke-width="2"
++                       viewBox="0 0 24 24"
++                       width="24"
++                       xmlns="http://www.w3.org/2000/svg"
++                     >
++                       <path
++                         d="M18 6 6 18"
++                       />
++                       <path
++                         d="m6 6 12 12"
++                       />
++                     </svg>
+                    </button>
++                 </span>
++               </li>
++             </ul>
++           </div>
++         </div>
++       </div>
++     </div>
++   </div>
++ </body>
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:260:34
+    258|   expect(host.querySelector('[data-stash-entry="first"]')).toBeNull();
+    259|   const second = host.querySelector<HTMLButtonElement>('[data-stash-re…
+    260|   expect(document.activeElement).toBe(second);
+       |                                  ^
+    261|   expect((await press(second, { key: "ArrowUp" })).defaultPrevented).t…
+    262|   expect((await press(second, { key: "Enter" })).defaultPrevented).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after shortcut deletion with editorDisabled=true
+AssertionError: expected <body style><div>…(3)</div></body> to be <button type="button" …(3)></button> // Object.is equality
+
+- Expected
++ Received
+
++ <body
++   style=""
++ >
++   <div>
++     <form>
++       <div
++         data-testid="composer-editor"
++       >
++         Draft
++       </div>
++       <input
++         aria-label="Other composer field"
++       />
++       <button
++         data-prompt-stash-badge="true"
++         type="button"
++       >
++         Stash
++       </button>
++     </form>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       />
++     </form>
++     <div
++       class="[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))] dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))] [html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)] relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent] [--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))] dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))] [html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28] [--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline) before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation) before:shadow-composer dark:before:shadow-composer-dark dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface) min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)] @container [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl [&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl"
++       data-composer-banner-surface="attached"
++       data-composer-banner-width="fill"
++       data-composer-stash-drawer="true"
++       data-slot="composer-banner"
++       data-variant="default"
++     >
++       <button
++         aria-expanded="true"
++         aria-label="Close stash"
++         class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring"
++         data-composer-banner-layout="inline"
++         data-composer-banner-row="true"
++         type="button"
++       >
++         <span
++           aria-hidden="true"
++           class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++           data-slot="composer-banner-icon"
++         >
++           <svg
++             aria-hidden="true"
++             class="lucide lucide-bookmark"
++             fill="none"
++             height="24"
++             stroke="currentColor"
++             stroke-linecap="round"
++             stroke-linejoin="round"
++             stroke-width="2"
++             viewBox="0 0 24 24"
++             width="24"
++             xmlns="http://www.w3.org/2000/svg"
++           >
++             <path
++               d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"
++             />
++           </svg>
++         </span>
++         <span
++           class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5 text-muted-foreground"
++           data-slot="composer-banner-content"
++         >
++           Stash
++         </span>
++         <span
++           class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++           data-slot="composer-banner-actions"
++         >
++           <span
++             class="inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums"
++           >
++             1
++           </span>
++           <span
++             aria-hidden="true"
++             class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent pointer-events-none"
++             data-slot="button"
++             tabindex="-1"
++           >
++             <svg
++               aria-hidden="true"
++               class="lucide lucide-chevron-down size-3.5"
++               fill="none"
++               height="24"
++               stroke="currentColor"
++               stroke-linecap="round"
++               stroke-linejoin="round"
++               stroke-width="2"
++               viewBox="0 0 24 24"
++               width="24"
++               xmlns="http://www.w3.org/2000/svg"
++             >
++               <path
++                 d="m6 9 6 6 6-6"
++               />
++             </svg>
++           </span>
++         </span>
++       </button>
++       <div
++         class="relative size-full min-h-0 overflow-hidden rounded-none h-auto max-h-[min(24rem,40dvh)]"
++         role="presentation"
++         style="position: relative; --scroll-area-corner-height: 0px; --scroll-area-corner-width: 0px;"
++       >
++         <div
++           class="h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] focus-visible:mask-none [--fade-size:1.5rem] scroll-p-[var(--fade-size)] base-ui-disable-scrollbar"
++           data-id="base-ui-_r_i_-viewport"
++           data-slot="scroll-area-viewport"
++           role="presentation"
++           style="overflow: scroll;"
++           tabindex="-1"
++         >
++           <div
++             class="[[data-has-overflow-y]>&]:pe-2"
++           >
++             <ul
++               aria-label="Stashed prompts"
++               class="grid gap-px [&_[data-composer-banner-row]]:min-h-5"
++               role="list"
++             >
++               <li
++                 class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring relative rounded-sm bg-accent text-accent-foreground"
++                 data-composer-banner-layout="inline"
++                 data-composer-banner-row="true"
++                 data-highlighted="true"
++                 data-stash-entry="second"
++               >
++                 <span
++                   aria-hidden="true"
++                   class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++                   data-slot="composer-banner-icon"
++                 >
++                   <svg
++                     aria-hidden="true"
++                     class="lucide lucide-file-text"
++                     fill="none"
++                     height="24"
++                     stroke="currentColor"
++                     stroke-linecap="round"
++                     stroke-linejoin="round"
++                     stroke-width="2"
++                     viewBox="0 0 24 24"
++                     width="24"
++                     xmlns="http://www.w3.org/2000/svg"
++                   >
++                     <path
++                       d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
++                     />
++                     <path
++                       d="M14 2v5a1 1 0 0 0 1 1h5"
++                     />
++                     <path
++                       d="M10 9H8"
++                     />
++                     <path
++                       d="M16 13H8"
++                     />
++                     <path
++                       d="M16 17H8"
++                     />
++                   </svg>
++                 </span>
++                 <span
++                   class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5"
++                   data-slot="composer-banner-content"
++                 >
+                    <button
+                      aria-label="Restore stashed prompt: second prompt"
+                      class="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                      data-stash-restore="second"
+                      type="button"
+                    >
+                      second prompt
++                   </button>
++                 </span>
++                 <span
++                   class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++                   data-slot="composer-banner-actions"
++                 >
++                   <time
++                     class="shrink-0 text-muted-foreground tabular-nums max-sm:hidden"
++                     datetime="1970-01-01T00:00:00.000Z"
++                   >
++                     20738d ago
++                   </time>
++                   <button
++                     aria-label="Delete stashed prompt"
++                     class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent z-10"
++                     data-slot="button"
++                     type="button"
++                   >
++                     <svg
++                       aria-hidden="true"
++                       class="lucide lucide-x size-3.5"
++                       fill="none"
++                       height="24"
++                       stroke="currentColor"
++                       stroke-linecap="round"
++                       stroke-linejoin="round"
++                       stroke-width="2"
++                       viewBox="0 0 24 24"
++                       width="24"
++                       xmlns="http://www.w3.org/2000/svg"
++                     >
++                       <path
++                         d="M18 6 6 18"
++                       />
++                       <path
++                         d="m6 6 12 12"
++                       />
++                     </svg>
+                    </button>
++                 </span>
++               </li>
++             </ul>
++           </div>
++         </div>
++       </div>
++     </div>
++   </div>
++ </body>
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:260:34
+    258|   expect(host.querySelector('[data-stash-entry="first"]')).toBeNull();
+    259|   const second = host.querySelector<HTMLButtonElement>('[data-stash-re…
+    260|   expect(document.activeElement).toBe(second);
+       |                                  ^
+    261|   expect((await press(second, { key: "ArrowUp" })).defaultPrevented).t…
+    262|   expect((await press(second, { key: "Enter" })).defaultPrevented).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after button deletion with editorDisabled=false
+AssertionError: expected <body style><div>…(3)</div></body> to be <button type="button" …(3)></button> // Object.is equality
+
+- Expected
++ Received
+
++ <body
++   style=""
++ >
++   <div>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       >
++         Draft
++       </div>
++       <input
++         aria-label="Other composer field"
++       />
+        <button
++         data-prompt-stash-badge="true"
++         type="button"
++       >
++         Stash
++       </button>
++     </form>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       />
++     </form>
++     <div
++       class="[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))] dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))] [html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)] relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent] [--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))] dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))] [html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28] [--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline) before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation) before:shadow-composer dark:before:shadow-composer-dark dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface) min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)] @container [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl [&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl"
++       data-composer-banner-surface="attached"
++       data-composer-banner-width="fill"
++       data-composer-stash-drawer="true"
++       data-slot="composer-banner"
++       data-variant="default"
++     >
++       <button
++         aria-expanded="true"
++         aria-label="Close stash"
++         class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring"
++         data-composer-banner-layout="inline"
++         data-composer-banner-row="true"
++         type="button"
++       >
++         <span
++           aria-hidden="true"
++           class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++           data-slot="composer-banner-icon"
++         >
++           <svg
++             aria-hidden="true"
++             class="lucide lucide-bookmark"
++             fill="none"
++             height="24"
++             stroke="currentColor"
++             stroke-linecap="round"
++             stroke-linejoin="round"
++             stroke-width="2"
++             viewBox="0 0 24 24"
++             width="24"
++             xmlns="http://www.w3.org/2000/svg"
++           >
++             <path
++               d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"
++             />
++           </svg>
++         </span>
++         <span
++           class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5 text-muted-foreground"
++           data-slot="composer-banner-content"
++         >
++           Stash
++         </span>
++         <span
++           class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++           data-slot="composer-banner-actions"
++         >
++           <span
++             class="inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums"
++           >
++             1
++           </span>
++           <span
++             aria-hidden="true"
++             class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent pointer-events-none"
++             data-slot="button"
++             tabindex="-1"
++           >
++             <svg
++               aria-hidden="true"
++               class="lucide lucide-chevron-down size-3.5"
++               fill="none"
++               height="24"
++               stroke="currentColor"
++               stroke-linecap="round"
++               stroke-linejoin="round"
++               stroke-width="2"
++               viewBox="0 0 24 24"
++               width="24"
++               xmlns="http://www.w3.org/2000/svg"
++             >
++               <path
++                 d="m6 9 6 6 6-6"
++               />
++             </svg>
++           </span>
++         </span>
++       </button>
++       <div
++         class="relative size-full min-h-0 overflow-hidden rounded-none h-auto max-h-[min(24rem,40dvh)]"
++         role="presentation"
++         style="position: relative; --scroll-area-corner-height: 0px; --scroll-area-corner-width: 0px;"
++       >
++         <div
++           class="h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] focus-visible:mask-none [--fade-size:1.5rem] scroll-p-[var(--fade-size)] base-ui-disable-scrollbar"
++           data-id="base-ui-_r_j_-viewport"
++           data-slot="scroll-area-viewport"
++           role="presentation"
++           style="overflow: scroll;"
++           tabindex="-1"
++         >
++           <div
++             class="[[data-has-overflow-y]>&]:pe-2"
++           >
++             <ul
++               aria-label="Stashed prompts"
++               class="grid gap-px [&_[data-composer-banner-row]]:min-h-5"
++               role="list"
++             >
++               <li
++                 class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring relative rounded-sm bg-accent text-accent-foreground"
++                 data-composer-banner-layout="inline"
++                 data-composer-banner-row="true"
++                 data-highlighted="true"
++                 data-stash-entry="second"
++               >
++                 <span
++                   aria-hidden="true"
++                   class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++                   data-slot="composer-banner-icon"
++                 >
++                   <svg
++                     aria-hidden="true"
++                     class="lucide lucide-file-text"
++                     fill="none"
++                     height="24"
++                     stroke="currentColor"
++                     stroke-linecap="round"
++                     stroke-linejoin="round"
++                     stroke-width="2"
++                     viewBox="0 0 24 24"
++                     width="24"
++                     xmlns="http://www.w3.org/2000/svg"
++                   >
++                     <path
++                       d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
++                     />
++                     <path
++                       d="M14 2v5a1 1 0 0 0 1 1h5"
++                     />
++                     <path
++                       d="M10 9H8"
++                     />
++                     <path
++                       d="M16 13H8"
++                     />
++                     <path
++                       d="M16 17H8"
++                     />
++                   </svg>
++                 </span>
++                 <span
++                   class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5"
++                   data-slot="composer-banner-content"
++                 >
++                   <button
+                      aria-label="Restore stashed prompt: second prompt"
+                      class="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                      data-stash-restore="second"
+                      type="button"
+                    >
+                      second prompt
++                   </button>
++                 </span>
++                 <span
++                   class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++                   data-slot="composer-banner-actions"
++                 >
++                   <time
++                     class="shrink-0 text-muted-foreground tabular-nums max-sm:hidden"
++                     datetime="1970-01-01T00:00:00.000Z"
++                   >
++                     20738d ago
++                   </time>
++                   <button
++                     aria-label="Delete stashed prompt"
++                     class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent z-10"
++                     data-slot="button"
++                     type="button"
++                   >
++                     <svg
++                       aria-hidden="true"
++                       class="lucide lucide-x size-3.5"
++                       fill="none"
++                       height="24"
++                       stroke="currentColor"
++                       stroke-linecap="round"
++                       stroke-linejoin="round"
++                       stroke-width="2"
++                       viewBox="0 0 24 24"
++                       width="24"
++                       xmlns="http://www.w3.org/2000/svg"
++                     >
++                       <path
++                         d="M18 6 6 18"
++                       />
++                       <path
++                         d="m6 6 12 12"
++                       />
++                     </svg>
+                    </button>
++                 </span>
++               </li>
++             </ul>
++           </div>
++         </div>
++       </div>
++     </div>
++   </div>
++ </body>
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:260:34
+    258|   expect(host.querySelector('[data-stash-entry="first"]')).toBeNull();
+    259|   const second = host.querySelector<HTMLButtonElement>('[data-stash-re…
+    260|   expect(document.activeElement).toBe(second);
+       |                                  ^
+    261|   expect((await press(second, { key: "ArrowUp" })).defaultPrevented).t…
+    262|   expect((await press(second, { key: "Enter" })).defaultPrevented).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > keeps drawer navigation after button deletion with editorDisabled=true
+AssertionError: expected <body style><div>…(3)</div></body> to be <button type="button" …(3)></button> // Object.is equality
+
+- Expected
++ Received
+
++ <body
++   style=""
++ >
++   <div>
++     <form>
++       <div
++         data-testid="composer-editor"
++       >
++         Draft
++       </div>
++       <input
++         aria-label="Other composer field"
++       />
++       <button
++         data-prompt-stash-badge="true"
++         type="button"
++       >
++         Stash
++       </button>
++     </form>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       />
++     </form>
++     <div
++       class="[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))] dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))] [html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)] relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent] [--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))] dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))] [html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28] [--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline) before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation) before:shadow-composer dark:before:shadow-composer-dark dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface) min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)] @container [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl [&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl"
++       data-composer-banner-surface="attached"
++       data-composer-banner-width="fill"
++       data-composer-stash-drawer="true"
++       data-slot="composer-banner"
++       data-variant="default"
++     >
++       <button
++         aria-expanded="true"
++         aria-label="Close stash"
++         class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring"
++         data-composer-banner-layout="inline"
++         data-composer-banner-row="true"
++         type="button"
++       >
++         <span
++           aria-hidden="true"
++           class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++           data-slot="composer-banner-icon"
++         >
++           <svg
++             aria-hidden="true"
++             class="lucide lucide-bookmark"
++             fill="none"
++             height="24"
++             stroke="currentColor"
++             stroke-linecap="round"
++             stroke-linejoin="round"
++             stroke-width="2"
++             viewBox="0 0 24 24"
++             width="24"
++             xmlns="http://www.w3.org/2000/svg"
++           >
++             <path
++               d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z"
++             />
++           </svg>
++         </span>
++         <span
++           class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5 text-muted-foreground"
++           data-slot="composer-banner-content"
++         >
++           Stash
++         </span>
++         <span
++           class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++           data-slot="composer-banner-actions"
++         >
++           <span
++             class="inline-flex min-w-(--composer-banner-icon-column,1em) flex-none justify-center font-medium text-muted-foreground tabular-nums"
++           >
++             1
++           </span>
++           <span
++             aria-hidden="true"
++             class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent pointer-events-none"
++             data-slot="button"
++             tabindex="-1"
++           >
++             <svg
++               aria-hidden="true"
++               class="lucide lucide-chevron-down size-3.5"
++               fill="none"
++               height="24"
++               stroke="currentColor"
++               stroke-linecap="round"
++               stroke-linejoin="round"
++               stroke-width="2"
++               viewBox="0 0 24 24"
++               width="24"
++               xmlns="http://www.w3.org/2000/svg"
++             >
++               <path
++                 d="m6 9 6 6 6-6"
++               />
++             </svg>
++           </span>
++         </span>
++       </button>
++       <div
++         class="relative size-full min-h-0 overflow-hidden rounded-none h-auto max-h-[min(24rem,40dvh)]"
++         role="presentation"
++         style="position: relative; --scroll-area-corner-height: 0px; --scroll-area-corner-width: 0px;"
++       >
++         <div
++           class="h-full max-h-[inherit] overflow-auto overscroll-contain rounded-[inherit] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-has-overflow-x:overscroll-x-contain mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))] mask-l-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-start)))] mask-r-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-x-end)))] focus-visible:mask-none [--fade-size:1.5rem] scroll-p-[var(--fade-size)] base-ui-disable-scrollbar"
++           data-id="base-ui-_r_k_-viewport"
++           data-slot="scroll-area-viewport"
++           role="presentation"
++           style="overflow: scroll;"
++           tabindex="-1"
++         >
++           <div
++             class="[[data-has-overflow-y]>&]:pe-2"
++           >
++             <ul
++               aria-label="Stashed prompts"
++               class="grid gap-px [&_[data-composer-banner-row]]:min-h-5"
++               role="list"
++             >
++               <li
++                 class="group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)] [&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring relative rounded-sm bg-accent text-accent-foreground"
++                 data-composer-banner-layout="inline"
++                 data-composer-banner-row="true"
++                 data-highlighted="true"
++                 data-stash-entry="second"
++               >
++                 <span
++                   aria-hidden="true"
++                   class="col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-muted-foreground [&>svg]:size-3 group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-4"
++                   data-slot="composer-banner-icon"
++                 >
++                   <svg
++                     aria-hidden="true"
++                     class="lucide lucide-file-text"
++                     fill="none"
++                     height="24"
++                     stroke="currentColor"
++                     stroke-linecap="round"
++                     stroke-linejoin="round"
++                     stroke-width="2"
++                     viewBox="0 0 24 24"
++                     width="24"
++                     xmlns="http://www.w3.org/2000/svg"
++                   >
++                     <path
++                       d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"
++                     />
++                     <path
++                       d="M14 2v5a1 1 0 0 0 1 1h5"
++                     />
++                     <path
++                       d="M10 9H8"
++                     />
++                     <path
++                       d="M16 13H8"
++                     />
++                     <path
++                       d="M16 17H8"
++                     />
++                   </svg>
++                 </span>
++                 <span
++                   class="col-start-2 row-start-1 flex min-w-0 items-center gap-1 *:data-[slot=composer-banner-separator]:mx-0 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:col-[1/3] group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-2 sm:group-not-has-[>[data-slot=composer-banner-icon]]/banner-row:ps-1.5 group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-2 sm:group-not-has-[>[data-slot=composer-banner-icon],>[data-slot=composer-banner-actions]]/banner-row:pe-1.5"
++                   data-slot="composer-banner-content"
++                 >
+                    <button
+                      aria-label="Restore stashed prompt: second prompt"
+                      class="min-w-0 flex-1 cursor-pointer truncate text-left text-foreground/80 outline-none before:absolute before:inset-0 before:rounded-sm focus-visible:before:ring-2 focus-visible:before:ring-inset focus-visible:before:ring-ring"
+                      data-stash-restore="second"
+                      type="button"
+                    >
+                      second prompt
++                   </button>
++                 </span>
++                 <span
++                   class="col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1 group-data-[composer-banner-layout=approval]/banner-row:self-center group-data-[composer-banner-layout=approval]/banner-row:gap-1.5 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2 group-data-[composer-banner-layout=wrap-actions]/banner-row:ms-auto"
++                   data-slot="composer-banner-actions"
++                 >
++                   <time
++                     class="shrink-0 text-muted-foreground tabular-nums max-sm:hidden"
++                     datetime="1970-01-01T00:00:00.000Z"
++                   >
++                     20738d ago
++                   </time>
++                   <button
++                     aria-label="Delete stashed prompt"
++                     class="[&_svg]:-mx-0.5 relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-[var(--control-radius)] border font-medium text-base outline-none transition-[box-shadow,scale] [&:active:not([aria-haspopup])]:scale-[0.97] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--control-radius)-1px)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 sm:text-sm [&_svg:not([class*='text-'])]:text-[var(--control-icon-color)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 size-7 sm:size-6 not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-4 sm:not-in-data-[slot=input-group]:[&_svg:not([class*='size-'])]:size-3.5 [--control-icon-color:var(--contrast-muted-foreground)] border-transparent text-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent z-10"
++                     data-slot="button"
++                     type="button"
++                   >
++                     <svg
++                       aria-hidden="true"
++                       class="lucide lucide-x size-3.5"
++                       fill="none"
++                       height="24"
++                       stroke="currentColor"
++                       stroke-linecap="round"
++                       stroke-linejoin="round"
++                       stroke-width="2"
++                       viewBox="0 0 24 24"
++                       width="24"
++                       xmlns="http://www.w3.org/2000/svg"
++                     >
++                       <path
++                         d="M18 6 6 18"
++                       />
++                       <path
++                         d="m6 6 12 12"
++                       />
++                     </svg>
+                    </button>
++                 </span>
++               </li>
++             </ul>
++           </div>
++         </div>
++       </div>
++     </div>
++   </div>
++ </body>
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:260:34
+    258|   expect(host.querySelector('[data-stash-entry="first"]')).toBeNull();
+    259|   const second = host.querySelector<HTMLButtonElement>('[data-stash-re…
+    260|   expect(document.activeElement).toBe(second);
+       |                                  ^
+    261|   expect((await press(second, { key: "ArrowUp" })).defaultPrevented).t…
+    262|   expect((await press(second, { key: "Enter" })).defaultPrevented).toB…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 16 passed (20)
+   Start at  23:15:15
+   Duration  4.23s (transform 39%, import 24%, environment 21%, tests 15%, setup 2%)
+

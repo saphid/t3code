@@ -1,0 +1,80 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/stash-shortcut-scope
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > focuses the drawer when it opens without a focused field
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx (9 tests | 1 failed) 361ms
+   × focuses the drawer when it opens without a focused field 23ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > focuses the drawer when it opens without a focused field
+AssertionError: expected <body style><div>…(3)</div></body> to be <div …(6)>…(2)</div> // Object.is equality
+
+- Expected
++ Received
+
+@@ -1,6 +1,27 @@
++ <body
++   style=""
++ >
++   <div>
++     <form>
+        <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       >
++         Draft
++       </div>
++       <input
++         aria-label="Other composer field"
++       />
++     </form>
++     <form>
++       <div
++         contenteditable="true"
++         data-testid="composer-editor"
++       />
++     </form>
++     <div
+        class="[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--card))] dark:[--chat-composer-attached-surface:var(--chat-composer-glass-surface,var(--surface-raised))] [html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)] relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent] [--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))] dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))] [html[data-theme-id]_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,var(--app-theme-toolbar-border))] dark:[html[data-theme-id]:not([data-theme-id=t3-chat])_&]:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--app-theme-input)_30%,var(--background)))] dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28] [--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline) before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation) before:shadow-composer dark:before:shadow-composer-dark dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface) min-w-0 px-1 py-(--composer-banner-padding-block) after:block after:h-(--chat-composer-attachment-overlap) text-xs/4 [--composer-banner-icon-column:--spacing(7)] [--composer-banner-padding-block:--spacing(1)] sm:[--composer-banner-icon-column:--spacing(6)] @container [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl [&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl [&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl"
+        data-composer-banner-surface="attached"
+        data-composer-banner-width="fill"
+        data-composer-stash-drawer="true"
+        data-slot="composer-banner"
+@@ -289,5 +310,7 @@
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
++   </div>
++ </body>
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:152:34
+    150| it("focuses the drawer when it opens without a focused field", async (…
+    151|   const { onRestore } = await renderComposer();
+    152|   expect(document.activeElement).toBe(host.querySelector('[data-compos…
+       |                                  ^
+    153|   await press(document.activeElement as HTMLElement, { key: "ArrowDown…
+    154|   expect(document.activeElement).toBe(host.querySelector('[data-stash-…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 passed (9)
+   Start at  22:53:59
+   Duration  3.44s (transform 31%, import 27%, environment 27%, tests 11%, setup 3%)
+

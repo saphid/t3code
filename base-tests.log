@@ -1,0 +1,165 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/stash-shortcut-scope
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Enter reach a dialog input while the drawer is open
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Backspace reach a dialog input while the drawer is open
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Backspace reach a dialog input while the drawer is open
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > ignores stash keys in input[aria-label="Other composer field"]
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > ignores stash keys in form:nth-child(2) [data-testid="composer-editor"]
+An update to ScrollAreaRoot inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx (8 tests | 5 failed) 433ms
+   ❯ stash keyboard scope (3)
+     × lets Enter reach a dialog input while the drawer is open 218ms
+     × lets Backspace reach a dialog input while the drawer is open 42ms
+     × lets Backspace reach a dialog input while the drawer is open 45ms
+   × ignores stash keys in input[aria-label="Other composer field"] 21ms
+   × ignores stash keys in form:nth-child(2) [data-testid="composer-editor"] 15ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Enter reach a dialog input while the drawer is open
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "attachments": Array [],
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "droppedImageNames": Array [],
+        "id": "first",
+        "prompt": "first prompt",
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:103:27
+    101|       input.dispatchEvent(event);
+    102|     });
+    103|     expect(onRestore).not.toHaveBeenCalled();
+       |                           ^
+    104|     expect(onDelete).not.toHaveBeenCalled();
+    105|     expect(onClose).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Backspace reach a dialog input while the drawer is open
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > stash keyboard scope > lets Backspace reach a dialog input while the drawer is open
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "attachments": Array [],
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "droppedImageNames": Array [],
+        "id": "first",
+        "prompt": "first prompt",
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:104:26
+    102|     });
+    103|     expect(onRestore).not.toHaveBeenCalled();
+    104|     expect(onDelete).not.toHaveBeenCalled();
+       |                          ^
+    105|     expect(onClose).not.toHaveBeenCalled();
+    106|     expect(onKeyDown).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > ignores stash keys in input[aria-label="Other composer field"]
+ FAIL  apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx > ignores stash keys in form:nth-child(2) [data-testid="composer-editor"]
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/web/src/components/chat/ComposerStashMenu.keyboard.test.tsx:206:91
+    204|   await act(() => target.focus());
+    205|   for (const key of ["ArrowUp", "ArrowDown", "Enter", "Escape", "Backs…
+    206|     expect((await press(target, { key, ctrlKey: key === "Backspace" })…
+       |                                                                                           ^
+    207|       false,
+    208|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  5 failed | 5 passed (10)
+   Start at  22:51:07
+   Duration  4.33s (transform 49%, import 32%, environment 11%, tests 6%, setup 2%)
+
+  Transform  transforming modules took 3.72s · 49% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
