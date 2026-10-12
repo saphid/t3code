@@ -1,0 +1,55 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-device-id-race
+
+stdout | apps/mobile/src/persistence/mobile-storage.test.ts > mobile device identity > concurrent first-use callers share one persisted device identity
+[23:08:56.679] ERROR (#1): Error [AssertionError]: expected [ 'generated-device-1', …(1) ] to deeply equal [ 'generated-device-1', …(1) ]
+    at /home/saphid/.t3code/worktrees/t3code/mobile-device-id-race/apps/mobile/src/persistence/mobile-storage.test.ts:50:25 {
+  actual: [ 'generated-device-1', 'generated-device-2' ],
+  expected: [ 'generated-device-1', 'generated-device-1' ],
+  showDiff: true,
+  operator: 'deepStrictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/mobile/src/persistence/mobile-storage.test.ts (3 tests | 1 failed) 19ms
+   ❯ mobile device identity (3)
+     × concurrent first-use callers share one persisted device identity 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/persistence/mobile-storage.test.ts > mobile device identity > concurrent first-use callers share one persisted device identity
+AssertionError: expected [ 'generated-device-1', …(1) ] to deeply equal [ 'generated-device-1', …(1) ]
+
+- Expected
++ Received
+
+  [
+    "generated-device-1",
+-   "generated-device-1",
++   "generated-device-2",
+  ]
+
+ ❯ apps/mobile/src/persistence/mobile-storage.test.ts:50:25
+     48|       );
+     49|
+     50|       expect(deviceIds).toEqual(["generated-device-1", "generated-devi…
+       |                         ^
+     51|       expect(yield* storage.loadAgentAwarenessDeviceId).toBe(deviceIds…
+     52|       expect(values.get(deviceIdKey)).toBe(deviceIds[0]);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ ExitPrimitive.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/core.ts:565:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:5152:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  23:08:56
+   Duration  335ms (import 40%, transform 25%, setup 25%, tests 9%, worker 1%)
+

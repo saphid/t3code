@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-device-id-race
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  23:09:07
+   Duration  441ms (import 38%, setup 28%, transform 26%, tests 6%, worker 2%)
+
