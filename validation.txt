@@ -1,0 +1,7 @@
+R2E-3 backend protocol validation
+Base: 511d20c6f20c2ed6ff787aba068d7d673e2949b9, with only the regression test added.
+Base test: 24 passed, 1 failed. The second thread's shell read had not begun after 10 simulated seconds while the first HTTP 200 body decode remained stalled.
+Fixed test: 25 passed. At 9999 simulated milliseconds, one HTTP request existed. At 10000 milliseconds, the worker began reading the second thread's shell, then both publish calls drained. Each failed thread retried after 1000/2000/4000/8000/16000 milliseconds; the first thread's retries published its latest title. After another minute, no more retries occurred (12 total requests across two threads).
+Boundary: production AgentAwarenessRelay, drainable worker, generated RelayApi HttpApiClient and FetchHttpClient. Only external services and fetch response are test fixtures; an HTTP 200 Response's arrayBuffer never resolves, so production JSON decoding stalls. TestClock controls time; Deferred marks worker progress; joins and drain await completion. No sleeps or polling in the test.
+Targeted lint: exit 0. Server package typecheck: exit 0, existing Effect suggestions only. Formatting check: exit 0.
+No browser, live database, dev server, push, or PR used.

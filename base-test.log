@@ -1,0 +1,56 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/activity-publish-timeout
+
+stdout | apps/server/src/relay/AgentAwarenessRelay.test.ts > AgentAwarenessRelay > a stalled response body releases later threads and uses bounded retries
+[23:03:27.723] ERROR (#57): Error [AssertionError]: expected false to be true
+    at /home/saphid/.t3/worktrees/t3code/activity-publish-timeout/apps/server/src/relay/AgentAwarenessRelay.test.ts:467:14 {
+  actual: false,
+  expected: true,
+  showDiff: true,
+  operator: 'strictEqual',
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/relay/AgentAwarenessRelay.test.ts (25 tests | 1 failed) 544ms
+   ❯ AgentAwarenessRelay (21)
+     × a stalled response body releases later threads and uses bounded retries 38ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/relay/AgentAwarenessRelay.test.ts > AgentAwarenessRelay > a stalled response body releases later threads and uses bounded retries
+AssertionError: expected false to be true
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ apps/server/src/relay/AgentAwarenessRelay.test.ts:467:14
+    465|       yield* TestClock.adjust("1 millis");
+    466|       // Assert progress before draining so the base fails instead of …
+    467|       assert.isTrue(yield* Deferred.isDone(secondRead));
+       |              ^
+    468|       yield* Fiber.join(first);
+    469|       yield* Fiber.join(second);
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ PrimitiveImpl.~effect/Effect/evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:970:30
+ ❯ FiberImpl.runLoop node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:653:41
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:594:23
+ ❯ FiberImpl.evaluate node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:588:27
+ ❯ node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1158:17
+ ❯ Array.<anonymous> node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:803:44
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 24 passed (25)
+   Start at  22:55:52
+   Duration  455.37s (transform 58%, import 42%)
+
+  Transform  transforming modules took 264.83s · 58% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+
