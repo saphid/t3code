@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors
+
+
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+   Start at  22:37:56
+   Duration  1.66s (transform 54%, import 36%, setup 8%, tests 2%)
+

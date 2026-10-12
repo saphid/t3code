@@ -1,0 +1,218 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors
+
+stdout | packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: unauthenticated
+[22:39:05.850] ERROR (#564): [Error: {"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true,"kind":"review-comment","path":"file.ts","reviewState":null}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[{"id":"root","path":"file.ts","line":3,"side":"right","isResolved":false,"isOutdated":false,"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true}],"canResolve":true}],"commits":[]}] {
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: rate-limited
+[22:39:05.853] ERROR (#577): [Error: {"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true,"kind":"review-comment","path":"file.ts","reviewState":null}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[{"id":"root","path":"file.ts","line":3,"side":"right","isResolved":false,"isOutdated":false,"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true}],"canResolve":true}],"commits":[]}] {
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: missing-tool
+[22:39:05.855] ERROR (#590): [Error: {"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true,"kind":"review-comment","path":"file.ts","reviewState":null}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[{"id":"root","path":"file.ts","line":3,"side":"right","isResolved":false,"isOutdated":false,"comments":[{"id":"root","author":{"login":"alice","name":null,"avatarUrl":"https://git.cafe/avatars/one"},"body":"Review","createdAt":"2026-09-12T12:00:00Z","url":null,"canEdit":true}],"canResolve":true}],"commits":[]}] {
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts (29 tests | 3 failed) 98ms
+   × preserves critical optional reaction failures and recovers ordinary failures: unauthenticated 5ms
+   × preserves critical optional reaction failures and recovers ordinary failures: rate-limited 1ms
+   × preserves critical optional reaction failures and recovers ordinary failures: missing-tool 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: unauthenticated
+{
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: rate-limited
+{
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts > preserves critical optional reaction failures and recovers ordinary failures: missing-tool
+{
+  comments: [
+    {
+      id: 'root',
+      author: [Object],
+      body: 'Review',
+      createdAt: '2026-09-12T12:00:00Z',
+      url: null,
+      canEdit: true,
+      kind: 'review-comment',
+      path: 'file.ts',
+      reviewState: null
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [
+    {
+      id: 'root',
+      path: 'file.ts',
+      line: 3,
+      side: 'right',
+      isResolved: false,
+      isOutdated: false,
+      comments: [Array],
+      canResolve: true
+    }
+  ],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 26 passed (29)
+   Start at  22:39:04
+   Duration  1.56s (transform 51%, import 36%, tests 7%, setup 6%)
+

@@ -1,0 +1,882 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: rate-limited
+[22:36:06.402] ERROR (#4): [Error: {"reactions":[],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: unauthenticated
+[22:36:06.408] ERROR (#13): [Error: {"reactions":[],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: missing-tool
+[22:36:06.411] ERROR (#22): [Error: {"reactions":[],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: rate-limited
+[22:36:06.415] ERROR (#31): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: unauthenticated
+[22:36:06.417] ERROR (#40): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: missing-tool
+[22:36:06.418] ERROR (#49): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: rate-limited
+[22:36:06.420] ERROR (#58): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: unauthenticated
+[22:36:06.421] ERROR (#67): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: missing-tool
+[22:36:06.423] ERROR (#76): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":true,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: rate-limited
+[22:36:06.424] ERROR (#85): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: unauthenticated
+[22:36:06.425] ERROR (#94): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: missing-tool
+[22:36:06.426] ERROR (#103): [Error: {"reactions":[],"comments":[{"id":"42","kind":"issue-comment","author":null,"body":"Keep this comment","createdAt":"2026-07-01T00:00:00Z","url":null,"path":null,"reviewState":null,"reactions":[]}],"commentCount":1,"commentsTruncated":false,"reviewThreads":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z"}]}] {
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts (28 tests | 12 failed | 12 skipped) 48ms
+   ❯ optional activity reads (16)
+     × preserves critical activity failure listNotes: rate-limited 16ms
+     × preserves critical activity failure listNotes: unauthenticated 2ms
+     × preserves critical activity failure listNotes: missing-tool 2ms
+     × preserves critical activity failure listCommits: rate-limited 4ms
+     × preserves critical activity failure listCommits: unauthenticated 2ms
+     × preserves critical activity failure listCommits: missing-tool 1ms
+     × preserves critical activity failure listDiscussions: rate-limited 2ms
+     × preserves critical activity failure listDiscussions: unauthenticated 1ms
+     × preserves critical activity failure listDiscussions: missing-tool 1ms
+     × preserves critical activity failure listReactions: rate-limited 1ms
+     × preserves critical activity failure listReactions: unauthenticated 1ms
+     × preserves critical activity failure listReactions: missing-tool 1ms
+stdout | packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliAuthenticationError: Azure DevOps CLI failed in execute: Azure DevOps CLI is not authenticated. Run `az devops login` and retry.
+[22:36:06.481] ERROR (#4): [Error: {"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[]}] {
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliRateLimitError: Azure DevOps CLI failed in execute: Azure DevOps API rate limit exceeded.
+[22:36:06.486] ERROR (#9): [Error: {"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[]}] {
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliUnavailableError: Azure DevOps CLI failed in execute: Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH.
+[22:36:06.489] ERROR (#14): [Error: {"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[]}] {
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts (18 tests | 3 failed | 14 skipped) 25ms
+   ❯ optional activity failures (4)
+     × preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliAuthenticationError: Azure DevOps CLI failed in execute: Azure DevOps CLI is not authenticated. Run `az devops login` and retry. 14ms
+     × preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliRateLimitError: Azure DevOps CLI failed in execute: Azure DevOps API rate limit exceeded. 2ms
+     × preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliUnavailableError: Azure DevOps CLI failed in execute: Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH. 3ms
+stdout | packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubApiAuthenticationError: GitHub refused the credential for github.com. Run `gh auth login --hostname github.com` and retry.
+[22:36:06.557] ERROR (#4): [Error: {"author":null,"reviewers":[],"reactions":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z","authors":[]}],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreadsTruncated":true,"reviewThreads":[]}] {
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubApiRateLimitError: GitHub API rate limit exceeded.
+[22:36:06.563] ERROR (#10): [Error: {"author":null,"reviewers":[],"reactions":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z","authors":[]}],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreadsTruncated":true,"reviewThreads":[]}] {
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  [cause]: undefined
+}
+
+stdout | packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubCliMissingError: No GitHub credential for github.com: set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.
+[22:36:06.565] ERROR (#16): [Error: {"author":null,"reviewers":[],"reactions":[],"commits":[{"oid":"abc","messageHeadline":"Keep this commit","committedDate":"2026-07-01T00:00:00Z","authors":[]}],"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreadsTruncated":true,"reviewThreads":[]}] {
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts (32 tests | 3 failed | 28 skipped) 27ms
+   ❯ optional activity failures (4)
+     × preserves critical review-thread errors and recovers ordinary errors: GitHubApiAuthenticationError: GitHub refused the credential for github.com. Run `gh auth login --hostname github.com` and retry. 20ms
+     × preserves critical review-thread errors and recovers ordinary errors: GitHubApiRateLimitError: GitHub API rate limit exceeded. 1ms
+     × preserves critical review-thread errors and recovers ordinary errors: GitHubCliMissingError: No GitHub credential for github.com: set GH_TOKEN, or install the GitHub CLI and run `gh auth login`. 1ms
+stdout | apps/server/src/pullRequest/PullRequestService.test.ts > pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.com
+[22:36:09.471] ERROR (#4): [Error: {"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[],"reactions":[]}] {
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  reactions: [],
+  [cause]: undefined
+}
+
+stdout | apps/server/src/pullRequest/PullRequestService.test.ts > pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.example.test
+[22:36:09.553] ERROR (#319): [Error: {"comments":[],"commentCount":0,"commentsTruncated":true,"reviewThreads":[],"commits":[],"reactions":[]}] {
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  reactions: [],
+  [cause]: undefined
+}
+
+ ❯ apps/server/src/pullRequest/PullRequestService.test.ts (203 tests | 2 failed | 201 skipped) 221ms
+   × pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.com 137ms
+   × pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.example.test 80ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 20 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/server/src/pullRequest/PullRequestService.test.ts > pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.com
+{
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  reactions: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/20]⎯
+
+ FAIL  apps/server/src/pullRequest/PullRequestService.test.ts > pauses uncached GitLab activity reads after an optional endpoint rate limit on gitlab.example.test
+{
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  reactions: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/20]⎯
+
+ FAIL  packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliAuthenticationError: Azure DevOps CLI failed in execute: Azure DevOps CLI is not authenticated. Run `az devops login` and retry.
+{
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/20]⎯
+
+ FAIL  packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliRateLimitError: Azure DevOps CLI failed in execute: Azure DevOps API rate limit exceeded.
+{
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/20]⎯
+
+ FAIL  packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.test.ts > optional activity failures > preserves critical thread errors and recovers ordinary errors: AzureDevOpsCliUnavailableError: Azure DevOps CLI failed in execute: Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH.
+{
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/20]⎯
+
+ FAIL  packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubApiAuthenticationError: GitHub refused the credential for github.com. Run `gh auth login --hostname github.com` and retry.
+{
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/20]⎯
+
+ FAIL  packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubApiRateLimitError: GitHub API rate limit exceeded.
+{
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/20]⎯
+
+ FAIL  packages/source-control-github/src/server/GitHubPullRequestProvider.test.ts > optional activity failures > preserves critical review-thread errors and recovers ordinary errors: GitHubCliMissingError: No GitHub credential for github.com: set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.
+{
+  author: null,
+  reviewers: [],
+  reactions: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z',
+      authors: []
+    }
+  ],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreadsTruncated: true,
+  reviewThreads: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: rate-limited
+{
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: unauthenticated
+{
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listNotes: missing-tool
+{
+  reactions: [],
+  comments: [],
+  commentCount: 0,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: rate-limited
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: unauthenticated
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listCommits: missing-tool
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: rate-limited
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: unauthenticated
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listDiscussions: missing-tool
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: true,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: rate-limited
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: unauthenticated
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/20]⎯
+
+ FAIL  packages/source-control-gitlab/src/server/GitLabPullRequestProvider.test.ts > optional activity reads > preserves critical activity failure listReactions: missing-tool
+{
+  reactions: [],
+  comments: [
+    {
+      id: '42',
+      kind: 'issue-comment',
+      author: null,
+      body: 'Keep this comment',
+      createdAt: '2026-07-01T00:00:00Z',
+      url: null,
+      path: null,
+      reviewState: null,
+      reactions: []
+    }
+  ],
+  commentCount: 1,
+  commentsTruncated: false,
+  reviewThreads: [],
+  commits: [
+    {
+      oid: 'abc',
+      messageHeadline: 'Keep this commit',
+      committedDate: '2026-07-01T00:00:00Z'
+    }
+  ],
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/20]⎯
+
+
+ Test Files  4 failed (4)
+      Tests  20 failed | 6 passed | 255 skipped (281)
+   Start at  22:36:03
+   Duration  5.90s (transform 60%, import 30%, setup 7%, tests 2%)
+
+  Transform  transforming modules took 8.18s · 60% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

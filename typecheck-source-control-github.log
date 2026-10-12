@@ -1,0 +1,4 @@
+~/packages/source-control-github$ tsc-rs --noEmit ⊘ cache disabled
+src/server/GitHubApi.ts(395,28): suggestion TS377015: This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)
+src/server/GitHubPullRequestApi.ts(1702,13): suggestion TS377120: `Effect.filterOrFail` expresses this conditional validation more directly than `Effect.flatMap` with an identity `Effect.succeed` branch. effect(flatMapConditionalToFilterOrFail)
+

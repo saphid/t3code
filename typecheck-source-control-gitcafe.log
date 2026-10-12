@@ -1,0 +1,6 @@
+~/packages/source-control-gitcafe$ tsc-rs --noEmit ⊘ cache disabled
+src/server/GitCafePullRequestProvider.ts(504,13): suggestion TS377114: `Effect.asSome` expresses wrapping the success value in `Option.some` directly. effect(mapSomeToAsSome)
+src/server/GitCafePullRequestProvider.ts(509,21): suggestion TS377117: `Effect.succeedNone` expresses this Option success value directly. effect(preferSucceedSomeOrNone)
+src/server/GitCafePullRequestProvider.ts(656,15): suggestion TS377116: `Effect.catchIf` expresses selective recovery more directly than `Effect.catch` with a conditional `Effect.fail` passthrough. effect(catchConditionalRefailToCatchIf)
+src/server/GitCafeSourceControlProvider.ts(207,5): suggestion TS377015: This expression contains chained `pipe` calls that can be simplified to a single `pipe` call. effect(unnecessaryPipeChain)
+

@@ -1,0 +1,336 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from getMergeability on response errors while recovering other optional-read failures
+[22:37:45.659] ERROR (#4): Error [AssertionError]: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(24 matching properties omitted from actual)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2040:10)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28 {
+  showDiff: true,
+  expected: { _tag: 'Failure', failure: { reason: 'unauthenticated' } },
+  actual: {
+    _id: 'Result',
+    _tag: 'Success',
+    value: {
+      number: 1,
+      title: 'Check polling',
+      url: 'https://bitbucket.org/acme/web/pull-requests/1',
+      author: null,
+      headBranch: 'feature',
+      baseBranch: 'main',
+      state: 'open',
+      isDraft: false,
+      mergeability: 'unknown',
+      additions: 0,
+      deletions: 0,
+      createdAt: '2026-09-16T00:00:00.000Z',
+      updatedAt: '2026-09-16T00:00:00.000Z',
+      reviewRequestLogins: [],
+      labels: [],
+      changedFiles: 0,
+      body: '',
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: [Object],
+      viewerPermissions: [Object]
+    }
+  },
+  [cause]: undefined
+}
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listChecks on response errors while recovering other optional-read failures
+[22:37:45.669] ERROR (#27): Error [AssertionError]: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(24 matching properties omitted from actual)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2040:10)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28 {
+  showDiff: true,
+  expected: { _tag: 'Failure', failure: { reason: 'unauthenticated' } },
+  actual: {
+    _id: 'Result',
+    _tag: 'Success',
+    value: {
+      number: 1,
+      title: 'Check polling',
+      url: 'https://bitbucket.org/acme/web/pull-requests/1',
+      author: null,
+      headBranch: 'feature',
+      baseBranch: 'main',
+      state: 'open',
+      isDraft: false,
+      mergeability: 'unknown',
+      additions: 0,
+      deletions: 0,
+      createdAt: '2026-09-16T00:00:00.000Z',
+      updatedAt: '2026-09-16T00:00:00.000Z',
+      reviewRequestLogins: [],
+      labels: [],
+      changedFiles: 0,
+      body: '',
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: [Object],
+      viewerPermissions: [Object]
+    }
+  },
+  [cause]: undefined
+}
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from getRepositoryPermission on response errors while recovering other optional-read failures
+[22:37:45.673] ERROR (#52): Error [AssertionError]: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(24 matching properties omitted from actual)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2040:10)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28 {
+  showDiff: true,
+  expected: { _tag: 'Failure', failure: { reason: 'unauthenticated' } },
+  actual: {
+    _id: 'Result',
+    _tag: 'Success',
+    value: {
+      number: 1,
+      title: 'Check polling',
+      url: 'https://bitbucket.org/acme/web/pull-requests/1',
+      author: null,
+      headBranch: 'feature',
+      baseBranch: 'main',
+      state: 'open',
+      isDraft: false,
+      mergeability: 'unknown',
+      additions: 0,
+      deletions: 0,
+      createdAt: '2026-09-16T00:00:00.000Z',
+      updatedAt: '2026-09-16T00:00:00.000Z',
+      reviewRequestLogins: [],
+      labels: [],
+      changedFiles: 0,
+      body: '',
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: [Object],
+      viewerPermissions: [Object]
+    }
+  },
+  [cause]: undefined
+}
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listComments on response errors while recovering other optional-read failures
+[22:37:45.676] ERROR (#79): Error [AssertionError]: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(6 matching properties omitted from actual)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2040:10)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28 {
+  showDiff: true,
+  expected: { _tag: 'Failure', failure: { reason: 'unauthenticated' } },
+  actual: {
+    _id: 'Result',
+    _tag: 'Success',
+    value: {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: true,
+      reviewThreads: [],
+      commits: []
+    }
+  },
+  [cause]: undefined
+}
+
+stdout | packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listCommits on response errors while recovering other optional-read failures
+[22:37:45.680] ERROR (#99): Error [AssertionError]: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(6 matching properties omitted from actual)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:2040:10)
+    at Proxy.<anonymous> (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/vitest@5.0.1_@types+node@24.12.4_@vitest+browser-preview@5.0.1_@vitest+ui@5.0.1_vitest@_bf6784d19ff933557995fd8a9aa01378/node_modules/vitest/dist/chunks/index.m3L2HgmY.js:1934:14)
+    at Proxy.methodWrapper (file:///home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)
+    at /home/saphid/.t3/worktrees/t3code/gitlab-activity-errors/packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28 {
+  showDiff: true,
+  expected: { _tag: 'Failure', failure: { reason: 'unauthenticated' } },
+  actual: {
+    _id: 'Result',
+    _tag: 'Success',
+    value: {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: []
+    }
+  },
+  [cause]: undefined
+}
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts (15 tests | 5 failed) 38ms
+   × preserves authentication and rate limits from getMergeability on response errors while recovering other optional-read failures 18ms
+   × preserves authentication and rate limits from listChecks on response errors while recovering other optional-read failures 3ms
+   × preserves authentication and rate limits from getRepositoryPermission on response errors while recovering other optional-read failures 2ms
+   × preserves authentication and rate limits from listComments on response errors while recovering other optional-read failures 2ms
+   × preserves authentication and rate limits from listCommits on response errors while recovering other optional-read failures 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from getMergeability on response errors while recovering other optional-read failures
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listChecks on response errors while recovering other optional-read failures
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from getRepositoryPermission on response errors while recovering other optional-read failures
+AssertionError: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(24 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "_tag": "Failure",
+-   "failure": {
+-     "reason": "unauthenticated",
++   "_id": "Result",
++   "_tag": "Success",
++   "value": {
++     "additions": 0,
++     "author": null,
++     "baseBranch": "main",
++     "body": "",
++     "changedFiles": 0,
++     "checks": [],
++     "closedAt": null,
++     "createdAt": "2026-09-16T00:00:00.000Z",
++     "deletions": 0,
++     "headBranch": "feature",
++     "isDraft": false,
++     "labels": [],
++     "mergeCapabilities": {
++       "merge": true,
++       "rebase": true,
++       "squash": true,
++     },
++     "mergeability": "unknown",
++     "mergedAt": null,
++     "number": 1,
++     "reviewRequestLogins": [],
++     "reviewers": [],
++     "state": "open",
++     "title": "Check polling",
++     "updatedAt": "2026-09-16T00:00:00.000Z",
++     "url": "https://bitbucket.org/acme/web/pull-requests/1",
++     "viewerPermissions": {
++       "actions": [
++         "merge",
++         "close",
++       ],
++       "comment": true,
++       "requestReviewers": true,
++       "resolve": true,
++       "verdicts": [
++         "comment",
++         "approve",
++         "request-changes",
++       ],
++     },
+    },
+  }
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28
+     79|             });
+     80|           } else if (status === 401 && variant === "response") {
+     81|             expect(result).toMatchObject({
+       |                            ^
+     82|               _tag: "Failure",
+     83|               failure: { reason: "unauthenticated" },
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ MatchImpl.matchSuccess [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3588:16
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listComments on response errors while recovering other optional-read failures
+AssertionError: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "_tag": "Failure",
+-   "failure": {
+-     "reason": "unauthenticated",
++   "_id": "Result",
++   "_tag": "Success",
++   "value": {
++     "commentCount": 0,
++     "comments": [],
++     "commentsTruncated": true,
++     "commits": [],
++     "reviewThreads": [],
+    },
+  }
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28
+     79|             });
+     80|           } else if (status === 401 && variant === "response") {
+     81|             expect(result).toMatchObject({
+       |                            ^
+     82|               _tag: "Failure",
+     83|               failure: { reason: "unauthenticated" },
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ MatchImpl.matchSuccess [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3588:16
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts > preserves authentication and rate limits from listCommits on response errors while recovering other optional-read failures
+AssertionError: expected { Object (success) } to match object { _tag: 'Failure', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "_tag": "Failure",
+-   "failure": {
+-     "reason": "unauthenticated",
++   "_id": "Result",
++   "_tag": "Success",
++   "value": {
++     "commentCount": 0,
++     "comments": [],
++     "commentsTruncated": false,
++     "commits": [],
++     "reviewThreads": [],
+    },
+  }
+
+ ❯ packages/source-control-bitbucket/src/server/BitbucketPullRequestProvider.test.ts:81:28
+     79|             });
+     80|           } else if (status === 401 && variant === "response") {
+     81|             expect(result).toMatchObject({
+       |                            ^
+     82|               _tag: "Failure",
+     83|               failure: { reason: "unauthenticated" },
+ ❯ IteratorImpl.~effect/Effect/successCont node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1421:28
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ MatchImpl.matchSuccess [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:3588:16
+ ❯ FiberImpl.succeedWith node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:710:30
+ ❯ ContImpl.mapCont [as ~effect/Effect/successCont] node_modules/.pnpm/effect@4.0.2_patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688/node_modules/effect/src/internal/effect.ts:1520:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 10 passed (15)
+   Start at  22:37:44
+   Duration  1.77s (transform 51%, import 38%, setup 9%, tests 2%)
+

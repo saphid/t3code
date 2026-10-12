@@ -1,0 +1,2 @@
+note: You are running `vp lint` as a Vite+ built-in command. If you meant to run the lint npm script, use `vpr lint` instead.
+packages/source-control-gitcafe/src/server/GitCafePullRequestProvider.test.ts:550:38: warning eslint(no-unsafe-optional-chaining): Unsafe usage of optional chaining help: If this short-circuits with 'undefined' the evaluation will throw TypeError
