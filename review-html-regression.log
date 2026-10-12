@@ -1,0 +1,55 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/theme-draft-highlight
+
+stderr | apps/web/src/hooks/useHtmlRenderTheme.test.ts > useHtmlRenderTheme > keeps HTML render colors consistent with a light draft over a single-appearance theme
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | apps/web/src/hooks/useHtmlRenderTheme.test.ts > useHtmlRenderTheme > keeps HTML render colors consistent with a dark draft over a single-appearance theme
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ apps/web/src/hooks/useHtmlRenderTheme.test.ts (15 tests | 2 failed) 58ms
+   ❯ useHtmlRenderTheme (15)
+     × keeps HTML render colors consistent with a light draft over a single-appearance theme 8ms
+     × keeps HTML render colors consistent with a dark draft over a single-appearance theme 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/hooks/useHtmlRenderTheme.test.ts > useHtmlRenderTheme > keeps HTML render colors consistent with a light draft over a single-appearance theme
+AssertionError: expected '#0a0a0a' to be '#fcfcfc' // Object.is equality
+
+Expected: "#fcfcfc"
+Received: "#0a0a0a"
+
+ ❯ apps/web/src/hooks/useHtmlRenderTheme.test.ts:120:47
+    118|
+    119|       expect(theme.appearance).toBe(draftAppearance);
+    120|       expect(theme.variables["--background"]).toBe(
+       |                                               ^
+    121|         themeColorToHex(getStandardThemeColors(draftAppearance).canvas…
+    122|       );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/web/src/hooks/useHtmlRenderTheme.test.ts > useHtmlRenderTheme > keeps HTML render colors consistent with a dark draft over a single-appearance theme
+AssertionError: expected '#fcfcfc' to be '#0a0a0a' // Object.is equality
+
+Expected: "#0a0a0a"
+Received: "#fcfcfc"
+
+ ❯ apps/web/src/hooks/useHtmlRenderTheme.test.ts:120:47
+    118|
+    119|       expect(theme.appearance).toBe(draftAppearance);
+    120|       expect(theme.variables["--background"]).toBe(
+       |                                               ^
+    121|         themeColorToHex(getStandardThemeColors(draftAppearance).canvas…
+    122|       );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 13 passed (15)
+   Start at  22:46:09
+   Duration  1.44s (transform 50%, import 40%, setup 5%, tests 4%)
+

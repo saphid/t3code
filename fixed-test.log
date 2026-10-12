@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/theme-draft-highlight
+
+
+ Test Files  3 passed (3)
+      Tests  60 passed (60)
+   Start at  22:46:31
+   Duration  2.65s (tests 48%, transform 25%, import 20%, setup 7%)
+

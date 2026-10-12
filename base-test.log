@@ -1,0 +1,49 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3/worktrees/t3code/theme-draft-highlight
+
+ ❯ apps/web/src/hooks/useTheme.test.ts (7 tests | 2 failed) 2611ms
+   ❯ draft rendering appearance (2)
+     × renders the opposite draft and restores the saved dark appearance on cancel 1942ms
+     × renders the opposite draft and restores the saved light appearance on cancel 120ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/web/src/hooks/useTheme.test.ts > draft rendering appearance > renders the opposite draft and restores the saved dark appearance on cancel
+AssertionError: expected 'dark' to be 'light' // Object.is equality
+
+Expected: "light"
+Received: "dark"
+
+ ❯ apps/web/src/hooks/useTheme.test.ts:84:40
+     82|       expect(classes.has("dark")).toBe(draftAppearance === "dark");
+     83|       expect(localStorage.getItem("t3code:theme")).toBe(savedAppearanc…
+     84|       expect(useTheme().resolvedTheme).toBe(draftAppearance);
+       |                                        ^
+     85|       expect(listener).toHaveBeenCalled();
+     86|       expect(useTheme().theme).toBe(savedAppearance);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/web/src/hooks/useTheme.test.ts > draft rendering appearance > renders the opposite draft and restores the saved light appearance on cancel
+AssertionError: expected 'light' to be 'dark' // Object.is equality
+
+Expected: "dark"
+Received: "light"
+
+ ❯ apps/web/src/hooks/useTheme.test.ts:84:40
+     82|       expect(classes.has("dark")).toBe(draftAppearance === "dark");
+     83|       expect(localStorage.getItem("t3code:theme")).toBe(savedAppearanc…
+     84|       expect(useTheme().resolvedTheme).toBe(draftAppearance);
+       |                                        ^
+     85|       expect(listener).toHaveBeenCalled();
+     86|       expect(useTheme().theme).toBe(savedAppearance);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+   Start at  22:32:12
+   Duration  3.06s (tests 90%, transform 5%, setup 4%)
+
