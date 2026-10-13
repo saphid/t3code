@@ -1,0 +1,37 @@
+TaskId: node:delegated-task:command%3Amcp%3A30125708-1749-43c6-af2e-e3c9f675000a%3Adelegate-task%3AR2G-3-review-round-1
+Provider: claudeAgent
+Model: claude-opus-5-5
+Effort: high
+Status: completed
+
+I found no defects. The fix is correct, the test is useful, and the scope matches the finding.
+
+**Correctness**
+- `use-composer-command-menu.ts:555-610`: when you pick a thread or pull-request chip, the menu hook reads and writes context through `ownerKey`. The new text, though, goes through `props.onChangeDraftMessage`, which writes to the edit draft. Before the fix, `ownerKey` was `composerOwnerKey`, so the context record landed in the normal thread draft while the chip text landed in the edit draft. That is the bug as reported.
+- `use-thread-composer-state.ts:493,520`: saving reads `draft.context` from `queuedEditDraftKey(threadKey, edit.runId)`. With `ownerKey: composerDraftKey`, that is the same key the menu now writes to. `beginQueuedRunEdit` (`queued-run-edit.ts:79-82`) puts the original context under that key too, so new records are added to the edit's existing records rather than to the normal draft's.
+- **Other effects of the key change, all fixes in the same direction:**
+  - `readComposerDraftSelection(ownerKey, …)` (`use-composer-command-menu.ts:221`) now reads the cursor position that `ComposerEditor` saves under `draftKey={composerDraftKey}` (`ThreadComposer.tsx:920`). Before, it read the normal draft's saved cursor, which belongs to different text.
+  - When the key switches on entering or leaving an edit (`:238-242`), the cursor is reset to the end of the edit text instead of carrying over and being clamped.
+  - Dictation already used `composerDraftKey` (`ThreadComposer.tsx:519`), so autocomplete is now consistent with it.
+  - Only the settings owner id (`:695`) still uses `composerOwnerKey`, which is correct.
+- When no queued edit is open, `props.draftKey` is `undefined`, so `composerDraftKey === composerOwnerKey` and behaviour is unchanged.
+- `NewTaskDraftScreen` already passes `flow.draftKey` as `ownerKey` (`:506`), so the only caller with the bug was ThreadComposer.
+
+**Test value**
+- The test renders the real `ThreadComposer` and the real menu hook. It picks the chip and presses save through the captured props, which act as interactions, not as checks on how callbacks are wired.
+- It then checks two outcomes: the saved payload holds a record whose `contextId` matches the reference parsed from the edit text, and the normal draft is deep-equal to what it was before.
+- The base log confirms it fails on the old code at the `saved?.context?.records` assertion (2/2), which is exactly the reported failure.
+- `onSendMessage` stands in for `saveQueuedRunEdit` by calling the real `resolveQueuedEditPayload` with the edit draft's context. That copies the production read in `use-thread-composer-state.ts:493,520-524`, which is acceptable.
+- The relative import from `packages/client-runtime/src/...` has precedent in `voiceInputSession.test.ts`.
+
+**Evidence**
+- The fixed run passes: 19 tests across 3 files.
+- Typecheck is clean.
+- The 7 lint warnings are on lines this change doesn't touch.
+
+**Scope**
+- The fix is one line plus one test file. Nothing in contracts, the server, web, MCP or docs changes.
+
+**Optional nit, not a defect**
+- The comment at `ThreadComposer.tsx:454-455` says the owner key "still identifies this composer for settings and dictation". Dictation already used the draft key before this commit, so the comment was already slightly wrong. It could be trimmed to "settings", but it isn't worth holding the fix for.
+

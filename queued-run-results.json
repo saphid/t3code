@@ -1,0 +1,17 @@
+[
+  {
+    "threadId": "67df53e4-62bc-491f-9b17-93e44be93205",
+    "text": "The referenced thread\u2019s context is unavailable. Please paste the relevant content and tell me what you\u2019d like me to do with it.",
+    "streaming": false
+  },
+  {
+    "threadId": "b6939ac4-d2d2-4826-a2af-d3c66b48440e",
+    "text": "I\u2019ll read the attached thread for context.\n",
+    "streaming": false
+  },
+  {
+    "threadId": "b6939ac4-d2d2-4826-a2af-d3c66b48440e",
+    "text": "I\u2019ve read \u201cReply Ready\u201d and will use it as reference context.",
+    "streaming": false
+  }
+]

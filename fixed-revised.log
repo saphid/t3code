@@ -1,0 +1,10 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-queued-edit-context-owner
+
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  23:12:56
+   Duration  1.50s (transform 57%, import 36%, setup 4%, tests 2%)
+

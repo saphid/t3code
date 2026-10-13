@@ -1,0 +1,15 @@
+TaskId: node:delegated-task:command%3Amcp%3A30125708-1749-43c6-af2e-e3c9f675000a%3Adelegate-task%3AR2G-3-review-round-2
+Provider: claudeAgent
+Model: claude-opus-5-5
+Effort: high
+Status: completed
+
+No findings for R2G-3 round 2.
+
+- **Diff**: the change from `511d20c6f2` to `HEAD` (`d9af004be7`) is the one line at `apps/mobile/src/features/threads/ThreadComposer.tsx:496` (`ownerKey: composerDraftKey`). The worktree is clean, and the rejected `ThreadComposer.queued-edit.test.tsx` is gone, as the coordinator asked.
+- **Fix**: this is now the key the menu hook uses for every read and write. That covers path-context records (`use-composer-command-menu.ts:555,572-573`), thread/PR records (`:590,606-607`), selection restore (`:221`) and the reset when the owner changes (`:239-242`). It is also the key that dictation (`ThreadComposer.tsx:519-524`), the attachment route (`:467`) and `saveQueuedRunEdit` use. When no edit is open, `props.draftKey` is undefined, so the key falls back to `composerOwnerKey` and behaviour is unchanged.
+- **Settings**: `settingsOwnerId` at `:695` still uses `composerOwnerKey`, which is correct.
+- **No new test**: this is acceptable. The coordinator explicitly allowed shipping without one, and the hook's ownership logic already works for any key it is given. The regression was in which key the caller passed, and testing that needs the component scaffolding that was rejected.
+- **Optional, pre-existing nit (not a defect)**: the comment at `ThreadComposer.tsx:454-455` says the owner key is used "for settings and dictation". Dictation already uses the draft key, so the comment could say just settings. It's fine to leave it out of scope.
+
+I only read the code and did not re-run the tests, lint or typecheck. I relied on the logs you reported.

@@ -1,0 +1,64 @@
+note: You are running `vp test` as a Vite+ built-in command. If you meant to run the test npm script, use `vpr test` instead.
+
+ RUN  v5.0.1 /home/saphid/.t3code/worktrees/t3code/mobile-queued-edit-context-owner
+
+ ❯ apps/mobile/src/features/threads/ThreadComposer.queued-edit.test.tsx (2 tests | 2 failed) 31ms
+   × saves a thread chip in the queued edit without changing the ordinary draft 26ms
+   × saves a pull-request chip in the queued edit without changing the ordinary draft 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/mobile/src/features/threads/ThreadComposer.queued-edit.test.tsx > saves a thread chip in the queued edit without changing the ordinary draft
+AssertionError: expected undefined to deeply equal [ ObjectContaining{…} ]
+
+- Expected:
+[
+  ObjectContaining {
+    "contextId": "thread_other",
+    "kind": "thread",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ apps/mobile/src/features/threads/ThreadComposer.queued-edit.test.tsx:293:37
+    291|       harness.save?.();
+    292|     });
+    293|     expect(saved?.context?.records).toEqual([
+       |                                     ^
+    294|       expect.objectContaining({
+    295|         kind: kind === "thread" ? "thread" : "review-comment",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/mobile/src/features/threads/ThreadComposer.queued-edit.test.tsx > saves a pull-request chip in the queued edit without changing the ordinary draft
+AssertionError: expected undefined to deeply equal [ ObjectContaining{…} ]
+
+- Expected:
+[
+  ObjectContaining {
+    "contextId": "pr-context-id",
+    "kind": "review-comment",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ apps/mobile/src/features/threads/ThreadComposer.queued-edit.test.tsx:293:37
+    291|       harness.save?.();
+    292|     });
+    293|     expect(saved?.context?.records).toEqual([
+       |                                     ^
+    294|       expect.objectContaining({
+    295|         kind: kind === "thread" ? "thread" : "review-comment",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  22:57:53
+   Duration  2.08s (transform 45%, environment 27%, import 24%, setup 2%, tests 2%)
+
