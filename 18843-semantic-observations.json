@@ -1,0 +1,95 @@
+{
+  "head": "1df4c32662bb2afcb0ababb83e8f9b5a69385fcb",
+  "scope": "candidate ordinary composer; synthetic threads; no provider turn",
+  "stashed": {
+    "message": "",
+    "drafts": {
+      "state": {
+        "draftsByThreadKey": {},
+        "draftThreadsByThreadKey": {},
+        "logicalProjectDraftThreadKeyByLogicalProjectKey": {},
+        "stickyModelSelectionByProvider": {},
+        "stickyOptionsByModelByProvider": {},
+        "stickyActiveProvider": null
+      },
+      "version": 9
+    },
+    "stash": {
+      "version": 2,
+      "state": {
+        "entries": [
+          {
+            "id": "8c11c317-3e4f-4eb0-98bf-edaeccbb22eb",
+            "createdAt": "2026-10-14T21:27:46.735Z",
+            "prompt": "[New thread](t3-context://v1/thread/thread_thread-project-1ae85a9b-4b94-4834-b068-6a-ed2ca3a520138902)  Verify thread context stash.",
+            "attachments": [],
+            "droppedImageNames": [],
+            "unreadableImageNames": [],
+            "pendingImageCount": 0,
+            "records": [
+              {
+                "version": 1,
+                "kind": "thread",
+                "contextId": "thread_thread-project-1ae85a9b-4b94-4834-b068-6a-ed2ca3a520138902",
+                "label": "New thread",
+                "environmentId": "45cae80d-49e9-4590-809c-186b28451da6",
+                "threadId": "thread:project:1ae85a9b-4b94-4834-b068-6ad6cfd13aad:1a6e6c1e-619b-473c-89b2-776cdefa9dca",
+                "title": "New thread"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "restored": {
+    "message": "New thread  Verify thread context stash.",
+    "drafts": {
+      "state": {
+        "draftsByThreadKey": {
+          "45cae80d-49e9-4590-809c-186b28451da6:thread:project:c4dd2c9b-4008-44c3-a1fc-73df2f5e24fc:ffa300c6-5b29-4dc0-b436-186d13465bb8": {
+            "prompt": "[New thread](t3-context://v1/thread/thread_thread-project-1ae85a9b-4b94-4834-b068-6a-ed2ca3a520138902)  Verify thread context stash.",
+            "attachments": [],
+            "threadContexts": [
+              {
+                "version": 1,
+                "kind": "thread",
+                "contextId": "thread_thread-project-1ae85a9b-4b94-4834-b068-6a-ed2ca3a520138902",
+                "label": "New thread",
+                "environmentId": "45cae80d-49e9-4590-809c-186b28451da6",
+                "threadId": "thread:project:1ae85a9b-4b94-4834-b068-6ad6cfd13aad:1a6e6c1e-619b-473c-89b2-776cdefa9dca",
+                "title": "New thread"
+              }
+            ]
+          }
+        },
+        "draftThreadsByThreadKey": {},
+        "logicalProjectDraftThreadKeyByLogicalProjectKey": {},
+        "stickyModelSelectionByProvider": {},
+        "stickyOptionsByModelByProvider": {},
+        "stickyActiveProvider": null
+      },
+      "version": 9
+    },
+    "stash": {
+      "version": 2,
+      "state": {
+        "entries": []
+      }
+    }
+  },
+  "checks": {
+    "sourceMessageCleared": true,
+    "sourceDraftsCleared": true,
+    "oneThreadRecord": true,
+    "restoredRecordIdentical": true,
+    "restoredPromptIdentical": true,
+    "stashEmptyAfterRestore": true
+  },
+  "limits": [
+    "pending-question restore untested",
+    "baseline UI not captured",
+    "no private live data used",
+    "pre-stash storage read was before debounced draft flush, so equality comparison uses durable stash and restored payloads"
+  ]
+}
