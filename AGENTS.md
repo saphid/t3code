@@ -156,6 +156,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 - Inferred types over annotations. `any` is the enemy.
 - Comments describe how a thing is used, and move when the code moves. To be used mostly to describe functions, not to annotate every line of behavior.
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
+- Nothing on screen moves unless the user caused it or can predict it. A control that shifts when late data arrives, or a list that moves under the cursor, is a regression even when every frame is fast.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
 
 ## Additional tips
