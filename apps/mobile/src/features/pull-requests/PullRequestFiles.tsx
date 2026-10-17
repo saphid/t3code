@@ -162,7 +162,7 @@ export function usePullRequestFilesContent(props: {
       : rows.filter((row) => row !== null),
     header: (
       <>
-        <PullRequestReadStatus pending={false} error={result.error} />
+        <PullRequestReadStatus params={props.params} pending={false} error={result.error} />
         {loading ? (
           <View
             accessibilityLabel="Loading changed files"

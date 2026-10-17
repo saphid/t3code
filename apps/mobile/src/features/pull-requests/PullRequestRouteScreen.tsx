@@ -623,6 +623,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           ) : null}
                           {tab === "activity" ? (
                             <PullRequestReadStatus
+                              params={params}
                               pending={tabContent.pending}
                               error={tabContent.error}
                             />
@@ -672,6 +673,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   ListHeaderComponent={
                     <>
                       <PullRequestReadStatus
+                        params={params}
                         pending={result.isPending && !identity}
                         error={result.error}
                       />
@@ -1098,7 +1100,11 @@ export function PullRequestFileRouteScreen({
       >
         {loadingDiff || result.error ? (
           <View style={{ paddingTop: Platform.OS === "ios" && !staleDiff ? insets.top : 0 }}>
-            <PullRequestReadStatus pending={loadingDiff} error={result.error} />
+            <PullRequestReadStatus
+              params={route.params}
+              pending={loadingDiff}
+              error={result.error}
+            />
           </View>
         ) : null}
         {NativeDiffView && data.rows.length && !seekingFile ? (

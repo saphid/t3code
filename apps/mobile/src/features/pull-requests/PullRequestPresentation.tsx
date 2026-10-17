@@ -1,20 +1,37 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import type { PullRequestActor } from "@t3tools/contracts";
 import { Image } from "expo-image";
-import { View } from "react-native";
+import { Linking, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useProject } from "../../state/entities";
+import { nativePullRequestBrowserLink } from "../../lib/pullRequestNavigation";
+import { openOnProviderLabel } from "./pullRequestActions";
+import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
 export function PullRequestReadStatus(props: {
+  readonly params: PullRequestParams;
   readonly pending: boolean;
   readonly error: string | null;
 }) {
+  const target = pullRequestTarget(props.params);
+  const project = useProject({
+    environmentId: target.environmentId,
+    projectId: target.input.projectId,
+  });
+  const link = nativePullRequestBrowserLink(props.params, project?.repositoryIdentity);
   return props.pending ? (
     <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
   ) : props.error ? (
-    <EmptyState title="Couldn't load this pull request" detail={props.error} variant="plain" />
+    <EmptyState
+      title="Couldn't load this pull request"
+      detail={props.error}
+      variant="plain"
+      actionLabel={link ? openOnProviderLabel(link.provider) : undefined}
+      onAction={link ? () => void Linking.openURL(link.url) : undefined}
+    />
   ) : null;
 }
 
