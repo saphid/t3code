@@ -11,7 +11,8 @@ import {
   CircleDashedIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 
 import {
   isCompatibleUsageContractVersion,
@@ -43,8 +44,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
-import { Button } from "../ui/button";
-import { toastManager } from "../ui/toast";
+import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   Menu,
@@ -55,7 +55,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
-import { segmentedControlGroupClassName } from "../ui/segmented-control-styles";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
@@ -70,8 +69,8 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
-import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { UsageThreadTable } from "./UsageThreadTable";
+import { sortModelsByTokens } from "./usageBreakdown";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
   readUsagePagePreferences,
@@ -116,13 +115,15 @@ export function UsagePage() {
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
-
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
-  // A namespaced project key, null for work outside every project, undefined for all.
-  const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
+  // The label travels with the key so it survives a window where the project has no usage.
+  const [selectedProject, setSelectedProject] = useState<ProjectSelection | undefined>(undefined);
+  const projectFilter = selectedProject?.key;
+  const selectedProjectLabel = selectedProject?.label ?? null;
   const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
   const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
@@ -156,9 +157,7 @@ export function UsagePage() {
   const breakdownModels = useMemo(
     () =>
       breakdown === "model" && metric === "tokens"
-        ? merged.models.toSorted(
-            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-          )
+        ? sortModelsByTokens(merged.models)
         : merged.models,
     [breakdown, merged.models, metric],
   );
@@ -173,22 +172,6 @@ export function UsagePage() {
         )
       : scoped;
   }, [merged.projects, metric, projectFilter]);
-  const breakdownProjectCostUsd = useMemo(
-    () => breakdownProjects.reduce((sum, project) => sum + project.costUsd, 0),
-    [breakdownProjects],
-  );
-  const projectLabelsRef = useRef(new Map<string, string>());
-  for (const project of merged.projects) {
-    if (project.projectKey !== null && project.project !== null) {
-      projectLabelsRef.current.set(project.projectKey, project.project);
-    }
-  }
-  const selectedProjectLabel =
-    projectFilter === undefined
-      ? null
-      : projectFilter === null
-        ? "Outside projects"
-        : (projectLabelsRef.current.get(projectFilter) ?? "Selected project");
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
   // Session figures are per transcript directory; a project filter cannot
@@ -240,9 +223,28 @@ export function UsagePage() {
     else selectWindow(original.days);
   };
   const selectMetric = (nextMetric: UsageMetric) => {
+    if (nextMetric === "limits") setLimitsNow(Date.now());
     const nextPreferences = { metric: nextMetric, windowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
+  };
+  const refreshLimits = async (automatic = false) => {
+    try {
+      await Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshUsageLimits(
+              environmentId,
+              () => refreshProviders({ environmentId, input: {} }),
+              automatic,
+            );
+          }
+        }),
+      );
+    } finally {
+      setLimitsNow(Date.now());
+    }
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
@@ -250,14 +252,7 @@ export function UsagePage() {
     if (showingLimits) {
       refreshingRef.current = true;
       setIsRefreshing(true);
-      void Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
-          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
-          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshProviders({ environmentId, input: {} });
-          }
-        }),
-      ).finally(() => {
+      void refreshLimits().finally(() => {
         refreshingRef.current = false;
         setIsRefreshing(false);
       });
@@ -276,19 +271,28 @@ export function UsagePage() {
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
-    void refresh(nextWindow)
-      .catch((error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not refresh usage",
-          description: error instanceof Error ? error.message : "Try again.",
-        });
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshing(false);
-      });
+    void refresh(nextWindow).finally(() => {
+      refreshingRef.current = false;
+      setIsRefreshing(false);
+    });
   };
+  const connectedLimitsEnvironments = [...presentations]
+    .filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        presentation.serverConfig !== null &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+    )
+    .map(([environmentId]) => environmentId)
+    .sort()
+    .join(",");
+  const autoRefreshLimits = useEffectEvent(() => {
+    void refreshLimits(true);
+  });
+  useEffect(() => {
+    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
+  }, [showingLimits, connectedLimitsEnvironments]);
+
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
@@ -322,9 +326,8 @@ export function UsagePage() {
         {showProjectPicker ? (
           <UsageProjectSelect
             projects={merged.projects}
-            filter={projectFilter}
-            selectedLabel={selectedProjectLabel}
-            onChange={setProjectFilter}
+            selection={selectedProject}
+            onChange={setSelectedProject}
           />
         ) : null}
         <ToggleGroup
@@ -374,16 +377,15 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
         {showProjectPicker ? (
           <UsageProjectSelect
             projects={merged.projects}
-            filter={projectFilter}
-            selectedLabel={selectedProjectLabel}
-            onChange={setProjectFilter}
+            selection={selectedProject}
+            onChange={setSelectedProject}
           />
         ) : null}
         <Select
@@ -445,14 +447,14 @@ export function UsagePage() {
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
     </div>
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron} className="h-auto">
           {topbarContent}
@@ -475,7 +477,7 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} />
+              <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} now={limitsNow} />
             ) : isPending ? (
               <UsageSkeleton />
             ) : (
@@ -495,10 +497,10 @@ export function UsagePage() {
                             : (selectedProjectLabel ?? "Outside projects");
                           if (metric !== "cost") return scope;
                           return merged.costQuality.unpricedShare > 0
-                            ? `${scope} · local public-list estimate excludes ${formatPercent(
+                            ? `${scope} · API estimate excludes ${formatPercent(
                                 merged.costQuality.unpricedShare,
                               )} unpriced records`
-                            : `${scope} · local public-list estimate`;
+                            : `${scope} · API estimate`;
                         })()}
                       </span>
                     </div>
@@ -528,7 +530,7 @@ export function UsagePage() {
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
                                 {sessionsKnown ? (
-                                  <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                  <span className="shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums">
                                     {sessionLabel}
                                   </span>
                                 ) : null}
@@ -557,7 +559,7 @@ export function UsagePage() {
                         {metric === "tokens" ? "processed tokens" : "cost"}
                       </h2>
                       {isPast24Hours ? null : (
-                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                        <span className="text-3xs tracking-wide text-muted-foreground uppercase">
                           drag to zoom · double-click resets
                         </span>
                       )}
@@ -593,7 +595,7 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Cache writes, estimated"
+                      label="Estimated cache writes"
                       value={
                         merged.costQuality.cacheWriteUsd === null
                           ? "Unavailable"
@@ -601,7 +603,7 @@ export function UsagePage() {
                       }
                       {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
                           }
                         : {})}
                     />
@@ -712,20 +714,25 @@ export function UsagePage() {
                                 )}
                               </td>
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(project.costUsd)}
+                                {isModelCostUnknown(project) ? (
+                                  <span className="text-muted-foreground">Unpriced</span>
+                                ) : (
+                                  formatUsd(project.costUsd)
+                                )}
                               </td>
-                              <UsageCacheWriteCell
+                              <CacheWriteCell
                                 cacheWriteTokens={project.cacheWriteTokens}
                                 cacheWriteUsd={project.cacheWriteUsd}
                               />
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(
-                                  projectFilter === undefined
-                                    ? project.costShare
-                                    : breakdownProjectCostUsd === 0
-                                      ? 0
-                                      : project.costUsd / breakdownProjectCostUsd,
-                                )}
+                                {isModelCostUnknown(project)
+                                  ? "—"
+                                  : formatPercent(
+                                      // A filtered table holds only the selected project.
+                                      projectFilter === undefined
+                                        ? project.costShare
+                                        : Number(project.costUsd > 0),
+                                    )}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(project.totalTokens)}
@@ -779,7 +786,7 @@ export function UsagePage() {
                                   formatUsd(model.costUsd)
                                 )}
                               </td>
-                              <UsageCacheWriteCell
+                              <CacheWriteCell
                                 cacheWriteTokens={model.cacheWriteTokens}
                                 cacheWriteUsd={model.cacheWriteUsd}
                               />
@@ -899,84 +906,89 @@ function UsageDateRangeInputs({
   });
   const comparison = compareUsageDays(sinceInput.value, untilInput.value);
   const invalid = comparison === null || comparison > 0;
-  const inputClassName =
-    "[color-scheme:inherit] [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
+  // The field chrome lives on a plain wrapper, not on <Input>: the no-restyle
+  // lint rule reserves color/spacing/typography on ui components, and the
+  // `[&_[data-slot=input]]` selectors reach the native input inside.
+  const fieldClassName =
+    "w-auto rounded-md transition-colors hover:bg-background/55 hover:text-foreground focus-within:bg-background focus-within:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background has-aria-invalid:text-destructive focus-within:has-aria-invalid:ring-destructive/50 dark:hover:bg-input/32 dark:focus-within:bg-input/72 [color-scheme:inherit] [&_[data-slot=input]]:h-6 [&_[data-slot=input]]:px-2.5 [&_[data-slot=input]]:leading-6 [&_[data-slot=input]]:pointer-coarse:h-8.5 [&_[data-slot=input]]:pointer-coarse:leading-8.5 [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
 
   return (
     <div
       className={cn(
-        "flex w-fit items-center text-xs text-muted-foreground",
-        segmentedControlGroupClassName,
+        "flex w-fit items-center gap-0.5 rounded-lg bg-input/40 p-0.5 text-xs text-muted-foreground",
         className,
       )}
     >
-      <Input
-        nativeInput
-        type="date"
-        size="segmented"
-        variant="segmented"
-        aria-label="From day"
-        className={inputClassName}
-        max={untilInput.value}
-        disabled={disabled}
-        aria-invalid={invalid || undefined}
-        {...sinceInput}
-      />
+      <span className={fieldClassName}>
+        <Input
+          nativeInput
+          unstyled
+          type="date"
+          size="compact"
+          aria-label="From day"
+          max={untilInput.value}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          {...sinceInput}
+        />
+      </span>
       <span className="px-0.5">to</span>
-      <Input
-        nativeInput
-        type="date"
-        size="segmented"
-        variant="segmented"
-        aria-label="To day"
-        className={inputClassName}
-        min={sinceInput.value}
-        disabled={disabled}
-        aria-invalid={invalid || undefined}
-        {...untilInput}
-      />
+      <span className={fieldClassName}>
+        <Input
+          nativeInput
+          unstyled
+          type="date"
+          size="compact"
+          aria-label="To day"
+          min={sinceInput.value}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          {...untilInput}
+        />
+      </span>
     </div>
   );
 }
 
+/** A picked project filter: a namespaced project key, or null for work outside every project. */
+interface ProjectSelection {
+  readonly key: string | null;
+  readonly label: string;
+}
+
 /**
- * Select values are plain strings, so the three filter states get distinct
- * encodings: sentinels for "all" and "outside", while attributed projects
- * already carry a namespaced stable key from the merge layer.
+ * Select values are plain strings, so "all" and "outside" get sentinels while
+ * attributed projects carry the namespaced stable key from the merge layer.
  */
 const ALL_PROJECTS_VALUE = "all";
 const OUTSIDE_PROJECTS_VALUE = "outside";
 const PROJECT_VALUE_PREFIX = "p:";
 
-function projectFilterValue(filter: string | null | undefined): string {
-  if (filter === undefined) return ALL_PROJECTS_VALUE;
-  if (filter === null) return OUTSIDE_PROJECTS_VALUE;
-  return `${PROJECT_VALUE_PREFIX}${filter}`;
-}
-
-function projectFilterFromValue(value: string): string | null | undefined {
-  if (value === OUTSIDE_PROJECTS_VALUE) return null;
-  if (value.startsWith(PROJECT_VALUE_PREFIX)) return value.slice(PROJECT_VALUE_PREFIX.length);
-  return undefined;
+function projectSelectValue(key: string | null): string {
+  return key === null ? OUTSIDE_PROJECTS_VALUE : `${PROJECT_VALUE_PREFIX}${key}`;
 }
 
 /** Narrows the whole page to one project's buckets. */
 function UsageProjectSelect({
   projects,
-  filter,
-  selectedLabel,
+  selection,
   onChange,
 }: {
   readonly projects: readonly ProjectTotals[];
-  readonly filter: string | null | undefined;
-  readonly selectedLabel: string | null;
-  readonly onChange: (filter: string | null | undefined) => void;
+  readonly selection: ProjectSelection | undefined;
+  readonly onChange: (selection: ProjectSelection | undefined) => void;
 }) {
-  const label = filter === undefined ? "All projects" : (selectedLabel ?? "Selected project");
   return (
     <Select
-      value={projectFilterValue(filter)}
-      onValueChange={(value) => onChange(projectFilterFromValue(value ?? ""))}
+      value={selection === undefined ? ALL_PROJECTS_VALUE : projectSelectValue(selection.key)}
+      onValueChange={(value) => {
+        const project = projects.find((entry) => projectSelectValue(entry.projectKey) === value);
+        onChange(
+          project === undefined
+            ? undefined
+            : { key: project.projectKey, label: project.project ?? "Outside projects" },
+        );
+      }}
     >
       <SelectTrigger
         aria-label="Project filter"
@@ -985,25 +997,19 @@ function UsageProjectSelect({
         className="w-auto max-w-48 min-w-0"
       >
         <SelectValue>
-          <span className="truncate">{label}</span>
+          <span className="truncate">{selection?.label ?? "All projects"}</span>
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
         <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
-        {projects.map((project) =>
-          project.project === null ? (
-            <SelectItem key={OUTSIDE_PROJECTS_VALUE} value={OUTSIDE_PROJECTS_VALUE}>
-              Outside projects
-            </SelectItem>
-          ) : (
-            <SelectItem
-              key={project.projectKey}
-              value={`${PROJECT_VALUE_PREFIX}${project.projectKey}`}
-            >
-              {project.project}
-            </SelectItem>
-          ),
-        )}
+        {projects.map((project) => (
+          <SelectItem
+            key={projectSelectValue(project.projectKey)}
+            value={projectSelectValue(project.projectKey)}
+          >
+            {project.project ?? "Outside projects"}
+          </SelectItem>
+        ))}
       </SelectPopup>
     </Select>
   );
@@ -1039,6 +1045,29 @@ function Metric({
       )}
     </div>
   );
+}
+
+/**
+ * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
+ * dash rather than a misleading $0.00.
+ */
+function CacheWriteCell({
+  cacheWriteTokens,
+  cacheWriteUsd,
+}: {
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number | null;
+}) {
+  return (
+    <td className="py-2 text-right text-muted-foreground tabular-nums">
+      {formatCacheWriteCost(cacheWriteTokens, cacheWriteUsd)}
+    </td>
+  );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 /**
@@ -1120,7 +1149,10 @@ function UsageEnvironmentFilter({
   return (
     <>
       <Menu>
-        <MenuTrigger className="group/usage-environment inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+        <MenuTrigger
+          render={<InlineButton />}
+          className="group/usage-environment min-w-0 max-w-full"
+        >
           <span className="min-w-0 truncate">{label}</span>
           <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
             {showUsageStatus && pendingCount > 0 ? (
@@ -1134,7 +1166,7 @@ function UsageEnvironmentFilter({
               </>
             ) : showUsageStatus && hasIssue ? (
               <CircleAlertIcon
-                className="size-3.5 text-amber-600 dark:text-amber-400"
+                className="size-3.5 text-warning-foreground"
                 aria-label="Some environments could not report usage"
               />
             ) : (
@@ -1145,7 +1177,7 @@ function UsageEnvironmentFilter({
             )}
           </span>
         </MenuTrigger>
-        <MenuPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+        <MenuPopup align="start">
           <MenuCheckboxItem
             checked={allSelected}
             closeOnClick={false}
@@ -1177,7 +1209,6 @@ function UsageEnvironmentFilter({
                 key={environment.environmentId}
                 checked={checked}
                 closeOnClick={false}
-                className="grid-cols-[1rem_minmax(0,1fr)]"
                 onCheckedChange={(nextChecked) => {
                   const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
                   if (nextChecked) next.add(environment.environmentId);
@@ -1252,8 +1283,8 @@ function UsageSkeleton() {
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <Skeleton className="size-2 shrink-0 rounded-full" />
-                  <Skeleton className="size-4 shrink-0 rounded-full" />
+                  <Skeleton shape="pill" className="size-2 shrink-0" />
+                  <Skeleton shape="pill" className="size-4 shrink-0" />
                   <Skeleton className="h-3.5 w-20" />
                 </span>
                 <Skeleton className="h-3.5 w-14" />
@@ -1266,8 +1297,8 @@ function UsageSkeleton() {
         <div className="flex flex-col gap-3">
           <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <Skeleton className="ml-16 h-56 bg-muted-foreground/10" />
-            <Skeleton className="ml-16 h-4 bg-muted-foreground/10" />
+            <Skeleton className="ml-16 h-56" />
+            <Skeleton className="ml-16 h-4" />
           </div>
         </div>
       </section>
@@ -1280,7 +1311,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Cache writes, estimated",
+            "Estimated cache writes",
             "Cache savings",
           ].map((label) => (
             <div key={label} className="flex flex-col gap-0.5">
@@ -1294,9 +1325,9 @@ function UsageSkeleton() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <Skeleton className="h-7 w-28 rounded-lg" />
+          <Skeleton shape="card" className="h-7 w-28" />
         </div>
-        <Skeleton className="h-44 bg-muted-foreground/10" />
+        <Skeleton className="h-44" />
       </section>
     </>
   );

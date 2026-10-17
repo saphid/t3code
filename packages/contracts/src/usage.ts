@@ -21,24 +21,23 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 12 as const;
+export const USAGE_CONTRACT_VERSION = 9 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
- * `project`; v7 adds its optional stable `projectId`; v8 distinguishes outside
- * projects from unknown attribution; v9 adds the separate thread-breakdown RPC;
- * v10 adds optional cache-write costs; v11 adds optional cache-write TTL counters;
- * v12 adds server-side thread filtering before the breakdown row cap.
- * v4 Claude/Codex buckets remain valid, so mixed-version environments keep those
- * totals instead of treating every older server as stale.
+ * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds optional project
+ * attribution to buckets; v7 adds the separate thread-breakdown RPC; v8 adds
+ * optional cache-write costs; v9 adds thread filtering before the breakdown row cap.
+ * v4 Claude/Codex buckets remain valid, so
+ * mixed-version environments keep those totals instead of treating every older
+ * server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
-/** First contract version that explicitly distinguishes outside from unknown attribution. */
-export const USAGE_PROJECT_ATTRIBUTION_SINCE = 8 as const;
-/** First contract version that exposes the current thread-breakdown RPC. */
-export const USAGE_THREAD_BREAKDOWN_SINCE = 9 as const;
+/** First contract version whose buckets carry project attribution. */
+export const USAGE_PROJECT_ATTRIBUTION_SINCE = 6 as const;
+/** First contract version that exposes the thread-breakdown RPC. */
+export const USAGE_THREAD_BREAKDOWN_SINCE = 7 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -82,10 +81,6 @@ export const UsageTokenTotals = Schema.Struct({
   uncachedInputTokens: NonNegativeInt,
   cachedInputTokens: NonNegativeInt,
   cacheCreationTokens: NonNegativeInt,
-  /** Anthropic five-minute cache writes, when the transcript reports the TTL. */
-  cacheCreation5mTokens: Schema.optional(NonNegativeInt),
-  /** Anthropic one-hour cache writes, when the transcript reports the TTL. */
-  cacheCreation1hTokens: Schema.optional(NonNegativeInt),
   outputTokens: NonNegativeInt,
   reasoningTokens: NonNegativeInt,
 });
@@ -112,7 +107,7 @@ export const UsageBucket = Schema.Struct({
    * predating this field).
    */
   project: Schema.optional(TrimmedNonEmptyString),
-  /** Stable identity for `project`; absent on summaries from pre-v7 servers. */
+  /** Stable identity for `project`. */
   projectId: Schema.optional(ProjectId),
   /**
    * Whether the session ran in a project, outside every project, or carried no
@@ -130,9 +125,9 @@ export const UsageBucket = Schema.Struct({
    */
   cacheSavingsUsd: Schema.Number,
   /**
-   * Estimated cache-write cost at the model and TTL-specific rates. Cache
-   * creation is a billing category, not proof of expiry. A subset of `costUsd`
-   * when the bucket is model-priced. Absent from older summaries.
+   * Estimated cost of the cache-creation tokens in this bucket at the model's
+   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
+   * Absent from summaries written before this field existed.
    */
   cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
@@ -219,12 +214,6 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * Opaque identity of the source snapshots visible when the user explicitly
-   * requested a refresh. A new value bypasses the short-lived source cache
-   * once; repeated reads with the same value may reuse the updated snapshot.
-   */
-  refreshToken: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -243,6 +232,10 @@ export const UsageSummary = Schema.Struct({
 export type UsageSummary = typeof UsageSummary.Type;
 
 export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Return only rows attributed to this T3 thread. */
+  threadId: Schema.optional(ThreadId),
+  /** Makes a client query reread the breakdown after thread usage changes. */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
   /** Inclusive last day of the window, in `timeZone`. */
@@ -252,8 +245,6 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for a rolling window such as Past 24h. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
-  /** Changed by callers that need to bypass the short-lived source snapshot. */
-  refreshToken: Schema.optional(TrimmedNonEmptyString),
   /**
    * Restrict to one project's records: a namespaced stable key selects that
    * project, `null` selects records outside every project, absent applies no
@@ -262,8 +253,6 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   projectKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Providers this environment owns after physical-source de-duplication. */
   providers: Schema.optional(Schema.Array(UsageProviderKind)),
-  /** Return only rows attributed to this T3 thread. */
-  threadId: Schema.optional(ThreadId),
 });
 export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
 

@@ -42,11 +42,6 @@ export const GetProjectionProjectInput = Schema.Struct({
 });
 export type GetProjectionProjectInput = typeof GetProjectionProjectInput.Type;
 
-export const DeleteProjectionProjectInput = Schema.Struct({
-  projectId: ProjectId,
-});
-export type DeleteProjectionProjectInput = typeof DeleteProjectionProjectInput.Type;
-
 /**
  * ProjectionProjectRepositoryShape - Service API for projected project records.
  */
@@ -66,7 +61,7 @@ export interface ProjectionProjectRepositoryShape {
   ) => Effect.Effect<Option.Option<ProjectionProject>, ProjectionRepositoryError>;
 
   /**
-   * List all projected project rows.
+   * List all projected project rows, including soft-deleted ones.
    *
    * Returned in deterministic creation order.
    */
@@ -74,13 +69,6 @@ export interface ProjectionProjectRepositoryShape {
     ReadonlyArray<ProjectionProject>,
     ProjectionRepositoryError
   >;
-
-  /**
-   * Soft-delete a projected project row by id.
-   */
-  readonly deleteById: (
-    input: DeleteProjectionProjectInput,
-  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 /**

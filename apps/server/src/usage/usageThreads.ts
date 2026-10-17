@@ -124,10 +124,6 @@ export class ThreadUsageAccumulator {
       this.#unkeyedRecords.push({ record, context });
       return inWindow;
     }
-    if (this.#recordsByKey.has(record.dedupeKey)) {
-      this.#recordsByKey.set(record.dedupeKey, { record, context });
-      return inWindow;
-    }
     this.#recordsByKey.set(record.dedupeKey, { record, context });
     return inWindow;
   }

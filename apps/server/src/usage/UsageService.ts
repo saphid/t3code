@@ -15,6 +15,9 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  type ProviderInstanceConfig,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
@@ -47,18 +50,13 @@ import { ProjectionProjectRepository } from "../persistence/Services/ProjectionP
 import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import {
-  providerResumeCursorSessionId,
-  readProviderResumeCursorHistory,
-} from "../provider/providerResumeCursorHistory.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
-import { dedicatedUsageWorktreePath, normalizeUsagePath } from "./usagePaths.ts";
+import { dedicatedUsageWorktreePath } from "./usagePaths.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
-  readCodexTranscriptIdentity,
   readDirectoryVolumeId,
   readTranscriptRecords,
   readTranscriptTitle,
@@ -66,13 +64,10 @@ import {
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
-  decodeScanIdentityCache,
   dedupeWithinFile,
   encodeScanCache,
-  pruneScanIdentityCache,
   pruneScanCache,
   type ScanCache,
-  type ScanIdentityCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -92,9 +87,6 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Match the client query TTL so changing a date range does not rescan fresh sources. */
-const SOURCE_SCAN_TTL_MS = 60 * 1000;
-
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
@@ -103,6 +95,9 @@ const CACHE_RETENTION_DAYS = 90;
  * window can hold thousands of sessions, so lower-cost rows fold together.
  */
 const THREAD_ROW_CAP = 40;
+
+const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -120,12 +115,16 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
-const encodeSourceKey = Schema.encodeSync(ScanCacheJson);
+const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
 
 export function isValidUsageDay(day: string): boolean {
   const parsed = DateTime.make(`${day}T00:00:00Z`);
   return Option.isSome(parsed) && DateTime.formatIso(parsed.value).slice(0, 10) === day;
 }
+const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
+const decodeCachedSources = Schema.decodeUnknownOption(
+  Schema.Struct({ sources: Schema.Record(Schema.String, CachedSource) }),
+);
 
 export class UsageService extends Context.Service<
   UsageService,
@@ -188,10 +187,12 @@ export const make = Effect.gen(function* () {
   const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
-  const fileIdentityCache: ScanIdentityCache = new Map();
-  let cacheRevision = 0;
-  let persistedCacheRevision = 0;
-  const cachePersistSemaphore = yield* Semaphore.make(1);
+  const sourceCache = new Map<string, typeof CachedSource.Type>();
+  let cacheDirty = false;
+  const isWithinDirectory = (filePath: string, dir: string) => {
+    const relative = path.relative(dir, filePath);
+    return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
+  };
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -270,19 +271,6 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("UsageService.refreshRates"),
   );
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
   // A settings failure must not silently discard custom rates or transcript homes.
   const readSettings = settingsService.getSettings.pipe(
     Effect.catchCause(
@@ -298,29 +286,95 @@ export const make = Effect.gen(function* () {
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
+    retentionCutoffMs: number,
   ) {
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-    // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
-    // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
-    const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
-    const grokHome =
-      grokHomeEnv.length > 0
-        ? path.resolve(expandHomePath(grokHomeEnv))
-        : path.join(NodeOS.homedir(), ".grok");
-
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      {
-        provider: "grok" as const,
-        dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
-      },
-    ];
+    const dirs: Array<{
+      provider: UsageProviderKind;
+      dir: string;
+      volumeId: string;
+      fileName?: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+      // Disabled accounts still have history. Explicit default slots replace
+      // the legacy settings, just as they do in the provider registry.
+      const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
+        Object.values(settings.providerInstances).filter((instance) => instance.driver === driver);
+      if (!Object.hasOwn(settings.providerInstances, driver)) {
+        instances.push({ config: settings.providers[driver] });
+      }
+      for (const instance of instances) {
+        const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
+        const provider = driver === "claudeAgent" ? "claude" : driver;
+        let home: string;
+        if (driver === "codex") {
+          const decoded = decodeCodexSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const config = decoded.value;
+          const environmentHome = environment.CODEX_HOME?.trim();
+          const layout = yield* resolveCodexHomeLayout(
+            !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
+              ? { ...config, homePath: environmentHome }
+              : config,
+          );
+          home = layout.sharedHomePath;
+        } else if (driver === "claudeAgent") {
+          const decoded = decodeClaudeSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          const configured = decoded.value.homePath.trim();
+          home = configured
+            ? expandHomePath(configured)
+            : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else {
+          home = expandHomePath(
+            environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
+          );
+        }
+        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        const sourceKey = provider + "\0" + directory;
+        const previous = sourceCache.get(sourceKey);
+        // Keep canonical paths and source fingerprints stable after root cleanup,
+        // including aliases and clients merging pre-cleanup environment summaries.
+        const dir = yield* fileSystem
+          .realPath(directory)
+          .pipe(Effect.orElseSucceed(() => previous?.dir ?? directory));
+        const currentVolumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+        const hasRetainedHistory = fileCache
+          .entries()
+          .some(
+            ([filePath, entry]) =>
+              entry.provider === provider &&
+              entry.mtimeMs >= retentionCutoffMs &&
+              entry.records.length + entry.tailRecords.length > 0 &&
+              isWithinDirectory(filePath, dir),
+          );
+        // A recreated directory still reports the retained history under its old identity.
+        const volumeId =
+          previous?.dir === dir && (hasRetainedHistory || !currentVolumeId)
+            ? previous.volumeId || currentVolumeId
+            : currentVolumeId;
+        if (previous?.dir !== dir || previous.volumeId !== volumeId) {
+          sourceCache.set(sourceKey, { dir, volumeId });
+          cacheDirty = true;
+        }
+        const key = `${provider}\0${dir}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        dirs.push({
+          provider,
+          dir,
+          volumeId,
+          ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
+        });
+      }
+    }
+    return dirs;
   });
 
+  /**
+   * Reads every project (including soft-deleted ones, so past spend stays
+   * attributed) with its threads. `null` when the project list cannot be read.
+   */
   const loadProjectThreads = Effect.gen(function* () {
     const projects = yield* projectRepository
       .listAll()
@@ -338,7 +392,14 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Project names and worktree ownership are re-read for each request. */
+  /**
+   * Builds the cwd → project resolver for one request.
+   *
+   * Projects and thread worktrees are re-read every request so a project
+   * created or renamed since the last refresh attributes correctly. If the
+   * project list cannot be read, the scan reports unknown attribution rather
+   * than claiming the work ran outside every project.
+   */
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* (
     snapshot: typeof loadProjectThreads = loadProjectThreads,
   ) {
@@ -377,25 +438,30 @@ export const make = Effect.gen(function* () {
       );
       if (document === null) return;
       for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
-      for (const [path, entry] of decodeScanIdentityCache(document)) {
-        fileIdentityCache.set(path, entry);
+      const sources = decodeCachedSources(document);
+      if (Option.isSome(sources)) {
+        for (const [key, source] of Object.entries(sources.value.sources))
+          sourceCache.set(key, source);
       }
     }),
   );
 
-  const persistScanCacheUnlocked = Effect.fn("UsageService.persistScanCacheUnlocked")(function* () {
-    if (cacheRevision === persistedCacheRevision) return;
-    const revision = cacheRevision;
-    yield* encodeScanCacheFile(encodeScanCache(fileCache, fileIdentityCache)).pipe(
+  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
+    if (!cacheDirty) return;
+    // Cleared only after the write lands, so a failed persist is retried on
+    // the next scan instead of leaving disk permanently stale.
+    yield* encodeScanCacheFile({
+      ...encodeScanCache(fileCache),
+      sources: Object.fromEntries(sourceCache),
+    }).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
       Effect.map(() => {
-        persistedCacheRevision = revision;
+        cacheDirty = false;
       }),
       // A cache we cannot write is a slower next start, not a failed read.
       Effect.catchCause(() => Effect.void),
     );
   });
-  const persistScanCache = () => cachePersistSemaphore.withPermits(1)(persistScanCacheUnlocked());
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -423,7 +489,7 @@ export const make = Effect.gen(function* () {
       ) {
         return cached.tailRecords.length === 0
           ? cached.records
-          : dedupeWithinFile([...cached.records, ...cached.tailRecords]);
+          : [...cached.records, ...cached.tailRecords];
       }
 
       // Only a strictly grown file may resume. Same size with a new mtime, or
@@ -438,14 +504,17 @@ export const make = Effect.gen(function* () {
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null)
+        return cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [];
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The final snapshot wins so a resumed Claude parse can
-      // replace an earlier progressive snapshot from the cached base.
+      // duplicates. The aggregator still runs the cross-file dedupe pass. One
+      // seen set spans the cached base, the new lines, and the tail so a
+      // resumed parse dedupes exactly like a full one.
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const records = dedupeWithinFile([...base, ...parsed.records]);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords);
+      const seen = new Set<string>();
+      const records = dedupeWithinFile([...base, ...parsed.records], seen);
+      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
 
       fileCache.set(filePath, {
         size,
@@ -455,204 +524,101 @@ export const make = Effect.gen(function* () {
         tailRecords,
         position: parsed.position,
       });
-      if (provider === "codex") {
-        const state = parsed.position.codexState;
-        fileIdentityCache.set(filePath, {
-          size,
-          mtimeMs,
-          provider,
-          sessionId: state?.sessionId ?? "",
-          cwd: state?.cwd ?? "",
-        });
-      }
-      cacheRevision += 1;
-      return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
+      cacheDirty = true;
+      return tailRecords.length === 0 ? records : [...records, ...tailRecords];
     });
-
-  /** Reads and caches the bounded Codex preamble used for thread prefiltering. */
-  const readFileIdentity = Effect.fn("UsageService.readFileIdentity")(function* (
-    filePath: string,
-    size: number,
-    mtimeMs: number,
-    provider: UsageProviderKind,
-  ) {
-    const cached = fileIdentityCache.get(filePath);
-    if (
-      cached !== undefined &&
-      cached.size === size &&
-      cached.mtimeMs === mtimeMs &&
-      cached.provider === provider
-    ) {
-      return cached;
-    }
-    if (provider !== "codex") return null;
-
-    // I/O failures are not negative identities. Skip this read without
-    // caching it so the next request can retry an otherwise valid rollout.
-    const read = yield* Effect.tryPromise(() => readCodexTranscriptIdentity(filePath)).pipe(
-      Effect.option,
-    );
-    if (Option.isNone(read)) return null;
-
-    const identity = {
-      size,
-      mtimeMs,
-      provider,
-      sessionId: read.value?.sessionId ?? "",
-      cwd: read.value?.cwd ?? "",
-    } as const;
-    fileIdentityCache.set(filePath, identity);
-    cacheRevision += 1;
-    return identity;
-  });
 
   /** One provider directory's walk and parse, before rates are involved. */
   interface ScannedDir {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
-    readonly allPaths: ReadonlySet<string>;
     /** Parsed records per file, or `null` when the directory does not exist. */
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
   }
 
-  interface SourceSnapshot {
-    readonly completedAtMs: number;
-    readonly scanRevision: number;
-    readonly windowStartMs: number;
-    readonly sourceKey: string;
-    readonly dirs: readonly ScannedDir[];
-  }
-
-  let sourceSnapshot: SourceSnapshot | null = null;
-  let sourceScanRevision = 0;
-  let lastRefreshToken: string | null = null;
-  const sourceScanSemaphore = yield* Semaphore.make(1);
-
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
+    retentionCutoffMs: number,
   ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
-    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+    const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
-      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+    for (const { provider, dir, volumeId, fileName } of dirs) {
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) {
-        scanned.push({ provider, dir, volumeId, allPaths: new Set(), files: null });
+        scanned.push({ provider, dir, volumeId, files: null });
         continue;
       }
-      const allPaths = new Set<string>();
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, {
-          ...(fileName === undefined ? {} : { fileName }),
-          onFile: (filePath) => allPaths.add(filePath),
-        }),
+        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         parsedFiles.push({ path: file.path, records });
       }
-      scanned.push({ provider, dir, volumeId, allPaths, files: parsedFiles });
+      scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
     return scanned;
   });
 
-  const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
-    windowStartMs: number,
-    refreshToken: string | undefined,
-    settings: ServerSettingsValue,
-  ) {
-    return yield* sourceScanSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const startedAtMs = yield* Clock.currentTimeMillis;
-        const currentSnapshot = sourceSnapshot;
-        const snapshotAgeMs =
-          currentSnapshot === null
-            ? Number.POSITIVE_INFINITY
-            : startedAtMs - currentSnapshot.completedAtMs;
-        const snapshotCoversWindow =
-          currentSnapshot !== null && currentSnapshot.windowStartMs <= windowStartMs;
-        const sourceKey = encodeSourceKey([
-          settings.providers.claudeAgent,
-          settings.providers.codex,
-        ]);
-        const snapshotCoversSources = currentSnapshot?.sourceKey === sourceKey;
-        const manualRefresh = refreshToken !== undefined && refreshToken !== lastRefreshToken;
-
-        if (
-          !manualRefresh &&
-          currentSnapshot !== null &&
-          snapshotCoversWindow &&
-          snapshotCoversSources &&
-          snapshotAgeMs < SOURCE_SCAN_TTL_MS
-        ) {
-          return currentSnapshot;
-        }
-
-        // Preserve the widest coverage already loaded. A stale narrow request
-        // should update changed files, not discard older records and force the
-        // next wider range to read them again.
-        const scanWindowStartMs = Math.min(
-          windowStartMs,
-          currentSnapshot?.windowStartMs ?? windowStartMs,
-        );
-
-        // Pricing only matters once records are aggregated, so the rate table
-        // loads while transcripts stream instead of gating them: a cold rates
-        // fetch on a slow network no longer delays the scan by its own timeout.
-        sourceScanRevision += 1;
-        const scanRevision = sourceScanRevision;
-        const [, dirs] = yield* Effect.all(
-          [ensureRates(false), collectDirs(scanWindowStartMs, settings)],
-          { concurrency: 2 },
-        );
-        const now = yield* Clock.currentTimeMillis;
-        const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
-        const nextSnapshot = {
-          completedAtMs,
-          scanRevision,
-          windowStartMs: scanWindowStartMs,
-          sourceKey,
-          dirs,
-        } satisfies SourceSnapshot;
-        sourceSnapshot = nextSnapshot;
-        if (refreshToken !== undefined) lastRefreshToken = refreshToken;
-        return nextSnapshot;
-      }),
-    );
-  });
-
-  const getReusableSourceSnapshot = Effect.fn("UsageService.getReusableSourceSnapshot")(function* (
-    windowStartMs: number,
-    settings: ServerSettingsValue,
-  ) {
-    return yield* sourceScanSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const currentSnapshot = sourceSnapshot;
-        if (currentSnapshot === null) return null;
-        const now = yield* Clock.currentTimeMillis;
-        const sourceKey = encodeSourceKey([
-          settings.providers.claudeAgent,
-          settings.providers.codex,
-        ]);
-        return currentSnapshot.windowStartMs <= windowStartMs &&
-          currentSnapshot.sourceKey === sourceKey &&
-          now - currentSnapshot.completedAtMs < SOURCE_SCAN_TTL_MS
-          ? currentSnapshot
-          : null;
-      }),
-    );
-  });
+  /**
+   * Files that still contribute to one source: the walked files plus saved
+   * records for transcripts that cleanup removed. Codex records carry an
+   * occurrence key so moved rollout copies de-duplicate without collapsing
+   * repeated equal events within one rollout. The summary and the thread
+   * breakdown both fold these, so their totals reconcile.
+   */
+  const contributingFiles = (
+    { provider, dir, files }: ScannedDir,
+    retentionCutoffMs: number,
+  ): { readonly path: string; readonly records: readonly UsageRecord[] }[] => {
+    const retainedFiles = [...(files ?? [])];
+    const livePaths = new Set(retainedFiles.map((file) => file.path));
+    // Cleanup may remove transcripts, but the usage we already saved still
+    // contributes to this source. Keep the normal aggregation and dedupe path.
+    for (const [filePath, entry] of fileCache) {
+      if (
+        entry.provider !== provider ||
+        entry.mtimeMs < retentionCutoffMs ||
+        livePaths.has(filePath) ||
+        !isWithinDirectory(filePath, dir)
+      )
+        continue;
+      retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+    }
+    return retainedFiles.map((file) => {
+      if (provider !== "codex") return file;
+      const codexEventOccurrences = new Map<string, number>();
+      return {
+        path: file.path,
+        records: file.records.map((record) => {
+          if (record.sessionId.length === 0) return record;
+          // Match moved rollout copies without collapsing repeated equal events
+          // within one rollout (timestamps can have only second precision).
+          const key = encodeUsageRecordKey([
+            record.provider,
+            record.sessionId,
+            record.timestampMs,
+            record.model,
+            record.totals,
+          ]);
+          const occurrence = (codexEventOccurrences.get(key) ?? 0) + 1;
+          codexEventOccurrences.set(key, occurrence);
+          return { ...record, dedupeKey: key + ":" + occurrence };
+        }),
+      };
+    });
+  };
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
@@ -702,11 +668,17 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken, settings);
-    const scannedDirs = currentSnapshot.dirs;
-    const sourceReadAtMs = currentSnapshot.completedAtMs;
 
-    const resolveProject = yield* resolveProjects();
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+    // Pricing only matters once records are aggregated, so the rate table
+    // loads while transcripts stream instead of gating them: a cold rates
+    // fetch on a slow network no longer delays the scan by its own timeout.
+    const [, scannedDirs] = yield* Effect.all(
+      [ensureRates(false), collectDirs(windowStartMs, settings, retentionCutoffMs)],
+      { concurrency: 2 },
+    );
+
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -714,84 +686,58 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      ...(resolveProject === undefined ? {} : { resolveProject }),
+      resolveProject: yield* resolveProjects(),
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
     const sources: UsageSource[] = [];
-    const livePaths = new Set<string>();
-    const allPaths = new Set<string>();
-    const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, allPaths: dirPaths, files } of scannedDirs) {
-      if (files === null) {
-        sources.push({
-          fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
-          scannedFiles: 0,
-          skippedFiles: 0,
-          malformedRecords: 0,
-          distinctSessions: 0,
-          message: "No transcript directory on this environment.",
-        });
-        continue;
-      }
-
-      walkedRoots.push(dir);
-      for (const filePath of dirPaths) allPaths.add(filePath);
+    for (const scannedDir of scannedDirs) {
+      const { provider, dir, volumeId, files } = scannedDir;
       let scannedFiles = 0;
       let skippedFiles = 0;
-      for (const file of files) {
-        livePaths.add(file.path);
+      // Distinct per directory. Buckets carry per-cell session counts, but a
+      // session spans days and models, so clients total this figure instead.
+      const sessionIds = new Set<string>();
+
+      for (const file of contributingFiles(scannedDir, retentionCutoffMs)) {
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
         scannedFiles += 1;
         for (const record of file.records) {
-          aggregator.add(record);
+          // Only sessions contributing in-window count; the mtime slack can
+          // admit boundary files whose records fall outside the range.
+          if (aggregator.add(record) && record.sessionId.length > 0) {
+            sessionIds.add(record.sessionId);
+          }
         }
       }
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        // Clients exclude missing sources, so saved records remain an available source.
+        status: files === null && scannedFiles === 0 ? "missing" : "ok",
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        // Read from the settled records so a progressive snapshot replacement
-        // cannot leave the source count attached to the superseded session.
-        distinctSessions: aggregator.distinctSessions(provider),
-        message: null,
+        distinctSessions: sessionIds.size,
+        message: files === null ? "No transcript directory on this environment." : null,
       });
     }
 
-    // A newer source walk may have populated files after this snapshot left
-    // the scan lane. Only the latest walk can prove that an unseen path
-    // disappeared and persist the resulting cache.
-    if (currentSnapshot.scanRevision === sourceScanRevision) {
-      const pruned = pruneScanCache(fileCache, {
-        livePaths,
-        walkedRoots,
-        windowStartMs,
-        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-      });
-      if (pruned > 0) cacheRevision += 1;
-      const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
-        livePaths: allPaths,
-        walkedRoots,
-      });
-      if (prunedIdentities > 0) cacheRevision += 1;
-
-      yield* persistScanCache();
-    }
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+    if (pruned > 0) cacheDirty = true;
+    yield* persistScanCache();
 
     const aggregated = aggregator.finish();
+    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(DateTime.makeUnsafe(sourceReadAtMs)),
+      readAt: DateTime.formatIso(readAt),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -820,7 +766,6 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
-      input.refreshToken === undefined ? null : "refresh",
       priceOverrides,
     ]);
 
@@ -898,16 +843,24 @@ export const make = Effect.gen(function* () {
       ),
     );
     for (const runtime of runtimes) {
-      for (const sessionKey of runtimeUsageSessionKeys(
-        runtime.providerName,
-        runtime.resumeCursor,
-        runtime.runtimePayload,
-      )) {
-        sessionToThread.set(sessionKey, {
-          threadId: runtime.threadId,
-          title: titles.get(runtime.threadId) ?? runtime.threadId,
-        });
-      }
+      const cursor = runtime.resumeCursor;
+      if (typeof cursor !== "object" || cursor === null) continue;
+      const cursorRecord = cursor as Record<string, unknown>;
+      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
+      // carry the rollout uuid as `threadId`. Other providers do not surface
+      // usage transcripts, so their cursors are irrelevant here.
+      const sessionId =
+        runtime.providerName === "claudeAgent"
+          ? cursorRecord["resume"]
+          : runtime.providerName === "codex"
+            ? cursorRecord["threadId"]
+            : undefined;
+      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
+      sessionToThread.set(`${provider}:${sessionId}`, {
+        threadId: runtime.threadId,
+        title: titles.get(runtime.threadId) ?? runtime.threadId,
+      });
     }
 
     return { sessionToThread, worktreeToThread };
@@ -963,26 +916,18 @@ export const make = Effect.gen(function* () {
     const startedAtMs = yield* Clock.currentTimeMillis;
     const settings = yield* readSettings;
     yield* ensureScanCacheLoaded;
-    yield* ensureRates(false);
-    const projectSnapshot = yield* Effect.cached(loadProjectThreads);
-    const attribution = yield* loadThreadAttribution(projectSnapshot);
-    const target =
-      input.threadId === undefined ? null : threadTranscriptTarget(attribution, input.threadId);
 
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-    // Reuse a summary's fresh parsed snapshot when one exists, so a grown
-    // transcript cannot make its drill-down disagree during the source TTL.
-    // A thread-only read keeps the targeted identity scan below instead of
-    // cold-parsing the entire provider corpus.
-    // A manual single-thread refresh must retain the targeted body prefilter.
-    const threadScanRevision = sourceScanRevision;
-    const currentSnapshot = yield* input.refreshToken === undefined
-      ? getReusableSourceSnapshot(windowStartMs, settings)
-      : input.threadId === undefined
-        ? getSourceSnapshot(windowStartMs, input.refreshToken, settings)
-        : Effect.succeed(null);
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // Same walk as the summary. Files the summary just parsed are cache-warm,
+    // so this re-stats them instead of re-reading transcripts.
+    const [, scannedDirs] = yield* Effect.all(
+      [ensureRates(false), collectDirs(windowStartMs, settings, retentionCutoffMs)],
+      { concurrency: 2 },
+    );
 
+    const projectSnapshot = yield* Effect.cached(loadProjectThreads);
     const resolveProject = yield* resolveProjects(projectSnapshot);
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
@@ -990,8 +935,8 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       ...exactWindow,
       rates,
-      ...(resolveProject === undefined ? {} : { resolveProject }),
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
     });
 
     // Preferred transcript per session for title extraction: the main file,
@@ -1000,139 +945,39 @@ export const make = Effect.gen(function* () {
       string,
       { readonly path: string; readonly provider: UsageProviderKind }
     >();
-    const livePaths = new Set<string>();
-    const allPaths = new Set<string>();
-    const walkedRoots: string[] = [];
 
-    const addRecords = (
-      provider: UsageProviderKind,
-      filePath: string,
-      records: readonly UsageRecord[],
-    ) => {
-      if (records.length === 0) return;
-      const isSubagent =
-        provider === "claude" && path.basename(path.dirname(filePath)) === "subagents";
-      const agentId = isSubagent ? path.basename(filePath, ".jsonl") : null;
-      for (const record of records) {
-        const sessionKey =
-          record.sessionId.length > 0
-            ? `${provider}:${record.sessionId}`
-            : `${provider}:file:${path.basename(path.dirname(filePath))}:${path.basename(filePath, ".jsonl")}`;
-        accumulator.add(record, { sessionKey, agentId });
-        if (!isSubagent && !titleFiles.has(sessionKey)) {
-          titleFiles.set(sessionKey, { path: filePath, provider });
-        }
-      }
-    };
-
-    if (currentSnapshot !== null) {
-      for (const { provider, dir, allPaths: dirPaths, files } of currentSnapshot.dirs) {
-        if (input.providers !== undefined && !input.providers.includes(provider)) continue;
-        if (files === null) continue;
-        walkedRoots.push(dir);
-        for (const filePath of dirPaths) allPaths.add(filePath);
-        for (const file of files) {
-          if (
-            target !== null &&
-            !transcriptFileMayMatchThread({
-              path,
-              filePath: file.path,
-              root: dir,
-              provider,
-              target,
-              cached: {
-                records: file.records,
-                tailRecords: [],
-              },
-            })
-          ) {
-            continue;
+    for (const scannedDir of scannedDirs) {
+      const { provider } = scannedDir;
+      if (input.providers !== undefined && !input.providers.includes(provider)) continue;
+      for (const file of contributingFiles(scannedDir, retentionCutoffMs)) {
+        if (file.records.length === 0) continue;
+        const isSubagent =
+          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
+        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
+        for (const record of file.records) {
+          const sessionKey =
+            record.sessionId.length > 0
+              ? `${provider}:${record.sessionId}`
+              : `${provider}:file:${path.basename(path.dirname(file.path))}:${path.basename(file.path, ".jsonl")}`;
+          accumulator.add(record, { sessionKey, agentId });
+          if (!isSubagent && !titleFiles.has(sessionKey)) {
+            titleFiles.set(sessionKey, { path: file.path, provider });
           }
-          livePaths.add(file.path);
-          addRecords(provider, file.path, file.records);
-        }
-      }
-    } else {
-      const dirs = yield* resolveTranscriptDirs(settings).pipe(
-        Effect.provideService(Path.Path, path),
-      );
-      for (const { provider, dir, fileName } of dirs) {
-        if (input.providers !== undefined && !input.providers.includes(provider)) continue;
-        const exists = yield* fileSystem
-          .exists(dir)
-          .pipe(Effect.catchCause(() => Effect.succeed(false)));
-        if (!exists) continue;
-        walkedRoots.push(dir);
-
-        const files = yield* Effect.promise(() =>
-          listTranscriptFiles(dir, windowStartMs, {
-            ...(fileName === undefined ? {} : { fileName }),
-            onFile: (filePath) => allPaths.add(filePath),
-          }),
-        );
-        for (const file of files) {
-          const cached = fileCache.get(file.path);
-          const identity =
-            target !== null && provider === "codex"
-              ? yield* readFileIdentity(file.path, file.size, file.mtimeMs, provider)
-              : null;
-          if (
-            target !== null &&
-            !transcriptFileMayMatchThread({
-              path,
-              filePath: file.path,
-              root: dir,
-              provider,
-              target,
-              ...(cached === undefined ? {} : { cached }),
-              ...(identity === null ? {} : { identity }),
-            })
-          ) {
-            continue;
-          }
-          livePaths.add(file.path);
-          const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-          addRecords(provider, file.path, records);
         }
       }
     }
 
-    // A newer source walk may have populated files after a reused snapshot
-    // left the scan lane. Only the latest snapshot can prove that an unseen
-    // path disappeared. A targeted direct walk still persists its selected
-    // lifetime records when no reusable snapshot exists.
-    if (
-      currentSnapshot === null
-        ? threadScanRevision === sourceScanRevision
-        : currentSnapshot.scanRevision === sourceScanRevision
-    ) {
-      // A filtered walk sees only one thread's candidates, so it cannot prove
-      // that other cached files disappeared. Keeping the selected lifetime
-      // records also prevents an old thread from being cold-parsed every turn.
-      if (target === null) {
-        const pruned = pruneScanCache(fileCache, {
-          livePaths,
-          walkedRoots,
-          windowStartMs,
-          retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-        });
-        if (pruned > 0) cacheRevision += 1;
-      }
-      const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
-        livePaths: allPaths,
-        walkedRoots,
-      });
-      if (prunedIdentities > 0) cacheRevision += 1;
-      // Persist selected lifetime records so a restart does not cold-parse the
-      // same old thread again. Unfiltered reads retain the normal bounded cache.
+    // A thread-only client must warm and bound the same durable cache as the
+    // summary RPC, otherwise restarts repeat parsing and stale entries grow.
+    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+    if (pruned > 0) cacheDirty = true;
+    yield* persistScanCache();
 
-      yield* persistScanCache();
-    }
-
+    const attribution = yield* loadThreadAttribution(projectSnapshot);
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
-      ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
       ...(input.threadId === undefined ? {} : { threadFilter: input.threadId }),
+      ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
     });
 
     // Transcript titles only for retained unattributed rows. Grouped remainder
@@ -1154,10 +999,7 @@ export const make = Effect.gen(function* () {
       { concurrency: 8 },
     );
 
-    const readAt =
-      currentSnapshot === null
-        ? yield* DateTime.now
-        : DateTime.makeUnsafe(currentSnapshot.completedAtMs);
+    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
@@ -1178,186 +1020,6 @@ export function shortSessionLabel(sessionKey: string): string {
   if (sessionKey.includes(":file:")) return "Untitled session";
   const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
   return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
-}
-
-/** Maps a persisted provider cursor to the transcript session key it owns. */
-export function runtimeUsageSessionKey(providerName: string, cursor: unknown): string | null {
-  let provider: UsageProviderKind;
-  switch (providerName) {
-    case "claudeAgent":
-      provider = "claude";
-      break;
-    case "codex":
-      provider = "codex";
-      break;
-    case "grok":
-      provider = "grok";
-      break;
-    default:
-      return null;
-  }
-  const sessionId = providerResumeCursorSessionId(providerName, cursor);
-  return sessionId === null ? null : `${provider}:${sessionId}`;
-}
-
-/** Maps current and replaced provider cursors to every transcript session owned by a thread. */
-export function runtimeUsageSessionKeys(
-  providerName: string,
-  cursor: unknown,
-  runtimePayload: unknown | null,
-): readonly string[] {
-  const keys = [
-    runtimeUsageSessionKey(providerName, cursor),
-    ...readProviderResumeCursorHistory(runtimePayload).map((entry) =>
-      runtimeUsageSessionKey(entry.providerName, entry.resumeCursor),
-    ),
-  ];
-  return [...new Set(keys.filter((key): key is string => key !== null))];
-}
-
-export interface ThreadTranscriptTarget {
-  readonly sessionIds: ReadonlyMap<UsageProviderKind, ReadonlySet<string>>;
-  readonly worktrees: ReadonlySet<string>;
-}
-
-function threadTranscriptTarget(
-  attribution: {
-    readonly sessionToThread: ReadonlyMap<string, ThreadRef>;
-    readonly worktreeToThread: ReadonlyMap<string, ThreadRef>;
-  },
-  threadId: string,
-): ThreadTranscriptTarget {
-  const mutableSessionIds = new Map<UsageProviderKind, Set<string>>();
-  for (const [sessionKey, ref] of attribution.sessionToThread) {
-    if (ref.threadId !== threadId) continue;
-    const separator = sessionKey.indexOf(":");
-    const provider = sessionKey.slice(0, separator);
-    const sessionId = sessionKey.slice(separator + 1);
-    if (
-      separator <= 0 ||
-      sessionId.length === 0 ||
-      (provider !== "claude" && provider !== "codex" && provider !== "grok")
-    ) {
-      continue;
-    }
-    const ids = mutableSessionIds.get(provider) ?? new Set<string>();
-    ids.add(sessionId);
-    mutableSessionIds.set(provider, ids);
-  }
-  const worktrees = new Set<string>();
-  for (const [worktree, ref] of attribution.worktreeToThread) {
-    if (ref.threadId === threadId) worktrees.add(normalizeUsagePath(worktree));
-  }
-  return { sessionIds: mutableSessionIds, worktrees };
-}
-
-function cwdMatchesTarget(cwd: string, worktrees: ReadonlySet<string>): boolean {
-  if (cwd.length === 0) return false;
-  const normalizedCwd = normalizeUsagePath(cwd);
-  for (const worktree of worktrees) {
-    const prefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
-    if (normalizedCwd === worktree || normalizedCwd.startsWith(prefix)) return true;
-  }
-  return false;
-}
-
-function pathMatchesSession(
-  path: Pick<Path.Path, "basename" | "dirname">,
-  filePath: string,
-  provider: UsageProviderKind,
-  sessionIds: ReadonlySet<string>,
-): boolean {
-  if (sessionIds.size === 0) return false;
-  if (provider === "grok") return sessionIds.has(path.basename(path.dirname(filePath)));
-  if (provider === "claude") {
-    const parent = path.dirname(filePath);
-    const sessionId =
-      path.basename(parent) === "subagents"
-        ? path.basename(path.dirname(parent))
-        : path.basename(filePath, ".jsonl");
-    return sessionIds.has(sessionId);
-  }
-  const name = path.basename(filePath, ".jsonl");
-  for (const sessionId of sessionIds) {
-    if (name === sessionId || name.endsWith(`-${sessionId}`)) return true;
-  }
-  return false;
-}
-
-function pathMatchesWorktree(
-  path: Pick<Path.Path, "relative">,
-  filePath: string,
-  root: string,
-  provider: UsageProviderKind,
-  worktrees: ReadonlySet<string>,
-): boolean {
-  if (worktrees.size === 0 || provider === "codex") return false;
-  const firstSegment = path.relative(root, filePath).replaceAll("\\", "/").split("/")[0];
-  if (firstSegment === undefined) return false;
-  if (provider === "claude") {
-    for (const worktree of worktrees) {
-      const encodedWorktree = worktree.replaceAll(/[^A-Za-z0-9]/g, "-");
-      const isWindowsWorktree = /^[A-Za-z]:\//.test(worktree);
-      if (
-        isWindowsWorktree
-          ? firstSegment.toLowerCase() === encodedWorktree.toLowerCase()
-          : firstSegment === encodedWorktree
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-  try {
-    return cwdMatchesTarget(decodeURIComponent(firstSegment), worktrees);
-  } catch {
-    return false;
-  }
-}
-
-export function transcriptFileMayMatchThread(input: {
-  readonly path: Pick<Path.Path, "basename" | "dirname" | "relative">;
-  readonly filePath: string;
-  readonly root: string;
-  readonly provider: UsageProviderKind;
-  readonly target: ThreadTranscriptTarget;
-  readonly cached?: {
-    readonly records: readonly UsageRecord[];
-    readonly tailRecords: readonly UsageRecord[];
-  };
-  readonly identity?: {
-    readonly sessionId: string;
-    readonly cwd: string;
-  };
-}): boolean {
-  const sessionIds = input.target.sessionIds.get(input.provider) ?? new Set<string>();
-  if (pathMatchesSession(input.path, input.filePath, input.provider, sessionIds)) return true;
-  if (
-    pathMatchesWorktree(
-      input.path,
-      input.filePath,
-      input.root,
-      input.provider,
-      input.target.worktrees,
-    )
-  ) {
-    return true;
-  }
-  const cachedRecords =
-    input.cached === undefined ? [] : [...input.cached.records, ...input.cached.tailRecords];
-  if (
-    cachedRecords.some(
-      (record) =>
-        sessionIds.has(record.sessionId) || cwdMatchesTarget(record.cwd, input.target.worktrees),
-    )
-  ) {
-    return true;
-  }
-  return (
-    input.identity !== undefined &&
-    (sessionIds.has(input.identity.sessionId) ||
-      cwdMatchesTarget(input.identity.cwd, input.target.worktrees))
-  );
 }
 
 export const layer = Layer.effect(UsageService, make);

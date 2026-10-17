@@ -11,20 +11,31 @@ import {
   makeWindow,
 } from "./usageFormat.ts";
 
-describe("compareUsageDays", () => {
-  it("compares strict four-digit calendar dates numerically", () => {
-    expect(compareUsageDays("2026-08-03", "2026-08-11")).toBe(-1);
-    expect(compareUsageDays("2026-08-11", "2026-08-03")).toBe(1);
-    expect(compareUsageDays("2026-08-03", "2026-08-03")).toBe(0);
-  });
-
-  it("rejects variable-width years and impossible dates", () => {
-    expect(compareUsageDays("10000-01-01", "9999-12-31")).toBeNull();
-    expect(compareUsageDays("2026-02-29", "2026-03-01")).toBeNull();
-  });
-});
-
 describe("hourly usage formatting", () => {
+  it("keeps requested zones separate when formatting repeated calls", () => {
+    const instant = "2026-08-11T12:37:00.000Z";
+    for (const zone of ["UTC", "America/New_York", "Asia/Kathmandu", "UTC"]) {
+      expect(formatHourShort(instant, zone)).toBe(
+        new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric" }).format(
+          new Date(instant),
+        ),
+      );
+    }
+    expect(() => formatHourShort(instant, "Etc/Unknown")).toThrow(RangeError);
+    expect(formatHourShort("invalid", "UTC")).toBe("invalid");
+  });
+
+  it("uses the current system zone when no zone is supplied", () => {
+    try {
+      vi.stubEnv("TZ", "UTC");
+      expect(formatHourShort("2026-08-11T12:37:00.000Z")).toBe("12 PM");
+      vi.stubEnv("TZ", "America/New_York");
+      expect(formatHourShort("2026-08-11T12:37:00.000Z")).toBe("8 AM");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("enumerates 24 fixed buckets across a rolling window", () => {
     const hours = enumerateHourStarts("2026-08-10T12:37:00.000Z", "2026-08-11T12:37:00.000Z");
 
@@ -88,61 +99,42 @@ describe("hourly usage formatting", () => {
   });
 });
 
+describe("compareUsageDays", () => {
+  it("orders valid calendar days", () => {
+    expect(compareUsageDays("2026-08-03", "2026-08-11")).toBe(-1);
+    expect(compareUsageDays("2026-08-11", "2026-08-03")).toBe(1);
+    expect(compareUsageDays("2026-08-03", "2026-08-03")).toBe(0);
+  });
+
+  it("rejects impossible and malformed days", () => {
+    expect(compareUsageDays("2026-02-29", "2026-03-01")).toBeNull();
+    expect(compareUsageDays("10000-01-01", "9999-12-31")).toBeNull();
+    expect(compareUsageDays("", "2026-03-01")).toBeNull();
+  });
+});
+
 describe("makeCustomWindow", () => {
   it("builds a daily window over the inclusive range", () => {
-    const window = makeCustomWindow("2026-08-03", "2026-08-11");
-
-    expect(window.sinceDay).toBe("2026-08-03");
-    expect(window.untilDay).toBe("2026-08-11");
-    expect(window.resolution).toBe("day");
-    expect(window.sinceTime).toBeUndefined();
-  });
-
-  it("swaps out-of-order bounds so a raw drag never produces an invalid window", () => {
-    const window = makeCustomWindow("2026-08-11", "2026-08-03");
-
-    expect(window.sinceDay).toBe("2026-08-03");
-    expect(window.untilDay).toBe("2026-08-11");
-  });
-
-  it("caps typed ranges at the largest supported 90-day window", () => {
-    const window = makeCustomWindow("0001-01-01", "9999-12-31");
-
-    expect(window.sinceDay).toBe("0001-01-01");
-    expect(window.untilDay).toBe("0001-03-31");
-  });
-
-  it("rejects bounds outside the strict day format", () => {
-    expect(() => makeCustomWindow("10000-01-01", "9999-12-31")).toThrow(RangeError);
-  });
-});
-
-describe("locale-independent usage windows", () => {
-  it.each(["day", "hour"] as const)("builds %s bounds from numeric date parts", (resolution) => {
-    const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, "format");
-    if (descriptor === undefined) throw new Error("Expected the Intl format accessor");
-    const formatted = vi.fn(() => () => "09/09/2026");
-    Object.defineProperty(Intl.DateTimeFormat.prototype, "format", {
-      configurable: true,
-      get: formatted,
+    expect(makeCustomWindow("2026-08-03", "2026-08-11")).toMatchObject({
+      sinceDay: "2026-08-03",
+      untilDay: "2026-08-11",
+      resolution: "day",
     });
-    try {
-      const window = makeWindow(1, new Date("2026-09-09T12:00:00Z"), resolution);
-      expect(window.sinceDay).toMatch(/^2026-09-\d{2}$/);
-      expect(window.untilDay).toMatch(/^2026-09-\d{2}$/);
-      expect(formatted).not.toHaveBeenCalled();
-    } finally {
-      Object.defineProperty(Intl.DateTimeFormat.prototype, "format", descriptor);
-    }
   });
-});
 
-it("preserves four-digit early years in both daily bounds", () => {
-  const window = makeWindow(1, new Date("0001-07-15T12:00:00Z"));
-  expect(window.sinceDay).toMatch(/^0001-/);
-  expect(window.untilDay).toBe(window.sinceDay);
-});
+  it("swaps out-of-order bounds from a right-to-left drag", () => {
+    expect(makeCustomWindow("2026-08-11", "2026-08-03")).toMatchObject({
+      sinceDay: "2026-08-03",
+      untilDay: "2026-08-11",
+    });
+  });
 
-it("rejects years outside the four-digit usage contract", () => {
-  expect(() => makeWindow(1, new Date("+010000-07-15T12:00:00Z"))).toThrow(RangeError);
+  it("caps ranges at 90 days", () => {
+    expect(makeCustomWindow("2026-01-01", "2026-12-31").untilDay).toBe("2026-03-31");
+    expect(makeCustomWindow("9999-12-31", "9999-12-31").untilDay).toBe("9999-12-31");
+  });
+
+  it("rejects invalid bounds", () => {
+    expect(() => makeCustomWindow("2026-02-30", "2026-03-01")).toThrow(RangeError);
+  });
 });

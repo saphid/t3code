@@ -2,14 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
-  decodeScanIdentityCache,
   dedupeWithinFile,
   encodeScanCache,
-  pruneScanIdentityCache,
   pruneScanCache,
   type CachedFile,
   type ScanCache,
-  type ScanIdentityCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -24,7 +21,6 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
       cacheCreationTokens: 10,
-      cacheCreation5mTokens: 10,
       outputTokens: 50,
       reasoningTokens: 0,
     },
@@ -60,28 +56,6 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
-  it("restores positive and negative transcript identities", () => {
-    const identities: ScanIdentityCache = new Map([
-      [
-        "/target.jsonl",
-        {
-          size: 100,
-          mtimeMs: 200,
-          provider: "codex",
-          sessionId: "target-session",
-          cwd: "/work/target",
-        },
-      ],
-      ["/unknown.jsonl", { size: 10, mtimeMs: 20, provider: "codex", sessionId: "", cwd: "" }],
-    ]);
-
-    const restored = decodeScanIdentityCache(
-      JSON.parse(JSON.stringify(encodeScanCache(new Map(), identities))),
-    );
-
-    expect(restored).toEqual(identities);
-  });
-
   it("restores records unchanged", () => {
     const original = cacheWith([
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
@@ -125,25 +99,6 @@ describe("scan cache round trip", () => {
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
   });
 
-  it("preserves partial TTL classification and its unclassified remainder", () => {
-    const partial = record({
-      totals: {
-        uncachedInputTokens: 2,
-        cachedInputTokens: 10,
-        cacheCreationTokens: 60,
-        cacheCreation5mTokens: 20,
-        cacheCreation1hTokens: 10,
-        outputTokens: 12,
-        reasoningTokens: 0,
-      },
-    });
-    const original = cacheWith([["/partial.jsonl", 100, [partial]]]);
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
-
-    expect(restored.get("/partial.jsonl")?.records[0]?.totals).toEqual(partial.totals);
-  });
-
   it("drops an entry whose persisted parse state is corrupt", () => {
     // Resuming with a bad reducer state would attach appended usage to the
     // wrong model or replay fork-copied history; that entry must cold parse.
@@ -172,7 +127,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 5 };
+    const previous = { ...encoded, version: 2 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
@@ -242,62 +197,12 @@ describe("scan cache round trip", () => {
       files: {
         "/a.jsonl": {
           ...encoded.files["/a.jsonl"]!,
-          r: [[...row.slice(0, 10), cwdIndex, ...row.slice(11)]],
+          r: [[...row.slice(0, 10), cwdIndex]],
         },
       },
     };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
-  });
-
-  it.each([
-    [20, 0],
-    [-1, 11],
-    [5.5, 4.5],
-  ])("drops an entry with invalid cache TTL counters %s + %s", (fiveMinute, oneHour) => {
-    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const row = encoded.files["/a.jsonl"]!.r[0]!;
-    const poisoned = {
-      ...encoded,
-      files: {
-        "/a.jsonl": {
-          ...encoded.files["/a.jsonl"]!,
-          r: [[...row.slice(0, 11), fiveMinute, oneHour]],
-        },
-      },
-    };
-
-    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
-  });
-});
-
-describe("pruneScanIdentityCache", () => {
-  it("keeps old live identities and removes only files proven deleted", () => {
-    const identities: ScanIdentityCache = new Map([
-      [
-        "/codex/sessions/live.jsonl",
-        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "live", cwd: "/work/live" },
-      ],
-      [
-        "/codex/sessions/gone.jsonl",
-        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "gone", cwd: "/work/gone" },
-      ],
-      [
-        "/other/sessions/unwalked.jsonl",
-        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "other", cwd: "/work/other" },
-      ],
-    ]);
-
-    expect(
-      pruneScanIdentityCache(identities, {
-        livePaths: new Set(["/codex/sessions/live.jsonl"]),
-        walkedRoots: ["/codex/sessions"],
-      }),
-    ).toBe(1);
-    expect([...identities.keys()]).toEqual([
-      "/codex/sessions/live.jsonl",
-      "/other/sessions/unwalked.jsonl",
-    ]);
   });
 });
 
@@ -307,94 +212,23 @@ describe("pruneScanCache", () => {
   it("drops entries older than retention", () => {
     const cache = cacheWith([["/old.jsonl", 500, [record()]]]);
 
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 400,
-      retentionCutoffMs,
-    });
+    const removed = pruneScanCache(cache, retentionCutoffMs);
 
     expect(removed).toBe(1);
     expect(cache.size).toBe(0);
   });
 
-  it("drops in-window entries whose file has disappeared", () => {
+  it("keeps entries whose file has disappeared", () => {
     const cache = cacheWith([["/gone.jsonl", 5000, [record()]]]);
 
-    pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
+    pruneScanCache(cache, retentionCutoffMs);
 
-    expect(cache.size).toBe(0);
-  });
-
-  it("keeps entries outside the walked window that are still within retention", () => {
-    // Viewing 7 days must not evict the 30-day entries, which that walk never
-    // looked for and so cannot prove are gone.
-    const cache = cacheWith([["/older-but-valid.jsonl", 2000, [record()]]]);
-
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
-
-    expect(removed).toBe(0);
-    expect(cache.size).toBe(1);
-  });
-
-  it("keeps entries the walk saw", () => {
-    const cache = cacheWith([["/live.jsonl", 5000, [record()]]]);
-
-    pruneScanCache(cache, {
-      livePaths: new Set(["/live.jsonl"]),
-      walkedRoots: ["/"],
-      windowStartMs: 4000,
-      retentionCutoffMs,
-    });
-
-    expect(cache.size).toBe(1);
-  });
-});
-
-describe("pruneScanCache with an unwalked root", () => {
-  it("keeps in-window entries for a provider whose directory was not walked", () => {
-    // A missing provider root or failed settings read leaves livePaths without
-    // that provider's files. Its warm entries must survive the pass.
-    const cache = cacheWith([["/codex/sessions/a.jsonl", 5000, [record()]]]);
-
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/claude/projects"],
-      windowStartMs: 4000,
-      retentionCutoffMs: 1000,
-    });
-
-    expect(removed).toBe(0);
-    expect(cache.size).toBe(1);
-  });
-
-  it("keeps entries under a sibling path that only shares the walked root prefix", () => {
-    const cache = cacheWith([["/claude/projects-copy/a.jsonl", 5000, [record()]]]);
-
-    const removed = pruneScanCache(cache, {
-      livePaths: new Set(),
-      walkedRoots: ["/claude/projects"],
-      windowStartMs: 4000,
-      retentionCutoffMs: 1000,
-    });
-
-    expect(removed).toBe(0);
     expect(cache.size).toBe(1);
   });
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the final record per dedupe key", () => {
+  it("keeps the first record per dedupe key", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -402,7 +236,7 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(999);
+    expect(kept[0]?.totals.outputTokens).toBe(1);
   });
 
   it("keeps every record that has no dedupe key", () => {

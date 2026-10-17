@@ -20,15 +20,15 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import { normalizeUsagePath } from "./usagePaths.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
+import { normalizeUsagePath } from "./usagePaths.ts";
 import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
  * Formats an instant as a `YYYY-MM-DD` day in `timeZone`.
  *
- * Numeric parts preserve the requested time zone without depending on the
- * locale's punctuation or date ordering.
+ * `en-CA` yields ISO-ordered parts, which is why it is used here rather than
+ * assembling the day from `Date` getters (those are host-local only).
  */
 export function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
   let format: Intl.DateTimeFormat;
@@ -48,12 +48,7 @@ export function makeDayFormatter(timeZone: string): (timestampMs: number) => str
       day: "2-digit",
     });
   }
-  return (timestampMs) => {
-    const parts = Object.fromEntries(
-      format.formatToParts(new Date(timestampMs)).map(({ type, value }) => [type, value]),
-    );
-    return `${parts.year?.padStart(4, "0")}-${parts.month}-${parts.day}`;
-  };
+  return (timestampMs) => format.format(new Date(timestampMs));
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -85,7 +80,7 @@ export function makeProjectResolver(
   const roots = projects
     .map((project) => ({
       projectId: project.projectId,
-      root: project.workspaceRoot.length === 0 ? "" : normalizeUsagePath(project.workspaceRoot),
+      root: normalizeUsagePath(project.workspaceRoot),
       title: project.title.trim(),
       deleted: project.deleted,
     }))
@@ -95,8 +90,8 @@ export function makeProjectResolver(
   const byCwd = new Map<string, ProjectAttribution | null>();
   return (cwd) => {
     if (cwd.length === 0) return null;
+    if (byCwd.has(cwd)) return byCwd.get(cwd) ?? null;
     const normalizedCwd = normalizeUsagePath(cwd);
-    if (byCwd.has(normalizedCwd)) return byCwd.get(normalizedCwd) ?? null;
     let resolved: ProjectAttribution | null = null;
     for (const { projectId, root, title } of roots) {
       if (
@@ -107,7 +102,7 @@ export function makeProjectResolver(
         break;
       }
     }
-    byCwd.set(normalizedCwd, resolved);
+    byCwd.set(cwd, resolved);
     return resolved;
   };
 }
@@ -137,14 +132,14 @@ export interface AggregateOptions {
    * Maps a record's working directory to the project it ran in, or `null` when
    * it ran outside every project. Omitting it leaves every bucket unattributed.
    */
-  readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
+  readonly resolveProject?: ((cwd: string) => ProjectAttribution | null) | undefined;
 }
 
 export interface AggregateResult {
   readonly buckets: readonly UsageBucket[];
   /** Records dropped because an earlier record carried the same dedupe key. */
   readonly duplicatesDropped: number;
-  /** Retained records whose day fell outside the requested window. */
+  /** Records whose day fell outside the requested window. */
   readonly outOfWindow: number;
 }
 
@@ -156,13 +151,13 @@ export interface AggregateResult {
  * the same `dedupeKey` legitimately appears in several transcripts.
  */
 export class UsageAggregator {
-  readonly #recordsByKey = new Map<string, UsageRecord>();
-  readonly #unkeyedRecords: UsageRecord[] = [];
+  readonly #buckets = new Map<string, MutableBucket>();
+  readonly #seen = new Set<string>();
   readonly #toDay: (timestampMs: number) => string;
-  readonly #recordDays = new WeakMap<UsageRecord, string>();
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
   #duplicatesDropped = 0;
+  #outOfWindow = 0;
 
   constructor(options: AggregateOptions) {
     this.#options = options;
@@ -180,66 +175,37 @@ export class UsageAggregator {
     }
   }
 
-  /** Retains one record and reports whether it falls in the requested window. */
+  /**
+   * Folds one record in. Returns whether it actually contributed, so callers
+   * can derive per-window facts (distinct sessions, for one) from the records
+   * that landed rather than everything the mtime prefilter happened to admit.
+   */
   add(record: UsageRecord): boolean {
-    const inWindow = this.#isInWindow(record);
-    if (record.dedupeKey === null) {
-      this.#unkeyedRecords.push(record);
-      return inWindow;
+    if (record.dedupeKey !== null) {
+      if (this.#seen.has(record.dedupeKey)) {
+        this.#duplicatesDropped += 1;
+        return false;
+      }
+      this.#seen.add(record.dedupeKey);
     }
-    if (this.#recordsByKey.has(record.dedupeKey)) {
-      // Claude writes progressive snapshots for one response. The final copy
-      // is complete, so replace the earlier one without counting it twice.
-      this.#recordsByKey.set(record.dedupeKey, record);
-      this.#duplicatesDropped += 1;
-      return inWindow;
-    }
-    this.#recordsByKey.set(record.dedupeKey, record);
-    return inWindow;
-  }
 
-  #dayFor(record: UsageRecord): string {
-    const cached = this.#recordDays.get(record);
-    if (cached !== undefined) return cached;
-    const day = this.#toDay(record.timestampMs);
-    this.#recordDays.set(record, day);
-    return day;
-  }
-
-  #isInWindow(record: UsageRecord): boolean {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
+      this.#outOfWindow += 1;
       return false;
     }
 
-    const day = this.#dayFor(record);
+    const day = this.#toDay(record.timestampMs);
     if (
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
+      this.#outOfWindow += 1;
       return false;
     }
-    return true;
-  }
-
-  /** Distinct in-window sessions retained after progressive snapshots settle. */
-  distinctSessions(provider: UsageRecord["provider"]): number {
-    const sessionIds = new Set<string>();
-    const addSession = (record: UsageRecord): void => {
-      if (record.provider === provider && this.#isInWindow(record) && record.sessionId.length > 0) {
-        sessionIds.add(record.sessionId);
-      }
-    };
-    for (const record of this.#unkeyedRecords) addSession(record);
-    for (const record of this.#recordsByKey.values()) addSession(record);
-    return sessionIds.size;
-  }
-
-  #foldRecord(record: UsageRecord, buckets: Map<string, MutableBucket>): void {
-    const day = this.#dayFor(record);
 
     const hourStart =
       this.#hourlyWindow === null
@@ -259,7 +225,7 @@ export class UsageAggregator {
     const projectId = resolvedProject?.projectId.replaceAll("\u0000", "") ?? "";
     const project = resolvedProject?.title.replaceAll("\u0000", "") ?? "";
     const key = `${day}\u0000${hourStart}\u0000${projectAttribution}\u0000${projectId}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
-    let bucket = buckets.get(key);
+    let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
         totals: EMPTY_TOTALS,
@@ -272,7 +238,7 @@ export class UsageAggregator {
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
-      buckets.set(key, bucket);
+      this.#buckets.set(key, bucket);
     }
 
     const priced = priceUsage(
@@ -305,22 +271,12 @@ export class UsageAggregator {
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
   }
 
   finish(): AggregateResult {
-    const bucketsByKey = new Map<string, MutableBucket>();
-    let outOfWindow = 0;
-    const foldIfInWindow = (record: UsageRecord): void => {
-      if (this.#isInWindow(record)) {
-        this.#foldRecord(record, bucketsByKey);
-      } else {
-        outOfWindow += 1;
-      }
-    };
-    for (const record of this.#unkeyedRecords) foldIfInWindow(record);
-    for (const record of this.#recordsByKey.values()) foldIfInWindow(record);
     const buckets: UsageBucket[] = [];
-    for (const [key, bucket] of bucketsByKey) {
+    for (const [key, bucket] of this.#buckets) {
       const [
         day = "",
         hourStart = "",
@@ -362,7 +318,7 @@ export class UsageAggregator {
     return {
       buckets,
       duplicatesDropped: this.#duplicatesDropped,
-      outOfWindow,
+      outOfWindow: this.#outOfWindow,
     };
   }
 }

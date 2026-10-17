@@ -1,4 +1,3 @@
-import { randomUUID } from "../lib/utils";
 /**
  * Multi-environment usage state.
  *
@@ -12,25 +11,22 @@ import {
   USAGE_CONTRACT_VERSION,
   USAGE_THREAD_BREAKDOWN_SINCE,
   type EnvironmentId,
+  type UsageProviderKind,
   type UsageSummary,
   type UsageSummaryInput,
-  type UsageProviderKind,
   type UsageThreadBreakdown,
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
 } from "@t3tools/contracts";
 import { refreshUsage } from "@t3tools/client-runtime/state/usage";
-
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 
 import {
   mergeUsage,
   projectFilterForEnvironment,
-  retainUsageStatuses,
   type EnvironmentProviderContribution,
-  type SettledUsageStatuses,
   type EnvironmentUsage,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
@@ -88,16 +84,6 @@ export interface UsageView {
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
-export function filterUsageEnvironmentsForProject<
-  T extends { readonly environmentId: EnvironmentId },
->(environments: readonly T[], projectFilter: string | null | undefined): readonly T[] {
-  return environments.filter(
-    (environment) =>
-      projectFilterForEnvironment(projectFilter, environment.environmentId) !==
-      "environment-mismatch:",
-  );
-}
-
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
@@ -126,13 +112,7 @@ export function useUsage(
     ],
   );
   const atom = usageByWindowAtom(windowKey);
-  const currentEnvironments = useAtomValue(atom);
-  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
-  const retained = retainUsageStatuses(windowKey, currentEnvironments, settledStatuses.current);
-  useEffect(() => {
-    settledStatuses.current = retained.settled;
-  }, [retained.settled]);
-  const environments = retained.visible;
+  const environments = useAtomValue(atom);
   const selectedEnvironments = useMemo(
     () =>
       selectedEnvironmentIds === null
@@ -143,37 +123,19 @@ export function useUsage(
     [environments, selectedEnvironmentIds],
   );
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(
-      answered,
-      USAGE_CONTRACT_VERSION,
-      projectFilter === undefined ? undefined : { projectFilter },
-    );
-  }, [selectedEnvironments, projectFilter]);
-
   const refresh = useCallback(
     async (nextInput?: UsageSummaryInput) => {
       const currentInput = nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
       await refreshUsage({
         registry: appAtomRegistry,
-        refreshToken: randomUUID(),
         server: serverEnvironment,
         presentations: environmentPresentations,
         environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
         input: currentInput,
       });
       if (!refreshThreads) return;
+      // Thread rows follow the refreshed summary's provider ownership, so they
+      // refresh only after the summary has been published.
       const refreshed = mergeUsage(
         selectedEnvironments.flatMap(({ environmentId, label }) => {
           const summary = Option.getOrNull(
@@ -209,14 +171,29 @@ export function useUsage(
     [projectFilter, windowKey, refreshThreads, selectedEnvironments],
   );
 
-  const relevantEnvironments = filterUsageEnvironmentsForProject(
-    selectedEnvironments,
-    projectFilter,
-  );
-  const answeredCount = relevantEnvironments.filter(
+  const merged = useMemo(() => {
+    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
+      environment.summary === null
+        ? []
+        : [
+            {
+              environmentId: environment.environmentId,
+              label: environment.label,
+              summary: environment.summary,
+            },
+          ],
+    );
+    return mergeUsage(
+      answered,
+      USAGE_CONTRACT_VERSION,
+      projectFilter === undefined ? undefined : { projectFilter },
+    );
+  }, [selectedEnvironments, projectFilter]);
+
+  const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
   ).length;
-  const stillReporting = relevantEnvironments.filter(
+  const stillReporting = selectedEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
 

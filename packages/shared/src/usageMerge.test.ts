@@ -15,9 +15,12 @@ import {
   isModelCostUnknown,
   mergeUsage,
   projectFilterForEnvironment,
-  retainUsageStatuses,
   type EnvironmentUsage,
 } from "./usageMerge.ts";
+
+function inProject(id: string, title: string): Partial<UsageBucket> {
+  return { projectId: ProjectId.make(id), project: title, projectAttribution: "project" };
+}
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -167,6 +170,26 @@ describe("mergeUsage", () => {
     ]);
   });
 
+  it("uses the newest scan when environments share the same transcript directory", () => {
+    const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const environments = [
+      environment("env-a", summary([bucket({ costUsd: 4, records: 2 })], [source])),
+      environment("env-b", {
+        ...summary([bucket()], [source]),
+        readAt: "2026-08-07T01:00:00.000Z",
+      }),
+    ];
+
+    for (const ordered of [environments, environments.toReversed()]) {
+      const merged = mergeUsage(ordered, USAGE_CONTRACT_VERSION);
+      expect(merged.costUsd).toBe(10);
+      expect(merged.records).toBe(5);
+      expect(merged.sessions).toBe(1);
+      expect(merged.contributingEnvironments).toEqual(["env-b"]);
+      expect(merged.duplicateSources).toEqual(["env-a: /home/theo/.claude"]);
+    }
+  });
+
   it("excludes an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [
@@ -272,6 +295,29 @@ describe("mergeUsage", () => {
     expect(merged.models.filter(isModelCostUnknown).map((model) => model.model)).toEqual([
       "unknown-model",
     ]);
+  });
+
+  it("orders models by cost descending", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ provider: "claude", model: "lower-cost", costUsd: 4 }),
+              bucket({ provider: "codex", model: "higher-cost", costUsd: 9 }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.models.map((model) => model.model)).toEqual(["higher-cost", "lower-cost"]);
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {
@@ -399,8 +445,8 @@ describe("mergeUsage", () => {
           "env-a",
           summary(
             [
-              bucket({ project: "App", costUsd: 6 }),
-              bucket({ project: "App", costUsd: 2, model: "claude-opus-5" }),
+              bucket({ ...inProject("app", "App"), costUsd: 6 }),
+              bucket({ ...inProject("app", "App"), costUsd: 2, model: "claude-opus-5" }),
               bucket({ costUsd: 2 }),
             ],
             [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
@@ -418,15 +464,13 @@ describe("mergeUsage", () => {
   });
 
   it("keeps projects with the same title distinct and filters by stable id", () => {
-    const firstId = ProjectId.make("project-first");
-    const secondId = ProjectId.make("project-second");
     const environments = [
       environment(
         "env-a",
         summary(
           [
-            bucket({ projectId: firstId, project: "App", costUsd: 6 }),
-            bucket({ projectId: secondId, project: "App", costUsd: 2 }),
+            bucket({ ...inProject("project-first", "App"), costUsd: 6 }),
+            bucket({ ...inProject("project-second", "App"), costUsd: 2 }),
           ],
           [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
         ),
@@ -437,12 +481,12 @@ describe("mergeUsage", () => {
     expect(
       merged.projects.map((project) => [project.projectId, project.project, project.costUsd]),
     ).toEqual([
-      [firstId, "App", 6],
-      [secondId, "App", 2],
+      ["project-first", "App", 6],
+      ["project-second", "App", 2],
     ]);
 
-    const secondKey = merged.projects.find((project) => project.projectId === secondId)?.projectKey;
-    if (secondKey === undefined) throw new Error("second project key missing");
+    const secondKey = merged.projects[1]?.projectKey;
+    if (typeof secondKey !== "string") throw new Error("second project key missing");
     const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: secondKey });
     expect(filtered.costUsd).toBe(2);
   });
@@ -547,7 +591,7 @@ describe("mergeUsage", () => {
         "env-a",
         summary(
           [
-            bucket({ project: "App", costUsd: 6 }),
+            bucket({ ...inProject("app", "App"), costUsd: 6 }),
             bucket({ costUsd: 2, provider: "codex", model: "gpt-5.6-sol" }),
           ],
           [
@@ -560,7 +604,7 @@ describe("mergeUsage", () => {
 
     const unfiltered = mergeUsage(environments, USAGE_CONTRACT_VERSION);
     const appKey = unfiltered.projects.find((project) => project.project === "App")?.projectKey;
-    if (appKey === undefined || appKey === null) throw new Error("app project key missing");
+    if (typeof appKey !== "string") throw new Error("app project key missing");
     const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: appKey });
     expect(filtered.costUsd).toBe(6);
     expect(filtered.providers.map((provider) => provider.provider)).toEqual(["claude"]);
@@ -574,20 +618,19 @@ describe("mergeUsage", () => {
     expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
   });
 
-  it("namespaces stable project ids by environment", () => {
-    const sharedId = ProjectId.make("cloned-project");
+  it("keeps equal project ids on different environments apart", () => {
     const environments = [
       environment(
         "env-a",
         summary(
-          [bucket({ projectId: sharedId, project: "App", costUsd: 6 })],
+          [bucket({ ...inProject("cloned-project", "App"), costUsd: 6 })],
           [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
         ),
       ),
       environment(
         "env-b",
         summary(
-          [bucket({ projectId: sharedId, project: "App", costUsd: 2 })],
+          [bucket({ ...inProject("cloned-project", "App"), costUsd: 2 })],
           [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }],
         ),
       ),
@@ -596,11 +639,37 @@ describe("mergeUsage", () => {
     const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
     expect(merged.projects.map((project) => project.costUsd)).toEqual([6, 2]);
     const firstKey = merged.projects[0]?.projectKey;
-    if (firstKey === undefined || firstKey === null) throw new Error("project key missing");
-    expect(projectFilterForEnvironment(firstKey, "env-a" as EnvironmentId)).toBe(`id:${sharedId}`);
+    if (typeof firstKey !== "string") throw new Error("project key missing");
+    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, { projectFilter: firstKey });
+    expect(filtered.costUsd).toBe(6);
+    expect(projectFilterForEnvironment(firstKey, "env-a" as EnvironmentId)).toBe(
+      "id:cloned-project",
+    );
     expect(projectFilterForEnvironment(firstKey, "env-b" as EnvironmentId)).toBe(
       "environment-mismatch:",
     );
+  });
+
+  it("marks a project whose every record lacked rates as unpriced", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ ...inProject("app", "App"), costUsd: 0, records: 3, unpricedRecords: 3 }),
+              bucket({ costUsd: 2 }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.projects.filter(isModelCostUnknown).map((project) => project.project)).toEqual([
+      "App",
+    ]);
   });
 
   it("does not treat unknown attribution from old summaries as outside projects", () => {
@@ -647,89 +716,5 @@ describe("mergeUsage", () => {
       projectFilter: null,
     });
     expect(outside.costUsd).toBe(0);
-  });
-});
-
-describe("retainUsageStatuses", () => {
-  const status = (
-    id: string,
-    usageSummary: UsageSummary | null,
-    isPending = false,
-  ): {
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly isPending: boolean;
-    readonly error: string | null;
-    readonly summary: UsageSummary | null;
-  } => ({
-    environmentId: id as EnvironmentId,
-    label: id,
-    isPending,
-    error: null,
-    summary: usageSummary,
-  });
-
-  it("keeps each environment's settled value while the same range refreshes", () => {
-    const oldA = summary([bucket({ costUsd: 2 })], []);
-    const oldB = summary([bucket({ costUsd: 3 })], []);
-    const newA = { ...oldA, readAt: "2026-08-07T00:01:00.000Z" };
-    const previous = {
-      rangeKey: "range-a",
-      statuses: [status("env-a", oldA), status("env-b", oldB)],
-    };
-
-    const refreshing = retainUsageStatuses(
-      "range-a",
-      [status("env-a", null, true), status("env-b", null, true)],
-      previous,
-    );
-    const partlyAnswered = retainUsageStatuses(
-      "range-a",
-      [status("env-a", newA), status("env-b", null, true)],
-      refreshing.settled,
-    );
-
-    expect(refreshing.visible.map(({ isPending, summary: value }) => [isPending, value])).toEqual([
-      [true, oldA],
-      [true, oldB],
-    ]);
-    expect(
-      partlyAnswered.visible.map(({ isPending, summary: value }) => [isPending, value]),
-    ).toEqual([
-      [false, newA],
-      [true, oldB],
-    ]);
-  });
-
-  it("does not retain values across date ranges", () => {
-    const old = summary([], []);
-    const result = retainUsageStatuses("range-b", [status("env-a", null, true)], {
-      rangeKey: "range-a",
-      statuses: [status("env-a", old)],
-    });
-
-    expect(result.visible[0]?.summary).toBeNull();
-  });
-
-  it("does not revive a settled summary after every environment fails", () => {
-    const old = summary([bucket({ costUsd: 2 })], []);
-    const previous = {
-      rangeKey: "range-a",
-      statuses: [status("env-a", old)],
-    };
-    const failed = retainUsageStatuses(
-      "range-a",
-      [{ ...status("env-a", null), error: "could not report usage" }],
-      previous,
-    );
-    const retrying = retainUsageStatuses("range-a", [status("env-a", null, true)], failed.settled);
-
-    expect(failed.visible[0]).toMatchObject({
-      error: "could not report usage",
-      summary: null,
-    });
-    expect(failed.settled).toBeNull();
-    expect(retrying.visible[0]).toMatchObject({ isPending: true, error: null, summary: null });
-    expect(retrying.settled).toBeNull();
   });
 });

@@ -34,11 +34,11 @@ function CostRow(props: {
   readonly costUsd: number | null;
 }) {
   return (
-    <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 text-[11px] leading-5">
+    <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 text-2xs leading-5">
       <span className="min-w-0 text-secondary-label">
         {props.label}
         {props.tokens === undefined ? null : (
-          <span className="ms-1 text-tertiary-label">{formatTokens(props.tokens)} tokens</span>
+          <span className="ms-1 text-muted-foreground">{formatTokens(props.tokens)} tokens</span>
         )}
       </span>
       <span className="font-medium text-muted-foreground tabular-nums">
@@ -63,11 +63,11 @@ export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapsho
             size="compact"
             variant="ghost-muted"
             data-thread-cost-indicator="true"
-            className="cursor-default rounded-full px-1.5 text-[11px] text-secondary-label tabular-nums hover:bg-muted/60 hover:text-muted-foreground data-pressed:text-muted-foreground"
+            className="cursor-default"
             aria-label={`Thread API cost ${formattedTotal}`}
             onPointerDown={(event) => event.preventDefault()}
           >
-            {formattedTotal}
+            <span className="tabular-nums">{formattedTotal}</span>
           </Button>
         }
       />
@@ -75,10 +75,9 @@ export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapsho
         tooltipStyle
         side="top"
         align="end"
-        viewportClassName="p-0"
         className="w-72 max-w-none text-left whitespace-normal"
       >
-        <div className="flex flex-col p-[var(--floating-content-inset)]">
+        <div className="flex flex-col">
           <div className="mb-1 flex items-baseline justify-between gap-4">
             <span className="font-medium text-muted-foreground text-xs">Thread API cost</span>
             <span className="font-semibold text-foreground text-sm tabular-nums">
@@ -103,7 +102,7 @@ export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapsho
           {cost.providerReportedUsd > 0.000_001 ? (
             <CostRow label="Provider-reported remainder" costUsd={cost.providerReportedUsd} />
           ) : null}
-          <p className="mt-1 border-border/60 border-t pt-2 text-tertiary-label text-[10px] leading-4">
+          <p className="mt-1 border-border/60 border-t pt-2 text-muted-foreground text-3xs leading-4">
             API-equivalent cost. Subscription billing may differ.
           </p>
         </div>

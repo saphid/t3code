@@ -10,29 +10,10 @@ import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  filterUsageEnvironmentsForProject,
   filterProviderContributionsForProject,
   makeThreadBreakdownInput,
   mergeUsageThreadBreakdowns,
 } from "./usage";
-
-describe("filterUsageEnvironmentsForProject", () => {
-  const environments = [
-    { environmentId: "env-a" as EnvironmentId },
-    { environmentId: "env-b" as EnvironmentId },
-  ];
-
-  it("keeps only the environment that owns a namespaced project", () => {
-    expect(
-      filterUsageEnvironmentsForProject(environments, JSON.stringify(["env-a", "id:project-one"])),
-    ).toEqual([environments[0]]);
-  });
-
-  it("keeps every environment for all and outside-project views", () => {
-    expect(filterUsageEnvironmentsForProject(environments, undefined)).toEqual(environments);
-    expect(filterUsageEnvironmentsForProject(environments, null)).toEqual(environments);
-  });
-});
 
 function row(provider: UsageProviderKind, overrides: Partial<UsageThreadRow> = {}): UsageThreadRow {
   return {
@@ -126,7 +107,7 @@ describe("makeThreadBreakdownInput", () => {
           sinceTime: "2026-08-07T12:00:00.000Z",
           untilTime: "2026-08-08T12:00:00.000Z",
         },
-        JSON.stringify(["env-a", "id:project-one"]),
+        JSON.stringify(["env-a", "project-one"]),
         ["claude"],
         "env-a" as EnvironmentId,
       ),
@@ -157,7 +138,7 @@ describe("makeThreadBreakdownInput", () => {
 
     expect(
       filterProviderContributionsForProject(
-        JSON.stringify(["env-a", "id:project-one"]),
+        JSON.stringify(["env-a", "project-one"]),
         contributions,
       ).map((contribution) => contribution.environmentId),
     ).toEqual(["env-a"]);

@@ -22,50 +22,6 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
-export interface RetainableUsageStatus {
-  readonly environmentId: EnvironmentId;
-  readonly error: string | null;
-  readonly summary: UsageSummary | null;
-}
-
-export interface SettledUsageStatuses<T extends RetainableUsageStatus> {
-  readonly rangeKey: string;
-  readonly statuses: readonly T[];
-}
-
-/**
- * Keeps each environment's last value visible while a refreshed query for
- * the same date range starts cold. New answers replace retained values one at
- * a time; failures and date-range changes never inherit old data.
- */
-export function retainUsageStatuses<T extends RetainableUsageStatus>(
-  rangeKey: string,
-  current: readonly T[],
-  previous: SettledUsageStatuses<T> | null,
-): {
-  readonly visible: readonly T[];
-  readonly settled: SettledUsageStatuses<T> | null;
-} {
-  const previousByEnvironment =
-    previous?.rangeKey === rangeKey
-      ? new Map(previous.statuses.map((status) => [status.environmentId, status] as const))
-      : null;
-  let retainedAny = false;
-  const withRetained = current.map((status) => {
-    if (status.summary !== null || status.error !== null) return status;
-    const settledStatus = previousByEnvironment?.get(status.environmentId);
-    if (settledStatus?.summary === null || settledStatus === undefined) return status;
-    retainedAny = true;
-    return Object.assign({}, status, { summary: settledStatus.summary });
-  });
-  const visible = retainedAny ? withRetained : current;
-  const settled = visible.some((status) => status.summary !== null)
-    ? { rangeKey, statuses: visible }
-    : null;
-
-  return { visible, settled };
-}
-
 export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
@@ -95,7 +51,7 @@ export interface ModelTotals {
 /** One project's slice of the window. `project` is null for buckets that ran outside every project. */
 export interface ProjectTotals {
   readonly projectId: ProjectId | null;
-  /** Stable, namespaced value accepted by `MergeUsageOptions.projectFilter`. */
+  /** Stable, environment-namespaced value accepted by `MergeUsageOptions.projectFilter`. */
   readonly projectKey: string | null;
   readonly project: string | null;
   readonly costUsd: number;
@@ -103,15 +59,18 @@ export interface ProjectTotals {
   readonly cacheWriteTokens: number;
   readonly cacheWriteUsd: number | null;
   readonly records: number;
+  readonly unpricedRecords: number;
   readonly costShare: number;
 }
 
 /**
- * A model whose every record lacked rates has an unknown cost, not a zero one.
- * Clients must not present its `costUsd` as a real dollar figure.
+ * A model or project whose every record lacked rates has an unknown cost, not
+ * a zero one. Clients must not present its `costUsd` as a real dollar figure.
  */
-export function isModelCostUnknown(model: ModelTotals): boolean {
-  return model.records > 0 && model.unpricedRecords >= model.records;
+export function isModelCostUnknown(
+  totals: Pick<ModelTotals | ProjectTotals, "records" | "unpricedRecords">,
+): boolean {
+  return totals.records > 0 && totals.unpricedRecords >= totals.records;
 }
 
 export interface DailyTotals {
@@ -194,9 +153,9 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * most recently read summary claims a fingerprint; the rest have that provider's
+ * buckets dropped. Environment ids break ties so the winner is stable when
+ * summaries have the same read time.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -205,7 +164,11 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
 
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
+  const ordered = [...environments].sort(
+    (a, b) =>
+      (Date.parse(b.summary.readAt) || 0) - (Date.parse(a.summary.readAt) || 0) ||
+      a.environmentId.localeCompare(b.environmentId),
+  );
 
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
@@ -306,17 +269,24 @@ export interface MergeUsageOptions {
   readonly projectFilter?: string | null;
 }
 
-function localBucketProjectKey(bucket: UsageBucket): string | null | undefined {
-  if (bucket.projectId !== undefined) return `id:${bucket.projectId}`;
-  if (bucket.project !== undefined) return `title:${bucket.project}`;
+/**
+ * Namespaces a bucket's project by environment so equal ids or titles on two
+ * servers stay separate. `null` is the explicit outside-projects slice and
+ * `undefined` is unknown attribution (no working directory, or a pre-v6 server).
+ */
+function bucketProjectKey(
+  environmentId: EnvironmentId,
+  bucket: UsageBucket,
+): string | null | undefined {
+  if (bucket.projectId !== undefined) return JSON.stringify([environmentId, bucket.projectId]);
   return bucket.projectAttribution === "outside" ? null : undefined;
 }
 
-function namespacedProjectKey(environmentId: EnvironmentId, localKey: string): string {
-  return JSON.stringify([environmentId, localKey]);
-}
-
-/** Converts a merged project key back to the key understood by one server. */
+/**
+ * Converts a merged project key back to the key one server's thread breakdown
+ * understands (`id:<projectId>`). A key from another environment selects
+ * nothing there.
+ */
 export function projectFilterForEnvironment(
   filter: string | null | undefined,
   environmentId: EnvironmentId,
@@ -330,7 +300,7 @@ export function projectFilterForEnvironment(
       parsed[0] === environmentId &&
       typeof parsed[1] === "string"
     ) {
-      return parsed[1];
+      return `id:${parsed[1]}`;
     }
   } catch {
     // A malformed or foreign key must select nothing in this environment.
@@ -400,10 +370,9 @@ export function mergeUsage(
       unpricedRecords: number;
     }
   >();
-  // Keyed by stable project id where available, with a namespaced title
-  // fallback for pre-v7 summaries. Accumulated before the project filter.
+  // Accumulated before the project filter so the picker keeps every option.
   const projectAccumulator = new Map<
-    string,
+    string | null,
     {
       projectId: ProjectId | null;
       projectKey: string | null;
@@ -414,6 +383,7 @@ export function mergeUsage(
       cacheWriteUsd: number;
       cacheWriteComplete: boolean;
       records: number;
+      unpricedRecords: number;
     }
   >();
   let unfilteredCostUsd = 0;
@@ -472,18 +442,13 @@ export function mergeUsage(
         bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
 
       unfilteredCostUsd += bucket.costUsd;
-      const localProjectKey = localBucketProjectKey(bucket);
-      const projectKey =
-        typeof localProjectKey === "string"
-          ? namespacedProjectKey(environment.environmentId, localProjectKey)
-          : localProjectKey;
+      const projectKey = bucketProjectKey(environment.environmentId, bucket);
       // Unknown attribution stays in unfiltered totals but never claims to be
       // part of the explicit Outside projects slice.
       if (projectKey === undefined) {
         if (projectFilter !== undefined) continue;
       } else {
-        const accumulatorKey = projectKey ?? "\0";
-        const project = projectAccumulator.get(accumulatorKey) ?? {
+        const project = projectAccumulator.get(projectKey) ?? {
           projectId: bucket.projectId ?? null,
           projectKey,
           project: bucket.project ?? null,
@@ -493,6 +458,7 @@ export function mergeUsage(
           cacheWriteUsd: 0,
           cacheWriteComplete: true,
           records: 0,
+          unpricedRecords: 0,
         };
         project.costUsd += bucket.costUsd;
         project.totalTokens += tokens;
@@ -500,7 +466,8 @@ export function mergeUsage(
         project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
         project.cacheWriteComplete &&= bucketCacheWriteComplete;
         project.records += bucket.records;
-        projectAccumulator.set(accumulatorKey, project);
+        project.unpricedRecords += bucket.unpricedRecords;
+        projectAccumulator.set(projectKey, project);
 
         if (projectFilter !== undefined && projectKey !== projectFilter) continue;
       }
@@ -622,6 +589,7 @@ export function mergeUsage(
       cacheWriteTokens: totals.cacheWriteTokens,
       cacheWriteUsd: totals.cacheWriteComplete ? totals.cacheWriteUsd : null,
       records: totals.records,
+      unpricedRecords: totals.unpricedRecords,
       costShare: unfilteredCostUsd === 0 ? 0 : totals.costUsd / unfilteredCostUsd,
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);

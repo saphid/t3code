@@ -21,7 +21,6 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /**
@@ -177,11 +176,7 @@ function ThreadRowGroup({
                 <ProviderMark provider={row.provider} />
                 <span className="truncate">{row.title}</span>
                 {row.agents.length > 0 ? (
-                  <Badge
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0 font-normal text-muted-foreground"
-                  >
+                  <Badge variant="outline" size="sm" className="shrink-0">
                     {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
                   </Badge>
                 ) : null}
@@ -214,10 +209,9 @@ function ThreadRowGroup({
           </div>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
-        <UsageCacheWriteCell
-          cacheWriteTokens={row.totals.cacheCreationTokens}
-          cacheWriteUsd={row.cacheWriteUsd}
-        />
+        <td className="py-2 text-right text-muted-foreground tabular-nums">
+          {formatCacheWriteCost(row.totals.cacheCreationTokens, row.cacheWriteUsd)}
+        </td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
         </td>
@@ -241,7 +235,7 @@ function ThreadRowGroup({
                   className="flex items-baseline justify-between gap-4 py-1 text-xs text-muted-foreground"
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <Badge variant="outline" size="sm" className="shrink-0 font-normal">
+                    <Badge variant="outline" size="sm" className="shrink-0">
                       agent
                     </Badge>
                     <span className="truncate">{agent.agentId}</span>
@@ -257,6 +251,11 @@ function ThreadRowGroup({
       ) : null}
     </>
   );
+}
+
+function formatCacheWriteCost(cacheWriteTokens: number, cacheWriteUsd: number | null): string {
+  if (cacheWriteTokens === 0) return "-";
+  return cacheWriteUsd === null ? "Unavailable" : formatUsd(cacheWriteUsd);
 }
 
 const CHART_WIDTH = 760;
@@ -346,11 +345,10 @@ function steppedAreaPath(
 }
 
 /**
- * One thread's daily model-priced cost stacked by component: cache writes,
- * cache reads, and fresh input plus output. Cache writes are a billing
- * category, not an inferred cause. Static SVG, no animation.
+ * One thread's daily model-priced cost split into continuous stacked bands.
+ * Static SVG, no animation.
  */
-export function UsageThreadDailyChart({
+function UsageThreadDailyChart({
   daily,
   sinceDay,
   untilDay,
@@ -384,7 +382,7 @@ export function UsageThreadDailyChart({
 
   return (
     <div className="flex max-w-3xl flex-col gap-1 pb-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-2xs text-muted-foreground">
         <span>
           Daily cost, {formatDayShort(sinceDay)} to {formatDayShort(untilDay)}
         </span>
@@ -392,10 +390,10 @@ export function UsageThreadDailyChart({
           Peak {formatUsd(peak)} · {formatDayShort(peakEntry.day)}
         </span>
       </div>
-      <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-3xs text-muted-foreground">
         {CHART_BANDS.toReversed().map((band) => (
           <span key={band.key} className="flex items-center gap-1">
-            <span aria-hidden className={`size-1.5 rounded-[2px] bg-current ${band.className}`} />
+            <span aria-hidden className={`size-1.5 rounded-xs bg-current ${band.className}`} />
             {band.label}
           </span>
         ))}
@@ -442,7 +440,7 @@ export function UsageThreadDailyChart({
           );
         })}
       </svg>
-      <div className="flex justify-between text-[10px] text-muted-foreground">
+      <div className="flex justify-between text-3xs text-muted-foreground">
         {labelDays.map((day) => (
           <span key={day}>{formatDayShort(day)}</span>
         ))}

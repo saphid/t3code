@@ -1,4 +1,9 @@
-import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  UsageDay,
+  USAGE_CONTRACT_VERSION,
+  USAGE_THREAD_BREAKDOWN_SINCE,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { serverEnvironment } from "./server";
 import { act, useLayoutEffect } from "react";
@@ -205,7 +210,7 @@ describe("usage environment selection", () => {
 });
 
 describe("thread breakdown refresh", () => {
-  it.each([9, USAGE_CONTRACT_VERSION])(
+  it.each([USAGE_THREAD_BREAKDOWN_SINCE, USAGE_CONTRACT_VERSION])(
     "waits for summary publication before refreshing contract-%i thread rows",
     async (contractVersion) => {
       testState.environments = testState.environments.map((entry) => ({
