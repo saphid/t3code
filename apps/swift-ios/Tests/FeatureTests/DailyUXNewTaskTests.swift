@@ -308,7 +308,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func requestNormalizesLegacyModesAndKeepsImageBytes() {
+    func requestPreservesLegacyPermissionAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),
             filename: "Image 1.jpg",
@@ -324,7 +324,7 @@ struct DailyUXNewTaskTests {
         )
 
         #expect(request.trimmedPrompt == "Build it")
-        #expect(request.runtimeMode == .fullAccess)
+        #expect(request.runtimeMode == .approvalRequired)
         #expect(request.interactionMode == .standard)
         #expect(request.workspaceMode == .local)
         #expect(request.branch == nil)
@@ -388,8 +388,20 @@ struct DailyUXNewTaskTests {
 
     @Test
     func mobileModeChoicesOnlyExposeSupportedValues() {
-        #expect(FeatureRuntimeMode.allCases == [.fullAccess])
+        #expect(FeatureRuntimeMode.allCases == [.automatic, .fullAccess])
         #expect(FeatureInteractionMode.allCases == [.standard])
+    }
+
+    @Test
+    func newTasksDefaultToFullAccessBuildMode() {
+        let request = NewTaskRequest(
+            projectID: "project",
+            prompt: "Build it",
+            selection: nil
+        )
+
+        #expect(request.runtimeMode == .fullAccess)
+        #expect(request.interactionMode == .standard)
     }
 
     @Test
@@ -415,6 +427,110 @@ struct DailyUXNewTaskTests {
         #expect(context.projectID == "second-project")
         #expect(merged.text == "Typed while loading")
         #expect(merged.attachments == [savedAttachment])
+    }
+
+    @Test
+    func computerSwitchCarriesLocalContentAndDropsAnotherServersUpload() {
+        let oldUpload = FeatureUploadedAttachmentReference(
+            environmentID: "source", attachmentID: "old-upload"
+        )
+        let currentUpload = FeatureUploadedAttachmentReference(
+            environmentID: "target", attachmentID: "target-upload"
+        )
+        let localFile = FeatureOwnedAttachmentFile(
+            fileName: "screenshot.png",
+            url: URL(fileURLWithPath: "/drafts/screenshot.png"),
+            byteCount: 1_024
+        )
+        let source = FeatureComposerDraft(
+            text: "Fix this screenshot",
+            attachments: [
+                FeatureDraftAttachment(
+                    ownedFile: localFile, thumbnailData: Data([0x01]),
+                    filename: "screenshot.png", mimeType: "image/png",
+                    uploadedReference: oldUpload
+                ),
+                FeatureDraftAttachment(
+                    data: Data([0x02]), filename: "target.png", mimeType: "image/png",
+                    uploadedReference: currentUpload
+                ),
+            ],
+            selection: FeatureSelection(providerID: "source-provider", modelID: "source-model"),
+            workspace: FeatureComposerWorkspaceDraft(
+                mode: .worktree, branch: "source-branch", worktreePath: "/source/tree",
+                startFromOrigin: false
+            )
+        )
+        let content = NewTaskDraftRestoreContext.content(from: source, forEnvironment: "target")
+        let context = NewTaskDraftRestoreContext(projectID: "target-project", baseline: content)
+        let targetSelection = FeatureSelection(providerID: "target-provider", modelID: "target-model")
+        let targetWorkspace = FeatureComposerWorkspaceDraft(
+            mode: .local, branch: nil, worktreePath: nil, startFromOrigin: true
+        )
+        let restored = context.merging(
+            saved: FeatureComposerDraft(selection: targetSelection, workspace: targetWorkspace),
+            current: content
+        )
+
+        #expect(context.shouldCarryContent(into: nil))
+        #expect(restored.text == source.text)
+        #expect(restored.attachments.map(\.id) == source.attachments.map(\.id))
+        #expect(restored.attachments[0].ownedFile == localFile)
+        #expect(restored.attachments[0].thumbnailData == Data([0x01]))
+        #expect(restored.attachments[0].uploadedReference == nil)
+        #expect(restored.attachments[1].uploadedReference == currentUpload)
+        #expect(restored.selection == targetSelection)
+        #expect(restored.workspace == targetWorkspace)
+        #expect(source.attachments[0].uploadedReference == oldUpload)
+    }
+
+    @Test
+    func computerSwitchKeepsExistingTargetDraftAndLiveEdits() {
+        let content = FeatureComposerDraft(text: "Prompt from the first computer")
+        let context = NewTaskDraftRestoreContext(projectID: "target-project", baseline: content)
+        let targetAttachment = FeatureDraftAttachment(
+            data: Data([0x01]), filename: "saved.png", mimeType: "image/png"
+        )
+        let saved = FeatureComposerDraft(
+            text: "Draft already on the target", attachments: [targetAttachment]
+        )
+
+        #expect(!context.shouldCarryContent(into: saved))
+        #expect(context.merging(saved: saved, current: content) == saved)
+        #expect(!context.shouldCarryContent(into: FeatureComposerDraft(attachments: [targetAttachment])))
+
+        let edited = context.merging(
+            saved: saved,
+            current: FeatureComposerDraft(text: "Typed while the target draft loaded")
+        )
+        #expect(edited.text == "Typed while the target draft loaded")
+        #expect(edited.attachments == [targetAttachment])
+
+        let cleared = context.merging(saved: nil, current: FeatureComposerDraft())
+        #expect(cleared.text.isEmpty)
+    }
+
+    @Test
+    func sharedProjectDraftRestorationDoesNotReuseAnotherEnvironmentsUpload() {
+        let source = FeatureComposerDraft(
+            text: "Shared repo draft",
+            attachments: [FeatureDraftAttachment(
+                data: Data([0x01]), filename: "screenshot.png", mimeType: "image/png",
+                uploadedReference: FeatureUploadedAttachmentReference(
+                    environmentID: "source", attachmentID: "source-upload"
+                )
+            )]
+        )
+        let content = NewTaskDraftRestoreContext.content(from: source, forEnvironment: "target")
+        let context = NewTaskDraftRestoreContext(
+            projectID: "target-project", baseline: content, environmentID: "target"
+        )
+        let restored = context.merging(saved: source, current: content)
+
+        #expect(restored.text == source.text)
+        #expect(restored.attachments[0].id == source.attachments[0].id)
+        #expect(restored.attachments[0].data == source.attachments[0].data)
+        #expect(restored.attachments[0].uploadedReference == nil)
     }
 
     @Test
@@ -907,6 +1023,208 @@ struct DailyUXNewTaskTests {
         )
 
         #expect(sections.recents.map(\.name) == ["Beta", "Alpha"])
+        #expect(sections.others.isEmpty)
+    }
+
+    @Test
+    func modelPickerSearchMatchesNamesAcrossSpacesAndPunctuation() {
+        let codex = FeatureProvider(
+            id: "codex",
+            name: "Codex",
+            models: [
+                .init(id: "gpt-5.6-luna", name: "GPT 5.6 Luna"),
+                .init(id: "gpt-5.6-terra", name: "GPT 5.6 Terra"),
+            ]
+        )
+        let openCode = FeatureProvider(
+            id: "opencode",
+            name: "OpenCode",
+            models: [.init(id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna")]
+        )
+
+        let matching = ProviderModelSearch.matching(
+            [codex, openCode],
+            query: "GPT 5.6 Luna"
+        )
+
+        #expect(matching.map(\.id) == ["codex", "opencode"])
+        #expect(matching.flatMap { $0.models.map(\.id) } == [
+            "gpt-5.6-luna",
+            "openai/gpt-5.6-luna",
+        ])
+    }
+
+    @Test
+    func modelPickerDisambiguatesModelsWithTheSameVisibleDetails() {
+        let provider = FeatureProvider(
+            id: "opencode",
+            name: "OpenCode",
+            models: [
+                .init(id: "kilo/openai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "kilo"),
+                .init(id: "kilo/xai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "kilo"),
+                .init(id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+            ]
+        )
+        let sections = ProviderModelDisplaySections(
+            catalog: DailyUXModelCatalog(
+                providers: [provider],
+                query: "",
+                favoriteIDs: [],
+                recentIDs: []
+            )
+        )
+
+        #expect(sections.disambiguatedModelIDs == Set([
+            "opencode::kilo/openai/gpt-5.6-luna",
+            "opencode::kilo/xai/gpt-5.6-luna",
+        ]))
+    }
+
+    @Test
+    func modelPickerDisambiguatesProvidersWithTheSameVisibleName() {
+        let providers = [
+            FeatureProvider(
+                id: "opencode-work",
+                name: "OpenCode",
+                models: [
+                    .init(id: "work/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+            FeatureProvider(
+                id: "opencode-personal",
+                name: "OpenCode",
+                models: [
+                    .init(id: "personal/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+        ]
+        let sections = ProviderModelDisplaySections(
+            catalog: DailyUXModelCatalog(
+                providers: providers,
+                query: "",
+                favoriteIDs: [],
+                recentIDs: []
+            )
+        )
+
+        #expect(sections.disambiguatedModelIDs == Set([
+            "opencode-work::work/gpt-5.6-luna",
+            "opencode-personal::personal/gpt-5.6-luna",
+        ]))
+    }
+
+    @Test
+    func projectPickerSearchMatchesNamesPathsAndEnvironmentNames() {
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio"
+        )
+        let laptop = FeatureEnvironment(
+            id: "laptop",
+            name: "Travel Laptop",
+            endpoint: "http://laptop"
+        )
+        let alpha = rankedProject("ios-app", name: "Alpha", environmentID: studio.id)
+        let beta = rankedProject("web-client", name: "Beta", environmentID: laptop.id)
+        let groups = DailyUXProjectGrouping.groups(projects: [beta, alpha])
+
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "ALPHA",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Alpha"]
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "web-client",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Beta"]
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "travel",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Beta"]
+        )
+    }
+
+    @Test
+    func projectPickerSearchTrimsQueriesAndPreservesGroupOrder() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let groups = DailyUXProjectGrouping.groups(projects: [beta, alpha])
+
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "  \n ",
+                environments: []
+            ).map(\.id) == groups.map(\.id)
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "  BET  ",
+                environments: []
+            ).map(\.name) == ["Beta"]
+        )
+    }
+
+    @Test
+    func projectPickerSearchFindsSecondaryEnvironmentsAndKeepsRecentSections() throws {
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio"
+        )
+        let laptop = FeatureEnvironment(
+            id: "laptop",
+            name: "Travel Laptop",
+            endpoint: "http://laptop"
+        )
+        let sharedOnStudio = rankedProject(
+            "studio-project",
+            name: "Shared",
+            environmentID: studio.id,
+            repositoryKey: "github.com/example/shared"
+        )
+        let sharedOnLaptop = rankedProject(
+            "laptop-project",
+            name: "Shared",
+            environmentID: laptop.id,
+            repositoryKey: "github.com/example/shared"
+        )
+        let unrelated = rankedProject(
+            "other-project",
+            name: "Other",
+            environmentID: studio.id
+        )
+        let groups = DailyUXProjectGrouping.groups(
+            projects: [unrelated, sharedOnStudio, sharedOnLaptop]
+        )
+        let sharedGroup = try #require(
+            DailyUXProjectGrouping.group(containing: sharedOnStudio.id, in: groups)
+        )
+        let unrelatedGroup = try #require(
+            DailyUXProjectGrouping.group(containing: unrelated.id, in: groups)
+        )
+
+        let filtered = NewTaskProjectPickerSearch.matching(
+            groups,
+            query: "travel",
+            environments: [studio, laptop]
+        )
+        let sections = DailyUXProjectPickerSections(
+            groups: filtered,
+            recentGroupIDs: [unrelatedGroup.id, sharedGroup.id]
+        )
+
+        #expect(filtered.map(\.id) == [sharedGroup.id])
+        #expect(sections.recents.map(\.id) == [sharedGroup.id])
         #expect(sections.others.isEmpty)
     }
 

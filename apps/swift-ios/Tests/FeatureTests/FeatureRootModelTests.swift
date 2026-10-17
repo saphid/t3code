@@ -1,12 +1,88 @@
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 import UIKit
+import XCTest
 @testable import T3Code
 
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test
+    func foregroundRecoveryIgnoresInitialActivationAndReplacesLongSuspendedSockets() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let start = Date(timeIntervalSince1970: 100)
+        await model.applicationDidBecomeActive(at: start)
+        #expect(client.foregroundReconnects.isEmpty)
+        model.applicationDidEnterBackground(at: start)
+        await model.applicationDidBecomeActive(at: start.addingTimeInterval(9))
+        model.applicationDidEnterBackground(at: start)
+        await model.applicationDidBecomeActive(at: start.addingTimeInterval(10))
+        await model.applicationDidBecomeActive(at: start.addingTimeInterval(11))
+        #expect(client.foregroundReconnects == [false, true])
+    }
+
+    @Test
+    func connectedComputerDoesNotHideThreadCatchUpOrItsFailure() {
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .connected, isOpening: false, syncState: .catchingUp
+        ) == .catchingUp)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .connected, isOpening: false, syncState: .failed("Timeout")
+        ) == .failed)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .connected, isOpening: false, syncState: .live
+        ) == nil)
+    }
+
+    @Test
+    func liveThreadSyncOutranksStaleLoadingAndEnvironmentReachability() {
+        for connectionState in [FeatureConnection.State.connected, .disconnected, .reconnecting] {
+            #expect(ThreadRefreshPresentation.resolve(
+                loadState: nil, connectionState: connectionState, isOpening: false, syncState: .live
+            ) == nil)
+            #expect(ThreadRefreshPresentation.resolve(
+                loadState: .loading, connectionState: connectionState, isOpening: false, syncState: .live
+            ) == nil)
+            #expect(ThreadRefreshPresentation.resolve(
+                loadState: .failed("Timeout"), connectionState: connectionState, isOpening: false, syncState: .live
+            ) == nil)
+            #expect(ThreadRefreshPresentation.resolve(
+                loadState: .loading, connectionState: connectionState, isOpening: true, syncState: .live
+            ) == nil)
+        }
+    }
+
+    @Test
+    func repeatedCatchUpEventsDoNotInvalidateViewState() async {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        await withCheckedContinuation { continuation in
+            withObservationTracking {
+                _ = model.threadSyncStates["thread"]
+            } onChange: {
+                continuation.resume()
+            }
+            client.emit(.threadSync(id: "thread", state: .catchingUp))
+        }
+        let changes = AsyncStream<Void>.makeStream()
+        withObservationTracking {
+            _ = model.threadSyncStates["thread"]
+        } onChange: {
+            changes.continuation.yield()
+        }
+        client.emit(.threadSync(id: "thread", state: .catchingUp))
+        client.finishEvents()
+        await run.value
+        changes.continuation.finish()
+        let didChange = await changes.stream.contains { _ in true }
+        #expect(!didChange)
+        #expect(model.threadSyncStates["thread"] == .catchingUp)
+    }
+
     @Test
     func appearanceAppliesImmediatelyAndPersistsWithoutSavingTheDraft() async {
         let client = FeatureClientStub()
@@ -187,6 +263,338 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func restoredCreationWaitsForItsFirstMessageEvenWhenTheThreadExists() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-partial-creation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(
+            threadID: "created-thread",
+            commandID: "create-command",
+            messageID: "missing-message",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let threadID = "environment-1::thread::created-thread"
+        let submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: identity,
+            threadID: threadID,
+            text: "Do not lose the first message",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: [
+                .init(data: Data([0x01]), name: "reference.png", mimeType: "image/png"),
+            ],
+            creation: .init(
+                projectID: "project-1",
+                projectName: "Native",
+                workspaceMode: .local,
+                branch: nil,
+                worktreePath: nil,
+                startFromOrigin: false
+            )
+        )
+        try await store.enqueue(submission)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ],
+            threads: [
+                .init(
+                    id: threadID,
+                    wireID: identity.threadID,
+                    projectID: "project-1",
+                    environmentID: "environment-1",
+                    title: "Created without a message"
+                ),
+            ]
+        )
+        client.startTaskError = URLError(.timedOut)
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+
+        await model.start()
+        await model.disconnect()
+
+        #expect(try await store.submissions() == [submission])
+    }
+
+    @Test
+    func cancellingAnOfflineTaskRemovesItsDurableSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-cancel-queued-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ]
+        )
+        client.startTaskError = URLError(.notConnectedToInternet)
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        let thread = try #require(await model.startTask(
+            NewTaskRequest(
+                projectID: "project-1",
+                prompt: "Cancel this task",
+                selection: nil,
+                runtimeMode: .fullAccess,
+                interactionMode: .standard
+            )
+        ))
+
+        await model.cancelTurn(threadID: thread.id)
+
+        #expect(try await store.submissions().isEmpty)
+        #expect(!model.snapshot.threads.contains(where: { $0.id == thread.id }))
+        #expect(client.cancelTurnCallCount == 0)
+    }
+
+    @Test
+    func cancellingARestoredServerThreadAlsoInterruptsItsTurn() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-cancel-restored-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(threadID: "created-thread")
+        let threadID = "environment-1::thread::created-thread"
+        let submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: identity,
+            threadID: threadID,
+            text: "Already running on the server",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: [],
+            creation: .init(
+                projectID: "project-1",
+                projectName: "Native",
+                workspaceMode: .local,
+                branch: nil,
+                worktreePath: nil,
+                startFromOrigin: false
+            )
+        )
+        try await store.enqueue(submission)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ],
+            threads: [
+                .init(
+                    id: threadID,
+                    wireID: identity.threadID,
+                    projectID: "project-1",
+                    environmentID: "environment-1",
+                    title: "Already running",
+                    state: .working
+                ),
+            ]
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.start()
+
+        await model.cancelTurn(threadID: threadID)
+
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(try await store.submissions().isEmpty)
+        #expect(model.snapshot.threads.contains(where: { $0.id == threadID }))
+    }
+
+    @Test(arguments: [false, true])
+    func cancellingAnAcknowledgedQueuedThreadInterruptsItsTurn(
+        acknowledgedBySnapshot: Bool
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-cancel-acknowledged-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(threadID: "acknowledged-thread")
+        let threadID = "environment-1::thread::acknowledged-thread"
+        try await store.enqueue(
+            FeatureQueuedSubmission(
+                environmentID: "environment-1",
+                identity: identity,
+                threadID: threadID,
+                text: "Accepted before the outbox cleared",
+                selection: nil,
+                runtimeMode: .fullAccess,
+                interactionMode: .standard,
+                attachments: [],
+                creation: .init(
+                    projectID: "project-1",
+                    projectName: "Native",
+                    workspaceMode: .local,
+                    branch: nil,
+                    worktreePath: nil,
+                    startFromOrigin: false
+                )
+            )
+        )
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ]
+        )
+        let acknowledged = FeatureThread(
+            id: threadID,
+            wireID: identity.threadID,
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Accepted on the server",
+            state: .working
+        )
+        if acknowledgedBySnapshot {
+            var snapshot = client.snapshot
+            snapshot.threads = [acknowledged]
+            client.emit(.snapshot(snapshot))
+        } else {
+            client.emit(.thread(acknowledged))
+        }
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.start()
+
+        await model.cancelTurn(threadID: threadID)
+
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(try await store.submissions().isEmpty)
+        #expect(model.snapshot.threads == [acknowledged])
+    }
+
+    @Test
+    func retryableCreationFailureReturnsTheAcknowledgedServerThread() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-acknowledged-creation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ]
+        )
+        client.startTaskError = URLError(.notConnectedToInternet)
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        client.beforeStartTask = {
+            var acknowledged = try #require(model.snapshot.threads.first)
+            acknowledged.title = "Accepted on the server"
+            acknowledged.state = .working
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.snapshot.threads.first(where: { $0.id == acknowledged.id })?.state
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(acknowledged))
+            }
+        }
+        let run = Task { await model.start() }
+
+        let thread = await model.startTask(
+            NewTaskRequest(
+                projectID: "project-1",
+                prompt: "Create this task once",
+                selection: nil,
+                runtimeMode: .fullAccess,
+                interactionMode: .standard
+            )
+        )
+        client.finishEvents()
+        await run.value
+
+        #expect(thread?.title == "Accepted on the server")
+        #expect(thread?.state == .working)
+        #expect(try await store.submissions().count == 1)
+    }
+
+    @Test
     func testPairReloadsConnectedSnapshot() async {
         let client = FeatureClientStub()
         client.snapshot = FeatureSnapshot(connection: .init(state: .disconnected))
@@ -248,6 +656,287 @@ struct FeatureRootModelTests {
         #expect(client.enabledEnvironmentID == "studio")
         #expect(client.environmentEnabledValue == false)
         #expect(model.snapshot.environments.first?.isEnabled == false)
+    }
+
+    @Test
+    func removingAnEnvironmentClearsItsPhysicalAndGroupedDrafts() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-draft-cleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let project = FeatureProject(
+            id: "project-1",
+            environmentID: "environment-1",
+            name: "Native",
+            path: "/native",
+            repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
+        )
+        let physicalKey = "environment:environment-1:thread:one"
+        let logicalKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: "github.com/t3/native"
+        )
+        let otherKey = "environment:environment-2:thread:two"
+        try await drafts.setDraft(FeatureComposerDraft(text: "remove physical"), for: physicalKey)
+        try await drafts.setDraft(FeatureComposerDraft(text: "remove logical"), for: logicalKey)
+        try await drafts.setDraft(FeatureComposerDraft(text: "keep"), for: otherKey)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example"
+                ),
+            ],
+            projects: [project]
+        )
+        client.snapshotAfterEnvironmentRemoval = FeatureSnapshot()
+        let model = FeatureRootModel(
+            client: client,
+            outboxStore: outbox,
+            draftStore: drafts
+        )
+        await model.reload()
+
+        await model.removeEnvironment("environment-1")
+
+        #expect(try await drafts.draft(for: physicalKey) == nil)
+        #expect(try await drafts.draft(for: logicalKey) == nil)
+        #expect(try await drafts.draft(for: otherKey)?.text == "keep")
+    }
+
+    @Test
+    func removingAnEnvironmentClearsDraftsWhenOutboxCleanupFails() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-cleanup-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let draftKey = "environment:environment-1:thread:one"
+        try await drafts.setDraft(FeatureComposerDraft(text: "Clear this draft"), for: draftKey)
+        let outbox = FeatureOutboxStore(fileURL: directory)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example"
+                ),
+            ]
+        )
+        client.snapshotAfterEnvironmentRemoval = FeatureSnapshot()
+        let model = FeatureRootModel(client: client, outboxStore: outbox, draftStore: drafts)
+        await model.reload()
+
+        await model.removeEnvironment("environment-1")
+
+        #expect(try await drafts.draft(for: draftKey) == nil)
+        #expect(model.errorMessage?.contains("queued messages or drafts") == true)
+    }
+
+    @Test
+    func signingOutClearsManagedOutboxEntriesAndGroupedDrafts() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-sign-out-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let project = FeatureProject(
+            id: "project-1",
+            environmentID: "managed-1",
+            name: "Native",
+            path: "/native",
+            repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
+        )
+        let groupedDraftKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: "github.com/t3/native"
+        )
+        try await drafts.setDraft(FeatureComposerDraft(text: "Private prompt"), for: groupedDraftKey)
+        try await outbox.enqueue(
+            FeatureQueuedSubmission(
+                environmentID: "managed-1",
+                identity: FeatureSubmissionIdentity(),
+                threadID: "managed-1::thread::queued",
+                text: "Private queued message",
+                selection: nil,
+                runtimeMode: .fullAccess,
+                interactionMode: .standard,
+                attachments: []
+            )
+        )
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [
+                .init(
+                    id: "managed-1",
+                    name: "Managed",
+                    endpoint: "https://managed.example",
+                    source: .t3Connect
+                ),
+                .init(
+                    id: "manual-1",
+                    name: "Manual",
+                    endpoint: "https://manual.example"
+                ),
+            ],
+            projects: [project]
+        )
+        let model = FeatureRootModel(
+            client: client,
+            outboxStore: outbox,
+            draftStore: drafts
+        )
+        await model.reload()
+
+        await model.signOutT3Connect()
+
+        #expect(client.signOutCallCount == 1)
+        #expect(model.snapshot.environments.map(\.id) == ["manual-1"])
+        #expect(try await outbox.submissions().isEmpty)
+        #expect(try await drafts.draft(for: groupedDraftKey) == nil)
+    }
+
+    @Test
+    func signingOutPreservesGroupedDraftsUsedByDirectEnvironments() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-shared-draft-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
+        let groupedDraftKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: identity.canonicalKey
+        )
+        let managedDraftKey = "environment:managed-1:thread:one"
+        try await drafts.setDraft(FeatureComposerDraft(text: "Keep shared prompt"), for: groupedDraftKey)
+        try await drafts.setDraft(FeatureComposerDraft(text: "Remove managed prompt"), for: managedDraftKey)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [
+                .init(
+                    id: "managed-1",
+                    name: "Managed",
+                    endpoint: "https://managed.example",
+                    source: .t3Connect
+                ),
+                .init(
+                    id: "manual-1",
+                    name: "Manual",
+                    endpoint: "https://manual.example"
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "managed-project",
+                    environmentID: "managed-1",
+                    name: "Native",
+                    path: "/managed/native",
+                    repositoryIdentity: identity
+                ),
+                .init(
+                    id: "manual-project",
+                    environmentID: "manual-1",
+                    name: "Native",
+                    path: "/manual/native",
+                    repositoryIdentity: identity
+                ),
+            ]
+        )
+        let model = FeatureRootModel(client: client, outboxStore: outbox, draftStore: drafts)
+        await model.reload()
+
+        await model.signOutT3Connect()
+
+        #expect(try await drafts.draft(for: groupedDraftKey)?.text == "Keep shared prompt")
+        #expect(try await drafts.draft(for: managedDraftKey) == nil)
+        #expect(model.snapshot.projects.map(\.id) == ["manual-project"])
+    }
+
+    @Test
+    func signingOutClearsDraftsWhenOutboxCleanupFails() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-sign-out-failure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let draftKey = "environment:managed-1:thread:one"
+        try await drafts.setDraft(FeatureComposerDraft(text: "Clear this draft"), for: draftKey)
+        let outboxURL = directory.appendingPathComponent("outbox.json")
+        let outbox = FeatureOutboxStore(fileURL: outboxURL)
+        let threadID = "managed-1::thread::queued"
+        try await outbox.enqueue(
+            FeatureQueuedSubmission(
+                environmentID: "managed-1",
+                identity: FeatureSubmissionIdentity(threadID: "queued"),
+                threadID: threadID,
+                text: "Private queued message",
+                selection: nil,
+                runtimeMode: .fullAccess,
+                interactionMode: .standard,
+                attachments: [],
+                creation: .init(
+                    projectID: "managed-project",
+                    projectName: "Native",
+                    workspaceMode: .local,
+                    branch: nil,
+                    worktreePath: nil,
+                    startFromOrigin: false
+                )
+            )
+        )
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "managed-1",
+                    name: "Managed",
+                    endpoint: "https://managed.example",
+                    source: .t3Connect,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "managed-project",
+                    environmentID: "managed-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ]
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: outbox, draftStore: drafts)
+        await model.start()
+        #expect(model.snapshot.threads.contains(where: { $0.id == threadID }))
+        #expect(model.details[threadID] != nil)
+        try FileManager.default.removeItem(at: outboxURL)
+        try FileManager.default.createDirectory(
+            at: outboxURL,
+            withIntermediateDirectories: false
+        )
+
+        await model.signOutT3Connect()
+
+        #expect(try await drafts.draft(for: draftKey) == nil)
+        #expect(model.snapshot.threads.isEmpty)
+        #expect(model.details.isEmpty)
+        #expect(model.errorMessage?.contains("Could not clear saved T3 Connect data") == true)
     }
 
     @Test
@@ -329,6 +1018,119 @@ struct FeatureRootModelTests {
         #expect(client.sentText == "ship it")
         #expect(model.details[thread.id]?.messages.last?.text == "ship it")
         #expect(model.details[thread.id]?.messages.last?.state == .complete)
+    }
+
+    @Test
+    func sendPreservesTheThreadAutomaticPermission() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Thread",
+            runtimeMode: .automatic
+        )
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let sent = await model.sendMessage(
+            threadID: thread.id,
+            text: "Use the saved permission",
+            selection: nil
+        )
+
+        #expect(sent)
+        #expect(client.sentRuntimeModes == [.automatic])
+    }
+
+    @Test
+    func runtimeModeUpdatesAfterSuccessAndStaysPutAfterFailure() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Thread",
+            runtimeMode: .fullAccess
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        await model.setRuntimeMode(thread.id, mode: .automatic)
+
+        #expect(client.setRuntimeModeCalls == [.automatic])
+        #expect(model.snapshot.threads.first?.runtimeMode == .automatic)
+
+        client.runtimeModeError = FeatureCapabilityUnavailable("Permission update failed")
+        await model.setRuntimeMode(thread.id, mode: .fullAccess)
+
+        #expect(client.setRuntimeModeCalls == [.automatic, .fullAccess])
+        #expect(model.snapshot.threads.first?.runtimeMode == .automatic)
+    }
+
+    @Test
+    func restoredOutboxRetryPreservesAutomaticPermission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-permission-retry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "thread-1",
+            wireID: "thread-wire",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Thread",
+            runtimeMode: .fullAccess
+        )
+        try await store.enqueue(FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: .init(threadID: "thread-wire"),
+            threadID: thread.id,
+            text: "Retry with Automatic",
+            selection: nil,
+            runtimeMode: .automatic,
+            interactionMode: .standard,
+            attachments: []
+        ))
+        let delivery = AsyncStream<Void>.makeStream()
+        let client = FeatureClientStub()
+        client.beforeSendMessage = { delivery.continuation.yield() }
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+
+        await model.start()
+        _ = await delivery.stream.first { _ in true }
+        delivery.continuation.finish()
+        await model.disconnect()
+
+        #expect(client.sentRuntimeModes == [.automatic])
     }
 
     @Test
@@ -720,6 +1522,11 @@ struct FeatureRootModelTests {
             input.bounds.height >= 100,
             "Expected room for more than two visible lines; got \(input.bounds.height) points"
         )
+        let inputFrame = input.convert(input.bounds, to: window)
+        #expect(
+            inputFrame.maxY <= window.bounds.height - 44,
+            "The text editor overlaps the composer controls: editor frame \(inputFrame), viewport \(window.bounds)"
+        )
     }
 
     @Test
@@ -735,6 +1542,267 @@ struct FeatureRootModelTests {
 
         await model.deleteThread(thread.id)
         #expect(model.snapshot.threads.isEmpty)
+    }
+
+    @Test
+    func activeThreadsCannotBeArchivedOrSettled() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            title: "Running task",
+            state: .working,
+            supportsSettlement: true
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        await model.setArchived(thread.id, archived: true)
+
+        #expect(model.snapshot.threads.first?.isArchived == false)
+        #expect(model.errorMessage?.contains("still active") == true)
+
+        model.errorMessage = nil
+        await model.setSettled(thread.id, settled: true)
+
+        #expect(model.snapshot.threads.first?.isSettled == false)
+        #expect(model.errorMessage?.contains("needs attention") == true)
+    }
+
+    @Test
+    func cachedThreadRefreshShowsLoadingThenRetryWithoutHidingMessages() async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "cached", projectID: "project", title: "Cached thread")
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [.init(id: "user", role: .user, text: "Do the task")]
+        )
+        client.threadDetail = cached
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+        let refresh = Task { await model.detail(for: thread.id, force: true) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+        #expect(model.detailLoadStates[thread.id] == .loading)
+        #expect(model.details[thread.id] == cached)
+
+        response?.resume(throwing: URLError(.notConnectedToInternet))
+        #expect(await refresh.value == cached)
+        guard case .failed = model.detailLoadStates[thread.id] else {
+            Issue.record("Expected an inline retry state for the cached thread")
+            return
+        }
+        #expect(model.errorMessage == nil)
+        #expect(model.details[thread.id]?.messages.first?.text == "Do the task")
+
+        client.loadThreadHandler = nil
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.detailLoadStates[thread.id] == nil)
+    }
+
+    @Test
+    func cachedThreadRestoresAttachmentsBeforeItsNetworkRefreshFinishes() async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "cached-draft", projectID: "project", environmentID: "one",
+            title: "Cached draft"
+        )
+        let cached = FeatureThreadDetail(thread: thread)
+        client.threadDetail = cached
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-thread-draft-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let draftStore = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let attachment = FeatureDraftAttachment(
+            data: Data([1]), filename: "example.png", mimeType: "image/png"
+        )
+        try await draftStore.setDraft(
+            FeatureComposerDraft(text: "Keep this draft", attachments: [attachment]),
+            for: FeatureComposerDraftStore.threadKey(thread)
+        )
+        let model = FeatureRootModel(
+            client: client,
+            outboxStore: FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json")),
+            draftStore: draftStore
+        )
+        _ = await model.detail(for: thread.id)
+
+        let loads = AsyncStream<Void>.makeStream()
+        let uploads = AsyncStream<UUID>.makeStream()
+        var pendingLoad: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                pendingLoad = continuation
+                loads.continuation.yield()
+            }
+        }
+        client.preuploadHandler = { value, environmentID in
+            #expect(environmentID == "one")
+            uploads.continuation.yield(value.id)
+            return nil
+        }
+        defer {
+            pendingLoad?.resume(returning: cached)
+            loads.continuation.finish()
+            uploads.continuation.finish()
+        }
+
+        let controller = UIHostingController(rootView: ThreadDetailView(
+            model: model, thread: thread, submitMessage: { _ in false }, draftStore: draftStore
+        ))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 800))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+        controller.view.layoutIfNeeded()
+
+        var loadEvents = loads.stream.makeAsyncIterator()
+        await loadEvents.next()
+        var uploadEvents = uploads.stream.makeAsyncIterator()
+        #expect(await uploadEvents.next() == attachment.id)
+        #expect(pendingLoad != nil)
+        #expect(model.detailLoadStates[thread.id] == .loading)
+        #expect(model.details[thread.id] == cached)
+    }
+
+    @Test(.serialized, arguments: [false, true])
+    func freshThreadImageSavesAndUploadsAfterDraftRestore(afterFullScreenCover: Bool) async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "fresh-image", projectID: "project", environmentID: "one", title: "Fresh image"
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(
+                id: "one", name: "Studio", endpoint: "https://studio.example",
+                connectionState: .connected
+            )],
+            threads: [thread],
+            preferencesByEnvironment: ["one": .init(supportsImageUploads: true)]
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-fresh-image-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let draftStore = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let draftKey = FeatureComposerDraftStore.threadKey(thread)
+        let initialText = "Attach this screenshot"
+        try await draftStore.setDraft(FeatureComposerDraft(text: initialText), for: draftKey)
+        let model = FeatureRootModel(
+            client: client,
+            outboxStore: FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json")),
+            draftStore: draftStore
+        )
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let uploaded = XCTestExpectation(description: "Fresh attachment saved and upload started")
+        var uploadedAttachment: FeatureUploadAttachment?
+        client.preuploadHandler = { attachment, environmentID in
+            let saved = try await draftStore.draft(for: draftKey)
+            #expect(environmentID == "one")
+            #expect(saved?.text == initialText)
+            #expect(saved?.attachments.map(\.id) == [attachment.id])
+            uploadedAttachment = attachment
+            uploaded.fulfill()
+            return nil
+        }
+        let presentation = ThreadImageCoverPresentation()
+        let controller = UIHostingController(rootView: ThreadImageTestHost(
+            detail: ThreadDetailView(
+                model: model, thread: thread, submitMessage: { _ in false }, draftStore: draftStore
+            ),
+            presentation: presentation
+        ))
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = try #require(scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer {
+            controller.dismiss(animated: false)
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+        // A representable can update its text without laying out the hosting
+        // controller. Drive UI frames until the restored editor is visible.
+        var renderedInput: UIView?
+        let layoutDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        repeat {
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            renderedInput = firstMultilineTextInput(in: controller.view)
+            if textInputText(renderedInput) == initialText { break }
+            try await Task.sleep(for: .milliseconds(16))
+        } while ContinuousClock.now < layoutDeadline
+        try #require(
+            textInputText(renderedInput) == initialText,
+            "Editor after layout: \(String(describing: textInputText(renderedInput)))"
+        )
+        let input = try #require(renderedInput as? FeatureComposerUITextView)
+        let pasteImages = try #require(input.onPasteImages)
+        let imageFormat = UIGraphicsImageRendererFormat()
+        imageFormat.opaque = true
+        let image = UIGraphicsImageRenderer(
+            size: CGSize(width: 180, height: 320), format: imageFormat
+        ).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 180, height: 320))
+        }
+        let attachImage = { pasteImages([NSItemProvider(object: image)]) }
+
+        if afterFullScreenCover {
+            presentation.onDismiss = attachImage
+            presentation.isPresented = true
+            try #require(await XCTWaiter.fulfillment(of: [presentation.appeared], timeout: 2) == .completed)
+            presentation.isPresented = false
+            try #require(await XCTWaiter.fulfillment(of: [presentation.dismissed], timeout: 2) == .completed)
+        } else {
+            attachImage()
+        }
+        try #require(await XCTWaiter.fulfillment(of: [uploaded], timeout: 2) == .completed)
+        let attachment = try #require(uploadedAttachment)
+        #expect(attachment.byteCount > 0)
+        #expect(attachment.mimeType.hasPrefix("image/"))
+        #expect(try await draftStore.draft(for: draftKey)?.attachments.map(\.id) == [attachment.id])
+    }
+
+    @Test
+    func threadRefreshPresentationShowsConnectionLossEvenWithCachedContent() {
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .connected, isOpening: true
+        ) == .loading)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: .loading, connectionState: .connected, isOpening: false
+        ) == .loading)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .reconnecting, isOpening: false
+        ) == .reconnecting)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .disconnected, isOpening: false
+        ) == .offline)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: .failed("Offline"), connectionState: .connected, isOpening: false
+        ) == .failed)
+        #expect(ThreadRefreshPresentation.resolve(
+            loadState: nil, connectionState: .connected, isOpening: false
+        ) == nil)
+        #expect(ThreadRefreshPresentation.failed.canRetry)
+        #expect(!ThreadRefreshPresentation.loading.canRetry)
     }
 
     @Test
@@ -756,6 +1824,7 @@ struct FeatureRootModelTests {
 
         #expect(refreshed == detail)
         #expect(model.errorMessage == nil)
+        #expect(model.detailLoadStates[thread.id] == nil)
     }
 
     @Test
@@ -832,6 +1901,48 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func failedSettlementKeepsNewerActivityFacts() async {
+        let client = FeatureClientStub()
+        var thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            title: "Thread",
+            supportsSettlement: true,
+            settlementFacts: FeatureThreadSettlementFacts()
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.settlementError = URLError(.notConnectedToInternet)
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        client.beforeSettlementReturn = {
+            thread.settlementFacts?.sessionStatus = "running"
+            thread.settlementFacts?.hasPendingApprovals = true
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.snapshot.threads.first?.settlementFacts?.sessionStatus
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(thread))
+            }
+        }
+        let run = Task { await model.start() }
+
+        #expect(!(await model.setSettled(thread.id, settled: true)))
+        client.finishEvents()
+        await run.value
+
+        guard let restored = model.snapshot.threads.first else {
+            Issue.record("Expected the thread after settlement rollback")
+            return
+        }
+        #expect(restored.settlementFacts?.settlementOverride == nil)
+        #expect(restored.settlementFacts?.sessionStatus == "running")
+        #expect(restored.settlementFacts?.hasPendingApprovals == true)
+    }
+
+    @Test
     func testResolveUserInputForwardsTypedAnswersAndClearsTheRequest() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
@@ -889,6 +2000,414 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func initialDetailLoadDoesNotOverwriteNewerLiveUpdate() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let live = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Live")]
+        )
+        client.threadDetail = initial
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.detail(live))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == live)
+        #expect(model.details[thread.id] == live)
+    }
+
+    @Test(
+        "Later overlapping detail load wins for either completion order",
+        .bug("https://github.com/pingdotgg/t3code/pull/7206#discussion_r3816827717"),
+        arguments: [[1, 2], [2, 1]]
+    )
+    func laterOverlappingDetailLoadWins(completionOrder: [Int]) async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let initial = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        let loadStarted = AsyncStream<Int>.makeStream()
+        var loadIndex = 0
+        var loadContinuations: [Int: CheckedContinuation<FeatureThreadDetail, Never>] = [:]
+        defer {
+            loadStarted.continuation.finish()
+            for continuation in loadContinuations.values {
+                continuation.resume(returning: refreshed)
+            }
+        }
+        client.loadThreadHandler = { _ in
+            loadIndex += 1
+            let index = loadIndex
+            loadStarted.continuation.yield(index)
+            return await withCheckedContinuation { continuation in
+                loadContinuations[index] = continuation
+            }
+        }
+        let model = testRootModel(client: client)
+        var starts = loadStarted.stream.makeAsyncIterator()
+
+        let initialLoad = Task { await model.detail(for: thread.id, force: true) }
+        let firstStart = await starts.next()
+        #expect(firstStart == 1)
+        let refresh = Task { await model.detail(for: thread.id, force: true) }
+        let secondStart = await starts.next()
+        #expect(secondStart == 2)
+
+        for index in completionOrder {
+            let pendingContinuation = loadContinuations.removeValue(forKey: index)
+            let continuation = try #require(pendingContinuation)
+            continuation.resume(returning: index == 1 ? initial : refreshed)
+            if index == 1 {
+                _ = await initialLoad.value
+                if completionOrder.first == 1 {
+                    #expect(model.detailLoadStates[thread.id] == .loading)
+                }
+            } else {
+                _ = await refresh.value
+                #expect(model.detailLoadStates[thread.id] == nil)
+            }
+        }
+
+        let expectedInitialResult = completionOrder.first == 1 ? initial : refreshed
+        #expect(await initialLoad.value == expectedInitialResult)
+        #expect(await refresh.value == refreshed)
+        #expect(model.details[thread.id] == refreshed)
+    }
+
+    @Test(
+        "Pagination does not cancel an overlapping detail refresh",
+        .bug("https://github.com/pingdotgg/t3code/pull/7206#discussion_r3816827717")
+    )
+    func paginationDoesNotCancelOverlappingDetailRefresh() async throws {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Cached")],
+            page: FeatureThreadPage(beforeCursor: "cursor-1", hasMore: true)
+        )
+        let paginated = FeatureThreadDetail(
+            thread: thread,
+            messages: [
+                FeatureMessage(id: "message-1", role: .user, text: "Earlier"),
+                cached.messages[0],
+            ],
+            page: FeatureThreadPage(beforeCursor: nil, hasMore: false)
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-3", role: .assistant, text: "Refreshed")]
+        )
+        client.threadDetail = cached
+        client.earlierThreadDetail = paginated
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+
+        let loadStarted = AsyncStream<Void>.makeStream()
+        var refreshContinuation: CheckedContinuation<FeatureThreadDetail, Never>?
+        defer {
+            loadStarted.continuation.finish()
+            refreshContinuation?.resume(returning: refreshed)
+        }
+        client.loadThreadHandler = { _ in
+            loadStarted.continuation.yield(())
+            return await withCheckedContinuation { continuation in
+                refreshContinuation = continuation
+            }
+        }
+        var starts = loadStarted.stream.makeAsyncIterator()
+
+        let refresh = Task { await model.detail(for: thread.id, force: true) }
+        _ = await starts.next()
+        await model.loadEarlierTurns(for: thread.id)
+        let continuation = try #require(refreshContinuation)
+        refreshContinuation = nil
+        continuation.resume(returning: refreshed)
+
+        #expect(await refresh.value == refreshed)
+        #expect(model.details[thread.id]?.messages == refreshed.messages)
+    }
+
+    @Test
+    func initialDetailLoadDoesNotRestoreRemovedThread() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.detailRevisions[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.threadRemoved(id: thread.id))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == nil)
+        #expect(model.details[thread.id] == nil)
+        #expect(model.snapshot.threads.isEmpty)
+    }
+
+    @Test
+    func initialDetailLoadMergesLatestThreadMetadata() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let intermediateThread = FeatureThread(
+            id: thread.id,
+            projectID: thread.projectID,
+            title: "Intermediate"
+        )
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Cached")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: intermediateThread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = cached
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.threadDetail = refreshed
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(intermediateThread))
+            }
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(thread))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == thread)
+        #expect(loaded?.messages == refreshed.messages)
+        #expect(model.details[thread.id] == loaded)
+        #expect(model.snapshot.threads == [thread])
+    }
+
+    @Test
+    func initialDetailLoadKeepsMetadataFromThreadCreatedDuringLoad() async {
+        let client = FeatureClientStub()
+        let original = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let live = FeatureThread(id: original.id, projectID: original.projectID, title: "Live")
+        let created = FeatureThread(id: original.id, projectID: original.projectID, title: "Created")
+        client.snapshot = FeatureSnapshot(threads: [original])
+        client.threadDetail = FeatureThreadDetail(thread: original)
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: original.id)
+        let run = Task { await model.start() }
+        client.createdThread = created
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[original.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(live))
+            }
+            _ = await model.createThread(projectID: original.projectID, title: nil, selection: nil)
+        }
+
+        let loaded = await model.detail(for: original.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == created)
+        #expect(model.details[original.id]?.thread == created)
+        #expect(model.snapshot.threads == [created])
+    }
+
+    @Test
+    func duplicateThreadEventDuringRefreshDoesNotDiscardLoadedMetadata() async {
+        let client = FeatureClientStub()
+        let original = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let refreshed = FeatureThread(id: original.id, projectID: original.projectID, title: "Refreshed")
+        client.snapshot = FeatureSnapshot(threads: [original])
+        client.threadDetail = FeatureThreadDetail(thread: original)
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: original.id)
+        client.threadDetail = FeatureThreadDetail(thread: refreshed)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.snapshot.connection
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.thread(original))
+                client.emit(.connection(.init(state: .connected)))
+            }
+        }
+
+        let loaded = await model.detail(for: original.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == refreshed)
+        #expect(model.details[original.id]?.thread == refreshed)
+        #expect(model.snapshot.threads == [refreshed])
+    }
+
+    @Test
+    func initialDetailLoadDoesNotRestoreResolvedApproval() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        let approval = FeatureApproval(
+            id: "approval-1",
+            threadID: thread.id,
+            kind: .command,
+            title: "Run command",
+            detail: "swift test"
+        )
+        let stale = FeatureThreadDetail(thread: thread, approvals: [approval])
+        client.threadDetail = stale
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.beforeLoadThreadReturn = {
+            await model.resolveApproval(approval.id, decision: .allowOnce)
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+
+        #expect(loaded?.approvals.isEmpty == true)
+        #expect(model.details[thread.id]?.approvals.isEmpty == true)
+    }
+
+    @Test
+    func initialDetailLoadDoesNotRestoreThreadRemovedBySnapshot() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Initial")]
+        )
+        let model = testRootModel(client: client)
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.detailRevisions[thread.id]
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot()))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded == nil)
+        #expect(model.details[thread.id] == nil)
+        #expect(model.snapshot.threads.isEmpty)
+    }
+
+    @Test
+    func initialDetailLoadMergesLatestSnapshotMetadata() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Original")
+        let intermediateThread = FeatureThread(
+            id: thread.id,
+            projectID: thread.projectID,
+            title: "Intermediate"
+        )
+        let cached = FeatureThreadDetail(
+            thread: thread,
+            messages: [FeatureMessage(id: "message-1", role: .assistant, text: "Cached")]
+        )
+        let refreshed = FeatureThreadDetail(
+            thread: intermediateThread,
+            messages: [FeatureMessage(id: "message-2", role: .assistant, text: "Refreshed")]
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        client.threadDetail = cached
+        let model = testRootModel(client: client)
+        _ = await model.detail(for: thread.id)
+        client.threadDetail = refreshed
+        let run = Task { await model.start() }
+        client.beforeLoadThreadReturn = {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot(threads: [intermediateThread])))
+            }
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = model.details[thread.id]?.thread
+                } onChange: {
+                    continuation.resume()
+                }
+                client.emit(.snapshot(FeatureSnapshot(threads: [thread])))
+            }
+        }
+
+        let loaded = await model.detail(for: thread.id, force: true)
+        client.finishEvents()
+        await run.value
+
+        #expect(loaded?.thread == thread)
+        #expect(loaded?.messages == refreshed.messages)
+        #expect(model.details[thread.id] == loaded)
+        #expect(model.snapshot.threads == [thread])
+    }
+
+    @Test
     func environmentScopedCatalogAndPreferencesInvalidateHomePresentation() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
@@ -914,6 +2433,117 @@ struct FeatureRootModelTests {
         await model.reload()
 
         #expect(model.homePresentationRevision == catalogRevision + 1)
+    }
+
+    @Test
+    func providerRefreshRoutesOnlyToChosenEnvironment() async {
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(providersByEnvironment: [
+            "left": [.init(id: "old-left", name: "Old left")],
+            "right": [.init(id: "old-right", name: "Old right")],
+        ])
+        client.refreshedProviders = [.init(id: "new-left", name: "New left")]
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let didRefresh = await model.refreshProviders(environmentID: "left")
+
+        #expect(didRefresh)
+        #expect(client.refreshedProviderEnvironmentID == "left")
+        #expect(model.snapshot.providersByEnvironment?["left"] == client.refreshedProviders)
+        #expect(
+            model.snapshot.providersByEnvironment?["right"]
+                == [.init(id: "old-right", name: "Old right")]
+        )
+    }
+
+    @Test
+    func automaticSettlementUpdatesRemainEnvironmentScopedAndFailuresKeepVisibleValues() async {
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            preferencesByEnvironment: [
+                "left": .init(
+                    automaticSettlement: .init(onMerge: true, afterDays: 3)
+                ),
+                "right": .init(
+                    automaticSettlement: .init(onMerge: false, afterDays: 7.5)
+                ),
+            ]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        client.automaticSettlementResult = .init(onMerge: false, afterDays: 3)
+        let didUpdate = await model.updateAutomaticSettlement(
+            environmentID: "left",
+            change: .onMerge(false)
+        )
+
+        #expect(didUpdate)
+        #expect(client.automaticSettlementEnvironmentID == "left")
+        #expect(client.automaticSettlementChange == .onMerge(false))
+        #expect(
+            model.snapshot.preferencesByEnvironment?["left"]?.automaticSettlement
+                == FeatureAutomaticSettlementSettings(onMerge: false, afterDays: 3)
+        )
+        #expect(
+            model.snapshot.preferencesByEnvironment?["right"]?.automaticSettlement
+                == FeatureAutomaticSettlementSettings(onMerge: false, afterDays: 7.5)
+        )
+
+        client.automaticSettlementError = FeatureCapabilityUnavailable(
+            "Automatic settlement settings"
+        )
+        let didFail = await model.updateAutomaticSettlement(
+            environmentID: "right",
+            change: .afterDays(nil)
+        )
+
+        #expect(!didFail)
+        #expect(
+            model.snapshot.preferencesByEnvironment?["right"]?.automaticSettlement
+                == FeatureAutomaticSettlementSettings(onMerge: false, afterDays: 7.5)
+        )
+        #expect(
+            model.errorMessage
+                == "Automatic settlement settings is not supported by this environment."
+        )
+    }
+
+    @Test
+    func stalePullRequestResponseCannotReplaceANewBranchIdentity() async throws {
+        let client = FeatureClientStub()
+        var thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            environmentID: "studio",
+            title: "Task",
+            branch: "feature/old",
+            worktreePath: "/repo"
+        )
+        client.snapshot = FeatureSnapshot(threads: [thread])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let oldIdentity = try #require(thread.pullRequestObservationIdentity)
+        model.updatePullRequest(
+            HomeThreadPullRequestPresentation(number: 1, state: .merged, updatedAt: .now),
+            threadID: thread.id,
+            observationIdentity: oldIdentity
+        )
+        #expect(model.pullRequestsByThreadID[thread.id]?.number == 1)
+
+        thread.branch = "feature/new"
+        client.snapshot.threads = [thread]
+        await model.reload()
+        #expect(model.pullRequestsByThreadID[thread.id] == nil)
+
+        model.updatePullRequest(
+            HomeThreadPullRequestPresentation(number: 1, state: .closed, updatedAt: .now),
+            threadID: thread.id,
+            observationIdentity: oldIdentity
+        )
+        #expect(model.pullRequestsByThreadID[thread.id] == nil)
     }
 
     @Test
@@ -1223,6 +2853,153 @@ struct FeatureRootModelTests {
         #expect(reduction.result == .refresh)
         #expect(reduction.renderMutation == .full)
     }
+
+    @Test
+    func detailReducerAppliesServerSettlementEvents() {
+        let thread = orchestrationThread()
+        let settled = orchestrationEvent(
+            type: "thread.settled",
+            sequence: 4,
+            payload: [
+                "threadId": .string(thread.id),
+                "settledAt": .string("2026-07-31T20:00:03Z"),
+                "updatedAt": .string("2026-07-31T20:00:03Z"),
+            ]
+        )
+
+        guard case let .updated(settledThread) = NativeThreadDetailReducer
+            .apply(settled, to: thread).result else {
+            Issue.record("Expected a settled thread")
+            return
+        }
+        #expect(settledThread.settledOverride == "settled")
+        #expect(settledThread.settledAt == "2026-07-31T20:00:03Z")
+        #expect(settledThread.unsettledAt == nil)
+
+        let unsettled = orchestrationEvent(
+            type: "thread.unsettled",
+            sequence: 5,
+            payload: [
+                "threadId": .string(thread.id),
+                "reason": .string("user"),
+                "updatedAt": .string("2026-07-31T20:00:04Z"),
+            ]
+        )
+        guard case let .updated(activeThread) = NativeThreadDetailReducer
+            .apply(unsettled, to: settledThread).result else {
+            Issue.record("Expected an active thread")
+            return
+        }
+        #expect(activeThread.settledOverride == "active")
+        #expect(activeThread.settledAt == nil)
+        #expect(activeThread.unsettledAt == "2026-07-31T20:00:04Z")
+
+        let activityReset = orchestrationEvent(
+            type: "thread.unsettled",
+            sequence: 6,
+            payload: [
+                "threadId": .string(thread.id),
+                "reason": .string("activity"),
+                "updatedAt": .string("2026-07-31T20:00:05Z"),
+            ]
+        )
+        guard case let .updated(resetThread) = NativeThreadDetailReducer
+            .apply(activityReset, to: activeThread).result else {
+            Issue.record("Expected an activity reset")
+            return
+        }
+        #expect(resetThread.settledOverride == nil)
+        #expect(resetThread.unsettledAt == "2026-07-31T20:00:04Z")
+    }
+
+    @Test
+    func linkedPullRequestUpdatesDoNotReloadTheEntireThread() throws {
+        let thread = orchestrationThread()
+        let link = ThreadLinkedPullRequest(
+            projectId: thread.projectId,
+            repository: "pingdotgg/t3code",
+            number: 5178,
+            url: "https://github.com/pingdotgg/t3code/pull/5178"
+        )
+        let event = orchestrationEvent(
+            type: "thread.meta-updated",
+            sequence: 7,
+            payload: [
+                "threadId": .string(thread.id),
+                "linkedPullRequest": try JSONValue.encode(link),
+                "updatedAt": .string("2026-08-25T12:00:00Z"),
+            ]
+        )
+
+        let reduction = NativeThreadDetailReducer.apply(event, to: thread)
+
+        guard case let .updated(updated) = reduction.result else {
+            Issue.record("Expected the linked pull request to update without a full refresh")
+            return
+        }
+        #expect(updated.linkedPullRequest == link)
+        #expect(reduction.renderMutation == .metadata)
+
+        let unlink = orchestrationEvent(
+            type: "thread.meta-updated",
+            sequence: 8,
+            payload: [
+                "threadId": .string(thread.id),
+                "linkedPullRequest": .null,
+                "updatedAt": .string("2026-08-25T12:01:00Z"),
+            ]
+        )
+        guard case let .updated(unlinked) = NativeThreadDetailReducer.apply(unlink, to: updated).result else {
+            Issue.record("Expected the pull request link to clear")
+            return
+        }
+        #expect(unlinked.linkedPullRequest == nil)
+    }
+}
+
+@MainActor
+@Observable
+private final class ThreadImageCoverPresentation {
+    var isPresented = false
+    var onDismiss: (() -> Void)?
+    let appeared = XCTestExpectation(description: "Full-screen attachment flow appeared")
+    let dismissed = XCTestExpectation(description: "Full-screen attachment flow dismissed")
+}
+
+private struct ThreadImageTestHost: View {
+    let detail: ThreadDetailView
+    @Bindable var presentation: ThreadImageCoverPresentation
+
+    var body: some View {
+        detail.fullScreenCover(isPresented: $presentation.isPresented, onDismiss: {
+            presentation.onDismiss?()
+            presentation.dismissed.fulfill()
+        }) {
+            ThreadImageAppearanceProbe(onAppear: { presentation.appeared.fulfill() })
+        }
+    }
+}
+
+private struct ThreadImageAppearanceProbe: UIViewControllerRepresentable {
+    let onAppear: () -> Void
+
+    func makeUIViewController(context: Context) -> Controller {
+        let controller = Controller()
+        controller.onAppear = onAppear
+        return controller
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        var onAppear: (() -> Void)?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            onAppear?()
+            onAppear = nil
+        }
+    }
 }
 
 @MainActor
@@ -1305,7 +3082,9 @@ private func orchestrationThread(
 }
 
 @MainActor
-private final class FeatureClientStub: FeatureClient {
+private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+    var foregroundReconnects: [Bool] = []
+    func resumeAfterBackground(reconnect: Bool) async { foregroundReconnects.append(reconnect) }
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
     var snapshot = FeatureSnapshot()
@@ -1329,17 +3108,40 @@ private final class FeatureClientStub: FeatureClient {
     var startedFromOrigin = false
     var createThreadCallCount = 0
     var sendMessageCallCount = 0
+    var sentRuntimeModes: [FeatureRuntimeMode] = []
+    var setRuntimeModeCalls: [FeatureRuntimeMode] = []
+    var cancelTurnCallCount = 0
+    var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
+    var runtimeModeError: (any Error)?
+    var settlementError: (any Error)?
+    var beforeSettlementReturn: (() async -> Void)?
     var enabledEnvironmentID: String?
     var environmentEnabledValue: Bool?
     var removedEnvironmentID: String?
+    var beforeStartTask: (() async throws -> Void)?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
+    var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
+    var preuploadHandler: ((FeatureUploadAttachment, String) async throws -> FeatureUploadedAttachmentReference?)?
+    var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
     var resolvedInputID: String?
     var resolvedInputAnswers: [String: FeatureInputAnswer]?
     var savedSettings: [FeatureSettings] = []
+    var refreshedProviderEnvironmentID: String?
+    var refreshedProviders: [FeatureProvider] = []
+    var automaticSettlementEnvironmentID: String?
+    var automaticSettlementChange: FeatureAutomaticSettlementChange?
+    var automaticSettlementResult = FeatureAutomaticSettlementSettings(
+        onMerge: true,
+        afterDays: 3
+    )
+    var automaticSettlementError: (any Error)?
+    lazy var t3ConnectController = T3ConnectController(
+        resolution: .unavailable(reason: "T3 Connect is disabled in feature tests.")
+    )
 
     init() {
         let pair = AsyncStream<FeatureEvent>.makeStream()
@@ -1392,6 +3194,20 @@ private final class FeatureClientStub: FeatureClient {
         removedEnvironmentID = id
     }
 
+    func connectT3Environment(
+        _ credential: T3ConnectManagedEnvironmentCredential
+    ) async throws {}
+
+    func signOutT3Connect() async {
+        signOutCallCount += 1
+        let removedIDs = Set(snapshot.environments.filter { $0.source == .t3Connect }.map(\.id))
+        snapshot.environments.removeAll { removedIDs.contains($0.id) }
+        snapshot.projects.removeAll { removedIDs.contains($0.environmentID) }
+        snapshot.threads.removeAll {
+            $0.environmentID.map(removedIDs.contains) ?? false
+        }
+    }
+
     func createThread(
         projectID: String,
         title: String?,
@@ -1427,6 +3243,7 @@ private final class FeatureClientStub: FeatureClient {
         startFromOrigin: Bool,
         attachments: [FeatureUploadAttachment]
     ) async throws -> FeatureThread {
+        try await beforeStartTask?()
         if let startTaskError { throw startTaskError }
         startedPrompt = prompt
         startedAttachments = attachments
@@ -1439,12 +3256,27 @@ private final class FeatureClientStub: FeatureClient {
 
     func renameThread(id: String, title: String) async throws {}
     func setThreadArchived(id: String, archived: Bool) async throws {}
+    func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {
+        setRuntimeModeCalls.append(mode)
+        if let runtimeModeError { throw runtimeModeError }
+    }
     func deleteThread(id: String) async throws {}
+
+    func preuploadAttachment(
+        _ attachment: FeatureUploadAttachment,
+        environmentID: String
+    ) async throws -> FeatureUploadedAttachmentReference? {
+        try await preuploadHandler?(attachment, environmentID)
+    }
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {
         if let loadThreadError {
             throw loadThreadError
         }
+        if let loadThreadHandler {
+            return try await loadThreadHandler(id)
+        }
+        await beforeLoadThreadReturn?()
         if let threadDetail {
             return threadDetail
         }
@@ -1463,7 +3295,25 @@ private final class FeatureClientStub: FeatureClient {
         sentText = text
     }
 
-    func cancelTurn(threadID: String) async throws {}
+    func sendMessage(
+        threadID: String,
+        text: String,
+        selection: FeatureSelection?,
+        runtimeMode: FeatureRuntimeMode,
+        attachments _: [FeatureUploadAttachment],
+        identity _: FeatureSubmissionIdentity
+    ) async throws {
+        sentRuntimeModes.append(runtimeMode)
+        try await sendMessage(threadID: threadID, text: text, selection: selection)
+    }
+
+    func cancelTurn(threadID: String) async throws {
+        cancelTurnCallCount += 1
+    }
+    func setThreadSettled(id: String, settled: Bool) async throws {
+        await beforeSettlementReturn?()
+        if let settlementError { throw settlementError }
+    }
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func resolveUserInput(
         id: String,
@@ -1474,5 +3324,18 @@ private final class FeatureClientStub: FeatureClient {
     }
     func saveSettings(_ settings: FeatureSettings) async throws {
         savedSettings.append(settings)
+    }
+    func refreshProviders(environmentID: String) async throws -> [FeatureProvider] {
+        refreshedProviderEnvironmentID = environmentID
+        return refreshedProviders
+    }
+    func updateAutomaticSettlement(
+        environmentID: String,
+        change: FeatureAutomaticSettlementChange
+    ) async throws -> FeatureAutomaticSettlementSettings {
+        automaticSettlementEnvironmentID = environmentID
+        automaticSettlementChange = change
+        if let automaticSettlementError { throw automaticSettlementError }
+        return automaticSettlementResult
     }
 }

@@ -44,6 +44,19 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     /// has not probed this saved environment yet.
     public var connectionState: FeatureConnection.State?
     public var connectionDetail: String?
+    public var machineIcon: String? = nil
+    public var canCustomizeIcon: Bool? = nil
+
+    public var systemImage: String {
+        switch machineIcon {
+        case "cloud": "cloud"
+        case "desktop": "desktopcomputer"
+        case "laptop": "laptopcomputer"
+        case "mac-mini": "macmini"
+        case "mac-studio": "macstudio"
+        default: "server.rack"
+        }
+    }
 
     public init(
         id: String,
@@ -74,6 +87,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case source
         case connectionState
         case connectionDetail
+        case machineIcon
+        case canCustomizeIcon
     }
 
     public init(from decoder: any Decoder) throws {
@@ -89,6 +104,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
             forKey: .connectionState
         )
         connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
+        machineIcon = try container.decodeIfPresent(String.self, forKey: .machineIcon)
+        canCustomizeIcon = try container.decodeIfPresent(Bool.self, forKey: .canCustomizeIcon)
     }
 }
 
@@ -124,6 +141,7 @@ public struct FeatureProject: Identifiable, Sendable, Equatable, Hashable, Codab
     public var repositoryIdentity: FeatureRepositoryIdentity?
     public var createdAt: String?
     public var updatedAt: String?
+    public var projectIcon: ProjectIconOverride? = nil
 
     public init(
         id: String,
@@ -167,13 +185,9 @@ public enum FeatureRuntimeMode: String, CaseIterable, Sendable, Codable {
     case automatic
     case fullAccess
 
-    /// Mobile is a build surface. Legacy modes remain decodable for server
-    /// history, but every command originating here uses full access.
-    public static let allCases: [FeatureRuntimeMode] = [.fullAccess]
-
-    public var mobileNormalized: FeatureRuntimeMode {
-        .fullAccess
-    }
+    /// Mobile offers the two current modes. Legacy modes remain distinct so
+    /// existing threads keep their exact server permission.
+    public static let allCases: [FeatureRuntimeMode] = [.automatic, .fullAccess]
 }
 
 public enum FeatureInteractionMode: String, CaseIterable, Sendable, Codable {
@@ -187,6 +201,61 @@ public enum FeatureInteractionMode: String, CaseIterable, Sendable, Codable {
     public var mobileNormalized: FeatureInteractionMode { .standard }
 }
 
+public enum FeatureThreadSettlementOverride: String, Sendable, Equatable, Hashable, Codable {
+    case settled
+    case active
+}
+
+public struct FeatureThreadSettlementFacts: Sendable, Equatable, Hashable, Codable {
+    public struct LatestTurn: Sendable, Equatable, Hashable, Codable {
+        public var requestedAt: Date?
+        public var startedAt: Date?
+        public var completedAt: Date?
+        public var requestedAtIsInvalid: Bool
+        public var startedAtIsInvalid: Bool
+        public var completedAtIsInvalid: Bool
+
+        public init(
+            requestedAt: Date? = nil,
+            startedAt: Date? = nil,
+            completedAt: Date? = nil,
+            requestedAtIsInvalid: Bool = false,
+            startedAtIsInvalid: Bool = false,
+            completedAtIsInvalid: Bool = false
+        ) {
+            self.requestedAt = requestedAt
+            self.startedAt = startedAt
+            self.completedAt = completedAt
+            self.requestedAtIsInvalid = requestedAtIsInvalid
+            self.startedAtIsInvalid = startedAtIsInvalid
+            self.completedAtIsInvalid = completedAtIsInvalid
+        }
+    }
+
+    public var settlementOverride: FeatureThreadSettlementOverride?
+    public var sessionStatus: String?
+    public var hasPendingApprovals: Bool
+    public var hasPendingUserInput: Bool
+    public var latestUserMessageAt: Date?
+    public var latestTurn: LatestTurn?
+
+    public init(
+        settlementOverride: FeatureThreadSettlementOverride? = nil,
+        sessionStatus: String? = nil,
+        hasPendingApprovals: Bool = false,
+        hasPendingUserInput: Bool = false,
+        latestUserMessageAt: Date? = nil,
+        latestTurn: LatestTurn? = nil
+    ) {
+        self.settlementOverride = settlementOverride
+        self.sessionStatus = sessionStatus
+        self.hasPendingApprovals = hasPendingApprovals
+        self.hasPendingUserInput = hasPendingUserInput
+        self.latestUserMessageAt = latestUserMessageAt
+        self.latestTurn = latestTurn
+    }
+}
+
 public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codable {
     public let id: String
     /// The environment-local identifier sent over the wire.
@@ -198,6 +267,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var preview: String?
     public var branch: String?
     public var worktreePath: String?
+    public var linkedPullRequest: ThreadLinkedPullRequest?
     public var createdAt: Date
     public var updatedAt: Date
     public var state: FeatureThreadState
@@ -209,6 +279,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var isSettled: Bool
     public var keepsActive: Bool
     public var settledAt: Date?
+    public var unsettledAt: Date?
     public var lastActivityAt: Date?
     public var snoozedUntil: Date?
     public var snoozedAt: Date?
@@ -217,9 +288,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
+    public var supportsPullRequestLinking: Bool?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
+    public var settlementFacts: FeatureThreadSettlementFacts?
     public var runtimeMode: FeatureRuntimeMode
     public var interactionMode: FeatureInteractionMode
 
@@ -233,6 +306,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         preview: String? = nil,
         branch: String? = nil,
         worktreePath: String? = nil,
+        linkedPullRequest: ThreadLinkedPullRequest? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         state: FeatureThreadState = .idle,
@@ -244,6 +318,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         isSettled: Bool = false,
         keepsActive: Bool = false,
         settledAt: Date? = nil,
+        unsettledAt: Date? = nil,
         lastActivityAt: Date? = nil,
         snoozedUntil: Date? = nil,
         snoozedAt: Date? = nil,
@@ -252,9 +327,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
+        supportsPullRequestLinking: Bool? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
+        settlementFacts: FeatureThreadSettlementFacts? = nil,
         runtimeMode: FeatureRuntimeMode = .fullAccess,
         interactionMode: FeatureInteractionMode = .standard
     ) {
@@ -267,6 +344,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.preview = preview
         self.branch = branch
         self.worktreePath = worktreePath
+        self.linkedPullRequest = linkedPullRequest
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.state = state
@@ -278,6 +356,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.isSettled = isSettled
         self.keepsActive = keepsActive
         self.settledAt = settledAt
+        self.unsettledAt = unsettledAt
         self.lastActivityAt = lastActivityAt
         self.snoozedUntil = snoozedUntil
         self.snoozedAt = snoozedAt
@@ -286,26 +365,29 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
+        self.supportsPullRequestLinking = supportsPullRequestLinking
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
+        self.settlementFacts = settlementFacts
         self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode
     }
 
-    /// Older cached environment descriptors may omit the optional capability even
-    /// when their server supports pinning. Always keep an existing pin reversible.
+    /// Missing capabilities mean unsupported. Existing states remain reversible
+    /// so older cached snapshots cannot trap a thread in its current state.
     public var canTogglePin: Bool {
-        pinnedAt != nil || supportsPinning != false
+        pinnedAt != nil || supportsPinning == true
     }
 
     public var canToggleSettlement: Bool {
-        isSettled || supportsSettlement != false
+        isSettled || supportsSettlement == true
     }
 
     public var canToggleSnooze: Bool {
-        snoozedUntil != nil || supportsSnooze != false
+        snoozedUntil != nil || supportsSnooze == true
     }
+
 }
 
 public enum FeatureMessageRole: String, Sendable, Codable {
@@ -350,14 +432,62 @@ public struct FeatureMessageAttachment: Identifiable, Sendable, Equatable, Hasha
 }
 
 public struct FeatureUploadAttachment: Sendable, Equatable {
-    public var data: Data
+    public let id: UUID
+    private var inlineData: Data?
+    public var ownedFile: FeatureOwnedAttachmentFile?
     public var name: String
     public var mimeType: String
+    public var uploadedReference: FeatureUploadedAttachmentReference?
 
-    public init(data: Data, name: String, mimeType: String) {
-        self.data = data
+    public init(
+        id: UUID = UUID(),
+        data: Data,
+        name: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = data
+        ownedFile = nil
         self.name = name
         self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(
+        id: UUID = UUID(),
+        ownedFile: FeatureOwnedAttachmentFile,
+        name: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = nil
+        self.ownedFile = ownedFile
+        self.name = name
+        self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(_ draft: FeatureDraftAttachment) {
+        id = draft.id
+        inlineData = draft.ownedFile == nil ? draft.data : nil
+        ownedFile = draft.ownedFile
+        name = draft.filename
+        mimeType = draft.mimeType
+        uploadedReference = draft.uploadedReference
+    }
+
+    public var data: Data {
+        get { inlineData ?? Data() }
+        set {
+            inlineData = newValue
+            ownedFile = nil
+        }
+    }
+
+    public var byteCount: Int {
+        inlineData?.count ?? ownedFile?.byteCount ?? 0
     }
 }
 
@@ -369,6 +499,9 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
     public var state: FeatureMessageState
     public var toolName: String?
     public var attachments: [FeatureMessageAttachment]
+    public var workLogImagePaths: [String]?
+    public var activeWorkLabel: String?
+    public var toolPresentation: ToolActivityPresentation? = nil
 
     public init(
         id: String,
@@ -377,7 +510,9 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
         createdAt: Date = .now,
         state: FeatureMessageState = .complete,
         toolName: String? = nil,
-        attachments: [FeatureMessageAttachment] = []
+        attachments: [FeatureMessageAttachment] = [],
+        workLogImagePaths: [String]? = nil,
+        activeWorkLabel: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -386,6 +521,8 @@ public struct FeatureMessage: Identifiable, Sendable, Equatable, Hashable, Codab
         self.state = state
         self.toolName = toolName
         self.attachments = attachments
+        self.workLogImagePaths = workLogImagePaths
+        self.activeWorkLabel = activeWorkLabel
     }
 }
 
@@ -393,8 +530,20 @@ public enum FeatureApprovalKind: String, Sendable, Codable {
     case command
     case fileRead
     case fileChange
+    case mcpElicitation
     case patch
     case other
+}
+
+public struct FeatureApprovalOption: Identifiable, Sendable, Equatable, Hashable, Codable {
+    public var id: FeatureApprovalDecision { decision }
+    public let decision: FeatureApprovalDecision
+    public let label: String
+
+    public init(decision: FeatureApprovalDecision, label: String) {
+        self.decision = decision
+        self.label = label
+    }
 }
 
 public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Codable {
@@ -405,6 +554,8 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
     public var kind: FeatureApprovalKind
     public var title: String
     public var detail: String
+    public var appName: String?
+    public var options: [FeatureApprovalOption]?
 
     public init(
         id: String,
@@ -412,7 +563,9 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
         threadID: String,
         kind: FeatureApprovalKind,
         title: String,
-        detail: String
+        detail: String,
+        appName: String? = nil,
+        options: [FeatureApprovalOption]? = nil
     ) {
         self.id = id
         self.wireID = wireID
@@ -420,6 +573,8 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
         self.kind = kind
         self.title = title
         self.detail = detail
+        self.appName = appName
+        self.options = options
     }
 }
 
@@ -568,6 +723,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
     public var page: FeatureThreadPage?
     public var activeSubagentCount: Int
     public var backgroundWorkIsActive: Bool
+    public var isCompacting: Bool?
 
     public init(
         thread: FeatureThread,
@@ -576,7 +732,8 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         userInputs: [FeatureUserInput] = [],
         page: FeatureThreadPage? = nil,
         activeSubagentCount: Int = 0,
-        backgroundWorkIsActive: Bool = false
+        backgroundWorkIsActive: Bool = false,
+        isCompacting: Bool = false
     ) {
         self.thread = thread
         self.messages = messages
@@ -585,6 +742,7 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.page = page
         self.activeSubagentCount = activeSubagentCount
         self.backgroundWorkIsActive = backgroundWorkIsActive
+        self.isCompacting = isCompacting
     }
 }
 
@@ -621,6 +779,7 @@ public struct FeatureModel: Identifiable, Sendable, Equatable, Hashable, Codable
     public var name: String
     public var detail: String?
     public var supportsImages: Bool
+    public var imageSupportIsUnknown: Bool? = nil
     public var supportsReasoning: Bool
     public var isDefault: Bool
     public var isLegacy: Bool?
@@ -678,6 +837,7 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
     public var kind: FeatureModelOptionKind
     public var choices: [FeatureModelOptionChoice]
     public var defaultValue: FeatureModelOptionValue?
+    public var promptInjectedValues: [String]?
 
     public init(
         id: String,
@@ -685,7 +845,8 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
         detail: String? = nil,
         kind: FeatureModelOptionKind,
         choices: [FeatureModelOptionChoice] = [],
-        defaultValue: FeatureModelOptionValue? = nil
+        defaultValue: FeatureModelOptionValue? = nil,
+        promptInjectedValues: [String]? = nil
     ) {
         self.id = id
         self.label = label
@@ -693,6 +854,7 @@ public struct FeatureModelOptionDescriptor: Identifiable, Sendable, Equatable, H
         self.kind = kind
         self.choices = choices
         self.defaultValue = defaultValue
+        self.promptInjectedValues = promptInjectedValues
     }
 }
 
@@ -743,6 +905,12 @@ public struct FeatureModelOptionSelection: Identifiable, Sendable, Equatable, Ha
     }
 }
 
+public struct FeatureProviderWorkspace: Sendable, Equatable, Hashable, Codable {
+    public let cwd: String
+    public let slashCommands: [FeatureProviderSlashCommand]
+    public let skills: [FeatureProviderSkill]
+}
+
 public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Codable {
     public let id: String
     public var name: String
@@ -752,6 +920,24 @@ public struct FeatureProvider: Identifiable, Sendable, Equatable, Hashable, Coda
     public var models: [FeatureModel]
     public var slashCommands: [FeatureProviderSlashCommand]?
     public var skills: [FeatureProviderSkill]?
+    public var workspaceSnapshots: [FeatureProviderWorkspace]? = nil
+    public var setup: ProviderSetupCapabilities? = nil
+    public var isEnabled: Bool? = nil
+    public var isInstalled: Bool? = nil
+    public var authStatus: String? = nil
+    public var statusMessage: String? = nil
+
+    func workspaceCatalog(cwd: String?) -> FeatureProviderWorkspace {
+        if let cwd, let workspace = workspaceSnapshots?.first(where: { $0.cwd == cwd }) {
+            return workspace
+        }
+        // A catalog from another workspace must not leak into this composer.
+        return FeatureProviderWorkspace(
+            cwd: cwd ?? "",
+            slashCommands: workspaceSnapshots == nil ? slashCommands ?? [] : [],
+            skills: workspaceSnapshots == nil ? skills ?? [] : []
+        )
+    }
 
     public init(
         id: String,
@@ -870,17 +1056,29 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
     public var newWorktreesStartFromOrigin: Bool
     public var projectGroupingMode: ProjectGroupingMode
     public var projectGroupingOverrides: [String: ProjectGroupingMode]
+    public var automaticSettlement: FeatureAutomaticSettlementSettings?
+    public var supportsImageUploads: Bool
+    public var maxFileAttachmentBytes: Int?
+    public var continueThreadsAfterServerUpdate: Bool?
 
     public init(
         defaultWorkspaceMode: FeatureWorkspaceMode = .local,
         newWorktreesStartFromOrigin: Bool = true,
         projectGroupingMode: ProjectGroupingMode = .repository,
-        projectGroupingOverrides: [String: ProjectGroupingMode] = [:]
+        projectGroupingOverrides: [String: ProjectGroupingMode] = [:],
+        automaticSettlement: FeatureAutomaticSettlementSettings? = nil,
+        supportsImageUploads: Bool = false,
+        maxFileAttachmentBytes: Int? = nil,
+        continueThreadsAfterServerUpdate: Bool? = nil
     ) {
         self.defaultWorkspaceMode = defaultWorkspaceMode
         self.newWorktreesStartFromOrigin = newWorktreesStartFromOrigin
         self.projectGroupingMode = projectGroupingMode
         self.projectGroupingOverrides = projectGroupingOverrides
+        self.automaticSettlement = automaticSettlement
+        self.supportsImageUploads = supportsImageUploads
+        self.maxFileAttachmentBytes = maxFileAttachmentBytes
+        self.continueThreadsAfterServerUpdate = continueThreadsAfterServerUpdate
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -888,6 +1086,10 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
         case newWorktreesStartFromOrigin
         case projectGroupingMode
         case projectGroupingOverrides
+        case automaticSettlement
+        case supportsImageUploads
+        case maxFileAttachmentBytes
+        case continueThreadsAfterServerUpdate
     }
 
     public init(from decoder: any Decoder) throws {
@@ -904,10 +1106,26 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
             ProjectGroupingMode.self,
             forKey: .projectGroupingMode
         ) ?? .repository
+        supportsImageUploads = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsImageUploads
+        ) ?? false
+        maxFileAttachmentBytes = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxFileAttachmentBytes
+        )
+        continueThreadsAfterServerUpdate = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .continueThreadsAfterServerUpdate
+        )
         projectGroupingOverrides = try container.decodeIfPresent(
             [String: ProjectGroupingMode].self,
             forKey: .projectGroupingOverrides
         ) ?? [:]
+        automaticSettlement = try container.decodeIfPresent(
+            FeatureAutomaticSettlementSettings.self,
+            forKey: .automaticSettlement
+        )
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -916,7 +1134,26 @@ public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
         try container.encode(newWorktreesStartFromOrigin, forKey: .newWorktreesStartFromOrigin)
         try container.encode(projectGroupingMode, forKey: .projectGroupingMode)
         try container.encode(projectGroupingOverrides, forKey: .projectGroupingOverrides)
+        try container.encodeIfPresent(automaticSettlement, forKey: .automaticSettlement)
+        try container.encode(supportsImageUploads, forKey: .supportsImageUploads)
+        try container.encodeIfPresent(maxFileAttachmentBytes, forKey: .maxFileAttachmentBytes)
+        try container.encodeIfPresent(continueThreadsAfterServerUpdate, forKey: .continueThreadsAfterServerUpdate)
     }
+}
+
+public struct FeatureAutomaticSettlementSettings: Sendable, Equatable, Codable {
+    public var onMerge: Bool
+    public var afterDays: Double?
+
+    public init(onMerge: Bool, afterDays: Double?) {
+        self.onMerge = onMerge
+        self.afterDays = afterDays
+    }
+}
+
+public enum FeatureAutomaticSettlementChange: Sendable, Equatable {
+    case onMerge(Bool)
+    case afterDays(Double?)
 }
 
 public struct FeatureSnapshot: Sendable, Equatable, Codable {
@@ -956,7 +1193,37 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
 public enum FeatureApprovalDecision: String, Sendable, Codable {
     case allowOnce
     case allowForSession
+    case allowAlways
     case deny
+    case cancel
+
+    init?(wireValue: String) {
+        switch wireValue {
+        case "accept": self = .allowOnce
+        case "acceptForSession": self = .allowForSession
+        case "acceptAlways": self = .allowAlways
+        case "decline": self = .deny
+        case "cancel": self = .cancel
+        default: return nil
+        }
+    }
+
+    var wireValue: String {
+        switch self {
+        case .allowOnce: "accept"
+        case .allowForSession: "acceptForSession"
+        case .allowAlways: "acceptAlways"
+        case .deny: "decline"
+        case .cancel: "cancel"
+        }
+    }
+}
+
+public enum FeatureThreadSyncState: Sendable, Equatable {
+    case catchingUp
+    case reconnecting
+    case live
+    case failed(String)
 }
 
 public enum FeatureEvent: Sendable {
@@ -966,5 +1233,6 @@ public enum FeatureEvent: Sendable {
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)
     case detailDelta(FeatureThreadDetail, FeatureDetailDelta)
+    case threadSync(id: String, state: FeatureThreadSyncState?)
     case failure(String)
 }

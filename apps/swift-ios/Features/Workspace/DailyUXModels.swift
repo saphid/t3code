@@ -2,27 +2,59 @@ import Foundation
 
 public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
     public let id: UUID
-    public var data: Data
+    private var inlineData: Data?
+    public var ownedFile: FeatureOwnedAttachmentFile?
     public var thumbnailData: Data?
     public var filename: String
     public var mimeType: String
+    public var uploadedReference: FeatureUploadedAttachmentReference?
 
     public init(
         id: UUID = UUID(),
         data: Data,
         thumbnailData: Data? = nil,
         filename: String,
-        mimeType: String
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
     ) {
         self.id = id
-        self.data = data
+        inlineData = data
+        ownedFile = nil
         self.thumbnailData = thumbnailData
         self.filename = filename
         self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    public init(
+        id: UUID = UUID(),
+        ownedFile: FeatureOwnedAttachmentFile,
+        thumbnailData: Data? = nil,
+        filename: String,
+        mimeType: String,
+        uploadedReference: FeatureUploadedAttachmentReference? = nil
+    ) {
+        self.id = id
+        inlineData = nil
+        self.ownedFile = ownedFile
+        self.thumbnailData = thumbnailData
+        self.filename = filename
+        self.mimeType = mimeType
+        self.uploadedReference = uploadedReference
+    }
+
+    /// Kept for image-only callers. File-backed attachments return empty data
+    /// instead of loading up to 50 MB into a UI property.
+    public var data: Data {
+        get { inlineData ?? Data() }
+        set {
+            inlineData = newValue
+            ownedFile = nil
+        }
     }
 
     public var byteCount: Int {
-        data.count
+        inlineData?.count ?? ownedFile?.byteCount ?? 0
     }
 }
 
@@ -42,8 +74,8 @@ public struct NewTaskRequest: Sendable, Equatable {
         projectID: String,
         prompt: String,
         selection: FeatureSelection?,
-        runtimeMode: FeatureRuntimeMode,
-        interactionMode: FeatureInteractionMode,
+        runtimeMode: FeatureRuntimeMode = .fullAccess,
+        interactionMode: FeatureInteractionMode = .standard,
         workspaceMode: FeatureWorkspaceMode = .local,
         branch: String? = nil,
         worktreePath: String? = nil,
@@ -53,7 +85,7 @@ public struct NewTaskRequest: Sendable, Equatable {
         self.projectID = projectID
         self.prompt = prompt
         self.selection = selection
-        self.runtimeMode = runtimeMode.mobileNormalized
+        self.runtimeMode = runtimeMode
         self.interactionMode = interactionMode.mobileNormalized
         self.workspaceMode = workspaceMode
         self.branch = Self.nonEmpty(branch)
@@ -128,12 +160,13 @@ enum DailyUXSnoozePresets {
             result.append(.init(id: .evening, label: "This evening", until: evening))
         }
 
-        if let tomorrow = calendar.date(
+        let tomorrow = calendar.date(
             bySettingHour: 9,
             minute: 0,
             second: 0,
             of: calendar.date(byAdding: .day, value: 1, to: now) ?? now
-        ) {
+        )
+        if let tomorrow {
             result.append(.init(id: .tomorrow, label: "Tomorrow", until: tomorrow))
         }
 
@@ -141,7 +174,8 @@ enum DailyUXSnoozePresets {
         let daysUntilMonday = (2 - weekday + 7) % 7
         let nextMondayOffset = daysUntilMonday == 0 ? 7 : daysUntilMonday
         if let monday = calendar.date(byAdding: .day, value: nextMondayOffset, to: now),
-           let nextWeek = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: monday) {
+           let nextWeek = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: monday),
+           nextWeek != tomorrow {
             result.append(.init(id: .nextWeek, label: "Next week", until: nextWeek))
         }
 
@@ -575,7 +609,8 @@ struct DailyUXSidebarIndex {
         snapshot: FeatureSnapshot,
         query: String,
         projectID: String? = nil,
-        now: Date = .now
+        now: Date = .now,
+        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
     ) {
         let visible = snapshot.threads.filter { thread in
             guard !thread.isArchived else { return false }
@@ -584,12 +619,22 @@ struct DailyUXSidebarIndex {
         let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
 
         pinned = available
-            .filter { $0.pinnedAt != nil }
+            .filter {
+                $0.pinnedAt != nil
+                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
+            }
             .sorted(by: Self.creationOrder)
 
         active = available
-            .filter { $0.pinnedAt == nil && !$0.isEffectivelySettled(at: now) }
-            .sorted(by: Self.creationOrder)
+            .filter {
+                $0.pinnedAt == nil
+                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
+            }
+            .sorted { lhs, rhs in
+                let leftAnchor = max(lhs.createdAt, lhs.unsettledAt ?? lhs.createdAt)
+                let rightAnchor = max(rhs.createdAt, rhs.unsettledAt ?? rhs.createdAt)
+                return leftAnchor == rightAnchor ? lhs.id < rhs.id : leftAnchor > rightAnchor
+            }
 
         snoozed = visible
             .filter { $0.isEffectivelySnoozed(at: now) }
@@ -603,7 +648,10 @@ struct DailyUXSidebarIndex {
             }
 
         settled = available
-            .filter { $0.pinnedAt == nil && $0.isEffectivelySettled(at: now) }
+            .filter {
+                $0.supportsSettlement == true
+                    && $0.isEffectivelySettled()
+            }
             .sorted { lhs, rhs in
                 if lhs.settledSortDate != rhs.settledSortDate {
                     return lhs.settledSortDate > rhs.settledSortDate
@@ -655,41 +703,24 @@ struct DailyUXSidebarIndex {
 enum DailyUXSidebarRefresh {
     static func nextBoundary(
         for threads: [FeatureThread],
-        after now: Date
+        after now: Date,
+        settings _: FeatureSettings = .init(),
+        pullRequestsByThreadID _: [String: HomeThreadPullRequestPresentation] = [:]
     ) -> Date? {
         threads.reduce(nil as Date?) { earliest, thread in
             let snoozeBoundary = thread.isEffectivelySnoozed(at: now)
                 ? thread.snoozedUntil
                 : nil
-            let settlementBoundary = automaticSettlementBoundary(for: thread, after: now)
-            let threadBoundary = [snoozeBoundary, settlementBoundary]
+            let queuedBoundary = thread.isArchived
+                ? nil
+                : thread.queuedSettlementBoundary(after: now)
+            let threadBoundary = [snoozeBoundary, queuedBoundary]
                 .compactMap { $0 }
                 .min()
 
             guard let threadBoundary else { return earliest }
             return min(earliest ?? threadBoundary, threadBoundary)
         }
-    }
-
-    private static func automaticSettlementBoundary(
-        for thread: FeatureThread,
-        after now: Date
-    ) -> Date? {
-        guard !thread.isArchived,
-              !thread.isSettled,
-              thread.pinnedAt == nil,
-              !thread.keepsActive,
-              let lastActivityAt = thread.lastActivityAt else {
-            return nil
-        }
-        switch thread.state {
-        case .idle, .failed, .completed:
-            break
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
-            return nil
-        }
-        let boundary = lastActivityAt.addingTimeInterval(3 * 24 * 60 * 60)
-        return boundary > now ? boundary : nil
     }
 }
 
@@ -771,6 +802,57 @@ enum HomeWorkingDuration {
     }
 }
 
+/// The completion age shown in a completed rich Home row.
+///
+/// Recent completions stay minute-granular because Home refreshes quiet rows every 60 seconds.
+enum HomeDoneDuration {
+    static func compact(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "now" }
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60
+        guard hours >= 24 else { return "\(hours)h \(minutes % 60)m" }
+        let days = hours / 24
+        guard days >= 7 else { return "\(days)d \(hours % 24)h" }
+        guard days >= 365 else { return "\(days / 7)w" }
+        return "\(days / 365)y"
+    }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        "Completed \(elapsedPhrase(since: date, now: now))"
+    }
+
+    private static func elapsedPhrase(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "just now" }
+        guard minutes >= 60 else { return "\(unit(minutes, singular: "minute")) ago" }
+
+        let hours = minutes / 60
+        guard hours >= 24 else {
+            let remainingMinutes = minutes % 60
+            guard remainingMinutes > 0 else { return "\(unit(hours, singular: "hour")) ago" }
+            return "\(unit(hours, singular: "hour")), \(unit(remainingMinutes, singular: "minute")) ago"
+        }
+
+        let days = hours / 24
+        guard days < 7 else {
+            guard days >= 365 else { return "\(unit(days / 7, singular: "week")) ago" }
+            return "\(unit(days / 365, singular: "year")) ago"
+        }
+        let remainingHours = hours % 24
+        guard remainingHours > 0 else { return "\(unit(days, singular: "day")) ago" }
+        return "\(unit(days, singular: "day")), \(unit(remainingHours, singular: "hour")) ago"
+    }
+
+    private static func elapsedMinutes(since date: Date, now: Date) -> Int {
+        max(0, Int(now.timeIntervalSince(date))) / 60
+    }
+
+    private static func unit(_ value: Int, singular: String) -> String {
+        "\(value) \(singular)\(value == 1 ? "" : "s")"
+    }
+}
+
 extension FeatureThread {
     var homeStatus: HomeThreadStatus {
         switch state {
@@ -827,7 +909,9 @@ extension FeatureThread {
 
     func homeRowStatusLabel(at now: Date) -> String {
         switch homeStatus {
-        case .done, .ready:
+        case .done:
+            homeDoneDuration(at: now) ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
+        case .ready:
             SidebarRelativeAge.compact(since: updatedAt, now: now)
         case .approval, .input, .working, .monitoring, .failed:
             homeStatusLabel ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
@@ -837,6 +921,25 @@ extension FeatureThread {
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
+    }
+
+    func homeDoneDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.compact(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeDoneAccessibilityLabel(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.accessibility(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeRowAccessibilityStatus(rich: Bool, at now: Date) -> String {
+        guard rich else { return homeStatusLabel ?? "Ready" }
+        if let completed = homeDoneAccessibilityLabel(at: now) { return completed }
+        if homeStatus == .done {
+            return "Done. \(SidebarRelativeAge.accessibility(since: updatedAt, now: now))"
+        }
+        return homeStatusLabel ?? "Ready"
     }
 
     var hasLiveWorkingDuration: Bool {
@@ -890,23 +993,70 @@ extension FeatureThread {
         state == .waitingForApproval || state == .waitingForInput || state == .failed
     }
 
-    func isEffectivelySettled(at now: Date) -> Bool {
-        switch state {
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+    func isEffectivelySettled() -> Bool {
+        effectiveSettlementOverride == .settled
+    }
+
+    func canSettleNow(at now: Date = .now) -> Bool {
+        guard canToggleSettlement else { return false }
+        return !hasSettlementActivityBlock(at: now)
+    }
+
+    var effectiveSettlementOverride: FeatureThreadSettlementOverride? {
+        if let settlementFacts { return settlementFacts.settlementOverride }
+        if keepsActive { return .active }
+        if isSettled { return .settled }
+        return nil
+    }
+
+    func hasSettlementActivityBlock(at now: Date) -> Bool {
+        guard settlementFacts != nil else {
+            return [.queued, .working, .monitoring, .waitingForApproval, .waitingForInput]
+                .contains(state)
+        }
+        if hasHardSettlementActivityBlock { return true }
+        return hasQueuedTurnStart(at: now)
+    }
+
+    var hasHardSettlementActivityBlock: Bool {
+        guard let facts = settlementFacts else {
+            return [
+                .queued,
+                .working,
+                .monitoring,
+                .waitingForApproval,
+                .waitingForInput,
+            ].contains(state)
+        }
+        return facts.hasPendingApprovals
+            || facts.hasPendingUserInput
+            || facts.sessionStatus == "starting"
+            || facts.sessionStatus == "running"
+    }
+
+    func hasQueuedTurnStart(at now: Date) -> Bool {
+        guard let facts = settlementFacts,
+              facts.sessionStatus != "error",
+              let messageAt = facts.latestUserMessageAt,
+              abs(now.timeIntervalSince(messageAt)) <= 2 * 60 else {
             return false
-        case .idle, .failed, .completed:
-            break
         }
-        if isSettled {
-            return true
-        }
-        if keepsActive {
+        guard let turn = facts.latestTurn else { return true }
+        if turn.requestedAtIsInvalid || turn.startedAtIsInvalid || turn.completedAtIsInvalid {
             return false
         }
-        guard let lastActivityAt else {
-            return false
+        return [turn.requestedAt, turn.startedAt, turn.completedAt].allSatisfy {
+            $0 == nil || $0! < messageAt
         }
-        return now.timeIntervalSince(lastActivityAt) >= 3 * 24 * 60 * 60
+    }
+
+    func queuedSettlementBoundary(after now: Date) -> Date? {
+        guard hasQueuedTurnStart(at: now),
+              let messageAt = settlementFacts?.latestUserMessageAt else {
+            return nil
+        }
+        let boundary = messageAt.addingTimeInterval(2 * 60 + 0.001)
+        return boundary > now ? boundary : nil
     }
 
     func isEffectivelySnoozed(at now: Date) -> Bool {
@@ -995,6 +1145,41 @@ struct DailyUXModelCatalog {
 }
 
 enum DailyUXModelOptions {
+    static func reasoningDescriptor(
+        for model: FeatureModel
+    ) -> FeatureModelOptionDescriptor? {
+        model.options.first(where: isReasoningDescriptor)
+    }
+
+    static func advancedDescriptors(
+        for model: FeatureModel
+    ) -> [FeatureModelOptionDescriptor] {
+        let primaryID = reasoningDescriptor(for: model)?.id
+        return model.options.filter { $0.id != primaryID }
+    }
+
+    static func undescribedSelections(
+        for model: FeatureModel,
+        selections: [FeatureModelOptionSelection]
+    ) -> [FeatureModelOptionSelection] {
+        let describedIDs = Set(model.options.map(\.id))
+        return selections.filter { !describedIDs.contains($0.id) }
+    }
+
+    static func isSupportedValue(
+        _ value: FeatureModelOptionValue,
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        switch (descriptor.kind, value) {
+        case let (.select, .string(choiceID)):
+            return descriptor.choices.contains { $0.id == choiceID }
+        case (.boolean, .boolean):
+            return true
+        case (.select, .boolean), (.boolean, .string):
+            return false
+        }
+    }
+
     static func initialSelection(
         projectDefault: FeatureSelection?,
         appDefault: FeatureSelection?,
@@ -1037,19 +1222,24 @@ enum DailyUXModelOptions {
 
     static func defaults(for model: FeatureModel) -> [FeatureModelOptionSelection] {
         model.options.compactMap { descriptor in
-            if let defaultValue = descriptor.defaultValue {
-                return FeatureModelOptionSelection(id: descriptor.id, value: defaultValue)
+            defaultValue(for: descriptor).map { value in
+                FeatureModelOptionSelection(id: descriptor.id, value: value)
             }
-            switch descriptor.kind {
-            case .select:
-                guard let choice = descriptor.choices.first(where: \.isDefault)
-                    ?? descriptor.choices.first else {
-                    return nil
-                }
-                return FeatureModelOptionSelection(id: descriptor.id, value: .string(choice.id))
-            case .boolean:
-                return FeatureModelOptionSelection(id: descriptor.id, value: .boolean(false))
-            }
+        }
+    }
+
+    /// An option without a declared default stays unset until the user selects it.
+    static func defaultValue(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> FeatureModelOptionValue? {
+        if let defaultValue = descriptor.defaultValue {
+            return defaultValue
+        }
+        switch descriptor.kind {
+        case .select:
+            return descriptor.choices.first(where: \.isDefault).map { .string($0.id) }
+        case .boolean:
+            return nil
         }
     }
 
@@ -1060,26 +1250,18 @@ enum DailyUXModelOptions {
         if let selected = selections.first(where: { $0.id == descriptor.id })?.value {
             return selected
         }
-        if let defaultValue = descriptor.defaultValue {
-            return defaultValue
-        }
-        switch descriptor.kind {
-        case .select:
-            let choice = descriptor.choices.first(where: \.isDefault)
-                ?? descriptor.choices.first
-            return choice.map { .string($0.id) }
-        case .boolean:
-            return .boolean(false)
-        }
+        return defaultValue(for: descriptor)
     }
 
     static func updating(
         _ selections: [FeatureModelOptionSelection],
         id: String,
-        value: FeatureModelOptionValue
+        value: FeatureModelOptionValue?
     ) -> [FeatureModelOptionSelection] {
         var next = selections.filter { $0.id != id }
-        next.append(FeatureModelOptionSelection(id: id, value: value))
+        if let value {
+            next.append(FeatureModelOptionSelection(id: id, value: value))
+        }
         return next
     }
 
@@ -1092,6 +1274,7 @@ enum DailyUXModelOptions {
             switch value {
             case let .string(choiceID):
                 return descriptor.choices.first(where: { $0.id == choiceID })?.label
+                    ?? choiceID
             case let .boolean(isEnabled):
                 return isEnabled ? descriptor.label : nil
             }
@@ -1099,20 +1282,8 @@ enum DailyUXModelOptions {
         return labels.isEmpty ? nil : labels.joined(separator: " · ")
     }
 
-    /// The compact composer gives reasoning its own non-compressible control,
-    /// so a long model name cannot hide the setting users change most often.
-    /// Only the model's own descriptor decides whether it exists and which
-    /// levels it offers.
-    static func reasoningDescriptor(for model: FeatureModel) -> FeatureModelOptionDescriptor? {
-        model.options.first { descriptor in
-            let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
-            return searchable.contains("reason")
-                || searchable.contains("effort")
-                || searchable.contains("thinking")
-                || searchable.contains("thought")
-        }
-    }
-
+    /// The compact composer gives reasoning its own non-compressible label so
+    /// a long model name cannot hide the setting users change most often.
     static func reasoningSummary(
         for model: FeatureModel,
         selections: [FeatureModelOptionSelection]
@@ -1125,9 +1296,20 @@ enum DailyUXModelOptions {
         switch value {
         case let .string(choiceID):
             return descriptor.choices.first(where: { $0.id == choiceID })?.label
+                ?? choiceID
         case let .boolean(isEnabled):
             return isEnabled ? descriptor.label : nil
         }
+    }
+
+    private static func isReasoningDescriptor(
+        _ descriptor: FeatureModelOptionDescriptor
+    ) -> Bool {
+        let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
+        return searchable.contains("reason")
+            || searchable.contains("effort")
+            || searchable.contains("thinking")
+            || searchable.contains("thought")
     }
 
     static func supportsImages(
@@ -1144,6 +1326,6 @@ enum DailyUXModelOptions {
               let model = provider.models.first(where: { $0.id == selection.modelID }) else {
             return true
         }
-        return model.supportsImages
+        return model.imageSupportIsUnknown == true || model.supportsImages
     }
 }

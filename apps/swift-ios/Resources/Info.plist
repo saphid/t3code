@@ -19,8 +19,6 @@
             </array>
         </dict>
     </array>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>T3 Code uses the microphone to dictate messages to your agents. Audio is transcribed on this device.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
@@ -36,6 +34,8 @@
             </dict>
         </dict>
     </dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Allow T3 Code to use your microphone for voice input.</string>
     <key>T3GitCommit</key>
     <string>$(T3_GIT_COMMIT)</string>
     <key>T3ConnectClerkJWTTemplate</key>
@@ -49,5 +49,10 @@
         <string>fetch</string>
         <string>remote-notification</string>
     </array>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
 </dict>
 </plist>

@@ -48,6 +48,22 @@ struct PlatformRootView: View {
             _ = PlatformRouteMailbox.shared.take()
             handle(route)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .t3ConnectSessionChanged)) { note in
+            guard let capability = model.client as? any T3ConnectCapable,
+                  let controller = note.object as? T3ConnectController,
+                  controller === capability.t3ConnectController else { return }
+            let previousAccountID = note.userInfo?["previousAccountID"] as? String
+            let accountID = note.userInfo?["accountID"] as? String
+            guard Self.shouldRemoveManagedEnvironments(
+                previousAccountID: previousAccountID,
+                accountID: accountID,
+                isSigningOut: model.isSigningOutT3Connect
+            ) else { return }
+            Task { @MainActor in
+                guard !model.isSigningOutT3Connect else { return }
+                await model.removeManagedEnvironmentsAfterAccountChange()
+            }
+        }
         .onChange(of: model.isLoading, initial: true) { _, isLoading in
             guard !isLoading else { return }
             processThreadChanges()
@@ -62,11 +78,13 @@ struct PlatformRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                Task { await model.applicationDidBecomeActive() }
                 consumeMailboxRouteIfAvailable()
                 synchronizeNotificationPreference()
                 synchronizeCloudDelivery()
                 refreshIncomingShares()
             } else if phase == .background {
+                model.applicationDidEnterBackground()
                 PlatformBackgroundRefreshCoordinator.shared.schedule()
             }
         }
@@ -101,6 +119,15 @@ struct PlatformRootView: View {
         } message: {
             Text("Your share is saved. Connect an environment and create a project to finish importing it.")
         }
+    }
+
+    static func shouldRemoveManagedEnvironments(
+        previousAccountID: String?,
+        accountID: String?,
+        isSigningOut: Bool
+    ) -> Bool {
+        guard !isSigningOut, let previousAccountID else { return false }
+        return previousAccountID != accountID
     }
 
     private var incomingShareProjects: [FeatureProject] {
@@ -215,7 +242,13 @@ struct PlatformRootView: View {
         importedShareProjectID = project.id
         Task { @MainActor in
             do {
-                try await incomingShareCoordinator.importPending(into: project)
+                try await incomingShareCoordinator.importPending(
+                    into: project,
+                    draftKey: FeatureComposerDraftStore.newTaskKey(
+                        project: project,
+                        in: model.snapshot
+                    )
+                )
             } catch {
                 importedShareProjectID = nil
                 model.errorMessage = error.localizedDescription

@@ -38,3 +38,20 @@ enum FeatureVoiceDictationSettings {
             ?? .dictation
     }
 }
+
+/// One immutable configuration is captured per recording so changing Settings
+/// cannot change its recognizer or its correction vocabulary halfway through.
+struct FeatureVoiceInputConfiguration {
+    let engine: FeatureVoiceEngine
+    let vocabulary: [String]
+
+    init(
+        engine: FeatureVoiceEngine = FeatureVoiceDictationSettings.engine,
+        vocabulary: [String] = []
+    ) {
+        self.engine = engine
+        self.vocabulary = FeatureVoiceVocabulary.merge([
+            vocabulary, FeatureVoiceVocabulary.staticTerms,
+        ])
+    }
+}

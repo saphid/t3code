@@ -256,6 +256,85 @@ final class T3ConnectRuntimeTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
+    func testRevokedCredentialCannotBeRestoredByAnInFlightRefresh() async throws {
+        let signer = try testSigner()
+        let environment = managedEnvironment(descriptor: descriptor())
+        let expired = EnvironmentCredential.managedDPoP(
+            accessToken: "expired-token",
+            expiresAt: Date().addingTimeInterval(-1),
+            scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes,
+            environmentID: environment.id,
+            proofKeyThumbprint: try await signer.thumbprint()
+        )
+        let credentials = InMemoryCredentialStore(credentials: [environment.id: expired])
+        let bootstrap = BlockingT3ConnectBootstrapSource(
+            credential: try await bootstrapCredential(signer: signer)
+        )
+        let transport = T3ConnectScriptedHTTPTransport { request, _ in
+            switch request.url?.path {
+            case "/.well-known/t3/environment":
+                return (.descriptor, 200)
+            case "/oauth/token":
+                return (
+                    .token(
+                        scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes
+                            .joined(separator: " ")
+                    ),
+                    200
+                )
+            default:
+                throw T3ConnectTestError.unexpectedPath(request.url?.path)
+            }
+        }
+        let authorization = T3ConnectRuntimeAuthorization(
+            authorizer: T3ConnectManagedEnvironmentAuthorizer(
+                transport: transport,
+                signer: signer
+            ),
+            bootstrapProvider: { id in try await bootstrap.value(for: id) }
+        )
+        let api = EnvironmentAPI(
+            transport: transport,
+            credentials: credentials,
+            managedAuthorization: authorization
+        )
+
+        let request = Task { try await api.session(for: environment) }
+        await bootstrap.waitUntilCallCount(1)
+        await credentials.removeCredential(for: environment.id)
+        await bootstrap.release()
+
+        do {
+            _ = try await request.value
+            XCTFail("A revoked environment credential was restored by an in-flight refresh")
+        } catch HTTPError.missingCredential {
+            // Removing the saved credential permanently invalidates this refresh.
+        }
+        let restoredCredential = await credentials.credential(for: environment.id)
+        XCTAssertNil(restoredCredential)
+    }
+
+    func testFailedManagedSaveDoesNotOverwriteNewerCredential() async throws {
+        try await assertFailedManagedSavePreservesNewerCredential(
+            previousCredential: managedCredential(accessToken: "previous-managed-token"),
+            replacementTiming: .afterInstallation
+        )
+    }
+
+    func testFailedFirstManagedSaveDoesNotDeleteNewerCredential() async throws {
+        try await assertFailedManagedSavePreservesNewerCredential(
+            previousCredential: nil,
+            replacementTiming: .afterInstallation
+        )
+    }
+
+    func testFailedManagedSaveRestoresCredentialRefreshedBeforeInstallation() async throws {
+        try await assertFailedManagedSavePreservesNewerCredential(
+            previousCredential: managedCredential(accessToken: "previous-managed-token"),
+            replacementTiming: .beforeInstallation
+        )
+    }
+
     func testRotatedProofKeyRebindsFreshCredential() async throws {
         let fixture = try await refreshFixture(
             savedThumbprint: "stale-proof-key",
@@ -273,6 +352,14 @@ final class T3ConnectRuntimeTests: XCTestCase {
     }
 
     func testStaggered401ReusesNewerSavedCredentialWithoutSecondMint() async throws {
+        try await assertStaggeredRejectionReusesNewerCredential(status: 401)
+    }
+
+    func testUnauthenticatedSessionReusesNewerSavedCredential() async throws {
+        try await assertStaggeredRejectionReusesNewerCredential(status: 200)
+    }
+
+    private func assertStaggeredRejectionReusesNewerCredential(status: Int) async throws {
         let signer = try testSigner()
         let thumbprint = try await signer.thumbprint()
         let environment = managedEnvironment(descriptor: descriptor())
@@ -291,10 +378,11 @@ final class T3ConnectRuntimeTests: XCTestCase {
             proofKeyThumbprint: thumbprint
         )
         let credentials = InMemoryCredentialStore(credentials: [environment.id: original])
-        let transport = T3ConnectStaggered401Transport(
+        let transport = T3ConnectStaggeredRejectionTransport(
             credentialStore: credentials,
             environmentID: environment.id,
-            newerCredential: newer
+            newerCredential: newer,
+            status: status
         )
         let bootstrap = T3ConnectBootstrapSource(
             credential: try await bootstrapCredential(signer: signer)
@@ -330,6 +418,14 @@ final class T3ConnectRuntimeTests: XCTestCase {
     }
 
     func testRejectedTokenRefreshesOnceAndRetriesWithANewProof() async throws {
+        try await assertRejectedTokenRefreshesWithANewProof(status: 401)
+    }
+
+    func testUnauthenticatedSessionRefreshesOnceAndRetriesWithANewProof() async throws {
+        try await assertRejectedTokenRefreshesWithANewProof(status: 200)
+    }
+
+    private func assertRejectedTokenRefreshesWithANewProof(status: Int) async throws {
         let signer = try testSigner()
         let thumbprint = try await signer.thumbprint()
         let environment = managedEnvironment(descriptor: descriptor())
@@ -345,7 +441,7 @@ final class T3ConnectRuntimeTests: XCTestCase {
         let transport = T3ConnectScriptedHTTPTransport { request, ordinal in
             switch (request.url?.path, ordinal) {
             case ("/api/auth/session", 1):
-                return (Data(#"{"message":"expired"}"#.utf8), 401)
+                return (.unauthenticatedSession, status)
             case ("/.well-known/t3/environment", 2):
                 return (.descriptor, 200)
             case ("/oauth/token", 3):
@@ -374,7 +470,8 @@ final class T3ConnectRuntimeTests: XCTestCase {
             managedAuthorization: runtimeAuthorization
         )
 
-        _ = try await api.session(for: environment)
+        let session = try await api.session(for: environment)
+        XCTAssertTrue(session.authenticated)
 
         let refreshCalls = await bootstrap.calls
         XCTAssertEqual(refreshCalls, 1)
@@ -389,6 +486,128 @@ final class T3ConnectRuntimeTests: XCTestCase {
             sessionRequests[0].value(forHTTPHeaderField: "DPoP"),
             sessionRequests[1].value(forHTTPHeaderField: "DPoP")
         )
+    }
+
+    func testUnauthenticatedSessionRetryStopsAfterOneRefresh() async throws {
+        let fixture = try await refreshFixture(
+            savedThumbprint: nil,
+            expiresAt: Date().addingTimeInterval(300),
+            sessionResponse: .unauthenticatedSession
+        )
+
+        do {
+            _ = try await fixture.api.session(for: fixture.environment)
+            XCTFail("An unauthenticated renewed session was accepted")
+        } catch HTTPError.unauthenticatedSession {
+            // The second rejection ends the request without another refresh.
+        }
+
+        let refreshCalls = await fixture.bootstrap.calls
+        XCTAssertEqual(refreshCalls, 1)
+        let requests = await fixture.transport.requests
+        XCTAssertEqual(requests.filter { $0.url?.path == "/api/auth/session" }.count, 2)
+        XCTAssertEqual(requests.filter { $0.url?.path == "/oauth/token" }.count, 1)
+    }
+
+    func testBearerSessionKeepsUnauthenticatedResponsesAndNetworkErrors() async throws {
+        var environment = managedEnvironment(descriptor: descriptor())
+        environment.kind = .bearer
+        let credentials = InMemoryCredentialStore(credentials: [
+            environment.id: EnvironmentCredential(accessToken: "bearer-token"),
+        ])
+        let transport = T3ConnectScriptedHTTPTransport { _, ordinal in
+            if ordinal == 1 { return (.unauthenticatedSession, 200) }
+            throw URLError(.cannotConnectToHost)
+        }
+        let api = EnvironmentAPI(transport: transport, credentials: credentials)
+
+        let session = try await api.session(for: environment)
+        XCTAssertFalse(session.authenticated)
+        do {
+            _ = try await api.session(for: environment)
+            XCTFail("The transport failure was ignored")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .cannotConnectToHost)
+            XCTAssertFalse(error.localizedDescription.contains(T3ConnectNetworkError.hint))
+        }
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests.allSatisfy {
+            $0.value(forHTTPHeaderField: "Authorization") == "Bearer bearer-token"
+        })
+    }
+
+    func testManagedHTTPNetworkFailuresExplainPossibleBlocking() async throws {
+        for code in [
+            URLError.Code.timedOut,
+            .cannotFindHost,
+            .cannotConnectToHost,
+            .dnsLookupFailed,
+            .networkConnectionLost,
+            .notConnectedToInternet,
+        ] {
+            let fixture = try await refreshFixture(
+                savedThumbprint: nil,
+                expiresAt: Date().addingTimeInterval(300),
+                sessionFailure: URLError(code)
+            )
+            do {
+                _ = try await fixture.api.session(for: fixture.environment)
+                XCTFail("The transport failure was ignored")
+            } catch let error as T3ConnectNetworkError {
+                XCTAssertTrue(error.localizedDescription.contains(T3ConnectNetworkError.hint))
+            }
+            let refreshCalls = await fixture.bootstrap.calls
+            XCTAssertEqual(refreshCalls, 0)
+        }
+    }
+
+    func testRelayAndManagedAuthorizationNetworkFailuresExplainPossibleBlocking() async throws {
+        let transport = T3ConnectScriptedHTTPTransport { _, _ in
+            throw URLError(.cannotFindHost)
+        }
+        let authorizer = T3ConnectManagedEnvironmentAuthorizer(
+            transport: transport,
+            signer: try testSigner()
+        )
+        let relay = T3ConnectRelayClient(
+            configuration: T3ConnectConfiguration(
+                clerkPublishableKey: "pk_test",
+                relayHTTPURL: URL(string: "https://relay.example")!
+            ),
+            transport: transport,
+            signer: try testSigner()
+        )
+        do {
+            _ = try await authorizer.descriptor(at: URL(string: "https://managed.example")!)
+            XCTFail("The descriptor transport failure was ignored")
+        } catch let error as T3ConnectNetworkError {
+            XCTAssertTrue(error.localizedDescription.contains(T3ConnectNetworkError.hint))
+        }
+        do {
+            _ = try await relay.listEnvironments(clerkToken: "clerk-token")
+            XCTFail("The relay transport failure was ignored")
+        } catch let error as T3ConnectNetworkError {
+            XCTAssertTrue(error.localizedDescription.contains(T3ConnectNetworkError.hint))
+        }
+    }
+
+    func testNetworkHintDoesNotChangeAuthenticationProtocolOrCancellationErrors() {
+        let errors: [any Error] = [
+            HTTPError.status(401, message: "Invalid credential", traceID: "trace-1"),
+            HTTPError.unauthenticatedSession,
+            T3ConnectRelayError.response(status: 403, message: "Access denied", traceID: "trace-2"),
+            HTTPError.invalidResponse,
+            RPCError.remote("Command rejected"),
+            URLError(.cancelled),
+            URLError(.badServerResponse),
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Invalid JSON")),
+        ]
+        for error in errors {
+            let presented = T3ConnectNetworkError.wrapping(error)
+            XCTAssertEqual(presented.localizedDescription, error.localizedDescription)
+            XCTAssertFalse(presented is T3ConnectNetworkError)
+        }
     }
 
     func testRefreshDescriptorMismatchDoesNotReplaceSavedCredential() async throws {
@@ -513,6 +732,41 @@ final class T3ConnectRuntimeTests: XCTestCase {
         do {
             _ = try await authorizer.webSocketURL(using: authorization)
             XCTFail("An unencrypted managed WebSocket endpoint was accepted")
+        } catch let error as T3ConnectRelayError {
+            guard case .invalidConfiguration = error else {
+                return XCTFail("Unexpected T3 Connect error: \(error)")
+            }
+        }
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testManagedWebSocketRejectsDifferentHostBeforeMintingTicket() async throws {
+        let signer = try testSigner()
+        let transport = T3ConnectScriptedHTTPTransport { request, _ in
+            throw T3ConnectTestError.unexpectedPath(request.url?.path)
+        }
+        let authorizer = T3ConnectManagedEnvironmentAuthorizer(
+            transport: transport,
+            signer: signer
+        )
+        let authorization = T3ConnectEnvironmentAccessToken(
+            environmentID: "managed-1",
+            label: "Managed Studio",
+            endpoint: T3ConnectManagedEndpoint(
+                httpBaseUrl: "https://managed.example",
+                wsBaseUrl: "wss://different.example/ws",
+                providerKind: .t3Relay
+            ),
+            accessToken: "access-token",
+            expiresAt: Date().addingTimeInterval(300),
+            scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes,
+            proofKeyThumbprint: try await signer.thumbprint()
+        )
+
+        do {
+            _ = try await authorizer.webSocketURL(using: authorization)
+            XCTFail("A managed WebSocket ticket was sent to a different host")
         } catch let error as T3ConnectRelayError {
             guard case .invalidConfiguration = error else {
                 return XCTFail("Unexpected T3 Connect error: \(error)")
@@ -815,7 +1069,9 @@ final class T3ConnectRuntimeTests: XCTestCase {
 
     private func refreshFixture(
         savedThumbprint: String?,
-        expiresAt: Date
+        expiresAt: Date,
+        sessionResponse: Data = .authSession,
+        sessionFailure: URLError? = nil
     ) async throws -> T3ConnectRefreshFixture {
         let signer = try testSigner()
         let currentThumbprint = try await signer.thumbprint()
@@ -837,7 +1093,8 @@ final class T3ConnectRuntimeTests: XCTestCase {
                 return (.token(scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes
                     .joined(separator: " ")), 200)
             case "/api/auth/session":
-                return (.authSession, 200)
+                if let sessionFailure { throw sessionFailure }
+                return (sessionResponse, 200)
             default:
                 throw T3ConnectTestError.unexpectedPath(request.url?.path)
             }
@@ -869,6 +1126,60 @@ final class T3ConnectRuntimeTests: XCTestCase {
                 credentials: credentials,
                 managedAuthorization: runtimeAuthorization
             )
+        )
+    }
+
+    private func assertFailedManagedSavePreservesNewerCredential(
+        previousCredential: EnvironmentCredential?,
+        replacementTiming: ManagedPersistenceCredentialStore.ReplacementTiming
+    ) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-managed-credential-race-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o700))],
+                ofItemAtPath: directory.path
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let environment = managedEnvironment(descriptor: descriptor())
+        let newerCredential = managedCredential(accessToken: "newer-managed-token")
+        let credentials = ManagedPersistenceCredentialStore(
+            previousCredential: previousCredential,
+            newerCredential: newerCredential,
+            replacementTiming: replacementTiming
+        )
+        let runtime = EnvironmentRuntime(
+            environmentStore: EnvironmentStore(
+                fileURL: directory.appendingPathComponent("environments.json")
+            ),
+            credentialStore: credentials
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o500))],
+            ofItemAtPath: directory.path
+        )
+
+        do {
+            _ = try await runtime.saveManagedEnvironment(
+                environment,
+                credential: managedCredential(accessToken: "pairing-managed-token")
+            )
+            XCTFail("Managed pairing unexpectedly updated a read-only environment catalog")
+        } catch {
+            let saved = await credentials.credential(for: environment.id)
+            XCTAssertEqual(saved, newerCredential)
+        }
+    }
+
+    private func managedCredential(accessToken: String) -> EnvironmentCredential {
+        .managedDPoP(
+            accessToken: accessToken,
+            expiresAt: Date(timeIntervalSince1970: 2_000_000_000),
+            scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes,
+            environmentID: "managed-1",
+            proofKeyThumbprint: "proof-key"
         )
     }
 
@@ -935,6 +1246,84 @@ private struct T3ConnectRefreshFixture {
 private enum T3ConnectTestError: Error {
     case unexpectedRefresh
     case unexpectedPath(String?)
+}
+
+private actor ManagedPersistenceCredentialStore: CredentialStore {
+    enum ReplacementTiming {
+        case beforeInstallation
+        case afterInstallation
+    }
+
+    private var storedCredential: EnvironmentCredential?
+    private let newerCredential: EnvironmentCredential
+    private let replacementTiming: ReplacementTiming
+    private var hasInsertedNewerCredential = false
+
+    init(
+        previousCredential: EnvironmentCredential?,
+        newerCredential: EnvironmentCredential,
+        replacementTiming: ReplacementTiming
+    ) {
+        storedCredential = previousCredential
+        self.newerCredential = newerCredential
+        self.replacementTiming = replacementTiming
+    }
+
+    func credential(for environmentID: String) -> EnvironmentCredential? {
+        let currentCredential = storedCredential
+        if replacementTiming == .beforeInstallation, !hasInsertedNewerCredential {
+            hasInsertedNewerCredential = true
+            storedCredential = newerCredential
+        }
+        return currentCredential
+    }
+
+    func setCredential(
+        _ credential: EnvironmentCredential,
+        for environmentID: String
+    ) {
+        storedCredential = credential
+        if replacementTiming == .afterInstallation, !hasInsertedNewerCredential {
+            hasInsertedNewerCredential = true
+            storedCredential = newerCredential
+        }
+    }
+
+    func swapCredential(
+        _ credential: EnvironmentCredential,
+        for environmentID: String
+    ) -> EnvironmentCredential? {
+        if replacementTiming == .beforeInstallation, !hasInsertedNewerCredential {
+            hasInsertedNewerCredential = true
+            storedCredential = newerCredential
+        }
+        let previousCredential = storedCredential
+        setCredential(credential, for: environmentID)
+        return previousCredential
+    }
+
+    func replaceCredential(
+        _ credential: EnvironmentCredential,
+        ifMatching expected: EnvironmentCredential,
+        for environmentID: String
+    ) -> Bool {
+        guard storedCredential == expected else { return false }
+        storedCredential = credential
+        return true
+    }
+
+    func removeCredential(for environmentID: String) {
+        storedCredential = nil
+    }
+
+    func removeCredential(
+        ifMatching expected: EnvironmentCredential,
+        for environmentID: String
+    ) -> Bool {
+        guard storedCredential == expected else { return false }
+        storedCredential = nil
+        return true
+    }
 }
 
 private actor T3ConnectBootstrapSource {
@@ -1034,27 +1423,30 @@ private actor T3ConnectScriptedHTTPTransport: HTTPTransport {
     }
 }
 
-private actor T3ConnectStaggered401Transport: HTTPTransport {
+private actor T3ConnectStaggeredRejectionTransport: HTTPTransport {
     private let credentialStore: InMemoryCredentialStore
     private let environmentID: String
     private let newerCredential: EnvironmentCredential
+    private let status: Int
     private(set) var requests: [URLRequest] = []
 
     init(
         credentialStore: InMemoryCredentialStore,
         environmentID: String,
-        newerCredential: EnvironmentCredential
+        newerCredential: EnvironmentCredential,
+        status: Int
     ) {
         self.credentialStore = credentialStore
         self.environmentID = environmentID
         self.newerCredential = newerCredential
+        self.status = status
     }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requests.append(request)
         if requests.count == 1 {
             await credentialStore.setCredential(newerCredential, for: environmentID)
-            return (Data(#"{"message":"expired"}"#.utf8), response(request, status: 401))
+            return (.unauthenticatedSession, response(request, status: status))
         }
         return (.authSession, response(request, status: 200))
     }
@@ -1087,6 +1479,10 @@ private actor T3ConnectFailingReceiveConnection: WebSocketConnection {
 }
 
 private extension Data {
+    static var unauthenticatedSession: Data {
+        Data(#"{"authenticated":false}"#.utf8)
+    }
+
     static var authSession: Data {
         Data(#"{"authenticated":true,"scopes":[],"sessionMethod":"dpop","expiresAt":null}"#.utf8)
     }

@@ -1,28 +1,66 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
+struct FeatureModelRefreshError: LocalizedError {
+    var errorDescription: String? { "Couldn’t refresh models." }
+}
+
+struct FeatureComposerUploadStatus {
+    var preparingCount = 0
+    var uploadingCount = 0
+    var failures: [(UUID, String)] = []
+
+    init(states: [(UUID, FeatureAttachmentUploadState?)]) {
+        for (id, state) in states {
+            switch state {
+            case .some(.ready): break
+            case let .some(.failed(message)): failures.append((id, message))
+            case .some(.uploading): uploadingCount += 1
+            case .some(.queued), .none: preparingCount += 1
+            }
+        }
+    }
+
+    var blocksSend: Bool {
+        preparingCount > 0 || uploadingCount > 0 || !failures.isEmpty
+    }
+}
+
 struct FeatureComposerView: View {
-    // Fully qualified: the app's own Core/Models.swift `Environment` type
-    // shadows the SwiftUI property wrapper in this scope.
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @AppStorage(FeatureVoiceDictationSettings.enabledKey)
     private var voiceDictationEnabled = true
     @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
     private var voiceDictationKeyboardEnabled = false
     @State private var isManuallyExpanded = false
-    @State private var dictation = FeatureVoiceDictationModel()
     @State private var isAttachmentFlowActive = false
+    @State private var isModelPickerPresented = false
+    @State private var isTraitsPickerPresented = false
+    @State private var restoresFocusAfterModelPickerDismissal = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
     @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @State private var imageIntakeErrorMessage: String?
+    @State private var textRevision: UInt64 = 0
+    @State private var textObservation = FeatureComposerTextObservation()
+    @State private var voiceInputController = FeatureVoiceInputController()
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
 
     private let providers: [FeatureProvider]
+    private let draftOwnerID: String
+    private let environmentID: String?
+    private let draftStorageKey: String?
+    private let environmentIsConnected: Bool
+    private let attachmentUploads: FeatureAttachmentUploadCoordinator
+    private let attachmentPreferences: FeatureEnvironmentPreferences
+    private let onRefreshModels: (() async throws -> Void)?
+    private let draftSaveError: String?
+    private let onRetryDraftSave: (() -> Void)?
     private let threadSelection: FeatureSelection?
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
@@ -36,6 +74,7 @@ struct FeatureComposerView: View {
     private let powerFeatures: FeatureComposerPowerFeatures
     private let onSend: () -> Void
     private let onStop: () -> Void
+    private let showsKeyboardDismissControl: Bool
     private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
@@ -44,6 +83,12 @@ struct FeatureComposerView: View {
         text: Binding<String>,
         selection: Binding<FeatureSelection?>,
         attachments: Binding<[FeatureDraftAttachment]>,
+        draftOwnerID: String,
+        environmentID: String?,
+        draftStorageKey: String?,
+        environmentIsConnected: Bool,
+        attachmentUploads: FeatureAttachmentUploadCoordinator,
+        attachmentPreferences: FeatureEnvironmentPreferences,
         providers: [FeatureProvider],
         threadSelection: FeatureSelection?,
         materializesDefaultSelection: Bool = true,
@@ -58,13 +103,26 @@ struct FeatureComposerView: View {
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
+        showsKeyboardDismissControl: Bool = false,
         onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
-        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
+        onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil,
+        onRefreshModels: (() async throws -> Void)? = nil,
+        draftSaveError: String? = nil,
+        onRetryDraftSave: (() -> Void)? = nil
     ) {
         _text = text
         _selection = selection
         _attachments = attachments
+        self.draftOwnerID = draftOwnerID
+        self.environmentID = environmentID
+        self.draftStorageKey = draftStorageKey
+        self.environmentIsConnected = environmentIsConnected
+        self.attachmentUploads = attachmentUploads
+        self.attachmentPreferences = attachmentPreferences
+        self.onRefreshModels = onRefreshModels
+        self.draftSaveError = draftSaveError
+        self.onRetryDraftSave = onRetryDraftSave
         self.providers = providers
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
@@ -79,6 +137,7 @@ struct FeatureComposerView: View {
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
         self.powerFeatures = powerFeatures
+        self.showsKeyboardDismissControl = showsKeyboardDismissControl
         self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
@@ -128,7 +187,9 @@ struct FeatureComposerView: View {
                     isFocused: focused,
                     textIsEmpty: textIsEmpty,
                     attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive,
+                    isAttachmentFlowActive: isAttachmentFlowActive
+                        || isModelPickerPresented
+                        || isTraitsPickerPresented,
                     isPreparingAttachments: attachmentPreparation.isPreparing
                 ) {
                     isManuallyExpanded = false
@@ -136,6 +197,35 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .onAppear {
+                synchronizeVoiceDraft(ownerChanged: false)
+            }
+            .onDisappear {
+                voiceInputController.cancel()
+            }
+            .onChange(of: text) {
+                textRevision &+= 1
+                synchronizeVoiceDraft(ownerChanged: false)
+            }
+            .onChange(of: draftOwnerID) {
+                synchronizeVoiceDraft(ownerChanged: true)
+            }
+            .onChange(of: voiceInputController.pendingCommit?.id) {
+                applyPendingVoiceCommit()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background {
+                    voiceInputController.appMovedToBackground()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: AVAudioSession.interruptionNotification
+            )) { notification in
+                guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
+                        as? UInt,
+                      AVAudioSession.InterruptionType(rawValue: rawType) == .began else { return }
+                voiceInputController.recordingWasInterrupted()
             }
             .alert(
                 "Couldn’t add image",
@@ -183,56 +273,12 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
-        .background {
-            // Behind the box, not on it: the opaque composer covers the
-            // centre, so the blurred fill blooms outward as a halo.
-            if dictation.isRecording {
-                FeatureComposerVoiceGlow(shape: composerShape, level: dictation.audioLevel)
-            }
-        }
         .modifier(
             FeatureComposerImageDrop(
-                isEnabled: imagesAllowed,
+                isEnabled: imagesAllowed && !voiceInputController.isBusy,
                 shape: composerShape,
                 onDropImages: attachDroppedImages
             )
-        )
-        .onDisappear {
-            // Navigating away mid-recording must release the microphone.
-            dictation.cancel()
-        }
-        .onChange(of: scenePhase) {
-            // Backgrounding stops capture anyway; finalize what was said so
-            // the model cannot come back believing the mic is still live.
-            if scenePhase != .active, dictation.phase != .idle {
-                dictation.stop()
-            }
-        }
-        .onChange(of: text) {
-            // Dictation appends at the end while the editor keeps the caret
-            // at its old position on external updates; ride the new text.
-            if dictation.phase == .recording || dictation.phase == .stopping {
-                textSelectionRequest = FeatureComposerTextSelectionRequest(
-                    location: text.utf16.count
-                )
-            }
-        }
-    }
-
-    private var dictationButton: some View {
-        FeatureVoiceDictationButton(
-            model: dictation,
-            text: $text,
-            vocabularyProvider: powerFeatures.voiceVocabulary,
-            onBegin: {
-                isManuallyExpanded = true
-                // The transcript types itself, so by default drop the
-                // keyboard and let the thread stay visible while talking.
-                if !voiceDictationKeyboardEnabled, focused {
-                    focused = false
-                    onDismissKeyboard?()
-                }
-            }
         )
     }
 
@@ -245,7 +291,7 @@ struct FeatureComposerView: View {
                     focused = true
                 }
             } label: {
-                Text(isWorking ? "Message to queue…" : "Ask anything…")
+                Text(composerPlaceholder)
                     .font(T3Typography.composer)
                     .foregroundStyle(T3Colors.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -256,12 +302,13 @@ struct FeatureComposerView: View {
             .accessibilityLabel("Message agent")
             .accessibilityHint("Opens the message editor")
 
-            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
-                dictationButton
-            }
-
             submitButton
                 .padding(.trailing, 7)
+
+            if voiceInputController.isSupported, voiceDictationEnabled {
+                voiceInputButton
+                    .padding(.trailing, 3)
+            }
         }
         .padding(.leading, 14)
         .padding(.vertical, 7)
@@ -274,6 +321,7 @@ struct FeatureComposerView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 3)
                     .padding(.bottom, 8)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Divider()
                     .overlay(T3Colors.separator)
@@ -282,14 +330,15 @@ struct FeatureComposerView: View {
 
             // Return is always editing input. Sending is deliberately
             // button-only, which is UITextView's native return behavior.
-            let placeholder = isWorking ? "Message to queue…" : "Ask anything…"
             ZStack(alignment: .topLeading) {
                 FeatureComposerTextInput(
                     text: $text,
                     focused: $focused,
-                    placeholder: placeholder,
+                    placeholder: composerPlaceholder,
                     acceptsImages: imagesAllowed,
+                    isReadOnly: voiceInputController.isBusy,
                     selectionRequest: textSelectionRequest,
+                    onSelectionChange: handleTextSelectionChange,
                     onPasteImages: attachImageProviders,
                     onDismissKeyboard: onDismissKeyboard
                 )
@@ -297,7 +346,7 @@ struct FeatureComposerView: View {
                 .padding(.top, 14)
 
                 if text.isEmpty {
-                    Text(placeholder)
+                    Text(composerPlaceholder)
                         .font(T3Typography.composer)
                         .foregroundStyle(T3Colors.textTertiary)
                         .padding(.horizontal, 16)
@@ -308,18 +357,11 @@ struct FeatureComposerView: View {
             }
             .padding(.bottom, 7)
             .frame(minHeight: 62, alignment: .top)
+            .layoutPriority(1)
+            .clipped()
 
-            if !attachments.isEmpty, !imagesAllowed {
-                Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.warning)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 15)
-                    .padding(.bottom, 4)
-            }
-
-            if let dictationError = dictation.errorMessage {
-                Label(dictationError, systemImage: "exclamationmark.circle")
+            if let attachmentBlocker {
+                Label(attachmentBlocker, systemImage: "exclamationmark.circle")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.warning)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -337,17 +379,61 @@ struct FeatureComposerView: View {
                     .accessibilityIdentifier("attachment-preparing")
             }
 
+            if let draftSaveError {
+                HStack(spacing: 8) {
+                    Text(draftSaveError).lineLimit(3)
+                    Spacer(minLength: 0)
+                    if let onRetryDraftSave {
+                        Button("Retry", action: onRetryDraftSave)
+                    }
+                }
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.danger)
+                .padding(.horizontal, 15)
+                .padding(.bottom, 4)
+                .accessibilityIdentifier("composer-draft-save-error")
+            } else if uploadStatus.blocksSend {
+                uploadStatusView(uploadStatus)
+            }
+
+            if voiceInputController.phase == .error {
+                voiceInputError
+            }
+
             composerFooter
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
     }
 
     private var composerFooter: some View {
+        Group {
+            if voiceInputController.isBusy {
+                voiceInputFooter
+            } else {
+                standardComposerFooter
+            }
+        }
+    }
+
+    private var standardComposerFooter: some View {
         HStack(spacing: 2) {
+            if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
+                isFocused: focused,
+                isEnabled: showsKeyboardDismissControl,
+                canDismiss: onDismissKeyboard != nil
+            ) {
+                dismissKeyboardButton
+            }
+
             FeatureImageAttachmentPicker(
                 attachments: $attachments,
                 preparationState: $attachmentPreparation,
                 isFlowActive: $isAttachmentFlowActive,
-                isEnabled: imagesAllowed
+                draftOwnerID: draftOwnerID,
+                environmentID: environmentID,
+                imagesAllowed: imagesAllowed,
+                maximumFileBytes: attachmentPreferences.maxFileAttachmentBytes
             )
 
             ProviderModelPicker(
@@ -355,25 +441,27 @@ struct FeatureComposerView: View {
                 selection: $selection,
                 style: .compact,
                 threadSelection: threadSelection,
-                materializesDefaultSelection: materializesDefaultSelection
+                materializesDefaultSelection: materializesDefaultSelection,
+                onRefresh: onRefreshModels,
+                onPresentationChange: handleModelPickerPresentation
             )
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(1)
 
-            if let reasoningControl {
-                reasoningLevelControl(reasoningControl)
-                    .frame(minWidth: 28, maxWidth: 104, alignment: .trailing)
+            if let traitsControl {
+                traitsPicker(traitsControl)
+                    .frame(minWidth: 28, maxWidth: 148, alignment: .trailing)
                     .layoutPriority(2)
             }
 
             Spacer(minLength: 0)
 
-            if let contextUsage {
-                FeatureContextMeter(usage: contextUsage)
+            if voiceInputController.isSupported, voiceDictationEnabled {
+                voiceInputButton
             }
 
-            if FeatureVoiceDictationModel.isSupported, voiceDictationEnabled {
-                dictationButton
+            if let contextUsage {
+                FeatureContextMeter(usage: contextUsage)
             }
 
             submitButton
@@ -384,63 +472,158 @@ struct FeatureComposerView: View {
         .padding(.bottom, 8)
     }
 
-    /// Levels come from the model descriptor and are written back through the
-    /// composer's existing selection binding, which is the same value the model
-    /// picker configures.
-    @ViewBuilder
-    private func reasoningLevelControl(
-        _ control: FeatureComposerReasoningControl
-    ) -> some View {
-        if control.isInteractive {
-            Menu {
-                Section(control.descriptorLabel) {
-                    ForEach(control.choices) { choice in
-                        Button {
-                            selection = control.selection(choosing: choice.id)
-                        } label: {
-                            if choice.id == control.currentChoiceID {
-                                Label(choice.label, systemImage: "checkmark")
-                            } else {
-                                Text(choice.label)
-                            }
-                        }
-                        .accessibilityIdentifier("composer-reasoning-choice-\(choice.id)")
-                    }
-                }
-            } label: {
-                reasoningLevelLabel(control.value, showsChevron: true)
-                    .frame(
-                        minWidth: T3Metrics.minimumTapTarget,
-                        minHeight: T3Metrics.minimumTapTarget
-                    )
-                    .contentShape(Rectangle())
-            }
-            // The composer sits at the bottom of the screen, so an adaptive menu
-            // would flip the descriptor's lowest-first order and put the highest
-            // level under the finger. Read the levels in their declared order.
-            .menuOrder(.fixed)
+    private var dismissKeyboardButton: some View {
+        Button("Hide keyboard", systemImage: "keyboard.chevron.compact.down", action: dismissKeyboard)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+            .contentShape(Rectangle())
             .buttonStyle(.plain)
-            .accessibilityLabel("Reasoning level")
-            .accessibilityValue(control.value)
-            .accessibilityIdentifier("composer-reasoning-level")
-        } else {
-            reasoningLevelLabel(control.value, showsChevron: false)
-                .accessibilityLabel("Reasoning level")
-                .accessibilityValue(control.value)
-                .accessibilityIdentifier("composer-reasoning-level")
+            .accessibilityHint("Keeps your draft and shows the thread")
+            .accessibilityIdentifier("composer-dismiss-keyboard")
+    }
+
+    private func dismissKeyboard() {
+        onDismissKeyboard?()
+    }
+
+    private var voiceInputButton: some View {
+        Button(action: startVoiceInput) {
+            Image(systemName: "mic")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start voice input")
+        .accessibilityIdentifier("voice-input-start")
+    }
+
+    private var voiceInputFooter: some View {
+        HStack(spacing: 8) {
+            voiceInputStatus
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
+
+            Spacer(minLength: 0)
+
+            Button("Cancel") {
+                voiceInputController.cancel()
+            }
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(minHeight: T3Metrics.minimumTapTarget)
+
+            if voiceInputController.phase == .recording {
+                Button("Stop") {
+                    voiceInputController.stop()
+                }
+                .font(T3Typography.supporting.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 34)
+                .background(T3Colors.accent, in: Capsule())
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .accessibilityLabel("Stop recording and transcribe")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var voiceInputStatus: some View {
+        switch voiceInputController.phase {
+        case .preparing:
+            Text("Preparing")
+        case .recording:
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text("Recording \(voiceRecordingDuration(at: context.date))")
+                    .monospacedDigit()
+            }
+        case .transcribing:
+            Text("Transcribing")
+        case .idle, .error:
+            EmptyView()
         }
     }
 
-    private func reasoningLevelLabel(_ value: String, showsChevron: Bool) -> some View {
+    private var voiceInputError: some View {
+        HStack(spacing: 8) {
+            Text(voiceInputController.errorMessage ?? "Voice input failed.")
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.danger)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let action = voiceInputController.errorAction {
+                Button(action == .settings ? "Settings" : "Retry") {
+                    if action == .settings,
+                       let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    } else {
+                        startVoiceInput()
+                    }
+                }
+                .font(T3Typography.supporting.weight(.semibold))
+            }
+
+            Button("Dismiss") {
+                voiceInputController.cancel()
+            }
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textSecondary)
+        }
+        .padding(.horizontal, 15)
+        .padding(.bottom, 4)
+    }
+
+    /// The popover keeps all descriptor sections together and preserves their
+    /// catalog order, including option descriptions that a system Menu would
+    /// flatten away.
+    private func traitsPicker(_ control: FeatureComposerTraitsControl) -> some View {
+        Button {
+            isTraitsPickerPresented.toggle()
+        } label: {
+            traitsPickerLabel(control)
+                .frame(
+                    minWidth: T3Metrics.minimumTapTarget,
+                    minHeight: T3Metrics.minimumTapTarget
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(
+            isPresented: $isTraitsPickerPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            FeatureComposerTraitsMenu(control: control) { descriptorID, choiceID in
+                selection = control.selection(choosing: choiceID, in: descriptorID)
+                isTraitsPickerPresented = false
+            }
+            .presentationCompactAdaptation(.popover)
+        }
+        .accessibilityLabel("Model traits")
+        .accessibilityValue(control.triggerLabel)
+        .accessibilityIdentifier("composer-traits-picker")
+    }
+
+    private func traitsPickerLabel(_ control: FeatureComposerTraitsControl) -> some View {
         HStack(spacing: 3) {
-            Text(value)
+            if control.showsFastModeIcon {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+            Text(control.triggerLabel)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if showsChevron {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .fixedSize()
-            }
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .fixedSize()
         }
         .font(T3Typography.supporting)
         .foregroundStyle(T3Colors.textSecondary)
@@ -449,27 +632,34 @@ struct FeatureComposerView: View {
 
     private var submitButton: some View {
         Button(action: performPrimaryAction) {
-            Group {
-                if isSending {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                } else {
-                    Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-                        .font(.system(size: showsStop ? 11 : 14, weight: .bold))
-                }
-            }
-            .foregroundStyle(.white)
-            .frame(width: 34, height: 34)
-            .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+            Image(systemName: submitSymbol)
+                .font(.system(size: showsStop ? 11 : 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(submitDisabled)
         .opacity(submitDisabled ? 0.3 : 1)
-        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
-        .contentShape(Rectangle())
-        .accessibilityLabel(showsStop ? "Stop agent" : "Send")
+        .accessibilityLabel(submitAccessibilityLabel)
         .accessibilityIdentifier(showsStop ? "thread-stop" : "message-send")
+    }
+
+    private var composerPlaceholder: String {
+        isWorking ? "Queue a message…" : "Ask anything…"
+    }
+
+    private var submitSymbol: String {
+        if isSending { return "ellipsis" }
+        return showsStop ? "stop.fill" : "arrow.up"
+    }
+
+    private var submitAccessibilityLabel: String {
+        if isSending { return "Sending message" }
+        if showsStop { return "Stop agent" }
+        return isWorking ? "Queue message" : "Send message"
     }
 
     private var composerShape: RoundedRectangle {
@@ -483,6 +673,8 @@ struct FeatureComposerView: View {
             || !textIsEmpty
             || !attachments.isEmpty
             || attachmentPreparation.isPreparing
+            || voiceInputController.isBusy
+            || voiceInputController.phase == .error
     }
 
     private var showsStop: Bool {
@@ -503,9 +695,12 @@ struct FeatureComposerView: View {
             text: text,
             attachmentCount: attachments.count,
             imagesAllowed: imagesAllowed,
+            filesAllowed: attachmentPreferences.maxFileAttachmentBytes != nil,
+            containsImages: attachments.contains { $0.mimeType.hasPrefix("image/") },
+            containsFiles: attachments.contains { !$0.mimeType.hasPrefix("image/") },
             isSending: isSending,
             preparationState: attachmentPreparation
-        )
+        ) && !uploadStatus.blocksSend && draftSaveError == nil
     }
 
     private var imagesAllowed: Bool {
@@ -515,8 +710,71 @@ struct FeatureComposerView: View {
         )
     }
 
-    private var reasoningControl: FeatureComposerReasoningControl? {
-        FeatureComposerReasoningControl.resolve(
+    private var attachmentBlocker: String? {
+        if attachments.contains(where: { !$0.mimeType.hasPrefix("image/") }),
+           attachmentPreferences.maxFileAttachmentBytes == nil {
+            return "This environment does not accept file attachments"
+        }
+        if attachments.contains(where: { $0.mimeType.hasPrefix("image/") }), !imagesAllowed {
+            return "Choose a model that accepts images"
+        }
+        return nil
+    }
+
+    private var applicableUploadStates: [(UUID, FeatureAttachmentUploadState?)] {
+        guard environmentIsConnected, let environmentID, draftStorageKey != nil else { return [] }
+        return attachments.compactMap { attachment in
+            let isImage = attachment.mimeType.hasPrefix("image/")
+            let uploadsHere = isImage
+                ? attachmentPreferences.supportsImageUploads
+                : attachmentPreferences.maxFileAttachmentBytes != nil
+            guard uploadsHere else { return nil }
+            return (
+                attachment.id,
+                attachmentUploads.state(
+                    environmentID: environmentID,
+                    attachmentID: attachment.id
+                )
+            )
+        }
+    }
+
+    private var uploadStatus: FeatureComposerUploadStatus {
+        FeatureComposerUploadStatus(states: applicableUploadStates)
+    }
+
+    private func uploadStatusView(_ status: FeatureComposerUploadStatus) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if status.preparingCount > 0 {
+                Text("Preparing \(status.preparingCount) attachment\(status.preparingCount == 1 ? "" : "s")")
+            }
+            if status.uploadingCount > 0 {
+                Text("Uploading \(status.uploadingCount) attachment\(status.uploadingCount == 1 ? "" : "s")")
+            }
+            ForEach(status.failures, id: \.0) { failure in
+                HStack(spacing: 8) {
+                    Text(failure.1).lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button("Retry") {
+                        guard let environmentID else { return }
+                        attachmentUploads.retry(
+                            environmentID: environmentID,
+                            attachmentID: failure.0
+                        )
+                    }
+                }
+            }
+        }
+        .font(T3Typography.supporting)
+        .foregroundStyle(status.failures.isEmpty ? T3Colors.textSecondary : T3Colors.danger)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 15)
+        .padding(.bottom, 4)
+        .accessibilityIdentifier("attachment-upload-status")
+    }
+
+    private var traitsControl: FeatureComposerTraitsControl? {
+        FeatureComposerTraitsControl.resolve(
             explicit: selection,
             inherited: threadSelection,
             providers: providers,
@@ -556,6 +814,7 @@ struct FeatureComposerView: View {
 
     private var showsCommandMenu: Bool {
         isExpanded
+            && !voiceInputController.isBusy
             && pendingApprovals.isEmpty
             && pendingUserInputs.isEmpty
             && composerTrigger != nil
@@ -614,21 +873,24 @@ struct FeatureComposerView: View {
         case let .providerCommand(command):
             replacement = "/\(command.name) "
         case let .skill(skill):
-            replacement = "$\(skill.name) "
+            replacement = skill.invocation
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }
-        textSelectionRequest = FeatureComposerTextSelectionRequest(
-            location: FeatureComposerTextSelectionPolicy.cursorLocation(
-                afterReplacing: trigger.range,
-                in: text,
-                with: replacement
-            )
+        let nextCursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
+            afterReplacing: trigger.range,
+            in: text,
+            with: replacement
         )
         text = FeatureComposerTriggerParser.replacing(
             trigger.range,
             in: text,
             with: replacement
+        )
+        // Publish the text first so the representable cannot consume and clamp
+        // this request against the pre-replacement draft.
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: nextCursorLocation
         )
         pathEntries = []
         pathSearchError = nil
@@ -643,14 +905,70 @@ struct FeatureComposerView: View {
             onStop()
         } else if FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton),
                   canSend {
-            // Sending mid-dictation is allowed: the live hypothesis is
-            // already in the draft, so cancel (its callbacks are gated on
-            // the torn-down engine, so no late segment can reach the next
-            // draft) and send what is visible.
-            if dictation.phase != .idle {
-                dictation.cancel()
-            }
             onSend()
+        }
+    }
+
+    private func startVoiceInput() {
+        synchronizeVoiceDraft(ownerChanged: false)
+        if !voiceDictationKeyboardEnabled, focused {
+            focused = false
+            onDismissKeyboard?()
+        }
+        voiceInputController.start(configuration: FeatureVoiceInputConfiguration(
+            vocabulary: powerFeatures.voiceVocabulary?() ?? []
+        ))
+    }
+
+    private func handleTextSelectionChange(_ selection: NSRange) {
+        textObservation.selection = selection
+        voiceInputController.updateSelection(selection)
+    }
+
+    private func synchronizeVoiceDraft(ownerChanged: Bool) {
+        let snapshot = FeatureVoiceDraftSnapshot(
+            ownerID: draftOwnerID,
+            text: text,
+            revision: textRevision,
+            selection: textObservation.selection
+        )
+        if ownerChanged {
+            voiceInputController.ownerChanged(to: snapshot)
+        } else {
+            voiceInputController.updateDraft(snapshot)
+        }
+    }
+
+    private func applyPendingVoiceCommit() {
+        guard let commit = voiceInputController.pendingCommit else { return }
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: commit.caretLocation
+        )
+        text = commit.text
+        voiceInputController.consumePendingCommit()
+    }
+
+    private func voiceRecordingDuration(at date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(
+            voiceInputController.recordingStartedAt ?? date
+        )))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func handleModelPickerPresentation(_ isPresented: Bool) {
+        if isPresented {
+            restoresFocusAfterModelPickerDismissal = focused
+            isManuallyExpanded = true
+            isModelPickerPresented = true
+            return
+        }
+
+        isModelPickerPresented = false
+        guard restoresFocusAfterModelPickerDismissal else { return }
+        restoresFocusAfterModelPickerDismissal = false
+        Task { @MainActor in
+            await Task.yield()
+            focused = true
         }
     }
 
@@ -709,6 +1027,109 @@ struct FeatureComposerView: View {
     }
 }
 
+enum FeatureComposerKeyboardDismissPolicy {
+    static func showsDismissControl(isFocused: Bool, isEnabled: Bool, canDismiss: Bool) -> Bool {
+        isFocused && isEnabled && canDismiss
+    }
+}
+
+private struct FeatureComposerTraitsMenu: View {
+    let control: FeatureComposerTraitsControl
+    let onSelect: (String, String) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(control.sections.enumerated()), id: \.element.id) { index, section in
+                    if index > 0 {
+                        Divider()
+                            .overlay(T3Colors.separator)
+                            .padding(.vertical, 5)
+                    }
+                    traitSection(section)
+                }
+            }
+            .padding(6)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 292)
+        .frame(maxHeight: 520)
+        .background(T3Colors.surface)
+        .accessibilityIdentifier("composer-traits-menu")
+    }
+
+    private func traitSection(_ section: FeatureComposerTraitsControl.Section) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(section.label)
+                .font(T3Typography.supportingStrong)
+                .foregroundStyle(T3Colors.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.top, 5)
+                .padding(.bottom, 3)
+
+            ForEach(section.choices) { choice in
+                let isCurrent = choice.id == section.currentChoiceID
+                Button {
+                    onSelect(section.id, choice.id)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Text(choice.label)
+                                    .font(T3Typography.control)
+                                    .foregroundStyle(T3Colors.textPrimary)
+                                    .lineLimit(1)
+                                if choice.isDefault {
+                                    Text("Default")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(T3Colors.textSecondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(T3Colors.subtleStrong, in: Capsule())
+                                }
+                            }
+                            if let detail = choice.detail {
+                                Text(detail)
+                                    .font(T3Typography.supporting)
+                                    .foregroundStyle(T3Colors.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        if isCurrent {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(T3Colors.accent)
+                                .padding(.top, 3)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, choice.detail == nil ? 1 : 4)
+                    .background(
+                        isCurrent ? T3Colors.accent.opacity(0.12) : .clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(choice.label)
+                .accessibilityValue(
+                    [choice.isDefault ? "Default" : nil, isCurrent ? "Current" : nil]
+                        .compactMap { $0 }
+                        .joined(separator: ", ")
+                )
+                .accessibilityIdentifier(
+                    "composer-trait-\(section.id)-choice-\(choice.id)"
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(section.label)
+        .accessibilityIdentifier("composer-trait-section-\(section.id)")
+    }
+}
+
 enum FeatureComposerCollapsePolicy {
     static func shouldCollapse(
         isFocused: Bool,
@@ -725,26 +1146,6 @@ enum FeatureComposerCollapsePolicy {
     }
 }
 
-/// Halo rising from behind the whole composer (input, mic, and send) that
-/// pulses brighter and dimmer with the live microphone level while
-/// dictating. Rendered as a blurred fill underneath the opaque composer so
-/// the light appears to emanate from behind the box rather than along its
-/// border. It animates only when level values arrive, never on a timer.
-private struct FeatureComposerVoiceGlow: View {
-    let shape: RoundedRectangle
-    let level: Double
-
-    var body: some View {
-        let intensity = 0.3 + level * 0.7
-        shape
-            .fill(T3Colors.accent.opacity(intensity * 0.75))
-            .blur(radius: 18 + level * 30)
-            .scaleEffect(1.02 + level * 0.06)
-            .allowsHitTesting(false)
-            .animation(.spring(duration: 0.25, bounce: 0.35), value: level)
-    }
-}
-
 private struct FeatureComposerPathSearchRequest: Hashable {
     let scopeID: String
     let query: String
@@ -755,6 +1156,9 @@ enum FeatureComposerSubmissionEligibility {
         text: String,
         attachmentCount: Int,
         imagesAllowed: Bool,
+        filesAllowed: Bool = false,
+        containsImages: Bool = true,
+        containsFiles: Bool = false,
         isSending: Bool,
         preparationState: FeatureAttachmentPreparationState
     ) -> Bool {
@@ -763,7 +1167,8 @@ enum FeatureComposerSubmissionEligibility {
         return !isSending
             && !preparationState.isPreparing
             && (hasText || hasAttachments)
-            && (!hasAttachments || imagesAllowed)
+            && (!hasAttachments || !containsImages || imagesAllowed)
+            && (!hasAttachments || !containsFiles || filesAllowed)
     }
 }
 
