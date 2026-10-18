@@ -37,7 +37,12 @@ import * as SqlError from "effect/unstable/sql/SqlError";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isOutsideIntervalRestrictions,
+  isSameSchedule,
+  nextScheduledRunAt,
+} from "./Schedule.ts";
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
@@ -146,10 +151,14 @@ function iso(value: DateTime.DateTime): string {
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
-  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "runCount">,
   from: DateTime.DateTime,
 ): string | null {
   if (!task.enabled) return null;
+  // A reached run cap is a permanent stop: the task never schedules again
+  // until an edit raises the cap (every caller recomputes from the live row,
+  // so raising maxRuns re-arms the task on the next save).
+  if (task.schedule.maxRuns !== undefined && task.runCount >= task.schedule.maxRuns) return null;
   // A stored interval can decode yet overflow the representable DateTime
   // range; an unrepresentable occurrence means the task has no next run.
   try {
@@ -159,6 +168,10 @@ function nextRunAt(
     return null;
   }
 }
+
+/** True when completing one more run would reach the task's maxRuns cap. */
+const capReachedAfterRun = (task: ScheduledTask): boolean =>
+  task.schedule.maxRuns !== undefined && task.runCount + 1 >= task.schedule.maxRuns;
 
 function errorMessage(error: unknown): string {
   if (Cause.isCause(error)) return Cause.pretty(error);
@@ -869,14 +882,19 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly capped: boolean;
     }) =>
+      // Reaching maxRuns pauses the task in the same statement; the CASE keeps
+      // a single preparable statement for both the capped and normal paths.
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
-            run_count = run_count + 1
+            run_count = run_count + 1,
+            enabled = CASE WHEN ${input.capped ? 1 : 0} THEN 0 ELSE enabled END,
+            enabled_seq = CASE WHEN ${input.capped ? 1 : 0} THEN NULL ELSE enabled_seq END
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
           AND last_run_at = ${input.startedAtIso}
@@ -909,13 +927,20 @@ export const layer = Layer.effect(
                 if (Result.isSuccess(reread) && reread.success === null) return; // deleted — nothing to release
                 const source =
                   Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
+                // The stuck attempt counts toward maxRuns like any other run;
+                // reaching the cap here pauses the task instead of arming it.
+                const runCountAfter = source.runCount + 1;
+                const capped =
+                  source.schedule.maxRuns !== undefined && runCountAfter >= source.schedule.maxRuns;
                 yield* sql`
               UPDATE scheduled_tasks
               SET last_run_status = 'failed',
                   last_run_error = ${message},
-                  next_run_at = ${nextRunAt(source, now)},
+                  next_run_at = ${capped ? null : nextRunAt({ ...source, runCount: runCountAfter }, now)},
                   updated_at = ${iso(now)},
-                  run_count = run_count + 1
+                  run_count = run_count + 1,
+                  enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END,
+                  enabled_seq = CASE WHEN ${capped ? 1 : 0} THEN NULL ELSE enabled_seq END
               WHERE task_id = ${task.id} AND last_run_status = 'running'
             `;
               }),
@@ -1160,6 +1185,15 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const current = yield* findTask(task.id);
                 if (current !== null) {
+                  // The cap is judged on the count this run produces: run_count
+                  // is incremented by the statement below, so the schedule's
+                  // maxRuns is compared against runCount + 1. Reaching it pauses
+                  // the task in the same write — an enabled row with no next
+                  // run would otherwise look armed but never fire.
+                  const runCountAfter = current.runCount + 1;
+                  const capped =
+                    current.schedule.maxRuns !== undefined &&
+                    runCountAfter >= current.schedule.maxRuns;
                   // startedAtIso in the guard ensures this writes only to the row
                   // this run marked as running — a task deleted mid-run and
                   // recreated with the same id (idempotent commandId replay) must
@@ -1167,10 +1201,13 @@ export const layer = Layer.effect(
                   yield* markCompleted({
                     id: task.id,
                     completedAtIso: iso(completedAt),
-                    nextRunAtIso: nextRunAt(current, completedAt),
+                    nextRunAtIso: capped
+                      ? null
+                      : nextRunAt({ ...current, runCount: runCountAfter }, completedAt),
                     status: lastRunStatus,
                     error: lastRunError,
                     startedAtIso,
+                    capped,
                   });
                 }
                 return current;
@@ -1188,13 +1225,17 @@ export const layer = Layer.effect(
           yield* notifyChanged;
         }
         const scheduleSource = current ?? task;
+        const cappedNow = capReachedAfterRun(scheduleSource);
         const completed: ScheduledTask = {
           ...scheduleSource,
           updatedAt: iso(completedAt),
           lastRunAt: startedAtIso,
-          nextRunAt: nextRunAt(scheduleSource, completedAt),
+          nextRunAt: cappedNow ? null : nextRunAt(scheduleSource, completedAt),
           lastRunStatus,
           lastRunError,
+          // Mirror the row write: a capped task is paused by the completion
+          // statement, so the returned snapshot must not claim it is enabled.
+          ...(cappedNow ? { enabled: false } : {}),
           runCount: scheduleSource.runCount + 1,
         };
         return completed;
@@ -1249,7 +1290,8 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          (isMissedFixedTimeRun(task.schedule, dueAt, now)
+          (isMissedFixedTimeRun(task.schedule, dueAt, now) ||
+          isOutsideIntervalRestrictions(task.schedule, now)
             ? rescheduleMissedRun(task, now)
             : runTask(task, "scheduled")
           ).pipe(
@@ -1279,13 +1321,21 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const decoded = yield* Effect.result(decodeRow(row));
             if (Result.isSuccess(decoded)) {
+              // The interrupted attempt counts toward maxRuns; reaching the
+              // cap releases the row paused instead of re-arming it.
+              const source = decoded.success;
+              const runCountAfter = source.runCount + 1;
+              const capped =
+                source.schedule.maxRuns !== undefined && runCountAfter >= source.schedule.maxRuns;
               yield* retryContended(sql`
                 UPDATE scheduled_tasks
                 SET last_run_status = 'failed',
                     last_run_error = 'Run was interrupted by a server restart.',
-                    next_run_at = ${nextRunAt(decoded.success, now)},
+                    next_run_at = ${capped ? null : nextRunAt({ ...source, runCount: runCountAfter }, now)},
                     updated_at = ${iso(now)},
-                    run_count = run_count + 1
+                    run_count = run_count + 1,
+                    enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END,
+                    enabled_seq = CASE WHEN ${capped ? 1 : 0} THEN NULL ELSE enabled_seq END
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
               `);
               return;
@@ -1421,7 +1471,14 @@ export const layer = Layer.effect(
                 updatedAt: iso(now),
                 nextRunAt: scheduleUnchanged
                   ? existingTask.nextRunAt
-                  : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
+                  : nextRunAt(
+                      {
+                        enabled: input.enabled,
+                        schedule: input.schedule,
+                        runCount: existingTask?.runCount ?? 0,
+                      },
+                      now,
+                    ),
                 lastRunAt: existingTask?.lastRunAt ?? null,
                 lastRunStatus: existingTask?.lastRunStatus ?? "never",
                 lastRunError: existingTask?.lastRunError ?? null,
@@ -1484,7 +1541,10 @@ export const layer = Layer.effect(
                 }))
                   ? {
                       ...task,
-                      nextRunAt: nextRunAt({ enabled: true, schedule: task.schedule }, now),
+                      nextRunAt: nextRunAt(
+                        { enabled: true, schedule: task.schedule, runCount: existingTask.runCount },
+                        now,
+                      ),
                     }
                   : task;
               yield* saveTask(toSave, input.requireExisting === true);
@@ -1532,8 +1592,18 @@ export const layer = Layer.effect(
               if (input.expectedActiveRun !== undefined) {
                 yield* ensureExpectedActiveRun({ taskId: input.id, run: input.expectedActiveRun });
               }
-              const nextEnabled = input.enabled ?? existing.enabled;
               const nextSchedule = input.schedule ?? existing.schedule;
+              // Reaching maxRuns pauses the task; editing the schedule so the
+              // cap is no longer reached (raised or removed) is the resume,
+              // unless the caller says otherwise with an explicit `enabled`.
+              const resumesFromCap =
+                input.enabled === undefined &&
+                input.schedule !== undefined &&
+                !existing.enabled &&
+                existing.schedule.maxRuns !== undefined &&
+                existing.runCount >= existing.schedule.maxRuns &&
+                (nextSchedule.maxRuns === undefined || existing.runCount < nextSchedule.maxRuns);
+              const nextEnabled = resumesFromCap ? true : (input.enabled ?? existing.enabled);
               const nextThreadId =
                 input.threadId !== undefined ? input.threadId : existing.threadId;
               const nextProjectId = input.nextProjectId ?? existing.projectId;
@@ -1582,6 +1652,7 @@ export const layer = Layer.effect(
               if (input.title !== undefined) patch.title = input.title;
               if (input.prompt !== undefined) patch.prompt = input.prompt;
               if (input.enabled !== undefined) patch.enabled = input.enabled ? 1 : 0;
+              if (resumesFromCap) patch.enabled = 1;
               if (input.schedule !== undefined) {
                 patch.schedule_json = yield* encodeScheduleJson(input.schedule);
               }
@@ -1625,13 +1696,17 @@ export const layer = Layer.effect(
                   resumeAfterArchive
                 ) {
                   patch.next_run_at = nextRunAt(
-                    { enabled: nextEnabled, schedule: nextSchedule },
+                    {
+                      enabled: nextEnabled,
+                      schedule: nextSchedule,
+                      runCount: existing.runCount,
+                    },
                     now,
                   );
                 }
               } else if (resumeAfterArchive) {
                 patch.next_run_at = nextRunAt(
-                  { enabled: nextEnabled, schedule: nextSchedule },
+                  { enabled: nextEnabled, schedule: nextSchedule, runCount: existing.runCount },
                   now,
                 );
               }
@@ -1746,7 +1821,10 @@ export const layer = Layer.effect(
                     // the interval restarts from now instead of firing the
                     // overdue due time the voided enablement left behind.
                     const now = yield* localNow;
-                    const next = nextRunAt({ enabled: true, schedule: existing.schedule }, now);
+                    const next = nextRunAt(
+                      { enabled: true, schedule: existing.schedule, runCount: existing.runCount },
+                      now,
+                    );
                     yield* sql`
                       UPDATE scheduled_tasks
                       SET enabled_seq = ${enabledSeq},
@@ -1782,7 +1860,14 @@ export const layer = Layer.effect(
                 return { task: existing, changed: false } as const;
               }
               const now = yield* localNow;
-              const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+              const next = nextRunAt(
+                {
+                  enabled: input.enabled,
+                  schedule: existing.schedule,
+                  runCount: existing.runCount,
+                },
+                now,
+              );
               const enabledSeq = input.enabled ? yield* latestEventSeq : null;
               // RETURNING so a task deleted between the load and this UPDATE is a
               // visible not-found error, not a false success. The schedule_json

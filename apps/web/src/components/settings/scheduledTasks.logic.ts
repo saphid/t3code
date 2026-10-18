@@ -7,7 +7,7 @@ import type {
   ScheduledTaskUpdateInput,
 } from "@t3tools/contracts";
 
-import type { DraftState } from "./scheduledTasksSettings.logic";
+import { scheduleRestrictionsFromDraft, type DraftState } from "./scheduledTasksSettings.logic";
 
 // "Use a specific checkout" requires a path — the contract is
 // TrimmedNonEmptyString, so a blank field would produce a strategy the server
@@ -44,13 +44,18 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
     // Fractional minutes are valid input (the create path permits them), so
     // truncate-free conversion matters for both diffing and the saved value.
     const minutes = Math.max(1, Number(draft.intervalMinutes) || 1);
-    return { type: "interval", everyMs: Math.round(minutes * 60_000) };
+    return {
+      type: "interval",
+      everyMs: Math.round(minutes * 60_000),
+      ...scheduleRestrictionsFromDraft(draft),
+    };
   }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+    ...scheduleRestrictionsFromDraft(draft),
   };
 }
 
@@ -63,8 +68,15 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 }
 
 function sameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
+  if (a.maxRuns !== b.maxRuns) return false;
   if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
+    return (
+      b.type === "interval" &&
+      a.everyMs === b.everyMs &&
+      weekdayKey(a.weekdays) === weekdayKey(b.weekdays) &&
+      a.window?.start === b.window?.start &&
+      a.window?.end === b.window?.end
+    );
   }
   return (
     b.type === "fixed_time" &&

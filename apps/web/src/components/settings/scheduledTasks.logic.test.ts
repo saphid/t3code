@@ -95,6 +95,37 @@ describe("buildScheduledTaskUpdateInput", () => {
     });
   });
 
+  it("sends restriction edits and keeps them when the interval changes", () => {
+    const restricted: ScheduledTask = {
+      ...task,
+      schedule: {
+        type: "interval",
+        everyMs: 1_800_000,
+        weekdays: [1, 2, 3, 4, 5],
+        window: { start: "09:00", end: "17:00" },
+        maxRuns: 16,
+      },
+    };
+    const baseline = taskToDraft(restricted);
+    expect(buildPatch(baseline, restricted)).toBeNull();
+    expect(buildPatch({ ...baseline, maxRuns: "20" }, restricted)).toMatchObject({
+      schedule: {
+        maxRuns: 20,
+        weekdays: [1, 2, 3, 4, 5],
+        window: { start: "09:00", end: "17:00" },
+      },
+    });
+    expect(buildPatch({ ...baseline, windowEnd: "18:00" }, restricted)).toMatchObject({
+      schedule: { window: { start: "09:00", end: "18:00" } },
+    });
+    expect(
+      buildPatch({ ...baseline, intervalWeekdays: new Set([1, 2, 3]) }, restricted),
+    ).toMatchObject({ schedule: { weekdays: [1, 2, 3] } });
+    expect(buildPatch({ ...baseline, intervalMinutes: "60" }, restricted)).toMatchObject({
+      schedule: { everyMs: 3_600_000, maxRuns: 16, weekdays: [1, 2, 3, 4, 5] },
+    });
+  });
+
   it("sends enabled, thread, workspace, model, and project moves when changed", () => {
     const bound: ScheduledTask = { ...task, threadId: "thread:1" as ScheduledTask["threadId"] };
     const baseline = taskToDraft(bound);
