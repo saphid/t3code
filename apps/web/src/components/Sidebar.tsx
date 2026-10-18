@@ -151,8 +151,10 @@ import {
   settledPrHoverColorClass,
   terminalStatusFromRunningIds,
   threadChangeRequestSnapshotsAtom,
+  TurnCompletionTickIcon,
   type ThreadChangeRequestSnapshot,
   type TerminalStatusIndicator,
+  useTurnCompletionTick,
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
@@ -806,6 +808,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const showCompletionTick = useTurnCompletionTick(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -1441,6 +1444,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                               )}
                             >
                               <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                              {showCompletionTick ? (
+                                <TurnCompletionTickIcon className="size-3.5" />
+                              ) : null}
                               <span role="status">{topStatus.label}</span>
                             </button>
                           }
@@ -1454,7 +1460,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           topStatus.className,
                         )}
                       >
-                        {topStatus.icon === "working" ? (
+                        {showCompletionTick ? (
+                          <TurnCompletionTickIcon className="size-4" />
+                        ) : topStatus.icon === "working" ? (
                           <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                         ) : topStatus.icon === "done" ? (
                           <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
@@ -1470,6 +1478,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         ) : null}
                       </span>
                     )
+                  ) : showCompletionTick ? (
+                    <TurnCompletionTickIcon className="size-4" />
                   ) : (
                     threadTimeLabel(thread)
                   )}

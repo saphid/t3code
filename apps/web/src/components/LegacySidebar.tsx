@@ -20,6 +20,8 @@ import {
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
+  TurnCompletionTickIcon,
+  useTurnCompletionTick,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
@@ -455,6 +457,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       lastVisitedAt,
     },
   });
+  const showCompletionTick = useTurnCompletionTick(thread);
   const pr = resolveThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
@@ -713,7 +716,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               </TooltipPopup>
             </Tooltip>
           )}
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {threadStatus ? (
+            <ThreadStatusLabel status={threadStatus} completionTick={showCompletionTick} />
+          ) : showCompletionTick ? (
+            <TurnCompletionTickIcon className="size-3" />
+          ) : null}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}

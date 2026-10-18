@@ -467,6 +467,147 @@ export type SidebarThreadStatus =
   | "failed"
   | "ready";
 
+export interface TurnCompletionTickState {
+  readonly turnId: string | null;
+  readonly requestedAtMs: number | null;
+  readonly phase: "idle" | "running" | "terminal";
+}
+
+export const EMPTY_TURN_COMPLETION_TICK_STATE: TurnCompletionTickState = {
+  turnId: null,
+  requestedAtMs: null,
+  phase: "idle",
+};
+
+export interface TurnCompletionTickTransition {
+  readonly state: TurnCompletionTickState;
+  readonly action: "none" | "start" | "cancel";
+}
+
+type TurnCompletionTickInput = Pick<
+  SidebarThreadSummary,
+  "latestTurn" | "latestUserMessageAt" | "session"
+> & {
+  readonly canObserveLiveTransitions: boolean;
+  readonly isForeground: boolean;
+};
+
+function turnRequestedAtMs(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function latestTurnActivityAtMs(turn: SidebarThreadSummary["latestTurn"]): number | null {
+  if (turn === null) return null;
+  let latest: number | null = null;
+  for (const value of [turn.requestedAt, turn.startedAt, turn.completedAt]) {
+    if (value === null) continue;
+    const parsed = turnRequestedAtMs(value);
+    if (parsed !== null && (latest === null || parsed > latest)) latest = parsed;
+  }
+  return latest;
+}
+
+/**
+ * Tracks one normalized latest-turn edge. The caller supplies the shell's
+ * live/synchronized provenance; without it, a running snapshot followed by
+ * replayed completion would be indistinguishable from new work.
+ */
+export function reduceTurnCompletionTick(
+  previous: TurnCompletionTickState,
+  input: TurnCompletionTickInput,
+): TurnCompletionTickTransition {
+  if (!input.canObserveLiveTransitions || !input.isForeground) {
+    return { state: EMPTY_TURN_COMPLETION_TICK_STATE, action: "cancel" };
+  }
+
+  const latestTurn = input.latestTurn;
+  const latestUserMessageAtMs =
+    input.latestUserMessageAt === null ? null : turnRequestedAtMs(input.latestUserMessageAt);
+  const latestTurnActivityMs = latestTurnActivityAtMs(latestTurn);
+  if (
+    previous.turnId !== null &&
+    latestTurn?.turnId === previous.turnId &&
+    latestUserMessageAtMs !== null &&
+    latestTurnActivityMs !== null &&
+    latestUserMessageAtMs > latestTurnActivityMs
+  ) {
+    return { state: EMPTY_TURN_COMPLETION_TICK_STATE, action: "cancel" };
+  }
+  const runningSessionTurnId =
+    input.session?.status === "running" ? input.session.activeTurnId : null;
+  const turnId = runningSessionTurnId ?? latestTurn?.turnId ?? null;
+  if (turnId === null) {
+    return { state: EMPTY_TURN_COMPLETION_TICK_STATE, action: "cancel" };
+  }
+
+  const requestedAt =
+    latestTurn?.turnId === turnId ? latestTurn.requestedAt : (input.session?.updatedAt ?? "");
+  const requestedAtMs = turnRequestedAtMs(requestedAt);
+  if (previous.turnId !== null && previous.turnId !== turnId) {
+    if (
+      previous.requestedAtMs !== null &&
+      requestedAtMs !== null &&
+      requestedAtMs < previous.requestedAtMs
+    ) {
+      return { state: previous, action: "none" };
+    }
+    const isRunning =
+      latestTurn?.turnId === turnId &&
+      latestTurn.state === "running" &&
+      input.session?.status === "running" &&
+      input.session.activeTurnId === turnId;
+    return {
+      state: {
+        turnId,
+        requestedAtMs,
+        phase: isRunning ? "running" : "idle",
+      },
+      action: "cancel",
+    };
+  }
+
+  const current =
+    previous.turnId === turnId ? previous : { turnId, requestedAtMs, phase: "idle" as const };
+
+  const isUnsuccessfulTerminal =
+    (latestTurn?.turnId === turnId &&
+      (latestTurn.state === "error" || latestTurn.state === "interrupted")) ||
+    input.session?.status === "error" ||
+    input.session?.status === "interrupted" ||
+    input.session?.status === "stopped";
+  if (isUnsuccessfulTerminal) {
+    return { state: { ...current, phase: "terminal" }, action: "cancel" };
+  }
+
+  if (current.phase === "terminal") {
+    return { state: current, action: "none" };
+  }
+
+  const isRunning =
+    latestTurn?.turnId === turnId &&
+    latestTurn.state === "running" &&
+    input.session?.status === "running" &&
+    input.session.activeTurnId === turnId;
+  if (isRunning) {
+    return { state: { ...current, phase: "running" }, action: "none" };
+  }
+
+  const isSuccessfulCompletion =
+    latestTurn?.turnId === turnId &&
+    latestTurn.state === "completed" &&
+    latestTurn.completedAt !== null &&
+    (input.session?.status === "idle" || input.session?.status === "ready");
+  if (isSuccessfulCompletion) {
+    return {
+      state: { ...current, phase: "terminal" },
+      action: current.phase === "running" ? "start" : "none",
+    };
+  }
+
+  return { state: current, action: "none" };
+}
+
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
