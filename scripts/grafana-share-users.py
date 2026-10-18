@@ -138,7 +138,8 @@ def update_policy(token, app, policy, emails):
         "name": policy["name"],
         "decision": policy["decision"],
         "precedence": policy["precedence"],
-        "include": [{"email": {"email": email}} for email in sorted(emails)],
+        "include": [rule for rule in policy.get("include", []) if "email" not in rule]
+        + [{"email": {"email": email}} for email in sorted(emails)],
         "exclude": policy.get("exclude", []),
         "require": policy.get("require", []),
     }
@@ -255,7 +256,12 @@ def remove(email, cf_token, grafana_token):
         enrolled_emails = set(policy_emails(enrolled_policy))
         if enrolled_policy["id"] == policy["id"] or email not in enrolled_emails:
             continue
-        if enrolled_emails == {email}:
+        remaining_rules = [
+            rule
+            for rule in enrolled_policy.get("include", [])
+            if rule.get("email", {}).get("email", "").lower() != email
+        ]
+        if not remaining_rules:
             cf_result(
                 "DELETE",
                 f"/accounts/{CF_ACCOUNT_ID}/access/apps/{app['id']}/policies/{enrolled_policy['id']}",
