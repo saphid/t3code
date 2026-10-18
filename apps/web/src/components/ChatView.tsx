@@ -347,6 +347,7 @@ import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/c
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   resolveThreadDetailRef,
+  readThreadShell,
   useProject,
   useProjects,
   useThreadProjection,
@@ -365,6 +366,8 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import { ThreadTranscriptPanel } from "./chat/ThreadTranscriptPanel";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -4850,6 +4853,18 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const openThreadPanelSurface = useCallback(
+    (targetThreadId: ThreadId) => {
+      if (!activeThreadRef) return;
+      const shell = readThreadShell(scopeThreadRef(activeThreadRef.environmentId, targetThreadId));
+      useRightPanelStore.getState().openThreadSurface(activeThreadRef, {
+        environmentId: activeThreadRef.environmentId,
+        threadId: targetThreadId,
+        ...(shell === null ? {} : { title: formatSubagentDisplayTitle(shell.source.title) }),
+      });
+    },
+    [activeThreadRef],
+  );
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useRightPanelStore.getState().open(activeThreadRef, "diff");
@@ -9502,6 +9517,20 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "thread" ? (
+      <ThreadTranscriptPanel
+        key={renderedRightPanelSurface.id}
+        environmentId={renderedRightPanelSurface.environmentId}
+        threadId={renderedRightPanelSurface.threadId}
+        onNavigateToThread={(threadId) => {
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(
+              scopeThreadRef(renderedRightPanelSurface.environmentId, threadId),
+            ),
+          });
+        }}
+      />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -9600,6 +9629,7 @@ export default function ChatView(props: ChatViewProps) {
       ? { onCheckoutPullRequestRequest: openPullRequestDialog }
       : {}),
     onComposerFocusRequest: scheduleComposerFocus,
+    onOpenThreadInPanel: openThreadPanelSurface,
     ...(isServerThread && isGitRepo ? { onOpenChanges: openChangesFromThreadPanel } : {}),
     versionMismatch:
       showVersionMismatchBanner && versionMismatch

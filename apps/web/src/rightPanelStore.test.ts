@@ -12,6 +12,7 @@ import {
   selectThreadPanelOpen,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
+  threadSurface,
   useRightPanelStore,
 } from "./rightPanelStore";
 
@@ -1000,5 +1001,74 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+
+  it("tracks one thread surface per target thread and refreshes its title", () => {
+    const store = useRightPanelStore.getState();
+    const target = { environmentId: "env-1" as EnvironmentId, threadId: ThreadId.make("child-1") };
+    store.openThreadSurface(refA, { ...target, title: "Checker" });
+    store.openThreadSurface(refA, target);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([threadSurface({ ...target, title: "Checker" })]);
+    expect(state.activeSurfaceId).toBe("thread:env-1:child-1");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("thread");
+
+    store.openThreadSurface(refA, { ...target, title: "Worker" });
+    store.openThreadSurface(refA, {
+      environmentId: "env-1" as EnvironmentId,
+      threadId: ThreadId.make("child-2"),
+      title: "Worker 2",
+    });
+    const reopened = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(reopened.surfaces.map((surface) => surface.id)).toEqual([
+      "thread:env-1:child-1",
+      "thread:env-1:child-2",
+    ]);
+    expect(reopened.surfaces[0]).toMatchObject({ title: "Worker" });
+    expect(reopened.activeSurfaceId).toBe("thread:env-1:child-2");
+
+    store.closeSurface(refA, "thread:env-1:child-2");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([threadSurface({ ...target, title: "Worker" })]);
+  });
+
+  it("keeps thread surfaces scoped to the thread whose panel opened them", () => {
+    const store = useRightPanelStore.getState();
+    const target = { environmentId: "env-1" as EnvironmentId, threadId: ThreadId.make("child-1") };
+    store.openThreadSurface(refA, target);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+  });
+
+  it("loads persisted panels from versions without thread surfaces", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "agents",
+            surfaces: [
+              { id: "agents", kind: "agents" },
+              { id: "diff", kind: "diff" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "agents",
+          surfaces: [
+            { id: "agents", kind: "agents" },
+            { id: "diff", kind: "diff" },
+          ],
+        },
+      },
+      threadPanelVisibilityByThreadKey: {},
+    });
   });
 });
