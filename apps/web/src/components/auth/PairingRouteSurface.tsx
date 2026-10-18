@@ -13,6 +13,37 @@ import { readHostedPairingRequest } from "../../hostedPairing";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ConnectionClasp } from "./ConnectionClasp";
+
+type HostedPairingStatus = "pairing" | "paired" | "error";
+
+export function HostedPairingHeading({
+  status,
+  playConnectionClasp = false,
+  onConnectionClaspSettled,
+}: {
+  status: HostedPairingStatus;
+  playConnectionClasp?: boolean;
+  onConnectionClaspSettled?: () => void;
+}) {
+  return (
+    <div className="mt-3 flex items-center gap-3">
+      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+        {status === "paired"
+          ? "Backend paired"
+          : status === "error"
+            ? "Pairing failed"
+            : "Pairing backend"}
+      </h1>
+      {status === "paired" ? (
+        <ConnectionClasp
+          playJoiningMotion={playConnectionClasp}
+          {...(onConnectionClaspSettled ? { onMotionSettled: onConnectionClaspSettled } : {})}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 export function PairingPendingSurface() {
   return (
@@ -168,7 +199,7 @@ export function HostedPairingRouteSurface() {
     reportFailure: false,
   });
   const hostedPairingRequestRef = useRef(readHostedPairingRequest());
-  const [status, setStatus] = useState<"pairing" | "paired" | "error">(() =>
+  const [status, setStatus] = useState<HostedPairingStatus>(() =>
     hostedPairingRequestRef.current ? "pairing" : "error",
   );
   const [message, setMessage] = useState(() =>
@@ -177,8 +208,10 @@ export function HostedPairingRouteSurface() {
       : "This pairing link is missing its backend host or token.",
   );
   const [canRetry, setCanRetry] = useState(false);
+  const [playConnectionClasp, setPlayConnectionClasp] = useState(false);
   const submitAttemptedRef = useRef(false);
   const tokenSubmittedRef = useRef(false);
+  const handleConnectionClaspSettled = useCallback(() => setPlayConnectionClasp(false), []);
 
   const submitHostedPairingRequest = useCallback(async () => {
     const request = hostedPairingRequestRef.current;
@@ -200,6 +233,7 @@ export function HostedPairingRouteSurface() {
     setStatus("pairing");
     setMessage("Connecting to this backend.");
     setCanRetry(false);
+    setPlayConnectionClasp(false);
     tokenSubmittedRef.current = true;
 
     const result = await connectPairingEnvironment({
@@ -209,6 +243,7 @@ export function HostedPairingRouteSurface() {
     if (result._tag === "Success") {
       setStatus("paired");
       setMessage(`${request.label || "The environment"} is saved in this browser.`);
+      setPlayConnectionClasp(true);
       return;
     }
 
@@ -244,13 +279,11 @@ export function HostedPairingRouteSurface() {
         <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
           {APP_DISPLAY_NAME}
         </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          {status === "paired"
-            ? "Backend paired"
-            : status === "error"
-              ? "Pairing failed"
-              : "Pairing backend"}
-        </h1>
+        <HostedPairingHeading
+          status={status}
+          playConnectionClasp={playConnectionClasp}
+          onConnectionClaspSettled={handleConnectionClaspSettled}
+        />
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
         {request ? (
