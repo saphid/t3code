@@ -48,28 +48,24 @@ export const makeImageGenerationFromRegistry = (
 ): ImageGeneration["Service"] =>
   ImageGeneration.of({
     generateProjectIcons: (input) =>
-      Effect.flatMap(registry.listInstances, (instances) => {
-        const instance = instances.find(
-          (candidate) => candidate.enabled && candidate.imageGeneration,
-        );
-        if (!instance?.imageGeneration) {
-          return Effect.fail(
-            new ProjectIconGenerationError({
-              reason: "unsupported",
-              message:
-                "No provider with image generation is available. Add and sign in to a provider that supports it, such as Codex.",
-            }),
-          );
+      Effect.gen(function* () {
+        const instances = yield* registry.listInstances;
+        let notReady: ServerProvider | undefined;
+        for (const instance of instances) {
+          if (!instance.enabled || !instance.imageGeneration) continue;
+          const snapshot = yield* instance.snapshot.getSnapshot;
+          if (isUsableSnapshot(snapshot))
+            return yield* instance.imageGeneration.generateProjectIcons(input);
+          notReady ??= snapshot;
         }
-        return Effect.flatMap(instance.snapshot.getSnapshot, (snapshot) =>
-          isUsableSnapshot(snapshot)
-            ? instance.imageGeneration!.generateProjectIcons(input)
-            : Effect.fail(
-                new ProjectIconGenerationError({
-                  reason: "unsupported",
-                  message: `${snapshot.displayName ?? "The provider"} is available but not ready. Check its status in Settings → Connections.`,
-                }),
-              ),
+        return yield* Effect.fail(
+          new ProjectIconGenerationError({
+            reason: "unsupported",
+            message:
+              notReady === undefined
+                ? "No provider with image generation is available. Add and sign in to a provider that supports it, such as Codex."
+                : `${notReady.displayName ?? "The provider"} is available but not ready. Check its status in Settings → Connections.`,
+          }),
         );
       }),
   });

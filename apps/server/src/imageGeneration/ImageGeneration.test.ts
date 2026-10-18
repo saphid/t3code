@@ -99,4 +99,28 @@ describe("makeImageGenerationFromRegistry", () => {
     );
     expect(isProjectIconGenerationError(error)).toBe(true);
   });
+
+  it("uses a ready capable provider after an unavailable one", async () => {
+    const service = makeImageGenerationFromRegistry({
+      listInstances: Effect.succeed([
+        makeInstance({
+          imageGeneration: okInstance,
+          snapshot: {
+            getSnapshot: Effect.succeed({
+              displayName: "Unavailable Codex",
+              enabled: true,
+              installed: true,
+              status: "error",
+            } as unknown as ServerProvider),
+          },
+        }),
+        makeInstance({ instanceId: "ready-instance", imageGeneration: okInstance }),
+      ]),
+    } as never);
+
+    const result = await Effect.runPromise(
+      service.generateProjectIcons({ prompt: "A rocket ship" }),
+    );
+    expect(result.iconPaths).toHaveLength(3);
+  });
 });
