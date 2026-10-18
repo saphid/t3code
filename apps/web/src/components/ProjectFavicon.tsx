@@ -7,6 +7,7 @@ import { FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { useState } from "react";
 import { useAssetUrlState } from "../assets/assetUrls";
+import { describeProjectFallbackMark, ProjectFallbackMark } from "./ProjectFallbackMark";
 import { cn } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Map<string, string>();
@@ -20,10 +21,15 @@ export function ProjectFavicon(input: {
 }) {
   const state = useProjectFaviconAsset(input);
   const src = state._tag === "Success" ? state.url : null;
-  const FallbackIcon = input.fallbackIcon ?? FolderIcon;
-
   if (!src || isProjectFaviconFallbackUrl(src)) {
-    return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;
+    return (
+      <ProjectFaviconFallback
+        environmentId={input.environmentId}
+        cwd={input.cwd}
+        className={input.className}
+        icon={input.fallbackIcon}
+      />
+    );
   }
 
   const cacheKey = getProjectFaviconCacheKey(input.environmentId, input.cwd, src);
@@ -34,7 +40,9 @@ export function ProjectFavicon(input: {
       cacheKey={cacheKey}
       src={src}
       className={input.className}
-      fallbackIcon={FallbackIcon}
+      environmentId={input.environmentId}
+      cwd={input.cwd}
+      fallbackIcon={input.fallbackIcon}
     />
   );
 }
@@ -52,25 +60,42 @@ export function useProjectFaviconAsset(input: {
 }
 
 function ProjectFaviconFallback({
+  environmentId,
+  cwd,
   className,
   icon: Icon,
 }: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
   readonly className?: string | undefined;
-  readonly icon: ComponentType<{ className?: string }>;
+  readonly icon?: ComponentType<{ className?: string }> | undefined;
 }) {
-  return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", className)} />;
+  if (Icon) {
+    return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", className)} />;
+  }
+
+  const descriptor = describeProjectFallbackMark(environmentId, cwd);
+  if (descriptor) {
+    return <ProjectFallbackMark descriptor={descriptor} className={className} />;
+  }
+
+  return <FolderIcon className={cn("size-3.5 shrink-0 text-icon-muted", className)} />;
 }
 
 function ProjectFaviconImage({
   cacheKey,
   src,
   className,
+  environmentId,
+  cwd,
   fallbackIcon: FallbackIcon,
 }: {
   readonly cacheKey: string;
   readonly src: string;
   readonly className?: string | undefined;
-  readonly fallbackIcon: ComponentType<{ className?: string }>;
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly fallbackIcon?: ComponentType<{ className?: string }> | undefined;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(
     () => loadedProjectFaviconSrcs.get(cacheKey) ?? null,
@@ -86,7 +111,12 @@ function ProjectFaviconImage({
   return (
     <>
       {displayedSrc === null ? (
-        <ProjectFaviconFallback className={className} icon={FallbackIcon} />
+        <ProjectFaviconFallback
+          environmentId={environmentId}
+          cwd={cwd}
+          className={className}
+          icon={FallbackIcon}
+        />
       ) : null}
       {displayedSrc ? (
         <img

@@ -1,7 +1,8 @@
 # Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
-paths, and icon links in project HTML files.
+paths, and icon links in project HTML files. When it finds no image, the web and desktop clients
+show a stable project mark based on the environment and project path.
 
 To choose a different icon:
 
