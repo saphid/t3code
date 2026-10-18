@@ -10,13 +10,16 @@ import type { Browser, ElectronApplication, Page } from "playwright-core";
 import { chromium, _electron } from "playwright-core";
 
 import { NetShaper, type ShapeConfig } from "./netShaper.ts";
+import { stopServer, waitForServerPairingUrl } from "./serverProcess.ts";
+import { createCleanupScope } from "./cleanup.ts";
 import { createWorkspaceRepo, seedFixture, type FixtureSize, type SeedResult } from "./seed.ts";
 
 const packageDir = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const repoRoot = NodePath.resolve(packageDir, "..", "..");
 // T3_PERF_SERVER_BIN points the web surface at any t3 server entry (e.g. an
 // npm-installed release's dist/bin.mjs) instead of this repo's build.
-const serverBin = process.env["T3_PERF_SERVER_BIN"] ?? NodePath.join(repoRoot, "apps/server/dist/bin.mjs");
+const serverBin =
+  process.env["T3_PERF_SERVER_BIN"] ?? NodePath.join(repoRoot, "apps/server/dist/bin.mjs");
 const desktopDir = NodePath.join(repoRoot, "apps/desktop");
 // T3_PERF_CHROME points at a Chromium binary on machines without installed
 // Chrome (Linux servers); default is the local Chrome channel.
@@ -120,13 +123,23 @@ interface SpawnedServer {
 }
 
 /** Spawns the built server against an isolated home and waits for its pairing URL. */
-async function spawnServer(input: {
-  readonly homeDir: string;
-  readonly port: number;
-  /** Extra origins (the relay's) the server should accept. */
-  readonly allowedOrigins?: ReadonlyArray<string>;
-}): Promise<SpawnedServer> {
-  const args = [serverBin, "--base-dir", input.homeDir, "--port", String(input.port), "--no-browser"];
+async function spawnServer(
+  input: {
+    readonly homeDir: string;
+    readonly port: number;
+    /** Extra origins (the relay's) the server should accept. */
+    readonly allowedOrigins?: ReadonlyArray<string>;
+  },
+  cleanups: Array<() => Promise<void>>,
+): Promise<SpawnedServer> {
+  const args = [
+    serverBin,
+    "--base-dir",
+    input.homeDir,
+    "--port",
+    String(input.port),
+    "--no-browser",
+  ];
   const child = NodeChildProcess.spawn(process.execPath, args, {
     cwd: repoRoot,
     env: {
@@ -138,27 +151,8 @@ async function spawnServer(input: {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let output = "";
-  const pairingUrl = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Server did not print a pairing URL within 60s. Output so far:\n${output.slice(-4000)}`));
-    }, 60_000);
-    timer.unref();
-    const scan = (chunk: Buffer) => {
-      output += chunk.toString();
-      const match = /pairingUrl[=:"\s]+"?(https?:\/\/\S+?)["\s]/.exec(output);
-      if (match?.[1] !== undefined) {
-        clearTimeout(timer);
-        resolve(match[1]);
-      }
-    };
-    child.stdout?.on("data", scan);
-    child.stderr?.on("data", scan);
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Server exited with code ${code} before printing a pairing URL:\n${output.slice(-4000)}`));
-    });
-  });
+  cleanups.push(() => stopServer(child));
+  const pairingUrl = await waitForServerPairingUrl(child);
   return { child, pairingUrl, port: input.port };
 }
 
@@ -228,21 +222,16 @@ async function chromiumGpuPid(browser: Browser): Promise<number> {
 }
 
 export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
-  const homeDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-perf-"));
-  const workspaceRoot = NodePath.join(homeDir, "workspace");
-  await createWorkspaceRepo(workspaceRoot);
-  if (options.streamingProvider === true) await provisionStreamingProvider(homeDir);
-  const cleanups: Array<() => Promise<void>> = [
-    async () => {
-      await NodeFSP.rm(homeDir, { recursive: true, force: true });
-    },
-  ];
-  const close = async () => {
-    for (const cleanup of [...cleanups].reverse()) {
-      await cleanup().catch(() => undefined);
-    }
-  };
+  const scope = createCleanupScope();
+  const { cleanups, close } = scope;
   try {
+    const homeDir = await scope.acquire(
+      () => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-perf-")),
+      (home) => NodeFSP.rm(home, { recursive: true, force: true }),
+    );
+    const workspaceRoot = NodePath.join(homeDir, "workspace");
+    await createWorkspaceRepo(workspaceRoot);
+    if (options.streamingProvider === true) await provisionStreamingProvider(homeDir);
     if (options.surface === "web") {
       const serverPort = await findFreePort();
       const profile =
@@ -259,23 +248,28 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
       if (wantRelay) {
         clientPort = await findFreePort();
         shaper = new NetShaper();
-        await shaper.listen(clientPort, serverPort);
-        shaper.set(scenarioShape ?? profile?.shape ?? {});
         const shaperHandle = shaper;
-        cleanups.push(async () => shaperHandle.close());
+        await scope.acquire(
+          () => shaperHandle.listen(clientPort, serverPort),
+          async () => shaperHandle.close(),
+        );
+        shaper.set(scenarioShape ?? profile?.shape ?? {});
       }
-      const server = await spawnServer({
-        homeDir,
-        port: serverPort,
-        ...(shaper !== null
-          ? {
-              allowedOrigins: [
-                `http://127.0.0.1:${clientPort}`,
-                `http://localhost:${clientPort}`,
-              ],
-            }
-          : {}),
-      });
+      const server = await spawnServer(
+        {
+          homeDir,
+          port: serverPort,
+          ...(shaper !== null
+            ? {
+                allowedOrigins: [
+                  `http://127.0.0.1:${clientPort}`,
+                  `http://localhost:${clientPort}`,
+                ],
+              }
+            : {}),
+        },
+        cleanups,
+      );
       // Behind the relay the browser must enter through the relay's port; the
       // pairing URL is origin-relative beyond that.
       const entryUrl =
@@ -286,11 +280,6 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
               url.port = String(clientPort);
               return url.toString();
             })();
-      cleanups.push(async () => {
-        server.child.kill("SIGTERM");
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (server.child.exitCode === null) server.child.kill("SIGKILL");
-      });
       const seed = await seedFixture({ homeDir, size: options.size, workspaceRoot });
       // Second server (environment-switch): its own home under the throwaway
       // dir (the rm -rf cleanup covers it), always the small fixture, retitled
@@ -302,19 +291,14 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
         const secondHomeDir = NodePath.join(homeDir, "second-env");
         const secondWorkspaceRoot = NodePath.join(secondHomeDir, "workspace");
         await createWorkspaceRepo(secondWorkspaceRoot);
-        const second = await spawnServer({
-          homeDir: secondHomeDir,
-          port: await findFreePort(),
-          allowedOrigins: [
-            `http://127.0.0.1:${clientPort}`,
-            `http://localhost:${clientPort}`,
-          ],
-        });
-        cleanups.push(async () => {
-          second.child.kill("SIGTERM");
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          if (second.child.exitCode === null) second.child.kill("SIGKILL");
-        });
+        const second = await spawnServer(
+          {
+            homeDir: secondHomeDir,
+            port: await findFreePort(),
+            allowedOrigins: [`http://127.0.0.1:${clientPort}`, `http://localhost:${clientPort}`],
+          },
+          cleanups,
+        );
         const secondSeed = await seedFixture({
           homeDir: secondHomeDir,
           size: "small",
@@ -327,14 +311,17 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
           threadTitle: `${SECOND_ENV_THREAD_PREFIX}perf-thread-giant`,
         };
       }
-      const browser = await chromium.launch({
-        ...(chromeExecutable !== undefined
-          ? { executablePath: chromeExecutable }
-          : { channel: "chrome" as const }),
-        ...(chromeExtraArgs.length > 0 ? { args: chromeExtraArgs } : {}),
-        headless: options.headless,
-      });
-      cleanups.push(async () => browser.close());
+      const browser = await scope.acquire(
+        () =>
+          chromium.launch({
+            ...(chromeExecutable !== undefined
+              ? { executablePath: chromeExecutable }
+              : { channel: "chrome" as const }),
+            ...(chromeExtraArgs.length > 0 ? { args: chromeExtraArgs } : {}),
+            headless: options.headless,
+          }),
+        (browser) => browser.close(),
+      );
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       const page = await context.newPage();
       // Shaped connections legitimately take minutes to move the bundle.
@@ -367,24 +354,11 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
     // boot the plain server once to run migrations, stop it, seed, launch.
     {
       const migratePort = await findFreePort();
-      const migrateServer = await spawnServer({ homeDir, port: migratePort });
+      const migrateServer = await spawnServer({ homeDir, port: migratePort }, cleanups);
       const seedDone = await seedFixture({ homeDir, size: options.size, workspaceRoot }).finally(
-        () => {
-          migrateServer.child.kill("SIGTERM");
-        },
+        () => stopServer(migrateServer.child),
       );
-      await new Promise<void>((resolve) => {
-        const force = setTimeout(() => {
-          migrateServer.child.kill("SIGKILL");
-          resolve();
-        }, 3000);
-        force.unref();
-        migrateServer.child.once("exit", () => {
-          clearTimeout(force);
-          resolve();
-        });
-      });
-      return await launchDesktop(homeDir, seedDone, cleanups, close);
+      return await launchDesktop(homeDir, seedDone, scope);
     }
   } catch (error) {
     await close();
@@ -395,68 +369,72 @@ export async function launchEnv(options: LaunchOptions): Promise<LaunchedEnv> {
 async function launchDesktop(
   homeDir: string,
   seed: SeedResult,
-  cleanups: Array<() => Promise<void>>,
-  close: () => Promise<void>,
+  scope: ReturnType<typeof createCleanupScope>,
 ): Promise<LaunchedEnv> {
-    // The terminal scenario opens a real PTY, and desktop points HOME at the
-    // throwaway dir; an empty .zshrc keeps a zsh with no startup files from
-    // running zsh-newuser-install into the measured terminal.
-    await NodeFSP.writeFile(NodePath.join(homeDir, ".zshrc"), "");
-    // The repo's launcher prepares the app bundle the way the desktop's own
-    // scripts do - a raw Electron binary launch fails scheme registration.
-    const { resolveElectronLaunchCommand } = (await import(
-      NodePath.join(desktopDir, "scripts/electron-launcher.mjs")
-    )) as { resolveElectronLaunchCommand: (args: Array<string>) => { electronPath: string; args: Array<string> } };
-    // --use-mock-keychain: with HOME pointed at the throwaway dir the login
-    // keychain is invisible, and without this switch macOS shows a blocking
-    // "Keychain Not Found" dialog (whose default button would edit the
-    // developer's real keychain search list). Test secrets need no encryption.
-    const command = resolveElectronLaunchCommand([
-      "--use-mock-keychain",
-      NodePath.join(desktopDir, "dist-electron/main.cjs"),
-    ]);
-    // Agents driving this harness often run inside a T3 desktop-spawned
-    // server, which exports ELECTRON_RUN_AS_NODE=1; inheriting it turns the
-    // Electron launch into a plain Node process with no Electron APIs.
-    const electronEnv = { ...(process.env as Record<string, string>) };
-    delete electronEnv["ELECTRON_RUN_AS_NODE"];
-    const electronApp = await _electron.launch({
-      executablePath: command.electronPath,
-      args: command.args,
-      cwd: desktopDir,
-      env: {
-        ...electronEnv,
-        VITE_DEV_SERVER_URL: "",
-        // T3CODE_HOME moves the database but NOT Electron's userData
-        // (cookies, IndexedDB), which otherwise lands on the developer's live
-        // T3 Code profile and collides with it. An isolated HOME moves both.
-        HOME: homeDir,
-        XDG_CONFIG_HOME: NodePath.join(homeDir, ".config"),
-        XDG_DATA_HOME: NodePath.join(homeDir, ".local/share"),
-        T3CODE_HOME: homeDir,
-        T3CODE_NO_BROWSER: "1",
-      },
-    });
-    cleanups.push(async () => {
+  const { close } = scope;
+  // The terminal scenario opens a real PTY, and desktop points HOME at the
+  // throwaway dir; an empty .zshrc keeps a zsh with no startup files from
+  // running zsh-newuser-install into the measured terminal.
+  await NodeFSP.writeFile(NodePath.join(homeDir, ".zshrc"), "");
+  // The repo's launcher prepares the app bundle the way the desktop's own
+  // scripts do - a raw Electron binary launch fails scheme registration.
+  const { resolveElectronLaunchCommand } = (await import(
+    NodePath.join(desktopDir, "scripts/electron-launcher.mjs")
+  )) as {
+    resolveElectronLaunchCommand: (args: Array<string>) => {
+      electronPath: string;
+      args: Array<string>;
+    };
+  };
+  // --use-mock-keychain: with HOME pointed at the throwaway dir the login
+  // keychain is invisible, and without this switch macOS shows a blocking
+  // "Keychain Not Found" dialog (whose default button would edit the
+  // developer's real keychain search list). Test secrets need no encryption.
+  const command = resolveElectronLaunchCommand([
+    "--use-mock-keychain",
+    NodePath.join(desktopDir, "dist-electron/main.cjs"),
+  ]);
+  // Agents driving this harness often run inside a T3 desktop-spawned
+  // server, which exports ELECTRON_RUN_AS_NODE=1; inheriting it turns the
+  // Electron launch into a plain Node process with no Electron APIs.
+  const electronEnv = { ...(process.env as Record<string, string>) };
+  delete electronEnv["ELECTRON_RUN_AS_NODE"];
+  const electronApp = await scope.acquire(
+    () =>
+      _electron.launch({
+        executablePath: command.electronPath,
+        args: command.args,
+        cwd: desktopDir,
+        env: {
+          ...electronEnv,
+          VITE_DEV_SERVER_URL: "",
+          // T3CODE_HOME moves the database but NOT Electron's userData
+          // (cookies, IndexedDB), which otherwise lands on the developer's live
+          // T3 Code profile and collides with it. An isolated HOME moves both.
+          HOME: homeDir,
+          XDG_CONFIG_HOME: NodePath.join(homeDir, ".config"),
+          XDG_DATA_HOME: NodePath.join(homeDir, ".local/share"),
+          T3CODE_HOME: homeDir,
+          T3CODE_NO_BROWSER: "1",
+        },
+      }),
+    async (electronApp) => {
       // close() can wedge (observed hanging a whole suite); give it 15s, then
       // kill the Electron root pid we captured at spawn.
-      const rootPid = electronApp.process().pid;
+      const rootProcess = electronApp.process();
+      let forceTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         electronApp.close().catch(() => undefined),
         new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            if (typeof rootPid === "number") {
-              try {
-                process.kill(rootPid, "SIGKILL");
-              } catch {
-                // Already gone.
-              }
+          forceTimer = setTimeout(() => {
+            if (rootProcess.exitCode === null && rootProcess.signalCode === null) {
+              rootProcess.kill("SIGKILL");
             }
             resolve();
           }, 15_000);
-          timer.unref();
+          forceTimer.unref();
         }),
-      ]);
+      ]).finally(() => clearTimeout(forceTimer));
       // The desktop's bundled server can outlive the Electron shell; reap it
       // via the pid it recorded inside our throwaway home.
       try {
@@ -475,16 +453,17 @@ async function launchDesktop(
       } catch {
         // Already gone, or never started.
       }
-    });
-    const page = await electronApp.firstWindow();
-    const metrics = await electronApp.evaluate(({ app }) => app.getAppMetrics());
-    const gpu = metrics.find((entry) => entry.type === "GPU");
-    if (gpu === undefined) throw new Error("Electron reported no GPU process in getAppMetrics().");
-    return {
-      surface: "desktop",
-      page,
-      seed: { ...seed, homeDir },
-      gpuHelperPid: gpu.pid,
+    },
+  );
+  const page = await electronApp.firstWindow();
+  const metrics = await electronApp.evaluate(({ app }) => app.getAppMetrics());
+  const gpu = metrics.find((entry) => entry.type === "GPU");
+  if (gpu === undefined) throw new Error("Electron reported no GPU process in getAppMetrics().");
+  return {
+    surface: "desktop",
+    page,
+    seed: { ...seed, homeDir },
+    gpuHelperPid: gpu.pid,
     rootPid: electronApp.process().pid ?? -1,
     serverPid: null,
     secondServer: null,

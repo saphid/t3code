@@ -87,6 +87,7 @@ class LokiShipper {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ streams }),
+        signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok && !this.warned) {
         this.warned = true;
@@ -161,6 +162,7 @@ class MetricsPusher {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok && !this.warned) {
         this.warned = true;
@@ -258,7 +260,11 @@ async function readVersions(path: string): Promise<Array<VersionEntry>> {
     .filter((line) => line !== "")
     .map((line) => {
       const [version, publishedIso] = line.split("\t");
-      if (version === undefined || publishedIso === undefined || Number.isNaN(Date.parse(publishedIso))) {
+      if (
+        version === undefined ||
+        publishedIso === undefined ||
+        Number.isNaN(Date.parse(publishedIso))
+      ) {
         throw new Error(`Bad versions line: ${line}`);
       }
       return { version, publishedIso };
@@ -373,16 +379,21 @@ async function main(): Promise<number> {
     void loki.flush();
   }, 15_000);
 
-  const stop = () => {
+  let stopExitCode: number | null = null;
+  const stop = (exitCode: number) => {
+    stopExitCode ??= exitCode;
     say("received stop signal; terminating current child");
     if (activeChild !== null) activeChild.kill("SIGTERM");
   };
-  process.on("SIGTERM", stop);
-  process.on("SIGINT", stop);
+  process.on("SIGTERM", () => stop(143));
+  process.on("SIGINT", () => stop(130));
 
-  say(`batch start: ${queue.length} version(s), suite=${values.suite}, surface=${values.surface}, host=${host}`);
+  say(
+    `batch start: ${queue.length} version(s), suite=${values.suite}, surface=${values.surface}, host=${host}`,
+  );
 
   for (const { version, publishedIso } of queue) {
+    if (stopExitCode !== null) break;
     const prior = ledger[version];
     if (prior !== undefined && isDone(prior)) {
       say(`skip ${version}: already done`);
@@ -398,6 +409,7 @@ async function main(): Promise<number> {
       say(`install ${version}`);
       beat();
       await metrics.flush();
+      if (stopExitCode !== null) break;
       const installCode = await spawnLogged(
         "npm",
         ["install", "--prefix", NodePath.join(releasesDir, version), "--silent", `t3@${version}`],
@@ -407,6 +419,7 @@ async function main(): Promise<number> {
           loki.push({ job: "t3perf-orchestrator", host, stream }, `[install ${version}] ${line}`);
         },
       );
+      if (stopExitCode !== null) break;
       if (installCode !== 0 || !NodeFS.existsSync(serverBin)) {
         say(`install-failed ${version} exit=${installCode}`);
         ledger[version] = {
@@ -423,12 +436,14 @@ async function main(): Promise<number> {
     say(`run ${version} (suite ${values.suite}, surface ${values.surface})`);
     beat();
     await metrics.flush();
+    if (stopExitCode !== null) break;
     const outDir = NodePath.join(resultsDir, version);
     await NodeFSP.mkdir(outDir, { recursive: true });
     // Leftovers from an aborted attempt would double-export under this build.
     for (const stale of NodeFS.readdirSync(outDir)) {
       if (/^perf-.*\.(json|md)$/.test(stale)) await NodeFSP.rm(NodePath.join(outDir, stale));
     }
+    if (stopExitCode !== null) break;
     const comboLine = /^\S+ \/ (web|desktop|server) \/ \S+ \/ net=/;
     const runCode = await spawnLogged(
       process.execPath,
@@ -454,27 +469,24 @@ async function main(): Promise<number> {
       },
     );
 
+    if (stopExitCode !== null) break;
+
     currentPhase = 3;
     say(`export ${version} at publish time ${publishedIso}`);
     beat();
     await metrics.flush();
+    if (stopExitCode !== null) break;
     const exportCode = await spawnLogged(
       process.execPath,
-      [
-        "src/otlpBackfill.ts",
-        "--in",
-        outDir,
-        "--otlp",
-        values.otlp,
-        "--time",
-        publishedIso,
-      ],
+      ["src/otlpBackfill.ts", "--in", outDir, "--otlp", values.otlp, "--time", publishedIso],
       { cwd: packageDir, env: process.env },
       (line, stream) => {
         localLog.write(`[export ${version}] ${line}\n`);
         loki.push({ job: "t3perf-orchestrator", host, stream }, `[export ${version}] ${line}`);
       },
     );
+
+    if (stopExitCode !== null) break;
 
     const durationMs = Date.now() - startedAt;
     const counts = readComboCounts(outDir);
@@ -499,13 +511,14 @@ async function main(): Promise<number> {
 
   currentVersion = "";
   currentPhase = 0;
-  say(`ALL-DONE: ${doneCount()} ok, ${failedCount()} failed, of ${queue.length}`);
+  const outcome = stopExitCode === null ? "ALL-DONE" : "STOPPED";
+  say(`${outcome}: ${doneCount()} ok, ${failedCount()} failed, of ${queue.length}`);
   clearInterval(telemetryTimer);
   beat();
   await metrics.flush();
   await loki.flush();
   localLog.end();
-  return failedCount() === 0 ? 0 : 1;
+  return stopExitCode ?? (failedCount() === 0 ? 0 : 1);
 }
 
 main().then(
