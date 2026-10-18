@@ -442,7 +442,8 @@ export function ThreadRelationshipsPanel(props: {
                       className={cn(
                         "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
                         statusDotClass(edge.status),
-                        statusDotIsRunning(edge.status) && "animate-status-pulse",
+                        statusDotIsRunning(edge.status) &&
+                          "motion-safe:animate-[status-pulse_2s_1]",
                       )}
                       aria-hidden="true"
                     />
