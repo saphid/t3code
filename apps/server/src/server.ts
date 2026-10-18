@@ -63,6 +63,7 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import * as ImageGeneration from "./imageGeneration/ImageGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
@@ -503,6 +504,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // Icon generation routes through the instance registry like text
+  // generation does; satisfy its registry requirement explicitly because
+  // this pipe's environments do not flow into later members.
+  Layer.provideMerge(
+    ImageGeneration.layer.pipe(Layer.provideMerge(ProviderInstanceRegistryHydrationLive)),
+  ),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance

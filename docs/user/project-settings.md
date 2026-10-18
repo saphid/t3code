@@ -49,6 +49,11 @@ T3 Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
+Choose **Generate** in the icon picker to create icons with AI. Describe what the icon should
+depict, optionally pick a vibe, and Generate produces three variants to pick between. Generation
+runs on the provider your environment uses, so it needs a provider that supports image generation
+(such as Codex); without one, the picker explains what to add.
+
 When no image is found, web and desktop show a two-character monogram with a color
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.

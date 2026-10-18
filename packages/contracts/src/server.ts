@@ -203,6 +203,9 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  // Only drivers that probed image-generation support set this. Absent means
+  // "not supported", so consumers must not default it to true.
+  supportsImageGeneration: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,

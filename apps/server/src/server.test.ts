@@ -29,6 +29,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
+  ProjectIconGenerationError,
   type PreviewEvent,
   ProjectId,
   type ProviderAuthState,
@@ -115,6 +116,7 @@ import {
   resolveFileManagerRevealKindForConfig,
 } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as ImageGeneration from "./imageGeneration/ImageGeneration.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
@@ -753,7 +755,9 @@ const buildAppUnderTest = (options?: {
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
     );
 
-    const servedRoutesLayer = HttpRouter.serve(
+    // The icon mock gets its own provide step: chaining it onto the pipe
+    // below would exceed the type-inference limit for Layer.provide chains.
+    const servedRoutesWithIconsLayer = HttpRouter.serve(
       makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
       {
         disableListenLog: true,
@@ -761,6 +765,19 @@ const buildAppUnderTest = (options?: {
         routerConfig: HTTP_ROUTER_CONFIG,
       },
     ).pipe(
+      Layer.provide(
+        Layer.mock(ImageGeneration.ImageGeneration)({
+          generateProjectIcons: () =>
+            Effect.fail(
+              new ProjectIconGenerationError({
+                reason: "unsupported",
+                message: "Icon generation is not stubbed in this test",
+              }),
+            ),
+        }),
+      ),
+    );
+    const servedRoutesLayer = servedRoutesWithIconsLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Keybindings.Keybindings)({

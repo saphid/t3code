@@ -44,9 +44,13 @@ describe("ProjectIconPickerDialog", () => {
       <ProjectIconPickerDialog
         current={null}
         projectName="Test"
+        environmentId={null}
+        workspaceRoot="/tmp/test"
+        providers={[]}
         open
         onOpenChange={() => {}}
         onSelect={() => {}}
+        onSelectFile={() => {}}
       />,
     );
 

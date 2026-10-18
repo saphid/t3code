@@ -75,6 +75,8 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  /** True when the signed-in account's model provider can generate images. */
+  readonly imageGeneration?: boolean;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -433,7 +435,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits, capabilities] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
@@ -459,6 +461,12 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
         ),
       ),
+      // Image generation is account-dependent; an answer that fails or never
+      // lands degrades to "not supported" for this probe.
+      client.request("modelProvider/capabilities/read", {}).pipe(
+        Effect.map((response) => response.imageGeneration),
+        Effect.catch(() => Effect.succeed(undefined)),
+      ),
     ],
     { concurrency: "unbounded" },
   );
@@ -471,6 +479,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    ...(capabilities !== undefined ? { imageGeneration: capabilities } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -690,6 +699,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
       usageLimits,
     },
+    supportsImageGeneration: snapshot.imageGeneration === true,
   });
 });
 

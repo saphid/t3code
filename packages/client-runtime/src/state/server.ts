@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  ORCHESTRATION_WS_METHODS,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -1113,6 +1114,14 @@ export function createServerEnvironmentAtoms<R, E>(
     retryResourceTelemetry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retry-resource-telemetry",
       tag: WS_METHODS.serverRetryResourceTelemetry,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    generateProjectIcons: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:generate-project-icons",
+      tag: ORCHESTRATION_WS_METHODS.generateProjectIcons,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId }) => environmentId,

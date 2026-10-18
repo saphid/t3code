@@ -33,6 +33,7 @@ import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import type * as ImageGeneration from "../imageGeneration/ImageGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
@@ -85,6 +86,12 @@ export interface ProviderInstance {
   >;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Present only when the driver can generate images on this install.
+   * Adapters that cannot make images leave this unset, which is the
+   * per-adapter "not supported here" decision.
+   */
+  readonly imageGeneration?: ImageGeneration.ImageGenerationInstance;
   readonly auth?: ProviderAuthController;
 }
 

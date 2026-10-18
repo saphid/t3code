@@ -206,6 +206,8 @@ export function buildServerProvider(input: {
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
+  /** Only set when the probe confirmed image-generation support. */
+  supportsImageGeneration?: boolean;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
     ? createProviderVersionAdvisory({
@@ -239,6 +241,7 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(input.supportsImageGeneration ? { supportsImageGeneration: true } : {}),
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
