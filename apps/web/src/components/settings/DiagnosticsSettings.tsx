@@ -83,7 +83,7 @@ function isStaleProcessSignalMessage(message: string | undefined): boolean {
   return message?.includes("not a live descendant") ?? false;
 }
 
-function StatBlock({
+export function StatBlock({
   label,
   value,
   tooltip,
@@ -133,7 +133,7 @@ function StatBlock({
   );
 }
 
-function StatsGrid({ children }: { children: ReactNode }) {
+export function StatsGrid({ children }: { children: ReactNode }) {
   return (
     <div className="relative grid grid-cols-2 sm:grid-cols-4">
       <span
@@ -779,7 +779,7 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
   );
 }
 
-function DiagnosticsRefreshButton({
+export function DiagnosticsRefreshButton({
   isPending,
   label,
   onClick,

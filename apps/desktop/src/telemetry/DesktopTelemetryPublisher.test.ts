@@ -18,6 +18,7 @@ import type * as Electron from "electron";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
+import * as GpuTelemetrySampler from "./GpuTelemetrySampler.ts";
 
 function makeElectronAppLayer(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
@@ -71,7 +72,9 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer)),
+        Layer.provide(
+          Layer.mergeAll(makeElectronAppLayer([]), powerLayer, GpuTelemetrySampler.layerTest()),
+        ),
       );
       const scope = yield* Scope.make();
 
@@ -135,6 +138,13 @@ describe("DesktopTelemetryPublisher", () => {
             }),
         }),
       );
+      const gpuLayer = GpuTelemetrySampler.layerTest(() =>
+        Effect.succeedSome({
+          backend: "agx",
+          gpuPercentByPid: new Map([[4_242, 42.5]]),
+          deviceUtilizationPercent: 12,
+        }),
+      );
       const layer = DesktopTelemetryPublisher.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -142,6 +152,7 @@ describe("DesktopTelemetryPublisher", () => {
               metricsReadCount += 1;
             }),
             powerLayer,
+            gpuLayer,
           ),
         ),
       );
@@ -179,6 +190,9 @@ describe("DesktopTelemetryPublisher", () => {
         assert.equal(demandedSnapshot.electronProcesses[0]?.creationTimeMs, 1_001);
         assert.equal(demandedSnapshot.electronProcesses[0]?.cpuPercent, 12.5);
         assert.equal(demandedSnapshot.electronProcesses[0]?.workingSetBytes, 2_048 * 1_024);
+        assert.equal(demandedSnapshot.electronProcesses[0]?.gpuPercent, 42.5);
+        assert.equal(demandedSnapshot.gpu?.backend, "agx");
+        assert.equal(demandedSnapshot.gpu?.deviceUtilizationPercent, 12);
         assert.equal(metricsReadCount, 1);
         yield* publisher.handleControlForSource("secondary-backend", {
           version: 1,
@@ -300,6 +314,7 @@ describe("DesktopTelemetryPublisher", () => {
         });
         const stoppedSnapshot = Option.getOrThrow(yield* Fiber.join(stoppedSnapshotFiber));
         assert.deepEqual(stoppedSnapshot.electronProcesses, []);
+        assert.isUndefined(stoppedSnapshot.gpu);
         const metricsAfterStopping = metricsReadCount;
         const configuredSnapshotFiber = yield* Stream.runHead(publisher.changes).pipe(
           Effect.forkChild,

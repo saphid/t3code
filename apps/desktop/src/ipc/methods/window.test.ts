@@ -10,11 +10,29 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
+  openStatsWindow,
   pickProjectFavicon,
 } from "./window.ts";
+
+describe("openStatsWindow", () => {
+  it.effect("delegates to the desktop window service", () => {
+    const open = vi.fn();
+    return Effect.gen(function* () {
+      yield* openStatsWindow.handler(undefined);
+      assert.equal(open.mock.calls.length, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(DesktopWindow.DesktopWindow)({
+          openStatsWindow: Effect.sync(open),
+        }),
+      ),
+    );
+  });
+});
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",

@@ -190,6 +190,10 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       onSome: (desktop) => desktop.power,
     }),
     speedLimitPercent: Option.flatMap(initialDesktop, (desktop) => desktop.speedLimitPercent),
+    ...Option.match(initialDesktop, {
+      onNone: () => ({}),
+      onSome: (desktop) => (desktop.gpu === undefined ? {} : { gpu: desktop.gpu }),
+    }),
     attribution: initialAttribution,
     health: buildHealth({
       native: initialNativeHealth,
@@ -305,6 +309,10 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           speedLimitPercent: Option.match(desktopSnapshot, {
             onNone: () => Option.none(),
             onSome: (desktop) => desktop.speedLimitPercent,
+          }),
+          ...Option.match(desktopSnapshot, {
+            onNone: () => ({}),
+            onSome: (desktop) => (desktop.gpu === undefined ? {} : { gpu: desktop.gpu }),
           }),
           attribution: attributionSnapshot,
           health: buildHealth({

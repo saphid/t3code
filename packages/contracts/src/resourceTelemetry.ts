@@ -217,8 +217,24 @@ export const DesktopElectronProcessMetric = Schema.Struct({
   idleWakeupsPerSecond: Schema.Number,
   workingSetBytes: NonNegativeInt,
   peakWorkingSetBytes: NonNegativeInt,
+  gpuPercent: Schema.optionalKey(Schema.Number),
 });
 export type DesktopElectronProcessMetric = typeof DesktopElectronProcessMetric.Type;
+
+/**
+ * Which mechanism attributed per-process GPU time:
+ * - agx: macOS IORegistry AGX counters (true GPU busy time, Apple Silicon).
+ * - drm-fdinfo: Linux /proc/<pid>/fdinfo drm-engine-* counters.
+ * - none: no per-process GPU attribution on this host.
+ */
+export const DesktopGpuBackend = Schema.Literals(["agx", "drm-fdinfo", "none"]);
+export type DesktopGpuBackend = typeof DesktopGpuBackend.Type;
+
+export const DesktopGpuTelemetry = Schema.Struct({
+  backend: DesktopGpuBackend,
+  deviceUtilizationPercent: Schema.optionalKey(Schema.Number),
+});
+export type DesktopGpuTelemetry = typeof DesktopGpuTelemetry.Type;
 
 const DesktopHostPowerSnapshot = Schema.Struct({
   ...HostPowerSnapshot.fields,
@@ -234,6 +250,7 @@ export const DesktopHostTelemetrySnapshot = Schema.Struct({
   power: DesktopHostPowerSnapshot,
   speedLimitPercent: Schema.OptionFromNullOr(Schema.Number),
   electronProcesses: Schema.Array(DesktopElectronProcessMetric),
+  gpu: Schema.optionalKey(DesktopGpuTelemetry),
 });
 export type DesktopHostTelemetrySnapshot = typeof DesktopHostTelemetrySnapshot.Type;
 
@@ -294,6 +311,7 @@ export const ResourceTelemetryProcess = Schema.Struct({
   ioWriteBytesPerSecond: Schema.Number,
   ioSemantics: ResourceTelemetryIoSemantics,
   idleWakeupsPerSecond: Schema.optionalKey(Schema.Number),
+  gpuPercent: Schema.optionalKey(Schema.Number),
   runTimeMs: NonNegativeInt,
   firstSeenAt: Schema.DateTimeUtc,
   lastSeenAt: Schema.DateTimeUtc,
@@ -366,6 +384,7 @@ export const ResourceTelemetrySnapshot = Schema.Struct({
   groups: ResourceTelemetryGroups,
   power: HostPowerSnapshot,
   speedLimitPercent: Schema.Option(Schema.Number),
+  gpu: Schema.optionalKey(DesktopGpuTelemetry),
   attribution: ResourceAttributionSnapshot,
   health: ResourceTelemetryHealth,
 });

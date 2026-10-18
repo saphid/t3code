@@ -94,7 +94,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -205,6 +205,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly revealedWindows?: Electron.BrowserWindow[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -253,7 +254,10 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) =>
+      Effect.sync(() => {
+        input.revealedWindows?.push(window);
+      }),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -394,6 +398,62 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it.effect("opens one reusable stats window at the stats route", () =>
+    Effect.gen(function* () {
+      const stats = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: stats.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.openStatsWindow;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(stats.loadURL.mock.calls[0]?.[0], "t3code-dev://app/#/settings/stats");
+        assert.equal(createdWindowOptions[0]?.width, 1040);
+        assert.equal(createdWindowOptions[0]?.height, 780);
+        assert.equal(createdWindowOptions[0]?.webPreferences?.backgroundThrottling, false);
+        assert.equal(createdWindowOptions[0]?.webPreferences?.sandbox, true);
+
+        stats.windowListeners.get("ready-to-show")?.();
+        yield* Effect.promise(() => Promise.resolve());
+        assert.deepEqual(revealedWindows, [stats.window]);
+        assert.deepEqual(stats.setBackgroundThrottling.mock.calls, [[true]]);
+
+        yield* desktopWindow.openStatsWindow;
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.deepEqual(revealedWindows, [stats.window, stats.window]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not mistake the stats window for the main window", () =>
+    Effect.gen(function* () {
+      const stats = makeFakeBrowserWindow();
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([stats.window, main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.openStatsWindow;
+        const ensuredMain = yield* desktopWindow.ensureMain;
+
+        assert.equal(ensuredMain, main.window);
+        assert.equal(yield* Ref.get(scenario.createCalls), 2);
+        assert.deepEqual(yield* Ref.get(scenario.mainWindow), Option.some(main.window));
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

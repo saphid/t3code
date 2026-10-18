@@ -159,6 +159,7 @@ describe("resource telemetry process model", () => {
           creationTimeMs: electronStart + 500,
           type: "Utility",
           name: "network-service",
+          gpuPercent: 37.5,
         }),
       ]),
     });
@@ -167,9 +168,13 @@ describe("resource telemetry process model", () => {
     expect(result.processes.find((process) => process.identity.pid === 300)?.category).toBe(
       "electron-main",
     );
+    expect(result.processes.find((process) => process.identity.pid === 300)?.gpuPercent).toBe(
+      undefined,
+    );
     expect(result.processes.find((process) => process.identity.pid === 301)?.category).toBe(
       "electron-utility",
     );
+    expect(result.processes.find((process) => process.identity.pid === 301)?.gpuPercent).toBe(37.5);
     expect(result.processes.find((process) => process.identity.pid === 301)?.depth).toBe(1);
     expect(result.groups.electron.processCount).toBe(2);
   });

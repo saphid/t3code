@@ -80,6 +80,7 @@ export class DesktopWindow extends Context.Service<
     readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    readonly openStatsWindow: Effect.Effect<void, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     // Show a lightweight "Connecting to WSL" splash window immediately (wsl-only
@@ -283,6 +284,7 @@ export const make = Effect.gen(function* () {
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  const statsWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
@@ -296,23 +298,32 @@ export const make = Effect.gen(function* () {
   });
 
   // currentMainOrFirst / focusedMainOrFirst fall back to "any first window",
-  // which during WSL-only boot is the connecting splash. The splash is never
-  // registered via setMain, so it must be treated as "no real main window" --
+  // which can be the connecting splash or Stats window. Auxiliary windows are
+  // never registered via setMain, so they must be treated as "no real main window" --
   // otherwise ensureMain/activate/dispatchMenuAction latch onto it and never
   // open (or retry) the real main. That is the failure the pool's swallowed
   // post-readiness window-open error would otherwise strand the user in:
   // splash up, backend ready, no main, and activation only re-reveals splash.
-  const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
-    Ref.get(splashWindowRef).pipe(
-      Effect.map((splash) =>
-        Option.isSome(splash) && Option.isSome(window) && window.value === splash.value
-          ? Option.none<Electron.BrowserWindow>()
-          : window,
-      ),
-    );
+  const withoutAuxiliaryWindows = (window: Option.Option<Electron.BrowserWindow>) =>
+    Effect.gen(function* () {
+      if (Option.isNone(window)) return window;
+      const splash = yield* Ref.get(splashWindowRef);
+      const stats = yield* Ref.get(statsWindowRef);
+      return (Option.isSome(splash) && window.value === splash.value) ||
+        (Option.isSome(stats) && window.value === stats.value)
+        ? Option.none<Electron.BrowserWindow>()
+        : window;
+    });
 
-  const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  const currentMainWindow = electronWindow.currentMainOrFirst.pipe(
+    Effect.flatMap(withoutAuxiliaryWindows),
+  );
+  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(
+    Effect.flatMap(withoutAuxiliaryWindows),
+    Effect.flatMap((focused) =>
+      Option.isSome(focused) ? Effect.succeed(focused) : electronWindow.main,
+    ),
+  );
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
@@ -779,6 +790,80 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
+  const openStatsWindow = Effect.gen(function* () {
+    const existingWindow = yield* Ref.get(statsWindowRef);
+    if (Option.isSome(existingWindow) && !existingWindow.value.isDestroyed()) {
+      yield* electronWindow.reveal(existingWindow.value);
+      return;
+    }
+
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
+    const statsUrl = new URL(applicationUrl);
+    statsUrl.hash = "/settings/stats";
+    const iconPaths = yield* assets.iconPaths;
+    const iconOption = getIconOption(iconPaths, environment.platform);
+    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const window = yield* electronWindow.create({
+      width: 1040,
+      height: 780,
+      minWidth: 760,
+      minHeight: 560,
+      show: false,
+      autoHideMenuBar: true,
+      ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
+      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...iconOption,
+      title: `Stats for Nerds — ${environment.displayName}`,
+      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      webPreferences: {
+        preload: environment.preloadPath,
+        backgroundThrottling: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    yield* Ref.set(statsWindowRef, Option.some(window));
+
+    if (environment.platform === "darwin") {
+      window.setAutoHideCursor(false);
+    }
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+        void runPromise(electronShell.openExternal(url));
+      }
+      return { action: "deny" };
+    });
+    window.webContents.on("will-navigate", (event, url) => {
+      if (isSameOriginRendererNavigation({ applicationUrl, navigationUrl: url })) return;
+      event.preventDefault();
+      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+        void runPromise(electronShell.openExternal(url));
+      }
+    });
+    window.once("closed", () => {
+      void runPromise(
+        Ref.update(statsWindowRef, (current) =>
+          Option.isSome(current) && current.value === window ? Option.none() : current,
+        ),
+      );
+    });
+
+    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
+    if (environment.platform === "linux") {
+      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+    }
+    bindFirstRevealTrigger(revealSubscribers, () => {
+      if (!window.isDestroyed()) {
+        window.webContents.setBackgroundThrottling(true);
+      }
+      void runPromise(electronWindow.reveal(window));
+    });
+
+    void window.loadURL(statsUrl.href);
+    yield* logWindowInfo("stats window created");
+  }).pipe(Effect.withSpan("desktop.window.openStatsWindow"));
+
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
@@ -837,6 +922,7 @@ export const make = Effect.gen(function* () {
     createMain,
     ensureMain,
     revealOrCreateMain,
+    openStatsWindow,
     activate: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {

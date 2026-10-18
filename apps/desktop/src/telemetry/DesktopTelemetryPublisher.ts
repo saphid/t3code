@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
+import * as GpuTelemetrySampler from "./GpuTelemetrySampler.ts";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -136,6 +137,7 @@ function sampleInterval(
 export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
+  const gpuSampler = yield* GpuTelemetrySampler.GpuTelemetrySampler;
   yield* electronApp.whenReady;
 
   const initialPowerState: PowerState = {
@@ -233,7 +235,14 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         };
         return [next, next] as const;
       });
+      const gpu = demand
+        ? yield* gpuSampler.sample(metrics.map((metric) => metric.pid))
+        : Option.none<GpuTelemetrySampler.GpuSample>();
       const nextSequence = yield* Ref.modify(sequence, (current) => [current + 1, current + 1]);
+      const gpuPercentByPid = Option.match(gpu, {
+        onNone: () => undefined,
+        onSome: (sample) => sample.gpuPercentByPid,
+      });
       const snapshot: DesktopHostTelemetrySnapshot = {
         version: 1,
         type: "desktopTelemetry",
@@ -253,20 +262,35 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           updatedAt: sampledAt,
         },
         speedLimitPercent: observedPower.speedLimitPercent,
-        electronProcesses: metrics.map((metric) => ({
-          pid: metric.pid,
-          creationTimeMs: Math.max(0, Math.round(metric.creationTime)),
-          type: metric.type,
-          ...(metric.name === undefined ? {} : { name: metric.name }),
-          ...(metric.serviceName === undefined ? {} : { serviceName: metric.serviceName }),
-          cpuPercent: metric.cpu.percentCPUUsage,
-          ...(metric.cpu.cumulativeCPUUsage === undefined
-            ? {}
-            : { cumulativeCpuSeconds: metric.cpu.cumulativeCPUUsage }),
-          idleWakeupsPerSecond: metric.cpu.idleWakeupsPerSecond,
-          workingSetBytes: Math.max(0, Math.round(metric.memory.workingSetSize * 1024)),
-          peakWorkingSetBytes: Math.max(0, Math.round(metric.memory.peakWorkingSetSize * 1024)),
-        })),
+        electronProcesses: metrics.map((metric) => {
+          const gpuPercent = gpuPercentByPid?.get(metric.pid);
+          return {
+            pid: metric.pid,
+            creationTimeMs: Math.max(0, Math.round(metric.creationTime)),
+            type: metric.type,
+            ...(metric.name === undefined ? {} : { name: metric.name }),
+            ...(metric.serviceName === undefined ? {} : { serviceName: metric.serviceName }),
+            cpuPercent: metric.cpu.percentCPUUsage,
+            ...(metric.cpu.cumulativeCPUUsage === undefined
+              ? {}
+              : { cumulativeCpuSeconds: metric.cpu.cumulativeCPUUsage }),
+            idleWakeupsPerSecond: metric.cpu.idleWakeupsPerSecond,
+            workingSetBytes: Math.max(0, Math.round(metric.memory.workingSetSize * 1024)),
+            peakWorkingSetBytes: Math.max(0, Math.round(metric.memory.peakWorkingSetSize * 1024)),
+            ...(gpuPercent === undefined ? {} : { gpuPercent }),
+          };
+        }),
+        ...Option.match(gpu, {
+          onNone: () => ({}),
+          onSome: (sample) => ({
+            gpu: {
+              backend: sample.backend,
+              ...(sample.deviceUtilizationPercent === undefined
+                ? {}
+                : { deviceUtilizationPercent: sample.deviceUtilizationPercent }),
+            },
+          }),
+        }),
       };
 
       yield* Ref.set(latest, Option.some(snapshot));

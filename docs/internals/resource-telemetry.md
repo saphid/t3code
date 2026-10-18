@@ -193,6 +193,17 @@ Electron reads:
 live cadence is 1 second on AC, 5 seconds on battery, and 15 seconds while
 locked, suspended, or thermally constrained.
 
+GPU attribution rides the same demand gate through `GpuTelemetrySampler`. On
+macOS it delta-samples `accumulatedGPUTime` from the IORegistry's
+AGXDeviceUserClient entries (Apple Silicon only; the class does not exist on
+Intel Macs) plus whole-device utilization from IOAccelerator; on Linux it
+delta-samples `drm-engine-*` counters from `/proc/<pid>/fdinfo` for the
+Electron pids. Deltas older than 30 seconds re-baseline instead of reporting,
+and three consecutive read failures disable the sampler for the session. The
+per-pid busy percent lands as `gpuPercent` on `DesktopElectronProcessMetric`
+and flows through the merge into `ResourceTelemetryProcess`; the backend and
+device utilization ride the snapshot-level `gpu` field.
+
 It also listens for:
 
 - lock and unlock;
