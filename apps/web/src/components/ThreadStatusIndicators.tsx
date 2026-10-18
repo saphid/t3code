@@ -88,7 +88,7 @@ export function useTurnCompletionTick(
     "environmentId" | "latestTurn" | "latestUserMessageAt" | "session"
   >,
 ): boolean {
-  const shellState = useAtomValue(environmentShell.stateValueAtom(thread.environmentId));
+  const shellStatus = useAtomValue(environmentShell.statusValueAtom(thread.environmentId));
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(thread.environmentId));
   const connectionState = useEnvironmentConnectionState(thread.environmentId);
   const supportsSynchronizedShell = serverConfig?.shellResumeCompletionMarker === true;
@@ -131,7 +131,7 @@ export function useTurnCompletionTick(
       session: thread.session,
       canObserveLiveTransitions:
         supportsSynchronizedShell &&
-        shellState.status === "live" &&
+        shellStatus === "live" &&
         connectionState.data?.phase === "connected",
       isForeground,
     });
@@ -152,7 +152,7 @@ export function useTurnCompletionTick(
     connectionState.data?.generation,
     connectionState.data?.phase,
     isForeground,
-    shellState.status,
+    shellStatus,
     supportsSynchronizedShell,
     thread.latestTurn,
     thread.latestUserMessageAt,

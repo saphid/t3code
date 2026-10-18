@@ -390,6 +390,14 @@ export function createEnvironmentServerConfigsAtom(input: {
   }).pipe(Atom.withLabel("environment-server-configs"));
 }
 
+export function createEnvironmentShellStatusAtom(
+  stateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>,
+) {
+  return Atom.family((environmentId: EnvironmentId) =>
+    Atom.map(stateValueAtom(environmentId), (state) => state.status),
+  );
+}
+
 export function createEnvironmentShellAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry | EnvironmentCacheStore | ShellSnapshotLoader | R,
@@ -411,6 +419,7 @@ export function createEnvironmentShellAtoms<R, E>(
   return {
     stateAtom,
     stateValueAtom,
+    statusValueAtom: createEnvironmentShellStatusAtom(stateValueAtom),
   };
 }
 

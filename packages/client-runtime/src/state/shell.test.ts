@@ -6,7 +6,11 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import type { EnvironmentShellState } from "./shell.ts";
-import { createEnvironmentServerConfigsAtom, createEnvironmentShellSummaryAtom } from "./shell.ts";
+import {
+  createEnvironmentServerConfigsAtom,
+  createEnvironmentShellStatusAtom,
+  createEnvironmentShellSummaryAtom,
+} from "./shell.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const OTHER_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
@@ -88,6 +92,52 @@ function makeHarness() {
 }
 
 describe("environment shell projections", () => {
+  it("notifies status subscribers only when synchronization status changes", () => {
+    const tasks = new Set<() => void>();
+    const registry = AtomRegistry.make({
+      scheduleTask: (task) => {
+        tasks.add(task);
+        return () => tasks.delete(task);
+      },
+    });
+    const stateAtoms = Atom.family((_environmentId: EnvironmentId) =>
+      Atom.make(shellState({ status: "live", snapshotSequence: 1 })),
+    );
+    const statusAtoms = createEnvironmentShellStatusAtom(stateAtoms);
+    const notifications: EnvironmentShellState["status"][] = [];
+    const unsubscribe = registry.subscribe(
+      statusAtoms(ENVIRONMENT_ID),
+      (status) => notifications.push(status),
+      { immediate: true },
+    );
+    const flush = () => {
+      while (tasks.size > 0) {
+        const pending = [...tasks];
+        tasks.clear();
+        for (const task of pending) task();
+      }
+    };
+
+    try {
+      registry.set(
+        stateAtoms(ENVIRONMENT_ID),
+        shellState({ status: "live", snapshotSequence: 2, updatedAt: "2026-06-03T00:00:00Z" }),
+      );
+      registry.set(stateAtoms(OTHER_ENVIRONMENT_ID), shellState({ status: "synchronizing" }));
+      flush();
+      expect(notifications).toEqual(["live"]);
+
+      registry.set(stateAtoms(ENVIRONMENT_ID), shellState({ status: "synchronizing" }));
+      flush();
+      registry.set(stateAtoms(ENVIRONMENT_ID), shellState({ status: "live" }));
+      flush();
+      expect(notifications).toEqual(["live", "synchronizing", "live"]);
+    } finally {
+      unsubscribe();
+      registry.dispose();
+    }
+  });
+
   it("summarizes shell state and preserves identity when only irrelevant snapshot data changes", () => {
     const harness = makeHarness();
     const summary = harness.registry.get(harness.summaryAtom);
