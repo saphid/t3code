@@ -128,3 +128,5 @@ settings section when you no longer need it.
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
 Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
 Weekly, or both for each provider. Reopen T3 to refresh expired readings.
+
+The web and desktop composer shows the active thread's API-equivalent cost. Hover over it for cache writes, cache reads, fresh input and output, and provider-reported cost. Missing pricing shows **Unpriced**; subscription billing may differ.

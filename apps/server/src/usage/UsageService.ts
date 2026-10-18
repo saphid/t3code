@@ -976,6 +976,7 @@ export const make = Effect.gen(function* () {
     const attribution = yield* loadThreadAttribution(projectSnapshot);
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
+      ...(input.threadId === undefined ? {} : { threadFilter: input.threadId }),
       ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
     });
 

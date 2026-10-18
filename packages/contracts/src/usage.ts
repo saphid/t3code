@@ -21,14 +21,15 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 8 as const;
+export const USAGE_CONTRACT_VERSION = 9 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds optional project
  * attribution to buckets; v7 adds the separate thread-breakdown RPC; v8 adds
- * optional cache-write costs. v4 Claude/Codex buckets remain valid, so
+ * optional cache-write costs; v9 adds thread filtering before the breakdown row cap.
+ * v4 Claude/Codex buckets remain valid, so
  * mixed-version environments keep those totals instead of treating every older
  * server as stale.
  */
@@ -231,6 +232,10 @@ export const UsageSummary = Schema.Struct({
 export type UsageSummary = typeof UsageSummary.Type;
 
 export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Return only rows attributed to this T3 thread. */
+  threadId: Schema.optional(ThreadId),
+  /** Makes a client query reread the breakdown after thread usage changes. */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
   /** Inclusive last day of the window, in `timeZone`. */
