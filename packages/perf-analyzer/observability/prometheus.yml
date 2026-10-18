@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+# Samples arrive via remote write from the collector, carrying their original
+# run timestamps; the window lets backfilled history land in the past.
+storage:
+  tsdb:
+    out_of_order_time_window: 90d
