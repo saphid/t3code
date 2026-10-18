@@ -40,7 +40,9 @@ function nextRestrictedIntervalRun(
   const windowStart = schedule.window ? minutesOfDay(schedule.window.start) : null;
   const windowEnd = schedule.window ? minutesOfDay(schedule.window.end) : null;
   let candidate = DateTime.add(from, { milliseconds: everyMs });
-  for (let hop = 0; hop < 8; hop += 1) {
+  // A weekly opening may fall in a DST gap. Search two full weekday cycles
+  // plus today so skipping that date still finds the following week.
+  for (let hop = 0; hop < 15; hop += 1) {
     if (weekdays !== null && !weekdays.has(DateTime.toParts(candidate).weekDay)) {
       candidate = startOfNextDay(candidate);
       continue;

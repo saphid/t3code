@@ -283,3 +283,22 @@ describe("interval restrictions at dispatch and across DST", () => {
     expect(next && DateTime.toParts(next)).toMatchObject({ day: 9, hour: 2, minute: 10 });
   });
 });
+
+describe("weekly interval windows across DST", () => {
+  it("finds the following week when the first allowed opening is in a spring-forward gap", () => {
+    const from = DateTime.makeZonedUnsafe(
+      { year: 2026, month: 3, day: 1, hour: 12, minute: 0, second: 0, millisecond: 0 },
+      { timeZone: "America/New_York", adjustForTimeZone: true },
+    );
+    const next = nextScheduledRunAt(
+      {
+        type: "interval",
+        everyMs: 60_000,
+        weekdays: [0],
+        window: { start: "02:30", end: "04:00" },
+      },
+      from,
+    );
+    expect(next ? DateTime.formatIso(DateTime.toUtc(next)) : null).toBe("2026-03-15T06:30:00.000Z");
+  });
+});
