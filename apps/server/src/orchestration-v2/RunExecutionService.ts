@@ -935,11 +935,11 @@ export const layer: Layer.Layer<
           const rootRunFinalized = yield* Ref.make(false);
           const providerThreadOwnerLost = yield* Ref.make(false);
           // Set when ingesting an event was skipped. A skipped terminal means
-          // the failure item was not stored; a skipped completion or roster
-          // update means the stored rows are stale, so the stream stays open
+          // the failure item was not stored; a skipped lifecycle update can
+          // leave tracking incomplete or stale, so the stream stays open
           // until the provider closes it rather than releasing tracking early.
           const terminalIngestSkipped = yield* Ref.make(false);
-          const completionIngestSkipped = yield* Ref.make(false);
+          const lifecycleIngestSkipped = yield* Ref.make(false);
           const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
           const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
           const activeBackgroundTurnItems = yield* Ref.make<
@@ -1113,7 +1113,7 @@ export const layer: Layer.Layer<
             if (terminal !== null && terminal.status !== "completed") {
               return true;
             }
-            if (yield* Ref.get(completionIngestSkipped)) {
+            if (yield* Ref.get(lifecycleIngestSkipped)) {
               return false;
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
@@ -1237,8 +1237,10 @@ export const layer: Layer.Layer<
                                 event.type === "turn.terminal"
                                   ? Ref.set(terminalIngestSkipped, true)
                                   : event.type === "turn_item.updated" ||
-                                      event.type === "provider_thread.updated"
-                                    ? Ref.set(completionIngestSkipped, true)
+                                      event.type === "provider_thread.updated" ||
+                                      event.type === "provider_turn.updated" ||
+                                      event.type === "subagent.updated"
+                                    ? Ref.set(lifecycleIngestSkipped, true)
                                     : Effect.void,
                               ),
                               Effect.as(null),
