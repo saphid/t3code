@@ -53,7 +53,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { SidebarThreadRowDensity, TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -132,7 +132,10 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useUpdateClientSettings,
+} from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -255,6 +258,17 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { glyphNodesInOrder, SidebarThreadRowMeta } from "./sidebar/SidebarThreadRowMeta";
+import {
+  ThreadRowCustomizeEditor,
+  type ThreadRowFieldsValue,
+} from "./sidebar/ThreadRowCustomizeEditor";
+import {
+  isRecommendedThreadRows,
+  resolveThreadRowPresentation,
+  type ThreadRowFieldId,
+} from "./sidebar/threadRowPreference";
+import { useRegisterCustomizeSurface, useCustomizeSession } from "../personalization/customizeSession";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -1037,7 +1051,13 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
-  variant: "card" | "slim";
+  variant: "card" | "compact" | "slim";
+  // Resolved once per sidebar list and passed by reference to every row: the
+  // enabled secondary fields in the user's order. Read only, so no row needs
+  // its own subscription.
+  rowFields: readonly ThreadRowFieldId[];
+  // User preference; only matters for rows the lifecycle renders as cards.
+  density: SidebarThreadRowDensity;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -1567,7 +1587,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 : props.isActive || isWoke || status === "input"
                   ? "text-foreground"
                   : isUnread
-                    ? "text-muted-foreground"
+                    ? // Compact rows are active or pinned work, so an unread
+                      // completion reads at full strength there.
+                      variant === "compact"
+                      ? "text-foreground"
+                      : "text-muted-foreground"
                     : "text-secondary-label/70",
             ),
         isRegeneratingTitle && "opacity-[0.55]",
@@ -1656,7 +1680,149 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     )
   ) : null;
 
-  if (variant === "slim") {
+  // The branch slot of the card's second line, shared with the meta row.
+  const branchMeta = thread.branch ? (
+    <>
+      <ThreadWorktreeIndicator thread={thread} />
+      <MiddleTruncate
+        value={thread.branch}
+        showTitle={false}
+        className="flex-1 text-muted-foreground/40"
+      />
+    </>
+  ) : null;
+  // The local environment is "this machine" and needs no marker; every other
+  // one gets its machine glyph. With no local environment (the hosted app)
+  // that is every thread, which is the point: the glyph is what tells rows on
+  // different machines apart.
+  const environmentMeta = isRemote ? (
+    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+      <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
+    </span>
+  ) : null;
+  const providerMeta = (
+    <SidebarProviderStack
+      thread={thread}
+      providerEntryByInstanceId={props.providerEntryByInstanceId}
+    />
+  );
+  const diff = latestRunDiff(thread);
+  const diffMeta = diff ? (
+    <span className="shrink-0 font-mono">
+      <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
+      <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
+    </span>
+  ) : null;
+  // One source of truth for the status imagery: the card pairs this glyph
+  // with a label in its status slot, compact rows render it alone.
+  const statusIcon =
+    topStatus === null ? null : topStatus.icon === "working" ? (
+      <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+    ) : topStatus.icon === "input" ? (
+      <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
+    ) : topStatus.icon === "approval" ? (
+      <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
+    ) : topStatus.icon === "failed" ? (
+      <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+    ) : topStatus.icon === "done" ? (
+      <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+    ) : null;
+  const statusGlyph =
+    topStatus === null || statusIcon === null ? null : isWokeStatus ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Dismiss Woke notification"
+              onClick={handleAcknowledgeWokeClick}
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                topStatus.className,
+              )}
+            />
+          }
+        >
+          <AlarmClockIcon aria-hidden className="size-3.5 shrink-0" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
+      </Tooltip>
+    ) : (
+      <span
+        role="img"
+        aria-label={topStatus.label}
+        className={cn("inline-flex shrink-0 items-center", topStatus.className)}
+      >
+        {statusIcon}
+      </span>
+    );
+  const compactGlyphs =
+    variant === "compact"
+      ? glyphNodesInOrder(props.rowFields, {
+          terminal: terminalStatusIcon,
+          pullRequest: prBadge,
+          environment: environmentMeta,
+          provider: providerMeta,
+        })
+      : [];
+
+  if (variant !== "card") {
+    const compact = variant === "compact";
+    // The card's quick actions on the slim shell: same conditions and
+    // handlers, revealed on hover or keyboard focus like the card's slot,
+    // absolutely positioned so nothing shifts when they appear.
+    const compactQuickActions =
+      compact && !sortable?.isDragging && (props.settlementSupported || showSnoozeButton || hasUnsentDraft) ? (
+        <span
+          className={cn(
+            "pointer-events-none absolute inset-y-0 right-0 flex items-center opacity-0 transition-opacity group-has-[:focus-visible]/sidebar-row:pointer-events-auto group-has-[:focus-visible]/sidebar-row:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+            snoozeMenuOpen && "pointer-events-auto opacity-100",
+          )}
+        >
+          {hasUnsentDraft ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Discard draft"
+                    onClick={handleDiscardDraftClick}
+                    className="inline-flex cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  />
+                }
+              >
+                <XIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Discard draft</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showSnoozeButton ? (
+            <SnoozePopoverButton
+              open={snoozeMenuOpen}
+              onOpenChange={setSnoozeMenuOpen}
+              onSnooze={handleSnoozePreset}
+              timestampFormat={props.timestampFormat}
+            />
+          ) : null}
+          {props.settlementSupported ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Settle thread"
+                    onClick={handleSettleClick}
+                    className="inline-flex cursor-pointer items-center rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  />
+                }
+              >
+                <CheckIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup>Settle thread</TooltipPopup>
+            </Tooltip>
+          ) : null}
+        </span>
+      ) : null;
     return (
       <li
         data-thread-item
@@ -1675,7 +1841,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
-                data-testid="sidebar-row-slim"
+                data-testid={compact ? "sidebar-row-compact" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
@@ -1698,20 +1864,34 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {draftIndicator}
             {title}
-            {pinIndicator}
-            {terminalStatusIcon}
-            {isRegeneratingTitle ? (
-              <span role="status" className="sr-only">
-                Regenerating title
-              </span>
-            ) : null}
-            {/* The PR badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
-            {prBadge}
-            {sortable?.isDragging ? (
-              dragDestination
+            {compact ? (
+              <>
+                {compactGlyphs}
+                {statusGlyph}
+                {pinIndicator}
+                {sortable?.isDragging ? dragDestination : compactQuickActions}
+                {isRegeneratingTitle ? (
+                  <span role="status" className="sr-only">
+                    Regenerating title
+                  </span>
+                ) : null}
+              </>
             ) : (
+              <>
+                {pinIndicator}
+                {terminalStatusIcon}
+                {isRegeneratingTitle ? (
+                  <span role="status" className="sr-only">
+                    Regenerating title
+                  </span>
+                ) : null}
+                {/* The PR badge stays outside the hover-fading slot: it must
+                  remain visible AND clickable while the row is hovered. Only
+                  the time/jump label yields to the settle affordance. */}
+                {prBadge}
+                {sortable?.isDragging ? (
+                  dragDestination
+                ) : (
               <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
                 <span
                   className={cn(
@@ -1799,6 +1979,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </button>
                 )}
               </span>
+                )}
+              </>
             )}
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
           </TooltipTrigger>
@@ -1807,8 +1989,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       </li>
     );
   }
-
-  const diff = latestRunDiff(thread);
 
   return (
     <li
@@ -1844,16 +2024,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {props.projectDisplayName ? (
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-secondary-label text-xs",
-                    shouldRecede ? "font-normal" : "font-medium",
-                  )}
-                >
-                  {props.projectDisplayName}
-                </span>
+              {props.rowFields.includes("project") ? (
+                props.projectDisplayName ? (
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-secondary-label text-xs",
+                      shouldRecede ? "font-normal" : "font-medium",
+                    )}
+                  >
+                    {props.projectDisplayName}
+                  </span>
+                ) : (
+                  <span className="flex-1" />
+                )
               ) : (
+                // The favicon always shows; only the label is a user field.
                 <span className="flex-1" />
               )}
               {pinIndicator}
@@ -1905,17 +2090,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             topStatus.className,
                           )}
                         >
-                          {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "input" ? (
-                            <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "approval" ? (
-                            <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "failed" ? (
-                            <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "done" ? (
-                            <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-                          ) : null}
+                          {statusIcon}
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
@@ -1999,49 +2174,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               ) : null}
             </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
-                  working, but it truncated to a half-sentence and dropped the
-                  branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
-                <>
-                  <ThreadWorktreeIndicator thread={thread} />
-                  <MiddleTruncate
-                    value={thread.branch}
-                    showTitle={false}
-                    className="flex-1 text-muted-foreground/40"
-                  />
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
-                  <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
-                  </span>
-                ) : null}
-                <SidebarProviderStack
-                  thread={thread}
-                  providerEntryByInstanceId={props.providerEntryByInstanceId}
-                />
-              </span>
-            </div>
+            <SidebarThreadRowMeta
+              branch={branchMeta}
+              diff={diffMeta}
+              environment={environmentMeta}
+              fields={props.rowFields}
+              provider={providerMeta}
+              pullRequest={prBadge}
+              terminal={terminalStatusIcon}
+            />
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -2224,6 +2365,36 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const sidebarThreadRowDensity = useClientSettings((s) => s.sidebarThreadRowDensity);
+  const sidebarThreadRowFields = useClientSettings((s) => s.sidebarThreadRowFields);
+  const updateClientSettings = useUpdateClientSettings();
+  // Draft for the thread rows customize editor, following the thread details
+  // panel's pattern: null when closed, the live preview while open. The rows
+  // read `draft` so the list updates as the user edits.
+  const [threadRowsDraft, setThreadRowsDraft] = useState<ThreadRowFieldsValue | null>(null);
+  const [threadRowsEditorOpen, setThreadRowsEditorOpen] = useState(false);
+  useRegisterCustomizeSurface("thread-rows");
+  const draft = threadRowsDraft ?? { density: sidebarThreadRowDensity, fields: sidebarThreadRowFields };
+  const rowPresentation = useMemo(
+    () => resolveThreadRowPresentation(draft.density, draft.fields),
+    [draft.density, draft.fields],
+  );
+  const openThreadRowsEditor = useCallback(() => {
+    setThreadRowsDraft({ density: sidebarThreadRowDensity, fields: sidebarThreadRowFields });
+    setThreadRowsEditorOpen(true);
+  }, [sidebarThreadRowDensity, sidebarThreadRowFields]);
+  const closeThreadRowsEditor = useCallback(() => {
+    setThreadRowsEditorOpen(false);
+    setThreadRowsDraft(null);
+  }, []);
+  // The palette's sidebar.customizeThreadRows command lands here through the
+  // shared customize session.
+  const pendingCustomizeOpen = useCustomizeSession((s) => s.pendingOpen);
+  useEffect(() => {
+    if (pendingCustomizeOpen !== "thread-rows") return;
+    if (!useCustomizeSession.getState().consumePendingOpen("thread-rows")) return;
+    openThreadRowsEditor();
+  }, [openThreadRowsEditor, pendingCustomizeOpen]);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -4492,6 +4663,14 @@ export default function Sidebar() {
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
           <SidebarGroup className="z-[1]">
+            <div
+              className={cn(
+                "group/sidebar-header flex min-w-0 items-center",
+                // SidebarThreadHeader owns its own layout, so stretch it as
+                // this row's flexible child rather than editing its file.
+                "[&>div]:min-w-0 [&>div]:flex-1",
+              )}
+            >
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
@@ -4647,6 +4826,40 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+              <ThreadRowCustomizeEditor
+                open={threadRowsEditorOpen}
+                value={draft}
+                onCancel={closeThreadRowsEditor}
+                onChange={setThreadRowsDraft}
+                onDone={() => {
+                  // The settings store applies the patch optimistically, so
+                  // closing now cannot flash the old arrangement. Fields go
+                  // back to null at the recommended arrangement so untouched
+                  // users keep evolving with the defaults.
+                  const d = threadRowsDraft ?? {
+                    density: sidebarThreadRowDensity,
+                    fields: sidebarThreadRowFields,
+                  };
+                  void updateClientSettings({
+                    sidebarThreadRowDensity: d.density,
+                    sidebarThreadRowFields: isRecommendedThreadRows(d.density, d.fields)
+                      ? null
+                      : (d.fields ?? []),
+                  });
+                  closeThreadRowsEditor();
+                }}
+                onOpenChange={(open) => {
+                  if (open) {
+                    openThreadRowsEditor();
+                  } else {
+                    // Escape and outside clicks discard, matching Cancel, so
+                    // an accidental dismissal never persists a half-finished
+                    // arrangement.
+                    closeThreadRowsEditor();
+                  }
+                }}
+              />
+            </div>
           </SidebarGroup>
         }
       >
@@ -4758,11 +4971,15 @@ export default function Sidebar() {
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         // Settled and snoozed are the ONLY things that collapse a
-                        // row: every other thread is a full card. Density comes
-                        // from users (or the auto rules) actually parking work,
-                        // not from the sidebar second-guessing what still matters.
+                        // row: every other thread is a full card. Density is a
+                        // user preference for those cards; the lifecycle still
+                        // decides slim.
                         const isCard = section === "active" || section === "pinned";
-                        const rowVariant = isCard ? "card" : "slim";
+                        const rowVariant = !isCard
+                          ? "slim"
+                          : rowPresentation.density === "compact"
+                            ? "compact"
+                            : "card";
                         return (
                           <SidebarThreadRow
                             // Fade between card and compact rows while the outer
@@ -4770,6 +4987,8 @@ export default function Sidebar() {
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
                             variant={rowVariant}
+                            rowFields={rowPresentation.fields}
+                            density={rowPresentation.density}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"
