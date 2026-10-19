@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
+  deriveSidebarSubagents,
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
@@ -10,6 +11,45 @@ import {
   isTimelineBypassActivity,
   workflowCardMembers,
 } from "./subagentRuntime.ts";
+
+describe("deriveSidebarSubagents", () => {
+  it("counts workflow members once and keeps waiting and idle separate from finished", () => {
+    const model = deriveSidebarSubagents([
+      { id: "flow", title: "Workflow", kind: "workflow", status: "running", parentAgentId: null },
+      { id: "a", title: "A", kind: "workflow_agent", status: "running", parentAgentId: "flow" },
+      { id: "b", title: "B", kind: "workflow_agent", status: "completed", parentAgentId: "flow" },
+      { id: "c", title: "C", kind: "subagent", status: "failed", parentAgentId: null },
+      { id: "d", title: "D", kind: "subagent", status: "waiting", parentAgentId: null },
+      { id: "e", title: "E", kind: "subagent", status: "idle", parentAgentId: null },
+    ]);
+    expect(model.label).toBe("1 running · 2 finished · 1 waiting · 1 idle");
+    expect(model.rows.map(({ agent, depth }) => [agent.id, depth])).toEqual([
+      ["flow", 0],
+      ["a", 1],
+      ["b", 1],
+      ["c", 0],
+      ["d", 0],
+      ["e", 0],
+    ]);
+  });
+
+  it("shows orphaned and cyclic ancestry exactly once", () => {
+    const model = deriveSidebarSubagents([
+      {
+        id: "orphan",
+        title: "Orphan",
+        kind: "subagent",
+        status: "pending",
+        parentAgentId: "missing",
+      },
+      { id: "a", title: "A", kind: "subagent", status: "cancelled", parentAgentId: "b" },
+      { id: "b", title: "B", kind: "subagent", status: "interrupted", parentAgentId: "a" },
+    ]);
+    expect(model.rows.map(({ agent }) => agent.id)).toEqual(["orphan", "a", "b"]);
+    expect(model.label).toBe("1 running · 2 finished");
+    expect(deriveSidebarSubagents().rows).toEqual([]);
+  });
+});
 
 let sequence = 0;
 /**

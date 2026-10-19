@@ -445,6 +445,24 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+export const ThreadSubagentSummary = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  kind: Schema.Literals(["subagent", "workflow", "workflow_agent"]),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "waiting",
+    "idle",
+    "completed",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]),
+  parentAgentId: Schema.NullOr(Schema.String),
+});
+export type ThreadSubagentSummary = typeof ThreadSubagentSummary.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -480,6 +498,8 @@ export const OrchestrationThreadShell = Schema.Struct({
    * live work. Optional so old servers/clients interop; absent = none.
    */
   backgroundLiveness: Schema.optional(Schema.NullOr(Schema.Literals(["working", "monitoring"]))),
+  /** Compact roster for thread lists, absent on older servers. */
+  subagents: Schema.optional(Schema.Array(ThreadSubagentSummary)),
   /**
    * Current plan step while a turn runs, for the Working indicators
    * (sidebar row, in-chat working line). Cleared when the turn settles —
@@ -677,6 +697,10 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // "agent" marks thread creation initiated by the agent itself (e.g. the
+  // threads MCP toolkit), so clients can surface those differently from
+  // user-created threads. Optional so pre-agent-create payloads decode.
+  source: Schema.optional(Schema.Literal("agent")),
   createdAt: IsoDateTime,
 });
 
@@ -1133,6 +1157,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  source: Schema.optional(Schema.Literal("agent")),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

@@ -1,3 +1,4 @@
+import { SidebarSubagents } from "./SidebarSubagents";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
@@ -886,6 +887,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </div>
         </div>
       </SidebarMenuSubButton>
+      <SidebarSubagents agents={thread.subagents} threadTitle={thread.title} />
     </SidebarMenuSubItem>
   );
 });

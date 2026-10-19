@@ -8,9 +8,12 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
+  ProjectId,
+  type ThreadsCreateResult,
+  type ThreadsListResult,
   type ToolLifecycleItemType,
   type UserInputQuestion,
-  type ThreadId,
+  ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -73,6 +76,10 @@ export interface WorkLogEntry {
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
+  /** Parsed `threads_list` structured result for the item-list card; absent when the payload shape is off. */
+  threadsList?: ThreadsListResult;
+  /** Parsed `threads_create` structured result, used for the "new thread" toast. */
+  threadsCreated?: ThreadsCreateResult;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
@@ -768,6 +775,31 @@ export function deriveWorkLogEntries(
   });
 }
 
+/**
+ * Threads the agent created via `threads_create`, one per thread id, in work-log
+ * order. Failed or declined calls are excluded.
+ */
+export function deriveAgentCreatedThreads(
+  entries: ReadonlyArray<WorkLogEntry>,
+): ThreadsCreateResult[] {
+  const byThreadId = new Map<string, ThreadsCreateResult>();
+  for (const entry of entries) {
+    const created = entry.threadsCreated;
+    if (
+      !created ||
+      entry.toolLifecycleStatus === "failed" ||
+      entry.toolLifecycleStatus === "declined" ||
+      entry.toolLifecycleStatus === "stopped"
+    ) {
+      continue;
+    }
+    if (!byThreadId.has(created.threadId)) {
+      byThreadId.set(created.threadId, created);
+    }
+  }
+  return [...byThreadId.values()];
+}
+
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
   if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") {
     return false;
@@ -866,6 +898,22 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const data = asRecord(payload?.data);
     if (data?.item !== undefined) {
       entry.toolData = data.item;
+    }
+    // Tool-name detection mirrors the server's ActivityPayloadProjection:
+    // Claude/OpenCode put it at `data.toolName`, Codex at `data.item.tool`.
+    const item = asRecord(data?.item);
+    const toolName = asTrimmedString(data?.toolName) ?? (item ? asTrimmedString(item.tool) : null);
+    if (toolName === "threads_list") {
+      const threadsList = extractThreadsListResult(data?.structuredResult);
+      if (threadsList) {
+        entry.threadsList = threadsList;
+      }
+    }
+    if (toolName === "threads_create") {
+      const threadsCreated = extractThreadsCreateResult(data?.structuredResult);
+      if (threadsCreated) {
+        entry.threadsCreated = threadsCreated;
+      }
     }
   }
   if (itemType) {
@@ -1113,6 +1161,50 @@ function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPl
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+/**
+ * Decodes a `threads_list` structured result defensively: any shape mismatch
+ * yields undefined so the timeline renders the plain tool row instead.
+ */
+function extractThreadsListResult(value: unknown): ThreadsListResult | undefined {
+  const record = asRecord(value);
+  if (!record || !Array.isArray(record.threads)) {
+    return undefined;
+  }
+  const threads: Array<ThreadsListResult["threads"][number]> = [];
+  for (const item of record.threads) {
+    const entry = asRecord(item);
+    if (!entry) {
+      return undefined;
+    }
+    const threadId = asTrimmedString(entry.threadId);
+    const projectId = asTrimmedString(entry.projectId);
+    const title = asTrimmedString(entry.title);
+    const updatedAt = asTrimmedString(entry.updatedAt);
+    if (!threadId || !projectId || !title || !updatedAt || typeof entry.settled !== "boolean") {
+      return undefined;
+    }
+    // The payload arrived over the wire; the checks above are the validation.
+    threads.push({
+      threadId: ThreadId.make(threadId),
+      projectId: ProjectId.make(projectId),
+      title,
+      settled: entry.settled,
+      updatedAt,
+    });
+  }
+  return { threads };
+}
+
+function extractThreadsCreateResult(value: unknown): ThreadsCreateResult | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const threadId = asTrimmedString(record.threadId);
+  const title = asTrimmedString(record.title);
+  return threadId && title ? { threadId: ThreadId.make(threadId), title } : undefined;
 }
 
 function asTrimmedString(value: unknown): string | null {

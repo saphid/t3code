@@ -15,8 +15,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
+import { useAtomValue } from "@effect/atom-react";
 import { cn } from "~/lib/utils";
+import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
+import { serverEnvironment } from "~/state/server";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -109,6 +112,8 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const fileContextMenu = useFileContextMenu(environmentId);
   const entries = entriesQuery.data?.entries ?? [];
   const entryKinds = useMemo(
     () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
@@ -150,14 +155,25 @@ export default function FileBrowserPanel({
     const position = pointerIsFresh
       ? { x: pointer.x, y: pointer.y }
       : { x: anchorRect.left, y: anchorRect.bottom };
+    const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+    const fileMenuItems = fileContextMenu.buildItems(
+      fileTarget,
+      serverConfig?.availableEditors ?? [],
+    );
     try {
       const clicked = await api.contextMenu.show(
         [
+          ...fileMenuItems,
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
         position,
       );
+      if (clicked === null) return;
+      if (fileMenuItems.some((entry) => entry.id === clicked)) {
+        await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+        return;
+      }
       if (clicked === "copy-mention") {
         try {
           await writeTextToClipboard(mention);

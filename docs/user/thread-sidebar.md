@@ -22,3 +22,15 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Subagents
+
+Threads with subagents show a **Subagents** button with running and finished counts.
+Click or tap it to expand the list of names and statuses beneath the thread. Click it
+again to collapse the list. The counts continue to update while collapsed.
+
+Waiting and idle agents have separate counts. Finished includes failed, cancelled,
+and stopped agents; expand the list to see each agent's outcome. Workflow members
+appear beneath their coordinator and count once in the summary.
+
+The summary appears on web, desktop, and mobile when the connected server supports it.

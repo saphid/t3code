@@ -1,0 +1,31 @@
+{
+  "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+  "created": [
+    {
+      "threadId": "e84c14eb-819b-44cf-a28c-92fa30f82ac3",
+      "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+      "title": "Voice: chronological chat transcript",
+      "workdir": "/Users/aus-m5p-as/projects/t3code-voice-transcript-chat",
+      "modelSelection": {
+        "instanceId": "opencode",
+        "model": "enablers/xlarge"
+      },
+      "dispatch": {
+        "sequence": 1158284
+      }
+    },
+    {
+      "threadId": "8c9e4073-17f3-4f37-b56f-e2b3fb0548ce",
+      "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+      "title": "Voice: discover and activate interface buttons",
+      "workdir": "/Users/aus-m5p-as/projects/t3code-voice-ui-controls",
+      "modelSelection": {
+        "instanceId": "opencode",
+        "model": "enablers/xlarge"
+      },
+      "dispatch": {
+        "sequence": 1158287
+      }
+    }
+  ]
+}

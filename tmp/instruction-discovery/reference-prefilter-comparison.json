@@ -1,0 +1,22 @@
+[
+  {
+    "prefilter": true,
+    "seconds": 3.7333220419999997,
+    "files": 4782,
+    "stats": {
+      "documents": 1400,
+      "parsedContents": 121,
+      "prefilterSkipped": 17
+    }
+  },
+  {
+    "prefilter": false,
+    "seconds": 2.5586294999999994,
+    "files": 4782,
+    "stats": {
+      "documents": 1417,
+      "parsedContents": 123,
+      "prefilterSkipped": 0
+    }
+  }
+]

@@ -1,0 +1,47 @@
+{
+  "codex:gpt-5.6-sol": {
+    "tokens": 1315167809,
+    "usd": 751.8339559999993,
+    "unpriced": 0
+  },
+  "codex:gpt-6-astra": {
+    "tokens": 307464730,
+    "usd": 428.844516,
+    "unpriced": 0
+  },
+  "codex:gpt-5.6-luna": {
+    "tokens": 363684399,
+    "usd": 12.68815536,
+    "unpriced": 0
+  },
+  "codex:glm-5.3-flash": {
+    "tokens": 1209968099,
+    "usd": 0,
+    "unpriced": 6781
+  },
+  "codex:xlarge": {
+    "tokens": 37137,
+    "usd": 0,
+    "unpriced": 3
+  },
+  "claude:claude-fable-5-1": {
+    "tokens": 9152627,
+    "usd": 20.992745750000005,
+    "unpriced": 0
+  },
+  "claude:claude-opus-5": {
+    "tokens": 16959147,
+    "usd": 18.3447605,
+    "unpriced": 0
+  },
+  "claude:claude-fable-5": {
+    "tokens": 6025318,
+    "usd": 9.514482,
+    "unpriced": 0
+  },
+  "claude:glm-5.3-flash": {
+    "tokens": 18247329,
+    "usd": 0,
+    "unpriced": 371
+  }
+}

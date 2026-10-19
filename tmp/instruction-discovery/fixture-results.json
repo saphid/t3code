@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "seeds": 6,
+  "reachableFiles": 18,
+  "cases": [
+    "hidden",
+    "ignored",
+    "case variants",
+    "local/override names",
+    "backup exclusion",
+    "BOM",
+    "CRLF",
+    "UTF-16 BOM",
+    "@import",
+    "reference links",
+    "spaces",
+    "parentheses",
+    "percent-encoded newline",
+    "Unicode",
+    "line suffix",
+    "command path",
+    "recursive links",
+    "extensionless file",
+    "asset leaf",
+    "missing file",
+    "remote URL",
+    "reference cycle",
+    "symlink cycle",
+    "prefilter parity"
+  ]
+}

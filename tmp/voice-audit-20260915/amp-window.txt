@@ -1,0 +1,30 @@
+Window: "T3 Code (Fork Nightly)", App: T3 Code (Fork Nightly).
+0 standard window T3 Code (Fork Nightly), Secondary Actions: Raise
+	1 container T3 Code (Fork Nightly)
+		2 container
+			3 HTML content T3 Code (Fork Nightly), URL: t3code://app/#/pair
+				4 container
+					5 container
+						6 text T3 CODE (FORK NIGHTLY)
+						7 heading Pair with this environment
+							8 text Pair with this environment
+						9 text This environment expects a trusted pairing credential before the app can connect.
+						10 container
+							11 text Pairing token
+							12 text field (settable) Pairing token
+							13 text Invalid pairing token. Check the token and try again.
+							14 button Continue
+							15 button Reload app
+						16 text Desktop-managed pairing and one-time pairing tokens are both accepted for this environment.
+	17 close button
+	18 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	19 minimize button
+20 menu bar
+	21 T3 Code (Fork Nightly)
+	22 File
+	23 Edit
+	24 View
+	25 Window
+	26 Help
+
+The focused UI element is 3 HTML content T3 Code (Fork Nightly), URL: t3code://app/#/pair

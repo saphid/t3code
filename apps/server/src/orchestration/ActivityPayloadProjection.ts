@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { THREADS_SURFACE_TOOL_NAMES } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -199,6 +200,46 @@ function summarizeMcpResult(result: unknown): Record<string, unknown> | undefine
   return summary ? { content: summary } : undefined;
 }
 
+/** True when the tool belongs to the server's own threads surface toolkit. */
+function isThreadsSurfaceTool(data: Record<string, unknown>, item: Record<string, unknown> | null) {
+  const candidates = [data.toolName, item?.tool];
+  return candidates.some(
+    (candidate) =>
+      typeof candidate === "string" &&
+      (THREADS_SURFACE_TOOL_NAMES as readonly string[]).includes(candidate),
+  );
+}
+
+/**
+ * Threads-surface tool results are small, structured, and needed verbatim by
+ * the clients (the item-list card renders thread ids from them), so they are
+ * preserved as `structuredResult` instead of the one-line summary every other
+ * MCP result gets. Results arrive wrapped per adapter (Codex `item.result`,
+ * Claude/OpenCode `data.result`); the JSON the toolkit encoded is extracted
+ * from the text content.
+ */
+function extractThreadsSurfaceStructuredResult(
+  data: Record<string, unknown>,
+  item: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  const rawResult = item?.result ?? data.result;
+  if (rawResult === undefined || rawResult === null) {
+    return undefined;
+  }
+  const text = extractMcpResultText(rawResult);
+  if (!text) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * MCP tool calls carry full tool results (`data.item.result` on Codex,
  * `data.result` on Claude/OpenCode) that used to bypass slimming entirely to
@@ -221,6 +262,13 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
       projectedItem.result = result;
     }
     projectedData.item = projectedItem;
+  }
+
+  if (isThreadsSurfaceTool(data, item)) {
+    const structuredResult = extractThreadsSurfaceStructuredResult(data, item);
+    if (structuredResult) {
+      projectedData.structuredResult = structuredResult;
+    }
   }
 
   if ("toolName" in data) {

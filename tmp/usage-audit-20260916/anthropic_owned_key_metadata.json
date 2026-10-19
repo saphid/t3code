@@ -1,0 +1,79 @@
+[
+  {
+    "id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+    "type": "api_key",
+    "name": "gcp-review-bot-prototype",
+    "workspace_id": null,
+    "scope": {
+      "type": "workspace",
+      "workspace_id": "wrkspc_01KV8XGCPWy2JQRjeGXaTkpz"
+    },
+    "created_at": "2026-09-08T04:48:53.234329Z",
+    "status": "active",
+    "expires_at": "2026-10-08T04:48:52.398000Z",
+    "principal": {
+      "type": "user_actor",
+      "user_id": "user_01WGWpZNuA4N4W7DNFDktpVj"
+    }
+  },
+  {
+    "id": "apikey_01VHdiRj3NKEvVpyJ466RwDr",
+    "type": "api_key",
+    "name": "AlexS T3 Code 2",
+    "workspace_id": null,
+    "scope": {
+      "type": "organization"
+    },
+    "created_at": "2026-08-28T06:42:30.628732Z",
+    "status": "active",
+    "expires_at": "2027-08-27T07:00:00Z",
+    "principal": {
+      "type": "user_actor",
+      "user_id": "user_01WGWpZNuA4N4W7DNFDktpVj"
+    }
+  },
+  {
+    "id": "apikey_011M7XdKN2WCAXEZohDcEorh",
+    "type": "api_key",
+    "name": "alex-usage-readonly",
+    "workspace_id": null,
+    "scope": {
+      "type": "organization"
+    },
+    "created_at": "2026-08-28T00:35:22.855968Z",
+    "status": "active",
+    "expires_at": "2026-09-27T00:35:22.006000Z",
+    "principal": {
+      "type": "user_actor",
+      "user_id": "user_01WGWpZNuA4N4W7DNFDktpVj"
+    }
+  },
+  {
+    "id": "apikey_01UYPYCj3ya2gqRjamSxcpD7",
+    "type": "api_key",
+    "name": "algolia-agent-fed-search",
+    "workspace_id": null,
+    "scope": {
+      "type": "workspace",
+      "workspace_id": "wrkspc_01KV8XGCPWy2JQRjeGXaTkpz"
+    },
+    "created_at": "2026-08-18T03:51:14.627276Z",
+    "status": "active",
+    "expires_at": "2027-08-18T03:51:14.052000Z",
+    "principal": null
+  },
+  {
+    "id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+    "type": "api_key",
+    "name": "t3-code",
+    "workspace_id": null,
+    "scope": {
+      "type": "workspace",
+      "workspace_id": "wrkspc_01KV8XGCPWy2JQRjeGXaTkpz"
+    },
+    "created_at": "2026-08-17T01:34:35.867126Z",
+    "status": "active",
+    "expires_at": null,
+    "principal": null
+  }
+]

@@ -1,0 +1,469 @@
+{
+  "thread": {
+    "thread_id": "8c9e4073-17f3-4f37-b56f-e2b3fb0548ce",
+    "project_id": "bc15f253-9156-4469-8723-f00ab80a0d38",
+    "title": "Voice Button Discovery and Activation",
+    "branch": null,
+    "worktree_path": "/Users/aus-m5p-as/projects/t3code-voice-ui-controls",
+    "latest_turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+    "created_at": "2026-09-15T01:25:45.006Z",
+    "updated_at": "2026-09-15T01:26:06.291Z",
+    "deleted_at": null,
+    "runtime_mode": "full-access",
+    "interaction_mode": "default",
+    "model_selection_json": "{\"instanceId\":\"opencode\",\"model\":\"enablers/xlarge\"}",
+    "archived_at": null,
+    "latest_user_message_at": "2026-09-15T01:25:45.023Z",
+    "pending_approval_count": 0,
+    "pending_user_input_count": 0,
+    "has_actionable_proposed_plan": 0,
+    "settled_override": null,
+    "settled_at": null,
+    "snoozed_until": null,
+    "snoozed_at": null,
+    "title_regeneration_request_id": null,
+    "title_regeneration_started_at": null,
+    "pinned_at": null,
+    "pin_order_key": null,
+    "linked_pull_request_json": null,
+    "unsettled_at": null,
+    "branch_pull_request_json": null,
+    "active_order_key": null,
+    "project_title": "T3 Code Contrib",
+    "workspace_root": "/Users/aus-m5p-as/projects/t3code-contrib",
+    "session_status": "running",
+    "provider_name": "opencode",
+    "provider_session_id": null,
+    "provider_thread_id": null,
+    "session_last_error": null
+  },
+  "messages": [
+    {
+      "message_id": "77e8682f-6c29-4f95-91cf-c5b400834336",
+      "turn_id": null,
+      "role": "user",
+      "text": "Alex explicitly requests fixing voice bugs in separate T3 threads, ALL using GLM 5.3 Flash. You run OpenCode AI Enablers enablers/xlarge, currently served as glm-5.3-flash. Do not switch models or spawn children. Read AGENTS.md and ~/.config/ai-usage-budget.md. No PR, push, publish, live install changes, server restarts, or browser/computer use. Work only in your isolated worktree. Base is the shipped fork voice build 194db89fe5, intentionally not upstream which lacks this feature. Implement and commit your single concern, run focused regression tests and scoped checks only, no full suite. Install dependencies if needed via repo package manager. Do not stop at a plan. Record final commit, checks, limitations and a concise report in /Users/aus-m5p-as/projects/t3code-contrib/tmp/voice-audit-20260915/REPORT-NAME.md, replacing NAME below. Parent handles integration and client verification. Preserve remote/client-owned execution architecture. No em dashes.\n\nImplement Alex's request that voice can discover and click any interface button. Audit existing app actions, shell commands, navigation, toolBridge and tool executor. Reuse existing handlers where practical and add a discoverable client-local UI control mechanism for remaining visible buttons, with stable identities/accessible names and execution outcomes. Include menus and dialog buttons, disabled/hidden and ambiguous/stale targets, and normal confirmation flows. The attached client must own UI execution so remote sessions work. Never let a model claim success without actual handler/visible outcome. Prefer minimal generic visible control enumeration/activation fallback plus existing semantic commands, avoid huge per-button switch registry. Map supported/unsupported controls explicitly and test actual mechanisms. Own contracts, tools.ts, toolBridge and broker tool definitions; avoid editing live-client.ts or transcript UI/controller owned by another worker unless coordinate via a note to parent. Document in a separate docs/user/voice-controls.md. REPORT-NAME = REPORT-controls.md.",
+      "is_streaming": 0,
+      "created_at": "2026-09-15T01:25:45.023Z",
+      "updated_at": "2026-09-15T01:25:45.023Z",
+      "attachments": []
+    }
+  ],
+  "activities": [
+    {
+      "activity_id": "c78b4cb0-9fd6-404f-b159-2ea818c29c7c",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.started",
+      "summary": "bash started",
+      "created_at": "2026-09-15T01:26:02.606Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution"
+      }
+    },
+    {
+      "activity_id": "88f69453-e702-41f9-a99d-4a20c8e384cb",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:02.864Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "af2460b1-fdad-47d9-a652-398117aaa958",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:02.884Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "f0c98201-2c26-4535-932b-1832d8081b26",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.started",
+      "summary": "read started",
+      "created_at": "2026-09-15T01:26:02.904Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call"
+      }
+    },
+    {
+      "activity_id": "686ec9f1-9342-4add-98bb-a854397ba373",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:02.922Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "08245cf7-35f0-41ba-a6e4-b9d2a3fdbf05",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:02.925Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "5b4c4b10-0e29-45eb-92c5-5484c747c981",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:03.136Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "38e3ebf4-a6c5-4554-be5f-2b04aba53b48",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:03.138Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "ac3fd344-a87a-48ad-9510-36ad947e3d57",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:03.147Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "79adfde1-0bff-4c81-8084-5b0b88712835",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.completed",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:03.151Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "detail": "194db89fe5 build: assemble v0.0.41-nightly.20260914.1722956577\n8272496f73 feat(voice): configure voice from integration settings\nb49a03d666 feat(voice): add fast commands and ex...",
+        "data": {
+          "tool": "bash",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "git log --oneline -5 && git status && pwd && ls"
+            },
+            "output": "194db89fe5 build: assemble v0.0.41-nightly.20260914.1722956577\n8272496f73 feat(voice): configure voice from integration settings\nb49a03d666 feat(voice): add fast commands and existing-thread follow-ups\ne317d35e23 fix(nightly): reconcile contracts with Nightly 1675\na4f0ab98c3 test(mobile): make cold highlighting independent of runner speed\nOn branch agent/voice-ui-controls\nnothing to commit, working tree clean\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls\nAGENTS.md\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nREADME.md\napps\nassets\ndocs\ninfra\nknip.jsonc\nnative\noxlint-plugin-t3code\npackage.json\npackages\npackaging\npatches\npnpm-lock.yaml\npnpm-workspace.yaml\nscripts\nt3.json\nthird-party-licenses.config.json\ntsconfig.base.json\nvite.config.ts\n",
+            "metadata": {
+              "output": "194db89fe5 build: assemble v0.0.41-nightly.20260914.1722956577\n8272496f73 feat(voice): configure voice from integration settings\nb49a03d666 feat(voice): add fast commands and existing-thread follow-ups\ne317d35e23 fix(nightly): reconcile contracts with Nightly 1675\na4f0ab98c3 test(mobile): make cold highlighting independent of runner speed\nOn branch agent/voice-ui-controls\nnothing to commit, working tree clean\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls\nAGENTS.md\nCLAUDE.md\nCONTRIBUTING.md\nLICENSE\nREADME.md\napps\nassets\ndocs\ninfra\nknip.jsonc\nnative\noxlint-plugin-t3code\npackage.json\npackages\npackaging\npatches\npnpm-lock.yaml\npnpm-workspace.yaml\nscripts\nt3.json\nthird-party-licenses.config.json\ntsconfig.base.json\nvite.config.ts\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "git log --oneline -5 && git status && pwd && ls",
+            "time": {
+              "start": 1789435563147,
+              "end": 1789435563151
+            }
+          }
+        }
+      }
+    },
+    {
+      "activity_id": "e950cce1-cac4-4425-9430-cd5c3f80c972",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "read",
+      "created_at": "2026-09-15T01:26:03.214Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "a01216c5-67d6-4c16-9f9b-d170312abf24",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.completed",
+      "summary": "read",
+      "created_at": "2026-09-15T01:26:03.228Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "detail": "<path>/Users/aus-m5p-as/.config/ai-usage-budget.md</path>\n<type>file</type>\n<content>\n1: # AI usage budget\n2: \n3: Use this policy for work that may span several turns, launch ch...",
+        "data": {
+          "tool": "read",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "/Users/aus-m5p-as/.config/ai-usage-budget.md"
+            },
+            "output": "<path>/Users/aus-m5p-as/.config/ai-usage-budget.md</path>\n<type>file</type>\n<content>\n1: # AI usage budget\n2: \n3: Use this policy for work that may span several turns, launch children, repeat reviews, process a queue, or carry a large conversation.\n4: \n5: The deterministic source of truth is `~/.config/t3-usage-guard.json`. Check it with `~/.local/bin/t3-usage-guard check` before starting a large campaign and after any major fan-out. A launch agent refreshes the independent transcript scan hourly.\n6: \n7: ## Agent behavior\n8: \n9: 1. State the intended provider, model, fan-out, and stopping condition before starting a large campaign.\n10: 2. At 80 percent of a configured limit, warn Alex in the transcript and finish the current bounded unit.\n11: 3. At an approval threshold, stop launching new work and ask Alex before continuing.\n12: 4. At a pause threshold, stop the campaign. Report current results, budget state, and the smallest safe continuation.\n13: 5. When context reaches 200,000 tokens, prepare a compact handoff. Start a new thread by 250,000 tokens. Carry the goal, decisions, changed files, verification, open problems, and next action. Leave the full transcript behind.\n14: 6. Treat a thread idle for 50 minutes as cache-cold. Resume through a compact handoff when its context is large.\n15: 7. Batch related retrieval work into warm workers. Send task deltas instead of repeating the full brief.\n16: 8. Give each parent one shared child budget. Default to 8 concurrent children, 32 total children, and $250 of API-equivalent child cost before approval. Recursive spawning starts disabled.\n17: 9. Allow two full review rounds. Later reviews receive the new diff and unresolved findings only.\n18: 10. Use Luna for retrieval, Sol for clear implementation, and Fable for orchestration or hard judgment unless the task requires another choice.\n19: \n20: Claude limits protect cash spend. Codex dollar limits protect API-equivalent usage because the Business plan currently makes its marginal cash cost zero. Token, request, context, fan-out, and runtime limits apply to both.\n21: \n22: The model warning is advisory. The T3 usage warning and `t3-usage-guard` notification are deterministic and remain authoritative when the model misses the policy.\n\n(End of file - total 22 lines)\n</content>",
+            "metadata": {
+              "preview": "# AI usage budget\n\nUse this policy for work that may span several turns, launch children, repeat reviews, process a queue, or carry a large conversation.\n\nThe deterministic source of truth is `~/.config/t3-usage-guard.json`. Check it with `~/.local/bin/t3-usage-guard check` before starting a large campaign and after any major fan-out. A launch agent refreshes the independent transcript scan hourly.\n\n## Agent behavior\n\n1. State the intended provider, model, fan-out, and stopping condition before starting a large campaign.\n2. At 80 percent of a configured limit, warn Alex in the transcript and finish the current bounded unit.\n3. At an approval threshold, stop launching new work and ask Alex before continuing.\n4. At a pause threshold, stop the campaign. Report current results, budget state, and the smallest safe continuation.\n5. When context reaches 200,000 tokens, prepare a compact handoff. Start a new thread by 250,000 tokens. Carry the goal, decisions, changed files, verification, open problems, and next action. Leave the full transcript behind.\n6. Treat a thread idle for 50 minutes as cache-cold. Resume through a compact handoff when its context is large.\n7. Batch related retrieval work into warm workers. Send task deltas instead of repeating the full brief.\n8. Give each parent one shared child budget. Default to 8 concurrent children, 32 total children, and $250 of API-equivalent child cost before approval. Recursive spawning starts disabled.\n9. Allow two full review rounds. Later reviews receive the new diff and unresolved findings only.\n10. Use Luna for retrieval, Sol for clear implementation, and Fable for orchestration or hard judgment unless the task requires another choice.\n\nClaude limits protect cash spend. Codex dollar limits protect API-equivalent usage because the Business plan currently makes its marginal cash cost zero. Token, request, context, fan-out, and runtime limits apply to both.",
+              "truncated": false,
+              "loaded": [],
+              "display": {
+                "type": "file",
+                "path": "/Users/aus-m5p-as/.config/ai-usage-budget.md",
+                "text": "# AI usage budget\n\nUse this policy for work that may span several turns, launch children, repeat reviews, process a queue, or carry a large conversation.\n\nThe deterministic source of truth is `~/.config/t3-usage-guard.json`. Check it with `~/.local/bin/t3-usage-guard check` before starting a large campaign and after any major fan-out. A launch agent refreshes the independent transcript scan hourly.\n\n## Agent behavior\n\n1. State the intended provider, model, fan-out, and stopping condition before starting a large campaign.\n2. At 80 percent of a configured limit, warn Alex in the transcript and finish the current bounded unit.\n3. At an approval threshold, stop launching new work and ask Alex before continuing.\n4. At a pause threshold, stop the campaign. Report current results, budget state, and the smallest safe continuation.\n5. When context reaches 200,000 tokens, prepare a compact handoff. Start a new thread by 250,000 tokens. Carry the goal, decisions, changed files, verification, open problems, and next action. Leave the full transcript behind.\n6. Treat a thread idle for 50 minutes as cache-cold. Resume through a compact handoff when its context is large.\n7. Batch related retrieval work into warm workers. Send task deltas instead of repeating the full brief.\n8. Give each parent one shared child budget. Default to 8 concurrent children, 32 total children, and $250 of API-equivalent child cost before approval. Recursive spawning starts disabled.\n9. Allow two full review rounds. Later reviews receive the new diff and unresolved findings only.\n10. Use Luna for retrieval, Sol for clear implementation, and Fable for orchestration or hard judgment unless the task requires another choice.\n\nClaude limits protect cash spend. Codex dollar limits protect API-equivalent usage because the Business plan currently makes its marginal cash cost zero. Token, request, context, fan-out, and runtime limits apply to both.\n\nThe model warning is advisory. The T3 usage warning and `t3-usage-guard` notification are deterministic and remain authoritative when the model misses the policy.",
+                "lineStart": 1,
+                "lineEnd": 22,
+                "totalLines": 22,
+                "truncated": false
+              }
+            },
+            "title": "../../.config/ai-usage-budget.md",
+            "time": {
+              "start": 1789435563214,
+              "end": 1789435563228
+            }
+          }
+        }
+      }
+    },
+    {
+      "activity_id": "ed7d2bf6-0a05-45e9-ba22-23260b5aad55",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.started",
+      "summary": "bash started",
+      "created_at": "2026-09-15T01:26:05.451Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution"
+      }
+    },
+    {
+      "activity_id": "23f342f9-1b4f-4a06-b2c9-c8eda858af8c",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:05.764Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "b1030591-1c03-4c6a-a081-6985b12f90d7",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:05.764Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "a4c08539-e3c0-41c9-a37f-f580c45adaa3",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.started",
+      "summary": "grep started",
+      "created_at": "2026-09-15T01:26:05.806Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call"
+      }
+    },
+    {
+      "activity_id": "1b7b3277-5a01-4f9a-aaa1-7567d9dd5e84",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:05.822Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "062aa6cb-71e6-4b19-a183-23c075b6d8b3",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.completed",
+      "summary": "bash",
+      "created_at": "2026-09-15T01:26:05.824Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "command_execution",
+        "detail": "T3 usage guard is already running.\n",
+        "data": {
+          "tool": "bash",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "~/.local/bin/t3-usage-guard check 2>&1 | tail -20"
+            },
+            "output": "T3 usage guard is already running.\n",
+            "metadata": {
+              "output": "T3 usage guard is already running.\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "~/.local/bin/t3-usage-guard check 2>&1 | tail -20",
+            "time": {
+              "start": 1789435565822,
+              "end": 1789435565824
+            }
+          }
+        }
+      }
+    },
+    {
+      "activity_id": "d2c04787-1689-4f7b-93a8-e240a101336d",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "grep",
+      "created_at": "2026-09-15T01:26:05.942Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "54f7a2d3-3880-44aa-b063-f85cfdc26cab",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.started",
+      "summary": "grep started",
+      "created_at": "2026-09-15T01:26:05.982Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call"
+      }
+    },
+    {
+      "activity_id": "852d441a-cdf3-4fb0-aad9-aac1b6f50cf7",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.updated",
+      "summary": "grep",
+      "created_at": "2026-09-15T01:26:06.194Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "status": "inProgress",
+        "data": {}
+      }
+    },
+    {
+      "activity_id": "8cc3e558-471a-4fd3-920f-b262a824d42c",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.completed",
+      "summary": "grep",
+      "created_at": "2026-09-15T01:26:06.258Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "detail": "Found 2 matches\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/apps/web/src/voice/ui/toolBridge.test.ts:\n  Line 4: import { createNavigatingVoiceToolExecutor } from \"./tool...",
+        "data": {
+          "tool": "grep",
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "toolBridge|tool-bridge"
+            },
+            "output": "Found 2 matches\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/apps/web/src/voice/ui/toolBridge.test.ts:\n  Line 4: import { createNavigatingVoiceToolExecutor } from \"./toolBridge\";\n\n\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/apps/web/src/voice/ui/voicePanelController.ts:\n  Line 33: import { createNavigatingVoiceToolExecutor } from \"./toolBridge\";\n",
+            "metadata": {
+              "matches": 2,
+              "truncated": false
+            },
+            "title": "toolBridge|tool-bridge",
+            "time": {
+              "start": 1789435565942,
+              "end": 1789435566258
+            }
+          }
+        }
+      }
+    },
+    {
+      "activity_id": "68e27cf7-88ff-440f-b6ca-e2de660101f7",
+      "turn_id": "opencode-turn-cd1c2e18-80e8-4895-84bb-bd5ffd77cbae",
+      "tone": "tool",
+      "kind": "tool.completed",
+      "summary": "grep",
+      "created_at": "2026-09-15T01:26:06.291Z",
+      "sequence": null,
+      "payload": {
+        "itemType": "dynamic_tool_call",
+        "detail": "Found 22 matches\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/packages/contracts/src/voice.ts:\n  Line 25: /** Client-generated stable id for one voice-driven mutation req...",
+        "data": {
+          "tool": "grep",
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "voice",
+              "include": "packages/contracts/src/**/*.ts"
+            },
+            "output": "Found 22 matches\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/packages/contracts/src/voice.ts:\n  Line 25: /** Client-generated stable id for one voice-driven mutation request. Retries\n\n  Line 75: /** The single error shape every voice tool may fail with. Tagged by `code`.\n\n  Line 98: // Tool 1: voice.discoverEnvironments\n\n  Line 107:   /** The environment descriptor advertised the `voiceLive` capability. */\n\n  Line 108:   voiceLiveCapable: Schema.Boolean,\n\n  Line 124: // Tool 2: voice.discoverProjects\n\n  Line 148: // Tool 3: voice.listModels\n\n  Line 183: // Tool 4: voice.searchThreads\n\n  Line 241: // Tool 5: voice.readThread\n\n  Line 285: // Tool 6: voice.readProject\n\n  Line 312: // Tool 7: voice.openThread\n\n  Line 340: // Tool 8: voice.startThread\n\n  Line 395: // Tool 9: voice.observeThread\n\n  Line 422: // Broker wire contracts (client <-> apps/server voice route)\n\n  Line 552: /** The frozen voice tool set. Each entry pairs the tool's input and output\n\n\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/packages/contracts/src/index.ts:\n  Line 46: export * from \"./voice.ts\";\n\n\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/packages/contracts/src/environment.ts:\n  Line 167:   /** Server brokers GPT Live voice sessions (the voice broker routes under\n\n  Line 168:       /api/voice/sessions) with its environment-owned OpenAI key. Absent on\n\n  Line 169:       servers from before voice brokering shipped, so clients hide the voice\n\n  Line 171:   voiceLive: Schema.optionalKey(Schema.Boolean),\n\n\n/Users/aus-m5p-as/projects/t3code-voice-ui-controls/packages/contracts/src/device.ts:\n  Line 216:   voiceOver: Schema.optional(Schema.Boolean),\n\n  Line 278:       \"voiceOver\",\n",
+            "metadata": {
+              "matches": 22,
+              "truncated": false
+            },
+            "title": "voice",
+            "time": {
+              "start": 1789435566194,
+              "end": 1789435566291
+            }
+          }
+        }
+      }
+    }
+  ]
+}

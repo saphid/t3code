@@ -1,0 +1,3826 @@
+{
+  "parentThreadId": "19f76675-d149-47f5-ba43-9f7a9fb86966",
+  "inheritedProviderInstanceId": "cliproxyapi",
+  "inheritedModel": "gpt-6-astra",
+  "runtimeMode": "full-access",
+  "interactionMode": "default",
+  "providers": [
+    {
+      "providerInstanceId": "cliproxyapi",
+      "driverKind": "codex",
+      "displayName": "CLIProxyAPI Cloud",
+      "models": [
+        {
+          "id": "gpt-6-astra",
+          "label": "GPT 6.0 Astra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "label": "GPT 5.6 Sol",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low",
+                  "isDefault": true
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "low"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "GPT 5.6 Terra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "GPT 5.6 Luna",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "label": "GPT 5.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-3-5-haiku-20241022",
+          "label": "Claude 3.5 Haiku",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-3-7-sonnet-20250219",
+          "label": "Claude 3.7 Sonnet",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-20250514",
+          "label": "Claude 4 Opus",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-20250514",
+          "label": "Claude 4 Sonnet",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-1-20250805",
+          "label": "Claude 4.1 Opus",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-haiku-4-5-20251001",
+          "label": "Claude 4.5 Haiku",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-5-20251101",
+          "label": "Claude 4.5 Opus",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-5-20250929",
+          "label": "Claude 4.5 Sonnet",
+          "options": [
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-6",
+          "label": "Claude 4.6 Opus",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "Claude 4.6 Sonnet",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-fable-5",
+          "label": "Claude Fable 5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-fable-5-1",
+          "label": "Claude Fable 5.1",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-7",
+          "label": "Claude Opus 4.7",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-8",
+          "label": "Claude Opus 4.8",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-5",
+          "label": "Claude Opus 5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-5",
+          "label": "Claude Sonnet 5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-composer-2.5-fast",
+          "label": "Composer 2.5 Fast",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-3-mini",
+          "label": "Grok 3 Mini",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-3-mini-fast",
+          "label": "Grok 3 Mini Fast",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.20-0309-non-reasoning",
+          "label": "Grok 4.20 0309 Non Reasoning",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.20-0309-reasoning",
+          "label": "Grok 4.20 0309 Reasoning",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.20-multi-agent-0309",
+          "label": "Grok 4.20 Multi Agent 0309",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.3",
+          "label": "Grok 4.3",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "none",
+                  "label": "None"
+                },
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.5",
+          "label": "Grok 4.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-4.6",
+          "label": "Grok 4.6",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-build-0.1",
+          "label": "Grok Build 0.1",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "glm-5.3-flash",
+          "label": "xlarge",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "fast",
+                  "label": "Fast"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "codex-auto-review",
+          "label": "codex-auto-review",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-image-1.5",
+          "label": "gpt-image-1.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "gpt-image-2",
+          "label": "gpt-image-2",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-image",
+          "label": "grok-imagine-image",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-image-2.0",
+          "label": "grok-imagine-image-2.0",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-image-quality",
+          "label": "grok-imagine-image-quality",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-video",
+          "label": "grok-imagine-video",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-video-1.5",
+          "label": "grok-imagine-video-1.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        },
+        {
+          "id": "grok-imagine-video-1.5-preview",
+          "label": "grok-imagine-video-1.5-preview",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard",
+                  "isDefault": true
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage"
+                }
+              ],
+              "currentValue": "default"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "codex",
+      "driverKind": "codex",
+      "displayName": "Codex",
+      "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "label": "GPT-5.6-Sol",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "GPT-5.6-Terra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "GPT-5.6-Luna",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra",
+          "label": "GPT-6-Astra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "label": "GPT-5.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "xhigh"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "codex_work",
+      "driverKind": "codex",
+      "displayName": "Work",
+      "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "label": "GPT-5.6-Sol",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "label": "GPT-5.6-Terra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "label": "GPT-5.6-Luna",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra",
+          "label": "GPT-6-Astra",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultra",
+                  "label": "Ultra"
+                }
+              ],
+              "currentValue": "medium"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "2x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        },
+        {
+          "id": "gpt-5.5",
+          "label": "GPT-5.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "xhigh"
+            },
+            {
+              "id": "serviceTier",
+              "label": "Service Tier",
+              "type": "select",
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Standard"
+                },
+                {
+                  "id": "priority",
+                  "label": "Fast",
+                  "description": "1.5x speed, increased usage",
+                  "isDefault": true
+                }
+              ],
+              "currentValue": "priority"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "claudeAgent_enablers_glm53",
+      "driverKind": "claudeAgent",
+      "displayName": "AI Enablers GLM-5.3 Flash",
+      "models": [
+        {
+          "id": "claude-fable-5-1",
+          "label": "Claude Fable 5.1",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-fable-5",
+          "label": "Claude Fable 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-5",
+          "label": "Claude Opus 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-8",
+          "label": "Claude Opus 4.8",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-7",
+          "label": "Claude Opus 4.7",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-6",
+          "label": "Claude Opus 4.6",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-5",
+          "label": "Claude Opus 4.5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-5",
+          "label": "Claude Sonnet 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k",
+                  "isDefault": true
+                },
+                {
+                  "id": "1m",
+                  "label": "1M"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "Claude Sonnet 4.6",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k",
+                  "isDefault": true
+                },
+                {
+                  "id": "1m",
+                  "label": "1M"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "label": "Claude Haiku 4.5",
+          "options": [
+            {
+              "id": "thinking",
+              "label": "Thinking",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "xlarge",
+          "label": "xlarge",
+          "options": []
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "claudeAgent",
+      "driverKind": "claudeAgent",
+      "displayName": "Claude old key",
+      "models": [
+        {
+          "id": "claude-fable-5-1",
+          "label": "Claude Fable 5.1",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-fable-5",
+          "label": "Claude Fable 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "isDefault": true
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-5",
+          "label": "Claude Opus 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-8",
+          "label": "Claude Opus 4.8",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultracode",
+                  "label": "Ultracode",
+                  "description": "xhigh effort plus multi-agent workflow orchestration"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-7",
+          "label": "Claude Opus 4.7",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-6",
+          "label": "Claude Opus 4.6",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k"
+                },
+                {
+                  "id": "1m",
+                  "label": "1M",
+                  "isDefault": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-opus-4-5",
+          "label": "Claude Opus 4.5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                }
+              ]
+            },
+            {
+              "id": "fastMode",
+              "label": "Fast Mode",
+              "type": "boolean"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-5",
+          "label": "Claude Sonnet 5",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Extra High"
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k",
+                  "isDefault": true
+                },
+                {
+                  "id": "1m",
+                  "label": "1M"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "label": "Claude Sonnet 4.6",
+          "options": [
+            {
+              "id": "effort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "isDefault": true
+                },
+                {
+                  "id": "max",
+                  "label": "Max"
+                },
+                {
+                  "id": "ultrathink",
+                  "label": "Ultrathink"
+                }
+              ],
+              "promptInjectedValues": ["ultrathink"]
+            },
+            {
+              "id": "contextWindow",
+              "label": "Context Window",
+              "type": "select",
+              "options": [
+                {
+                  "id": "200k",
+                  "label": "200k",
+                  "isDefault": true
+                },
+                {
+                  "id": "1m",
+                  "label": "1M"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "label": "Claude Haiku 4.5",
+          "options": [
+            {
+              "id": "thinking",
+              "label": "Thinking",
+              "type": "boolean"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "cursor",
+      "driverKind": "cursor",
+      "displayName": "Cursor",
+      "models": [],
+      "canRunChildTask": false,
+      "canRunCrossProviderChildTask": false,
+      "constraints": [
+        "Provider instance is disabled.",
+        "Provider executable is not installed.",
+        "Cursor is disabled in T3 Code settings."
+      ]
+    },
+    {
+      "providerInstanceId": "grok",
+      "driverKind": "grok",
+      "displayName": "Grok",
+      "models": [
+        {
+          "id": "grok-4.6",
+          "label": "Grok 4.6",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "xhigh",
+                  "label": "Extra High Effort",
+                  "description": "Highest effort and reasoning level"
+                },
+                {
+                  "id": "high",
+                  "label": "High Effort",
+                  "description": "Higher implementation quality with extensive reasoning",
+                  "isDefault": true
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium Effort",
+                  "description": "Balanced effort with standard implementation and testing"
+                },
+                {
+                  "id": "low",
+                  "label": "Low Effort",
+                  "description": "Quick, fast implementations"
+                }
+              ],
+              "currentValue": "high"
+            }
+          ]
+        },
+        {
+          "id": "grok-build",
+          "label": "Grok Build",
+          "options": []
+        },
+        {
+          "id": "grok-4.5",
+          "label": "Grok 4.5",
+          "options": [
+            {
+              "id": "reasoningEffort",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "high",
+                  "label": "High Effort",
+                  "description": "Highest implementation quality with extensive reasoning",
+                  "isDefault": true
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium Effort",
+                  "description": "Balanced effort with standard implementation and testing"
+                },
+                {
+                  "id": "low",
+                  "label": "Low Effort",
+                  "description": "Quick, fast implementations"
+                }
+              ],
+              "currentValue": "high"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "opencode",
+      "driverKind": "opencode",
+      "displayName": "AI Enablers",
+      "models": [
+        {
+          "id": "enablers/large",
+          "label": "large (glm-5.3-flash)",
+          "options": [
+            {
+              "id": "variant",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Xhigh"
+                }
+              ]
+            },
+            {
+              "id": "agent",
+              "label": "Agent",
+              "type": "select",
+              "options": [
+                {
+                  "id": "build",
+                  "label": "Build",
+                  "isDefault": true
+                },
+                {
+                  "id": "plan",
+                  "label": "Plan"
+                }
+              ],
+              "currentValue": "build"
+            }
+          ]
+        },
+        {
+          "id": "enablers/medium",
+          "label": "medium (gemma-4-31b-it-nvfp4)",
+          "options": [
+            {
+              "id": "variant",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Xhigh"
+                }
+              ]
+            },
+            {
+              "id": "agent",
+              "label": "Agent",
+              "type": "select",
+              "options": [
+                {
+                  "id": "build",
+                  "label": "Build",
+                  "isDefault": true
+                },
+                {
+                  "id": "plan",
+                  "label": "Plan"
+                }
+              ],
+              "currentValue": "build"
+            }
+          ]
+        },
+        {
+          "id": "enablers/small",
+          "label": "small (gemma-4-26b-a4b-nvfp4)",
+          "options": [
+            {
+              "id": "variant",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Xhigh"
+                }
+              ]
+            },
+            {
+              "id": "agent",
+              "label": "Agent",
+              "type": "select",
+              "options": [
+                {
+                  "id": "build",
+                  "label": "Build",
+                  "isDefault": true
+                },
+                {
+                  "id": "plan",
+                  "label": "Plan"
+                }
+              ],
+              "currentValue": "build"
+            }
+          ]
+        },
+        {
+          "id": "enablers/xlarge",
+          "label": "xlarge (glm-5.3-flash)",
+          "options": [
+            {
+              "id": "variant",
+              "label": "Reasoning",
+              "type": "select",
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High"
+                },
+                {
+                  "id": "xhigh",
+                  "label": "Xhigh"
+                }
+              ]
+            },
+            {
+              "id": "agent",
+              "label": "Agent",
+              "type": "select",
+              "options": [
+                {
+                  "id": "build",
+                  "label": "Build",
+                  "isDefault": true
+                },
+                {
+                  "id": "plan",
+                  "label": "Plan"
+                }
+              ],
+              "currentValue": "build"
+            }
+          ]
+        }
+      ],
+      "canRunChildTask": true,
+      "canRunCrossProviderChildTask": true,
+      "constraints": []
+    },
+    {
+      "providerInstanceId": "antigravity",
+      "driverKind": "antigravity",
+      "displayName": "Antigravity",
+      "models": [],
+      "canRunChildTask": false,
+      "canRunCrossProviderChildTask": false,
+      "constraints": [
+        "Provider instance is disabled.",
+        "Provider executable is not installed.",
+        "Antigravity is disabled in T3 Code settings."
+      ]
+    },
+    {
+      "providerInstanceId": "pi",
+      "driverKind": "pi",
+      "displayName": "Pi",
+      "models": [
+        {
+          "id": "default",
+          "label": "Pi default",
+          "options": []
+        }
+      ],
+      "canRunChildTask": false,
+      "canRunCrossProviderChildTask": false,
+      "constraints": [
+        "Provider instance is disabled.",
+        "Provider executable is not installed.",
+        "Pi is disabled in T3 Code settings."
+      ]
+    }
+  ],
+  "features": {
+    "appOwnedSubagents": true,
+    "asyncPolling": true,
+    "cancellation": true,
+    "batchThreadCreation": true,
+    "threadManagement": true,
+    "incrementalThreadRead": true,
+    "scheduledTasks": true,
+    "maxBatchThreads": 20
+  }
+}

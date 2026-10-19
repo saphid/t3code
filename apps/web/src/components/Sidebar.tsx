@@ -1,3 +1,4 @@
+import { SidebarSubagents } from "./SidebarSubagents";
 import { autoAnimate } from "@formkit/auto-animate";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
@@ -248,6 +249,46 @@ function WorkingDuration(props: { startedAt: string | null }) {
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
+}
+
+const TITLE_SHIMMER_STAGGER_MS = 90;
+const titleSegmenter = new Intl.Segmenter();
+
+// Splits the title into glyphs so a bright crest can travel through them
+// while it regenerates — the shadcn.io "Shimmering Text" effect. Every
+// character runs the same dim → bright(+3D lift) → dim timeline, offset one
+// stagger step from its neighbor, which produces a smooth traveling wave.
+// Whitespace is normalized and text segmented by grapheme cluster, so the
+// shimmering title lays out exactly like the idle one and accents or joined
+// scripts stay whole. Idle titles are a plain string.
+function ShimmeringTitleText(props: { text: string }) {
+  const normalized = props.text.replace(/\s+/g, " ");
+  const children: ReactNode[] = [];
+  let spaceRun = "";
+  [...titleSegmenter.segment(normalized)].forEach((segment, index) => {
+    // Whitespace runs stay plain text so they collapse and lay out exactly
+    // like the idle title; an inline-block space span would either vanish
+    // (collapsible) or render double-width runs (pre).
+    if (/^\s$/.test(segment.segment)) {
+      spaceRun += segment.segment;
+      return;
+    }
+    if (spaceRun) {
+      children.push(spaceRun);
+      spaceRun = "";
+    }
+    children.push(
+      <span
+        key={index}
+        className="title-shimmer-char"
+        style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
+      >
+        {segment.segment}
+      </span>,
+    );
+  });
+  children.push(spaceRun);
+  return <>{children}</>;
 }
 
 function SidebarThreadTooltip({
@@ -1125,11 +1166,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+        "relative min-w-0 flex-1 text-sm",
         shouldRecede ? "font-normal" : "font-medium",
         variant === "card"
           ? cn(
-              "truncate",
               isUnread || isWoke
                 ? "text-foreground"
                 : shouldRecede
@@ -1139,17 +1179,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     : "text-foreground/90",
             )
           : cn(
-              "truncate group-hover/sidebar-row:text-foreground",
+              "group-hover/sidebar-row:text-foreground",
               props.isActive || isWoke
                 ? "text-foreground"
                 : isUnread
                   ? "text-muted-foreground"
                   : "text-secondary-label/70",
             ),
-        isRegeneratingTitle && "opacity-[0.55]",
       )}
     >
-      {thread.title}
+      <span
+        className={cn(
+          "block truncate",
+          isRegeneratingTitle &&
+            "title-shimmering motion-reduce:opacity-[0.55] motion-reduce:text-inherit",
+        )}
+      >
+        {isRegeneratingTitle ? <ShimmeringTitleText text={thread.title} /> : thread.title}
+      </span>
     </span>
   );
 
@@ -1323,6 +1370,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        <SidebarSubagents agents={thread.subagents} threadTitle={thread.title} />
       </li>
     );
   }
@@ -1577,6 +1625,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      <SidebarSubagents agents={thread.subagents} threadTitle={thread.title} />
     </li>
   );
 });

@@ -11,6 +11,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateIdleTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -167,13 +168,15 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
+  const idleTooltip =
+    !showUpdateDetails && !showCheckIcon && state ? getDesktopUpdateIdleTooltip(state) : null;
   const tooltip = showUpdateDetails
     ? state
       ? getDesktopUpdateButtonTooltip(state)
       : "Update available"
     : showCheckIcon
       ? "Checking for updates…"
-      : "Check for updates";
+      : (idleTooltip?.title ?? "Check for updates");
   const disabled = showCheckIcon
     ? true
     : showUpdateDetails
@@ -356,6 +359,15 @@ function SidebarUpdateControl() {
         >
           {showUpdateDetails && state ? (
             <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
+          ) : idleTooltip ? (
+            <div className="text-left">
+              <div className="text-sm leading-5 font-medium">{idleTooltip.title}</div>
+              {idleTooltip.details.map((detail) => (
+                <div className="mt-0.5 text-xs leading-4 text-muted-foreground" key={detail}>
+                  {detail}
+                </div>
+              ))}
+            </div>
           ) : (
             tooltip
           )}

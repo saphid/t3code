@@ -1,0 +1,33 @@
+# Thread Usage
+
+## PR 103 review — Standards axis
+
+Scope: 2026-09-09T00:00:00.000Z to 2026-09-16T00:00:00.000Z (end exclusive), including 0 subagent threads.
+
+Cost: $0.002
+Total tokens: 6,809,060
+Input tokens: 6,760,870 (6,514,274 cache reads)
+Output tokens: 48,190
+Requests: 60
+Your personal OpenAI and your personal Anthropic were used for some inference and incurred an estimated $7.20 at token list prices.
+This cost reflects only Amp credits consumed. It does not include any model provider usage billed directly to customer-managed model provider keys.
+This estimate uses public list prices. It does not include provider discounts, commitments, router fees, or subscription usage. Amp does not bill it.
+
+## Credits
+
+| Type | Cost |
+| --- | ---: |
+| Amp paid tier (covered) | $0.002 |
+
+## Models
+
+| Model | Requests | Input | Output | Amp cost | Est. list price |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GPT-5.6 Sol | 4 | 86,587 | 1,965 | $0 | $0.19 |
+| Fable 5.1 | 52 | 6,674,283 | 46,225 | $0 | $7.02 |
+
+## Tools
+
+| Tool | Requests | Cost |
+| --- | ---: | ---: |
+| Web Extract | 2 | $0.002 |

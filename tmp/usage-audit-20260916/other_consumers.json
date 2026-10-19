@@ -1,0 +1,36 @@
+{
+  "opencode": {
+    "enablers/xlarge": {
+      "records": 4993,
+      "recorded_cost": 0,
+      "total": 688762425,
+      "input": 686862216,
+      "output": 1900209,
+      "reasoning": 0,
+      "cache_write": 0,
+      "cache_read": 0
+    },
+    "enablers/large": {
+      "records": 6939,
+      "recorded_cost": 0,
+      "total": 1024945780,
+      "input": 1023026474,
+      "output": 1919306,
+      "reasoning": 0,
+      "cache_write": 0,
+      "cache_read": 0
+    }
+  },
+  "hermes": [
+    {
+      "model": "large",
+      "provider": "custom",
+      "rows": 2,
+      "calls": 2,
+      "estimated_usd": 0.0,
+      "actual_usd": 0.0,
+      "first_seen": 1788486759.167752,
+      "last_seen": 1788486901.309408
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "by_key": {
+    "apikey_016NgTBzwNayuqu9rPY7Bh56": {
+      "usd": 86.65163,
+      "tokens": 6688579,
+      "cache1h": 0,
+      "cache5m": 0
+    },
+    "apikey_01MNC3kR5aXpq6cRgW9SFVhm": {
+      "usd": 849.69221425,
+      "tokens": 454298700,
+      "cache1h": 15289873,
+      "cache5m": 7600196
+    }
+  },
+  "daily": [
+    {
+      "day": "2026-09-09",
+      "key": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+      "usd": 2.03175
+    },
+    {
+      "day": "2026-09-09",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 36.192314
+    },
+    {
+      "day": "2026-09-10",
+      "key": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+      "usd": 50.98482
+    },
+    {
+      "day": "2026-09-10",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 89.916629
+    },
+    {
+      "day": "2026-09-11",
+      "key": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+      "usd": 7.922890000000001
+    },
+    {
+      "day": "2026-09-11",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 143.24950875
+    },
+    {
+      "day": "2026-09-12",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 1.3629244999999999
+    },
+    {
+      "day": "2026-09-13",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 6.8762165
+    },
+    {
+      "day": "2026-09-14",
+      "key": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+      "usd": 7.392200000000001
+    },
+    {
+      "day": "2026-09-14",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 208.30076225000002
+    },
+    {
+      "day": "2026-09-15",
+      "key": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+      "usd": 18.31997
+    },
+    {
+      "day": "2026-09-15",
+      "key": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+      "usd": 363.79385924999997
+    }
+  ]
+}

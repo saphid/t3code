@@ -1,0 +1,22 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  # Remote write (not a scraped exporter) so datapoint timestamps are stored
+  # as-is: backfilled history lands at its real run times instead of at the
+  # moment Prometheus happened to scrape. Needs the remote-write receiver and
+  # an out-of-order window on the Prometheus side (see docker-compose.yml and
+  # prometheus.yml).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    # Keep t3perf.wall_ms as t3perf_wall_ms instead of appending unit suffixes.
+    add_metric_suffixes: false
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheusremotewrite]

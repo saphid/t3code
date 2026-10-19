@@ -1,0 +1,770 @@
+{
+  "data": [
+    {
+      "starting_at": "2026-09-09T00:00:00Z",
+      "ending_at": "2026-09-10T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 172585,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 6118,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 78,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 152950,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 1485843,
+          "output_tokens": 27917,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 540,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 1283286
+          },
+          "cache_read_input_tokens": 1308492,
+          "output_tokens": 261781,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 763048,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 5029,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-10T00:00:00Z",
+      "ending_at": "2026-09-11T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 3631002,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 293496,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 342,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 835327,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 10534854,
+          "output_tokens": 120127,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 92,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 300115,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 12540588,
+          "output_tokens": 49803,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 27348,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 61327,
+            "ephemeral_5m_input_tokens": 971915
+          },
+          "cache_read_input_tokens": 3584953,
+          "output_tokens": 213150,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 62008,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 2258,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 4,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 11960
+          },
+          "cache_read_input_tokens": 2043,
+          "output_tokens": 8490,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-4-8",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 12323,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 696087
+          },
+          "cache_read_input_tokens": 3997126,
+          "output_tokens": 146270,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-11T00:00:00Z",
+      "ending_at": "2026-09-12T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 595724,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 39313,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 172,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 328193,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 8394171,
+          "output_tokens": 98355,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 152,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 132881,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 20288259,
+          "output_tokens": 96593,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 53594,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 854505,
+            "ephemeral_5m_input_tokens": 1725344
+          },
+          "cache_read_input_tokens": 13083414,
+          "output_tokens": 592677,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 21078,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 482353,
+            "ephemeral_5m_input_tokens": 90226
+          },
+          "cache_read_input_tokens": 10468057,
+          "output_tokens": 109411,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 97806,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 5066,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 21903,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 200270
+          },
+          "cache_read_input_tokens": 2273745,
+          "output_tokens": 72119,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-12T00:00:00Z",
+      "ending_at": "2026-09-13T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 1001,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 13,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 28,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 62991,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 830367,
+          "output_tokens": 12665,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-13T00:00:00Z",
+      "ending_at": "2026-09-14T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 12,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 163970,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 161427,
+          "output_tokens": 3024,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 876,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 112265,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 714806,
+          "output_tokens": 16985,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 1928,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 26,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-14T00:00:00Z",
+      "ending_at": "2026-09-15T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 559455,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 35953,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 58,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 108663,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 1436914,
+          "output_tokens": 18083,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 100295,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2181721,
+            "ephemeral_5m_input_tokens": 2401773
+          },
+          "cache_read_input_tokens": 44703440,
+          "output_tokens": 1462799,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 14146,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 1177694,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 29535704,
+          "output_tokens": 202270,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 1636429,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 66407,
+          "server_tool_use": {
+            "web_search_requests": 68
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 22,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 79719
+          },
+          "cache_read_input_tokens": 209114,
+          "output_tokens": 41855,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-4-8",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    },
+    {
+      "starting_at": "2026-09-15T00:00:00Z",
+      "ending_at": "2026-09-16T00:00:00Z",
+      "results": [
+        {
+          "uncached_input_tokens": 1235667,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 119266,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_016NgTBzwNayuqu9rPY7Bh56",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 592,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 908150,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 31284954,
+          "output_tokens": 393871,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 288,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 588820,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 42510508,
+          "output_tokens": 136347,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 51634,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2302345,
+            "ephemeral_5m_input_tokens": 139616
+          },
+          "cache_read_input_tokens": 39373262,
+          "output_tokens": 420009,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 65711,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3664191,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 125777355,
+          "output_tokens": 508471,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-fable-5-1",
+          "service_tier": "standard",
+          "context_window": "200k-1M",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 135235,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 0,
+          "output_tokens": 3776,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-haiku-4-5-20251001",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        },
+        {
+          "uncached_input_tokens": 462,
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 871412,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cache_read_input_tokens": 18526606,
+          "output_tokens": 217777,
+          "server_tool_use": {
+            "web_search_requests": 0
+          },
+          "api_key_id": "apikey_01MNC3kR5aXpq6cRgW9SFVhm",
+          "workspace_id": null,
+          "account_id": null,
+          "service_account_id": null,
+          "model": "claude-opus-5",
+          "service_tier": "standard",
+          "context_window": "0-200k",
+          "inference_geo": null
+        }
+      ]
+    }
+  ],
+  "pages": 1,
+  "has_more": false,
+  "starting_at": "2026-09-09T00:00:00Z",
+  "ending_at": "2026-09-16T05:28:09.563960Z"
+}

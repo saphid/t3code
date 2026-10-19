@@ -1,0 +1,13 @@
+{
+  "threadId": "a13e9fbf-39e6-494b-894a-d6e5812fd2e1",
+  "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+  "title": "Voice: recover conversation and audit failures",
+  "workdir": "/Users/aus-m5p-as/projects/t3code-contrib",
+  "modelSelection": {
+    "instanceId": "opencode",
+    "model": "enablers/xlarge"
+  },
+  "dispatch": {
+    "sequence": 1158420
+  }
+}

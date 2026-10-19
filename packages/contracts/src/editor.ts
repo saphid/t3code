@@ -75,6 +75,11 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
+export const RevealPathInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+});
+export type RevealPathInput = typeof RevealPathInput.Type;
+
 const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
 
 /** Editors that can open a remote workspace via `vscode-remote` deep links. */
@@ -188,12 +193,25 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedErrorClass<Ex
   }
 }
 
+export class ExternalLauncherRevealSpawnError extends Schema.TaggedErrorClass<ExternalLauncherRevealSpawnError>()(
+  "ExternalLauncherRevealSpawnError",
+  {
+    ...ExternalLauncherSpawnFields,
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Failed to reveal '${this.target}' with '${[this.command, ...this.args].join(" ")}'`;
+  }
+}
+
 export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealSpawnError,
 ]);
 export type ExternalLauncherError = typeof ExternalLauncherError.Type;
 

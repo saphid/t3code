@@ -3,9 +3,10 @@ import {
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadsListResult,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   emptyAgentPanelModel,
@@ -70,6 +71,9 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
+import { useFileContextMenuHandler } from "../../fileContextMenu";
+import { useProject, useThread } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
@@ -104,9 +108,16 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { useAtomValue } from "@effect/atom-react";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import {
+  formatChatTimestampTooltip,
+  formatDayAwareTimestamp,
+  formatRelativeTimeLabel,
+} from "../../timestampFormat";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import { useNavigate } from "@tanstack/react-router";
 
 import {
   buildInlineTerminalContextText,
@@ -1462,6 +1473,7 @@ function AssistantChangedFilesSectionInner({
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
+  const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const isLatestTurn = activity.latestTurnId === turnSummary.turnId;
   const persistedExpanded = useUiStateStore(
@@ -1473,6 +1485,20 @@ function AssistantChangedFilesSectionInner({
   );
   const [allDirectoriesExpanded, setAllDirectoriesExpanded] = useState(autoExpanded);
   const expanded = persistedExpanded ?? (isLatestTurn && autoExpanded);
+
+  const thread = useThread(ctx.threadRef);
+  const activeProject = useProject(
+    thread && thread.projectId
+      ? { environmentId: thread.environmentId, projectId: thread.projectId }
+      : null,
+  );
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(ctx.activeThreadEnvironmentId),
+  );
+  const onFileContextMenu = useFileContextMenuHandler(
+    ctx.activeThreadEnvironmentId,
+    serverConfig?.availableEditors ?? [],
+  );
 
   return (
     <ChangedFilesCard
@@ -1487,6 +1513,20 @@ function AssistantChangedFilesSectionInner({
       }
       onToggleAllDirectories={() => setAllDirectoriesExpanded((current) => !current)}
       onOpenTurnDiff={onOpenTurnDiff}
+      onFileContextMenu={(filePath, event) =>
+        onFileContextMenu(
+          {
+            environmentId: ctx.activeThreadEnvironmentId,
+            filePath,
+            workspaceRoot: ctx.workspaceRoot,
+            repositoryRoot:
+              thread?.worktreePath == null
+                ? activeProject?.repositoryIdentity?.rootPath
+                : undefined,
+          },
+          event,
+        )
+      }
     />
   );
 }
@@ -2223,7 +2263,60 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
+  if (workEntry.threadsList) {
+    return <ThreadsListCard threadsList={workEntry.threadsList} />;
+  }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+});
+
+/**
+ * Inline item list for an agent's `threads_list` call. The parsed result
+ * replaces the generic tool row entirely; rows navigate to the listed threads
+ * in the thread's own environment.
+ */
+const ThreadsListCard = memo(function ThreadsListCard(props: { threadsList: ThreadsListResult }) {
+  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const navigate = useNavigate();
+  const threads = props.threadsList.threads;
+
+  return (
+    <div className="flex flex-col rounded-md px-0.5 py-0.5">
+      <p className="px-1 pb-0.5 text-[11px] text-secondary-label">
+        {threads.length} thread{threads.length === 1 ? "" : "s"}
+      </p>
+      <div className="flex flex-col">
+        {threads.map((thread) => (
+          <button
+            key={thread.threadId}
+            type="button"
+            className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-accent/20"
+            onClick={() => {
+              navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(
+                  scopeThreadRef(activeThreadEnvironmentId, thread.threadId),
+                ),
+              });
+            }}
+          >
+            <span className="min-w-0 flex-1 truncate text-[12px] text-foreground">
+              {thread.title}
+            </span>
+            <span className="shrink-0 text-[11px] text-secondary-label">
+              {formatRelativeTimeLabel(thread.updatedAt)}
+            </span>
+            <span className="flex size-4 shrink-0 items-center justify-center text-icon-muted">
+              {thread.settled ? (
+                <CheckIcon className="block size-3 shrink-0 stroke-current" aria-hidden />
+              ) : (
+                <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+              )}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
@@ -2357,14 +2450,27 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
                   <TooltipPopup>Completed</TooltipPopup>
                 </Tooltip>
               ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-4 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
+                workEntry.createdAt ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="flex h-4 items-center justify-center text-secondary-label text-[11px] tabular-nums" />
+                      }
+                    >
+                      <WorkingTimer createdAt={workEntry.createdAt} />
+                    </TooltipTrigger>
+                    <TooltipPopup>Running</TooltipPopup>
+                  </Tooltip>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="flex size-4 items-center justify-center" />}
+                    >
+                      <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+                    </TooltipTrigger>
+                    <TooltipPopup>Empty</TooltipPopup>
+                  </Tooltip>
+                )
               ) : null}
             </span>
           </div>

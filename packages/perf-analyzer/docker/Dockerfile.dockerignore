@@ -1,0 +1,6 @@
+# BuildKit per-Dockerfile ignore: keeps repo checkouts' node_modules and
+# accumulated results out of the build context.
+node_modules
+results
+results-*
+.t3

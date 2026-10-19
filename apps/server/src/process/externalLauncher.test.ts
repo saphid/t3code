@@ -292,3 +292,64 @@ it.effect("rejects unknown editors through the service API", () =>
     assert.equal(error.message, "Unknown editor: missing-editor");
   }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
 );
+
+it.effect("reveals a path with the platform file manager command", () => {
+  let spawned: ChildProcess.StandardCommand | undefined;
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    yield* launcher.revealPath("/tmp/workspace/src/index.ts");
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, ["-R", "/tmp/workspace/src/index.ts"]);
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        platform: "darwin",
+        env: { PATH: "/usr/bin:/bin" },
+        onSpawn: (command) => {
+          spawned = command;
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("reveals a path parent on linux where no select convention exists", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+    const xdgOpen = path.join(binDir, "xdg-open");
+    yield* fileSystem.writeFileString(xdgOpen, "#!/bin/sh\n");
+    yield* fileSystem.chmod(xdgOpen, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.revealPath("/tmp/workspace/src/index.ts");
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "xdg-open");
+    assert.deepEqual(spawned.args, ["/tmp/workspace/src"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("fails reveal when the file manager command is unavailable", () =>
+  Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const error = yield* launcher.revealPath("/tmp/workspace/src/index.ts").pipe(Effect.flip);
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherRevealSpawnError);
+    assert.equal(error.target, "/tmp/workspace/src/index.ts");
+  }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
+);

@@ -1,3 +1,4 @@
+import { ThreadSubagents } from "./thread-subagents";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import type {
   EnvironmentProject,
@@ -679,38 +680,45 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     );
 
   return (
-    <ThreadSwipeable
-      backgroundColor={backgroundColor}
-      containerStyle={
-        compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
-      }
-      enableTrackpadSwipe
-      fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-      onDelete={handleDelete}
-      onSwipeableClose={props.onSwipeableClose}
-      onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={primaryAction}
-      resetKey={`${thread.environmentId}:${thread.id}`}
-      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-      threadTitle={thread.title}
-    >
-      {(close) => (
-        // Messages-style row actions on long-press. iOS: a real
-        // UIContextMenuInteraction with the row as the zoom preview (needs the
-        // patched @react-native-menu, see
-        // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
-        // interaction is hosted by the component view and the underlying
-        // UIButton passes touches through, so row taps keep working). Android:
-        // ControlPillMenu injects onLongPress into the row and anchors the
-        // token-styled dropdown to it; taps and swipes are untouched.
-        <ControlPillMenu
-          actions={menuActions}
-          onPressAction={handleMenuAction}
-          shouldOpenOnLongPress
-        >
-          {rowContent(close)}
-        </ControlPillMenu>
-      )}
-    </ThreadSwipeable>
+    <>
+      <ThreadSwipeable
+        backgroundColor={backgroundColor}
+        containerStyle={
+          compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
+        }
+        enableTrackpadSwipe
+        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        onDelete={handleDelete}
+        onSwipeableClose={props.onSwipeableClose}
+        onSwipeableWillOpen={props.onSwipeableWillOpen}
+        primaryAction={primaryAction}
+        resetKey={`${thread.environmentId}:${thread.id}`}
+        simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
+        threadTitle={thread.title}
+      >
+        {(close) => (
+          // Messages-style row actions on long-press. iOS: a real
+          // UIContextMenuInteraction with the row as the zoom preview (needs the
+          // patched @react-native-menu, see
+          // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
+          // interaction is hosted by the component view and the underlying
+          // UIButton passes touches through, so row taps keep working). Android:
+          // ControlPillMenu injects onLongPress into the row and anchors the
+          // token-styled dropdown to it; taps and swipes are untouched.
+          <ControlPillMenu
+            actions={menuActions}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+          >
+            {rowContent(close)}
+          </ControlPillMenu>
+        )}
+      </ThreadSwipeable>
+      <ThreadSubagents
+        key={`${thread.environmentId}:${thread.id}`}
+        agents={thread.subagents}
+        threadTitle={thread.title}
+      />
+    </>
   );
 });

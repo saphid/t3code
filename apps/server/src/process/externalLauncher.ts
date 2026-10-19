@@ -12,6 +12,7 @@ import {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   type EditorId,
@@ -41,6 +42,7 @@ export {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   isExternalLauncherError,
@@ -234,6 +236,35 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
   }
 }
 
+function buildRevealLaunch(
+  target: string,
+  platform: NodeJS.Platform,
+  dirname: (path: string) => string,
+): ProcessLaunch {
+  if (platform === "darwin") {
+    return {
+      command: "open",
+      args: ["-R", target],
+      options: DETACHED_IGNORE_STDIO_OPTIONS,
+    };
+  }
+
+  if (platform === "win32") {
+    return {
+      command: "explorer",
+      args: [`/select,${target}`],
+      options: DETACHED_IGNORE_STDIO_OPTIONS,
+    };
+  }
+
+  // No POSIX file manager has a select-and-reveal convention; show the parent.
+  return {
+    command: "xdg-open",
+    args: [dirname(target)],
+    options: DETACHED_IGNORE_STDIO_OPTIONS,
+  };
+}
+
 function buildBrowserLaunch(
   target: string,
   platform: NodeJS.Platform,
@@ -337,6 +368,11 @@ export class ExternalLauncher extends Context.Service<
      * Launches the editor as a detached process so server startup is not blocked.
      */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
+    /**
+     * Reveal a path in the platform file manager, selecting the file where the
+     * platform supports it (macOS, Windows).
+     */
+    readonly revealPath: (path: string) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
 
@@ -454,6 +490,44 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   );
 });
 
+const revealPathProcess = Effect.fn("externalLauncher.revealPathProcess")(function* (
+  target: string,
+): Effect.fn.Return<
+  void,
+  ExternalLauncherError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> {
+  const platform = yield* HostProcessPlatform;
+  const path = yield* Path.Path;
+  const env = yield* readCommandLookupEnv;
+  const launch = buildRevealLaunch(target, platform, (value) => path.dirname(value));
+  if (!(yield* isCommandAvailable(launch.command, { env }))) {
+    return yield* new ExternalLauncherRevealSpawnError({
+      target,
+      command: launch.command,
+      args: launch.args,
+      cause: new Error(`Command not found: ${launch.command}`),
+    });
+  }
+
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const command = ChildProcess.make(launch.command, launch.args, launch.options);
+  yield* spawner.spawn(command).pipe(
+    Effect.flatMap((handle) => handle.unref),
+    Effect.asVoid,
+    Effect.scoped,
+    Effect.mapError(
+      (cause) =>
+        new ExternalLauncherRevealSpawnError({
+          target,
+          command: launch.command,
+          args: launch.args,
+          cause,
+        }),
+    ),
+  );
+});
+
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -499,6 +573,12 @@ export const make = Effect.gen(function* () {
           launchEditorProcess(launch).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
+        ),
+      ),
+    revealPath: (path) =>
+      provideCommandResolutionServices(
+        revealPathProcess(path).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ),
       ),
   });

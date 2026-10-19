@@ -1,0 +1,273 @@
+# Usage
+
+Signed in as alex.southwell@algolia.com
+**Amp Megawatt Tier:** agent usage $12.16 of $20 remaining (61%), orb usage 716.2h of 750h a1.small orb hours remaining (95%) - period 2026-08-18 to 2026-09-18, ends in 2 days
+**Individual credits:** $2.03 remaining (set up auto-reload to avoid running out) - https://ampcode.com/settings
+**Workspace algolia:** $275.79 remaining (replenishes automatically) - https://ampcode.com/workspaces/algolia
+
+Range: 2026-09-09T00:00:00.000Z to 2026-09-16T00:00:00.000Z (end exclusive)
+Total Orb runtime: 9h41m22.173s (34,882,173 ms)
+Total tokens: 1,178,708,870
+Total recorded cost: $7.05 (excludes included orb hours)
+Included orb hours used: 38.9h of a1.small orbs (4× the 9.7h of orb runtime because orbs ran at a size larger than the a1.small default for this tier; larger orbs draw proportionally more included hours per hour of runtime)
+
+## How to Read Recorded Costs
+
+Recorded cost is what Amp billed in dollars: to the Amp tier agent pool, granted credits, or paid credits. It never includes included orb hours, which are reported separately. Compare providers and models by recorded cost, never by tokens; a linked model provider such as ChatGPT records tokens at $0.
+
+A linked ChatGPT subscription covers only OpenAI models. Ultra mode, custom agents or dial modes on non-OpenAI models, image generation, media viewing on non-OpenAI models, orb runtime, and tool fees (web search, web extract) always bill Amp.
+
+Amp paid tiers have two separate pools. Agent usage covers model inference and tool fees and is quoted in dollars; orb usage covers orb runtime and is quoted only in included orb hours, never in dollars. Exhausting one pool does not affect the other. Included orb hours are counted in the tier's default orb size: a larger orb draws proportionally more included hours per hour of runtime and a smaller orb draws fewer, so included hours can exceed or fall short of wall-clock orb runtime. Current period net usage and remaining balance include restored usage credits. Range tables show gross recorded usage before those credits.
+
+Covered is usage not debited from paid credits, such as Amp tier or granted-credit usage. It excludes Amp Free and does not represent savings from a linked model provider subscription.
+
+Paid is usage debited from paid credits. Those credits can belong to you, a workspace, or an enterprise, so Paid is not necessarily your personal out-of-pocket cost.
+
+Costs for linked-provider inference billed outside Amp are not included. This report cannot estimate API-equivalent costs or subscription savings, including from ChatGPT.
+
+## Amp Tier: Agent Usage Pool
+
+Tier agent usage drawn in the selected range, by the model or feature that consumed it.
+
+| Source | Recorded cost |
+| --- | ---: |
+| **All sources** | **$7.05** |
+| GLM-5.3-Flash | $4.69 |
+| GLM-5.2 (Sub Discount) | $1.53 |
+| Gemini 3.7 Flash | $0.36 |
+| Web Search | $0.28 |
+| Web Extract | $0.18 |
+
+## Amp Tier: Orb Usage Pool
+
+Gross included orb hours recorded in the selected range, in hours of a1.small orbs. Larger orbs draw more hours per hour of runtime. The net current period summary above includes restored usage credits. This table does not subtract them. Orb usage has no dollar amount.
+
+| Source | a1.small orb hours |
+| --- | ---: |
+| **All sources** | **38.9h** |
+| Orb | 38.9h |
+
+## From
+
+Sorted by recorded cost. Amp is usage billed to Amp; other sources are linked model provider connections.
+
+| Source | Tokens | Recorded cost |
+| --- | ---: | ---: |
+| Amp | 46,405,950 | $7.05 |
+| OpenAI | 1,114,324,096 | $0 |
+| Anthropic | 17,978,824 | $0 |
+
+## Models
+
+Sorted by recorded cost.
+
+| Model | Tokens | Recorded cost |
+| --- | ---: | ---: |
+| GLM-5.3-Flash | 40,682,709 | $4.69 |
+| GLM-5.2 (Sub Discount) | 5,473,659 | $1.53 |
+| Gemini 3.7 Flash | 249,582 | $0.36 |
+| GPT-6 Astra | 1,047,731,646 | $0 |
+| GPT-5.6 Sol | 40,870,844 | $0 |
+| GPT-5.6 Luna | 14,902,564 | $0 |
+| Fable 5.1 | 13,182,646 | $0 |
+| GPT-5.6 Terra | 10,779,706 | $0 |
+| Opus 5 | 4,796,178 | $0 |
+| GPT-5.5 | 39,336 | $0 |
+
+## Daily Recorded Cost
+
+| Date (UTC) | Included orb hours | Covered | Paid | Total |
+| --- | ---: | ---: | ---: | ---: |
+| 2026-09-15 | 1.8h | $0.17 | $0 | $0.17 |
+| 2026-09-14 | 11.1h | $0.89 | $0 | $0.89 |
+| 2026-09-11 | 12.6h | $0.68 | $0 | $0.68 |
+| 2026-09-10 | 8.4h | $4.93 | $0 | $4.93 |
+| 2026-09-09 | 5.1h | $0.40 | $0 | $0.40 |
+
+## Top Threads by Tokens
+
+Token counts cover only the selected range. These rows are sorted by tokens; a token-heavy thread on a linked provider can cost $0. Use Usage by Thread for cost.
+
+| Thread | Main model | Tokens | Orb runtime | Included orb hours | Covered | Paid | Total |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Metas Performance Lab — review and delivery plan (T-01a07a74-1a9f-74af-af7d-d72224fd69b5) | GLM-5.2 (Sub Discount) | 382,977,641 | 0h | 0h | $0.16 | $0 | $0.16 |
+| Metis deployment speed — review and delivery plan (T-01a07a74-4c50-772d-b260-366c983c0524) | GLM-5.2 (Sub Discount) | 236,090,247 | 0h | 0h | $0.32 | $0 | $0.32 |
+| ML lifecycle — full pipeline review and delivery plan (T-01a07a73-c984-72d2-96f6-022172c2dae7) | Gemini 3.7 Flash | 219,516,553 | 0h | 0h | $0.29 | $0 | $0.29 |
+| Perf components: index delivery and shard loading (T-01a07f37-9664-7398-9f1c-4c699e9f452d) | GPT-6 Astra | 55,242,941 | 0h | 0h | $0 | $0 | $0 |
+| Review dashboard observability, history, UX, and polling (T-01a08422-3dda-70b1-acee-9422f61366d2) | Gemini 3.7 Flash | 42,417,798 | 0h | 0h | $0.18 | $0 | $0.18 |
+
+## Usage by Thread
+
+These rows are sorted by recorded cost plus included orb hours. Main model is the model with the highest recorded cost in the thread for the selected range. Token counts cover only the selected range. Orb runtime is wall-clock time; when it differs from included orb hours, the row names the orb size direction and factor relative to the a1.small plan default.
+
+| Thread | Main model | Tokens | Orb runtime | Included orb hours | Covered | Paid | Total |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ML lifecycle planning (T-01a07a70-676e-720e-9521-fa4a2bd8bd8f) | GLM-5.2 (Sub Discount) | 35,188,083 | 9.4h (larger than a1.small, 4×) | 37.8h | $0.50 | $0 | $0.50 |
+  <!-- Run `amp threads usage T-01a07a70-676e-720e-9521-fa4a2bd8bd8f --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Build allowlisted TypedWF cloud source bundle (T-01a08d8a-2771-7173-9575-85e2896c784e) | GLM-5.3-Flash | 10,407,383 | 0h | 0h | $1.14 | $0 | $1.14 |
+  <!-- Run `amp threads usage T-01a08d8a-2771-7173-9575-85e2896c784e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Research WF deployment home for TypedWF cloud MVP (T-01a08d80-3010-76a1-babe-3d59c85c59ee) | GLM-5.3-Flash | 6,317,458 | 0h | 0h | $0.68 | $0 | $0.68 |
+  <!-- Run `amp threads usage T-01a08d80-3010-76a1-babe-3d59c85c59ee --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| AWS RDS standby provisioning internals and acceleration options (T-01a089d0-76c4-759c-bf41-3b99aa24ffa4) | GLM-5.3-Flash | 4,009,135 | 0h | 0h | $0.56 | $0 | $0.56 |
+  <!-- Run `amp threads usage T-01a089d0-76c4-759c-bf41-3b99aa24ffa4 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Research ML pipeline deployment and adoption constraints (T-01a08d80-6d28-72f4-be07-5b52a96a8194) | GLM-5.3-Flash | 5,056,117 | 0h | 0h | $0.55 | $0 | $0.55 |
+  <!-- Run `amp threads usage T-01a08d80-6d28-72f4-be07-5b52a96a8194 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Public reports of RDS PostgreSQL Multi-AZ provisioning delays (T-01a089d0-36c5-7282-b8dd-8b8c2de8d3af) | GLM-5.3-Flash | 3,831,571 | 0h | 0h | $0.54 | $0 | $0.54 |
+  <!-- Run `amp threads usage T-01a089d0-36c5-7282-b8dd-8b8c2de8d3af --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| RDS primary and standby parallel bootstrap options (T-01a08e09-281d-7233-b662-1630bf2df808) | GLM-5.3-Flash | 2,835,751 | 0.3h (larger than a1.small, 4×) | 1.2h | $0.34 | $0 | $0.34 |
+  <!-- Run `amp threads usage T-01a08e09-281d-7233-b662-1630bf2df808 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Metis deployment speed — review and delivery plan (T-01a07a74-4c50-772d-b260-366c983c0524) | GLM-5.2 (Sub Discount) | 236,090,247 | 0h | 0h | $0.32 | $0 | $0.32 |
+  <!-- Run `amp threads usage T-01a07a74-4c50-772d-b260-366c983c0524 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| ML lifecycle — full pipeline review and delivery plan (T-01a07a73-c984-72d2-96f6-022172c2dae7) | Gemini 3.7 Flash | 219,516,553 | 0h | 0h | $0.29 | $0 | $0.29 |
+  <!-- Run `amp threads usage T-01a07a73-c984-72d2-96f6-022172c2dae7 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| TypedWF export package artifact contracts (T-01a08acd-9daa-7365-8cb9-e93b13e5183c) | GLM-5.3-Flash | 2,302,208 | 0h | 0h | $0.27 | $0 | $0.27 |
+  <!-- Run `amp threads usage T-01a08acd-9daa-7365-8cb9-e93b13e5183c --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Metis RDS historical AWS provisioning bottlenecks (T-01a089af-ca0b-72ad-a18c-ce3c1b25a7c0) | GLM-5.3-Flash | 2,208,437 | 0h | 0h | $0.25 | $0 | $0.25 |
+  <!-- Run `amp threads usage T-01a089af-ca0b-72ad-a18c-ce3c1b25a7c0 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Metis PostgreSQL role and provisioning investigation (T-01a089af-75b0-77fc-8908-df54e9d41abc) | GLM-5.3-Flash | 3,228,010 | 0h | 0h | $0.21 | $0 | $0.21 |
+  <!-- Run `amp threads usage T-01a089af-75b0-77fc-8908-df54e9d41abc --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review dashboard observability, history, UX, and polling (T-01a08422-3dda-70b1-acee-9422f61366d2) | Gemini 3.7 Flash | 42,417,798 | 0h | 0h | $0.18 | $0 | $0.18 |
+  <!-- Run `amp threads usage T-01a08422-3dda-70b1-acee-9422f61366d2 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Prepare isolated TypedWF GCP resource configuration (T-01a08d8d-531d-744c-b8cc-335e19e87566) | GLM-5.3-Flash | 1,151,227 | 0h | 0h | $0.17 | $0 | $0.17 |
+  <!-- Run `amp threads usage T-01a08d8d-531d-744c-b8cc-335e19e87566 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Metas Performance Lab — review and delivery plan (T-01a07a74-1a9f-74af-af7d-d72224fd69b5) | GLM-5.2 (Sub Discount) | 382,977,641 | 0h | 0h | $0.16 | $0 | $0.16 |
+  <!-- Run `amp threads usage T-01a07a74-1a9f-74af-af7d-d72224fd69b5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Daily inbox and filter check 2026-09-11 (T-01a08dd7-51f1-71bc-b94c-c8890c297f29) | GLM-5.2 (Sub Discount) | 3,572,047 | 0h | 0h | $0.15 | $0 | $0.15 |
+  <!-- Run `amp threads usage T-01a08dd7-51f1-71bc-b94c-c8890c297f29 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Gmail history filter audit (T-01a0898e-bd66-76d6-b9f9-702545f42eb5) | GLM-5.2 (Sub Discount) | 1,336,584 | 0h | 0h | $0.15 | $0 | $0.15 |
+  <!-- Run `amp threads usage T-01a0898e-bd66-76d6-b9f9-702545f42eb5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| TypedWF export compiler registrations (T-01a08acd-522b-7748-ab01-f341799722ee) | GLM-5.3-Flash | 951,274 | 0h | 0h | $0.11 | $0 | $0.11 |
+  <!-- Run `amp threads usage T-01a08acd-522b-7748-ab01-f341799722ee --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| AWS storage snapshot acceleration experiments (T-01a07f36-6386-73e2-b708-c854d795ce8d) | GLM-5.2 (Sub Discount) | 30,164,484 | 0h | 0h | $0.11 | $0 | $0.11 |
+  <!-- Run `amp threads usage T-01a07f36-6386-73e2-b708-c854d795ce8d --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Job resource sampling (T-01a09e11-eefa-7218-bb97-11c5b731a435) | GLM-5.2 (Sub Discount) | 7,117,696 | 0h | 0h | $0.07 | $0 | $0.07 |
+  <!-- Run `amp threads usage T-01a09e11-eefa-7218-bb97-11c5b731a435 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Registry cache plan (T-01a09ea9-3f40-706e-924d-dac29538f892) | GLM-5.2 (Sub Discount) | 5,103,306 | 0h | 0h | $0.06 | $0 | $0.06 |
+  <!-- Run `amp threads usage T-01a09ea9-3f40-706e-924d-dac29538f892 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Datadog alert triage (T-01a08de4-bbbd-768b-ad1c-400615d3add8) | GLM-5.2 (Sub Discount) | 520,044 | 0h | 0h | $0.04 | $0 | $0.04 |
+  <!-- Run `amp threads usage T-01a08de4-bbbd-768b-ad1c-400615d3add8 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Daily Gmail filter safety audit, 11 September (T-01a08dd9-c9b8-706c-ba9e-e2d76ca9d8d5) | GLM-5.2 (Sub Discount) | 1,229,244 | 0h | 0h | $0.04 | $0 | $0.04 |
+  <!-- Run `amp threads usage T-01a08dd9-c9b8-706c-ba9e-e2d76ca9d8d5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| AWS inbox notification controls (T-01a08976-dc0a-756b-baaf-3cd7a7ffc5c2) | GPT-6 Astra | 2,762,886 | 0h | 0h | $0.03 | $0 | $0.03 |
+  <!-- Run `amp threads usage T-01a08976-dc0a-756b-baaf-3cd7a7ffc5c2 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review PR 103 (T-01a083de-35c6-70a5-b5c4-1d80b5377683) | GLM-5.2 (Sub Discount) | 1,509,607 | 0h | 0h | $0.03 | $0 | $0.03 |
+  <!-- Run `amp threads usage T-01a083de-35c6-70a5-b5c4-1d80b5377683 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| NAT attribution plan (T-01a09ea9-3fb8-7690-bb08-0e6c5de047f3) | GPT-5.6 Sol | 2,724,480 | 0h | 0h | $0.02 | $0 | $0.02 |
+  <!-- Run `amp threads usage T-01a09ea9-3fb8-7690-bb08-0e6c5de047f3 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| CI value model (T-01a09e4e-eed7-74e9-818c-8627819bf47f) | GPT-5.6 Sol | 3,397,411 | 0h | 0h | $0.02 | $0 | $0.02 |
+  <!-- Run `amp threads usage T-01a09e4e-eed7-74e9-818c-8627819bf47f --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| PR 103 provider spend dashboard integration review (Astra) (T-01a08e95-6d3e-726d-9bf2-850cde743b0a) | GLM-5.2 (Sub Discount) | 3,678,189 | 0h | 0h | $0.02 | $0 | $0.02 |
+  <!-- Run `amp threads usage T-01a08e95-6d3e-726d-9bf2-850cde743b0a --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| CI phase timings (T-01a09e11-e396-7356-b397-8ba22d6897fa) | GPT-5.6 Sol | 2,248,543 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a09e11-e396-7356-b397-8ba22d6897fa --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Queue outliers plan (T-01a09e11-de0b-712b-9a9a-abe97e9c82b6) | GPT-5.6 Sol | 2,968,639 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a09e11-de0b-712b-9a9a-abe97e9c82b6 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| AMI promotion tests (T-01a09e11-e8b7-77c5-8a33-788c2f5dc50e) | GPT-5.6 Sol | 2,291,972 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a09e11-e8b7-77c5-8a33-788c2f5dc50e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| NAT topology plan (T-01a09ea9-3f42-759c-a9c3-a14766d97cf5) | GLM-5.2 (Sub Discount) | 609,776 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a09ea9-3f42-759c-a9c3-a14766d97cf5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model name (T-01a088a9-4783-741f-84d6-e590923cefd0) | GLM-5.3-Flash | 32,784 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a088a9-4783-741f-84d6-e590923cefd0 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review AI Dev Hub cost attribution design (T-01a083ab-25b0-750f-9bd5-85f7f483de20) | Fable 5.1 | 256,652 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a083ab-25b0-750f-9bd5-85f7f483de20 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review PR 103 (T-01a083ec-3ceb-767f-9694-161cec941e77) | Fable 5.1 | 966,553 | 0h | 0h | $0.01 | $0 | $0.01 |
+  <!-- Run `amp threads usage T-01a083ec-3ceb-767f-9694-161cec941e77 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Durable boost app (T-01a09e11-d8e4-7456-9ba0-2137e164ae51) | GPT-5.6 Sol | 4,752,578 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09e11-d8e4-7456-9ba0-2137e164ae51 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| CI speed mapping (T-01a09dba-3b8c-77c2-a3d7-fffdf47d6f2e) | GPT-5.6 Sol | 579,408 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09dba-3b8c-77c2-a3d7-fffdf47d6f2e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model identity (T-01a09d96-8d09-76af-b977-e422512d735f) | GPT-5.6 Sol | 33,675 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09d96-8d09-76af-b977-e422512d735f --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Docker Hub authentication (T-01a09e11-d40c-750a-9840-3a4679ad3d31) | GPT-5.6 Sol | 3,864,332 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09e11-d40c-750a-9840-3a4679ad3d31 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Plan CI NAT topology cost fix (T-01a09ea9-b988-761f-8ac3-00e199f2f021) | GPT-6 Astra | 2,427,797 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09ea9-b988-761f-8ac3-00e199f2f021 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Plan job-correlated CI resource sampling (T-01a09e12-8197-71a2-9945-35d47c7ebfa8) | GPT-6 Astra | 3,855,069 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a09e12-8197-71a2-9945-35d47c7ebfa8 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Opus saved-result reader specification review (T-01a08f78-1f2f-77a9-a3f4-beeac19bf8c0) | Opus 5 | 1,167,446 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08f78-1f2f-77a9-a3f4-beeac19bf8c0 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Read-only Datadog Gmail alert triage (T-01a08de5-3bb3-74dc-a5a8-0f169f9f8b26) | GPT-6 Astra | 333,643 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08de5-3bb3-74dc-a5a8-0f169f9f8b26 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Opus saved-result reader standards review (T-01a08f78-4ce9-728d-8320-3e95d2ea4c9b) | Opus 5 | 1,382,290 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08f78-4ce9-728d-8320-3e95d2ea4c9b --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model version (T-01a08eb3-d9b4-768d-9707-3413b7b627af) | GPT-5.6 Sol | 37,763 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08eb3-d9b4-768d-9707-3413b7b627af --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model identification (T-01a08eb4-05f5-75ab-ab84-265a8ae2cfc5) | GPT-5.6 Sol | 37,766 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08eb4-05f5-75ab-ab84-265a8ae2cfc5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Fable response (T-01a08eb2-ae82-70fd-9cbc-75686b801d61) | GPT-5.5 | 15,054 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08eb2-ae82-70fd-9cbc-75686b801d61 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model version (T-01a08eb3-326c-759b-a3b2-16682fb5b05e) | GPT-5.5 | 15,318 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08eb3-326c-759b-a3b2-16682fb5b05e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Jira mail audit (T-01a08df0-b228-709f-9322-7fa99896f562) | GPT-6 Astra | 809,036 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08df0-b228-709f-9322-7fa99896f562 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model identification (T-01a08eb2-ee08-7450-bc9a-18e8250dec6e) | GPT-5.6 Sol | 37,761 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08eb2-ee08-7450-bc9a-18e8250dec6e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Opus review: readable DataGYM report increment (T-01a08f6b-f9ae-7058-ba87-2d6ff0bbd0f2) | Opus 5 | 1,660,595 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08f6b-f9ae-7058-ba87-2d6ff0bbd0f2 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Provider spend review (T-01a08e94-0e64-76ff-8d2e-91525651548e) | Fable 5.1 | 293,496 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08e94-0e64-76ff-8d2e-91525651548e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: index delivery and shard loading (T-01a07f37-9664-7398-9f1c-4c699e9f452d) | GPT-6 Astra | 55,242,941 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f37-9664-7398-9f1c-4c699e9f452d --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Claude Fable mode (T-01a08d90-744c-7559-bef4-3b6a2b6d0c90) | GPT-5.6 Sol | 68,272 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08d90-744c-7559-bef4-3b6a2b6d0c90 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Instruction Gardener review (T-01a08d90-e4d0-76c8-8bf2-c2146062ba2e) | Opus 5 | 587,242 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08d90-e4d0-76c8-8bf2-c2146062ba2e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model name (T-01a088a9-c7ec-7039-8a0e-dde7b3d013ad) | GPT-5.6 Sol | 32,116 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a088a9-c7ec-7039-8a0e-dde7b3d013ad --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review migration PRs (T-01a08927-1bb0-7315-a312-429115f45ff5) | GPT-6 Astra | 1,985,473 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08927-1bb0-7315-a312-429115f45ff5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Instruction Gardener problem and flows (T-01a0896e-8f0e-746c-89e1-89e5a1160870) | GPT-6 Astra | 181,977 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a0896e-8f0e-746c-89e1-89e5a1160870 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Instruction Gardener Fable UI prototype (T-01a08970-b4c9-753d-9731-19eb9ca82587) | GPT-6 Astra | 157,121 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08970-b4c9-753d-9731-19eb9ca82587 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Amp auth check (T-01a08975-7899-7369-830c-0df0625f2229) | GPT-6 Astra | 31,463 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08975-7899-7369-830c-0df0625f2229 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Executive inbox triage (T-01a088e3-3712-725f-9106-1a3e6f93d694) | GPT-6 Astra | 7,656,241 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a088e3-3712-725f-9106-1a3e6f93d694 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Fable routing check (T-01a08972-6d79-71ae-93cc-28bbf37525e5) | GPT-5.6 Sol | 31,504 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08972-6d79-71ae-93cc-28bbf37525e5 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model name unavailable (T-01a088aa-2aba-702c-b146-19c13c79ea70) | GPT-6 Astra | 32,091 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a088aa-2aba-702c-b146-19c13c79ea70 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: reducer and query workflow (T-01a07f37-8741-779b-9db0-1302dcf8d900) | GPT-6 Astra | 6,048,649 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f37-8741-779b-9db0-1302dcf8d900 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review Phase 2 ownership decision boundary (T-01a088ea-6d08-70d3-8f31-30b8cb0acb54) | GPT-6 Astra | 237,050 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a088ea-6d08-70d3-8f31-30b8cb0acb54 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Fable large routing check (T-01a08974-4ffc-7048-b765-0e56eff99b21) | GPT-5.6 Sol | 31,502 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08974-4ffc-7048-b765-0e56eff99b21 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Fable deep routing check (T-01a08973-4fa3-72e8-a3f4-e51c7ae165ef) | GPT-5.6 Sol | 31,505 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08973-4fa3-72e8-a3f4-e51c7ae165ef --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Model name unavailable (T-01a088e9-ca09-777e-974c-ff4ff92a349e) | GPT-6 Astra | 28,270 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a088e9-ca09-777e-974c-ff4ff92a349e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Fable review routing check (T-01a08972-d6cd-724e-abd5-dba70b72e8d0) | GPT-5.5 | 10,502 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08972-d6cd-724e-abd5-dba70b72e8d0 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| PR control verification (T-01a0892f-1282-74ad-8498-826d8fc16943) | GPT-6 Astra | 164,432 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a0892f-1282-74ad-8498-826d8fc16943 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Read-only full Gmail recurring-mail audit (T-01a0898f-9a3a-76ac-889d-8fe6f2b701b4) | GPT-6 Astra | 7,172,889 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a0898f-9a3a-76ac-889d-8fe6f2b701b4 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: API request path (T-01a07f37-7552-7767-be3b-44c6b8442461) | GPT-6 Astra | 8,665,437 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f37-7552-7767-be3b-44c6b8442461 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: replication backup migration (T-01a07f38-a054-7335-b717-0a17d55fa55e) | GPT-6 Astra | 3,383,689 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f38-a054-7335-b717-0a17d55fa55e --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: indexing coordinator and driver (T-01a07f37-8e7c-7648-bce7-007fd0fc277d) | GPT-6 Astra | 5,151,322 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f37-8e7c-7648-bce7-007fd0fc277d --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| PR 103 review — Standards axis (T-01a083ef-abad-77d5-b936-73adc6617bee) | Fable 5.1 | 6,809,060 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a083ef-abad-77d5-b936-73adc6617bee --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: application state and validation (T-01a07f38-974c-7591-9b44-26e00bc660de) | GPT-6 Astra | 5,383,442 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f38-974c-7591-9b44-26e00bc660de --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Build Wayfinder maps for all T3 projects (T-01a08375-1722-74e6-8920-69a56b211541) | GPT-6 Astra | 2,685,925 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08375-1722-74e6-8920-69a56b211541 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| PR 103 review — Spec axis (T-01a083ef-b144-7180-8be8-3273623437a0) | Fable 5.1 | 2,084,780 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a083ef-b144-7180-8be8-3273623437a0 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Independent review of review bot (T-01a08376-06bd-707a-8407-565ba7893234) | GPT-6 Astra | 1,227,995 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a08376-06bd-707a-8407-565ba7893234 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review and repair PR 103 (provider API key ownership) (T-01a083df-3c79-72f2-af17-6b449bba590d) | GPT-6 Astra | 4,761,889 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a083df-3c79-72f2-af17-6b449bba590d --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Review key attribution (T-01a083bf-55fe-7568-bb6a-51a2fa53eee8) | Fable 5.1 | 1,461,338 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a083bf-55fe-7568-bb6a-51a2fa53eee8 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+| Perf components: indexing and search extensions (T-01a07f38-b7f5-7630-8b12-34e41cfca069) | GPT-6 Astra | 5,079,936 | 0h | 0h | $0 | $0 | $0 |
+  <!-- Run `amp threads usage T-01a07f38-b7f5-7630-8b12-34e41cfca069 --details --start 2026-09-09T00:00:00.000Z --end 2026-09-16T00:00:00.000Z` for range-scoped detailed thread usage. Query multiple relevant thread rows with the same range and sum their Orb runtime milliseconds when a selected-thread subtotal is needed. -->
+
+Thread rows use the thread ID recorded on each event. Subagent usage can appear in its own row; a detailed parent thread report includes its subagent threads.
+
+<!-- Account and thread usage lookups share a limit of 60 requests per hour. Each lookup uses one request. Start with no more than the three most relevant thread drill-downs. -->
+<!-- Run `amp usage --start <timestamp> --end <timestamp>` for credit usage details for a date range. -->

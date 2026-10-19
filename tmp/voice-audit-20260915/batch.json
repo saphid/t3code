@@ -1,0 +1,17 @@
+{
+  "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+  "threads": [
+    {
+      "title": "Voice: chronological chat transcript",
+      "workdir": "/Users/aus-m5p-as/projects/t3code-voice-transcript-chat",
+      "model": "/Users/aus-m5p-as/projects/t3code-contrib/tmp/voice-audit-20260915/model.json",
+      "promptFile": "transcript.md"
+    },
+    {
+      "title": "Voice: discover and activate interface buttons",
+      "workdir": "/Users/aus-m5p-as/projects/t3code-voice-ui-controls",
+      "model": "/Users/aus-m5p-as/projects/t3code-contrib/tmp/voice-audit-20260915/model.json",
+      "promptFile": "controls.md"
+    }
+  ]
+}

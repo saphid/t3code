@@ -1839,6 +1839,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
           }),
+        [WS_METHODS.shellRevealPath]: (input) =>
+          observeRpcEffect(WS_METHODS.shellRevealPath, externalLauncher.revealPath(input.path), {
+            "rpc.aggregate": "workspace",
+          }),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,

@@ -13,6 +13,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { resolveThreadStatus } from "./threadPresentation";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -149,6 +150,28 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",
     );
+  });
+
+  it("keeps a settled thread visibly monitoring while a background monitor is live", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      backgroundLiveness: "monitoring",
+    });
+
+    expect(resolveThreadListV2Status(thread)).toBe("monitoring");
+    expect(resolveThreadStatus(thread)?.kind).toBe("monitoring");
+  });
+
+  it("shows live background agents as working after their parent turn settles", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      backgroundLiveness: "working",
+    });
+
+    expect(resolveThreadListV2Status(thread)).toBe("working");
+    expect(resolveThreadStatus(thread)?.kind).toBe("working");
   });
 });
 

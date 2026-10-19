@@ -1,0 +1,26 @@
+[
+  {
+    "slug": "resume",
+    "title": "Voice: report newly queued work accurately",
+    "workdir": "/Users/aus-m5p-as/projects/t3code-voice-resume",
+    "threadId": "1a441949-6d5a-4a3c-9ec8-a5372ba97e04"
+  },
+  {
+    "slug": "project",
+    "title": "Voice: choose the correct project for new work",
+    "workdir": "/Users/aus-m5p-as/projects/t3code-voice-project",
+    "threadId": "f5dcaae3-6a97-4658-bca8-072d522df975"
+  },
+  {
+    "slug": "history",
+    "title": "Voice: save conversation and tool outcome history",
+    "workdir": "/Users/aus-m5p-as/projects/t3code-voice-history",
+    "threadId": "554d4caa-8fcd-4c14-bcd2-b23b5980b0db"
+  },
+  {
+    "slug": "navigation",
+    "title": "Voice: diagnose delayed thread opening",
+    "workdir": "/Users/aus-m5p-as/projects/t3code-voice-navigation",
+    "threadId": "2dfd0e52-d35c-4848-9ba7-f377ee888c9e"
+  }
+]

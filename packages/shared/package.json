@@ -226,6 +226,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./subagentRuntime": {
+      "types": "./src/subagentRuntime.ts",
+      "import": "./src/subagentRuntime.ts"
     }
   },
   "scripts": {

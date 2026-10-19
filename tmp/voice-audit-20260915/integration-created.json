@@ -1,0 +1,13 @@
+{
+  "threadId": "04f207b0-da48-4b49-8e81-f17a701c154c",
+  "projectId": "bc15f253-9156-4469-8723-f00ab80a0d38",
+  "title": "Voice: integrate fixes and verify combined behavior",
+  "workdir": "/Users/aus-m5p-as/projects/t3code-voice-repairs",
+  "modelSelection": {
+    "instanceId": "opencode",
+    "model": "enablers/xlarge"
+  },
+  "dispatch": {
+    "sequence": 1163911
+  }
+}
