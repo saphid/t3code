@@ -250,14 +250,16 @@ export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
  * One day of a thread's cost split by component. Days the thread was idle are
- * omitted. Components need the rate table, so unpriced records contribute
- * tokens to the row totals but nothing here.
+ * omitted. Model-priced components need the rate table; provider-reported
+ * costs remain separate because their cache-component split is unknown.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
   cacheWriteUsd: Schema.Number,
   cacheReadUsd: Schema.Number,
-  /** Fresh input plus output. */
+  /** Provider-reported cost without an inferred cache-component split. */
+  providerReportedUsd: Schema.optional(Schema.Number),
+  /** Fresh input plus output priced from model rates. */
   freshUsd: Schema.Number,
 });
 export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
