@@ -93,6 +93,10 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+      { environmentId: "env-b", providers: ["claude"] },
+    ]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -111,6 +115,9 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+    ]);
   });
 
   it("drops only the duplicated provider, keeping the environment's other one", () => {
@@ -145,6 +152,10 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+      { environmentId: "env-b", providers: ["codex"] },
+    ]);
   });
 
   it("excludes an environment reporting an older contract version", () => {
@@ -414,6 +425,30 @@ describe("mergeUsage", () => {
       expect(filtered.costUsd).toBe(project.costUsd);
       expect(filtered.totalTokens).toBe(project.totalTokens);
     }
+  });
+
+  it("sums cache-write cost overall and per model, tolerating summaries without it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ cacheWriteUsd: 3 }),
+              bucket({ cacheWriteUsd: 1, model: "claude-opus-5" }),
+              // A summary written before the field existed contributes nothing.
+              bucket({ model: "claude-opus-5" }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBe(4);
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBe(1);
   });
 
   it("filters every figure except the project list when a project is selected", () => {

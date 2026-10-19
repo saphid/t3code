@@ -1,3 +1,4 @@
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import { useNavigation } from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
@@ -11,7 +12,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -92,6 +93,8 @@ export function UsageRouteScreen() {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
   };
+  const autoRefresh = useEffectEvent(refreshWindow);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -204,14 +207,14 @@ function ChartCard(props: {
       <View className="flex-row items-start justify-between gap-3">
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-sm text-foreground-muted">
-            {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+            {metric === "cost" ? "Local public-list estimate" : "Processed tokens"}
           </Text>
           <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
             {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
           </Text>
           <Text className="text-sm text-foreground-muted">
             {metric === "cost"
-              ? "* if billed at full API rate"
+              ? "* estimated from local transcripts at public list rates"
               : `Across ${formatCount(merged.sessions)} sessions`}
           </Text>
         </View>
@@ -382,7 +385,12 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         <MetricCell
           label="Uncached input"
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail="fresh input tokens"
+        />
+        <MetricCell
+          label="Cache writes, estimated"
+          value={formatUsd(merged.costQuality.cacheWriteUsd)}
+          detail={`${formatTokens(merged.cacheCreationTokens)} tokens · not an expiry measure`}
         />
         <MetricCell
           label="Output"

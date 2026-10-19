@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  usageThreadTable: vi.fn((_props: unknown) => null),
   metric: "cost" as "cost" | "tokens",
-  breakdown: "time" as "model" | "project" | "time",
+  breakdown: "time" as "model" | "project" | "thread" | "time",
+  projectFilter: undefined as string | null | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -30,7 +32,9 @@ vi.mock("react", async (importOriginal) => {
           ? testState.metric
           : initial === "model"
             ? testState.breakdown
-            : initial,
+            : initial === undefined
+              ? testState.projectFilter
+              : initial,
       vi.fn(),
     ]),
   };
@@ -57,6 +61,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -82,6 +87,8 @@ const modelTotals = Object.freeze([
     provider: "claude" as const,
     costUsd: 10,
     totalTokens: 100,
+    cacheWriteTokens: 40,
+    cacheWriteUsd: 2.5,
     records: 1,
     costShare: 10 / 16,
   },
@@ -90,6 +97,8 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 5,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 5 / 16,
   },
@@ -98,6 +107,8 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 1,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 1 / 16,
   },
@@ -108,6 +119,8 @@ const projectTotals = Object.freeze([
     project: "Expensive Project",
     costUsd: 9,
     totalTokens: 200,
+    cacheWriteTokens: 60,
+    cacheWriteUsd: 1.75,
     records: 2,
     costShare: 9 / 16,
   },
@@ -115,6 +128,8 @@ const projectTotals = Object.freeze([
     project: null,
     costUsd: 7,
     totalTokens: 900,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 7 / 16,
   },
@@ -123,6 +138,8 @@ const projectTotals = Object.freeze([
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.projectFilter = undefined;
+  testState.usageThreadTable.mockClear();
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -196,6 +213,26 @@ describe("UsagePage project breakdown", () => {
   });
 });
 
+describe("UsagePage thread breakdown", () => {
+  it("requests thread rows in the selected project scope", () => {
+    testState.breakdown = "thread";
+    testState.projectFilter = "Expensive Project";
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable).toHaveBeenCalledOnce();
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        sinceDay: "2026-08-10",
+        untilDay: "2026-08-11",
+        timeZone: "UTC",
+        project: "Expensive Project",
+      },
+      providerContributions: [],
+    });
+  });
+});
+
 describe("UsagePage model breakdown", () => {
   it("sorts models by cost when the cost metric is selected", () => {
     testState.breakdown = "model";
@@ -204,6 +241,17 @@ describe("UsagePage model breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
+  });
+
+  it("shows cache-write cost per row, with a dash for write-free providers", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    // Claude row carries its cache-write dollars; codex rows never bill writes.
+    expect(body).toContain("$2.50");
+    expect(body).toMatch(/token-heavy-model.*>-</);
   });
 
   it("sorts models by token usage when the token metric is selected", () => {
