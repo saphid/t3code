@@ -443,9 +443,7 @@ export function UsagePage() {
                   {breakdown === "thread" ? (
                     <UsageThreadTable
                       input={{
-                        sinceDay: window.sinceDay,
-                        untilDay: window.untilDay,
-                        timeZone: window.timeZone,
+                        ...window,
                         ...(projectFilter === undefined ? {} : { project: projectFilter }),
                       }}
                       providerContributions={merged.providerContributions}
