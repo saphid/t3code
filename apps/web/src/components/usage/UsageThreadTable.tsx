@@ -15,6 +15,7 @@ import {
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -155,9 +156,24 @@ function ThreadRowGroup({
           <span className="flex min-w-0 items-center gap-1.5">
             <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             <ProviderMark provider={row.provider} />
-            <span className="truncate" title={row.title}>
-              {row.title}
-            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="min-w-0 cursor-pointer truncate text-left"
+                    aria-expanded={open}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onToggle();
+                    }}
+                  />
+                }
+              >
+                {row.title}
+              </TooltipTrigger>
+              <TooltipPopup>{row.title}</TooltipPopup>
+            </Tooltip>
             {row.agents.length > 0 ? (
               <span className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground">
                 {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
@@ -233,7 +249,14 @@ export function UsageThreadDailyChart({
     [daily],
   );
   const peak = daily.reduce(
-    (max, entry) => Math.max(max, entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd),
+    (max, entry) =>
+      Math.max(
+        max,
+        entry.cacheWriteUsd +
+          entry.cacheReadUsd +
+          entry.freshUsd +
+          (entry.providerReportedUsd ?? 0),
+      ),
     0,
   );
 
@@ -253,6 +276,9 @@ export function UsageThreadDailyChart({
         <LegendSwatch className="text-sky-500" label="cache writes" />
         <LegendSwatch className="text-muted-foreground" label="cache reads" />
         <LegendSwatch className="text-emerald-500" label="fresh input + output" />
+        {daily.some((entry) => (entry.providerReportedUsd ?? 0) !== 0) ? (
+          <LegendSwatch className="text-violet-500" label="provider reported" />
+        ) : null}
       </div>
       <svg
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
@@ -266,16 +292,21 @@ export function UsageThreadDailyChart({
           if (entry === undefined) return null;
           const x = index * bandWidth;
           const segments = [
+            { value: entry.providerReportedUsd ?? 0, className: "text-violet-500" },
             { value: entry.freshUsd, className: "text-emerald-500" },
             { value: entry.cacheReadUsd, className: "text-muted-foreground" },
             { value: entry.cacheWriteUsd, className: "text-sky-500" },
           ];
           let y = CHART_HEIGHT;
-          const total = entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd;
+          const total =
+            entry.cacheWriteUsd +
+            entry.cacheReadUsd +
+            entry.freshUsd +
+            (entry.providerReportedUsd ?? 0);
           return (
             <g key={day}>
               <title>
-                {`${formatDayShort(day)}: ${formatUsd(total)} — cache writes ${formatUsd(entry.cacheWriteUsd)}, cache reads ${formatUsd(entry.cacheReadUsd)}, fresh input + output ${formatUsd(entry.freshUsd)}`}
+                {`${formatDayShort(day)}: ${formatUsd(total)} — cache writes ${formatUsd(entry.cacheWriteUsd)}, cache reads ${formatUsd(entry.cacheReadUsd)}, fresh input + output ${formatUsd(entry.freshUsd)}, provider reported ${formatUsd(entry.providerReportedUsd ?? 0)}`}
               </title>
               {segments.map((segment) => {
                 if (segment.value <= 0) return null;
