@@ -17,10 +17,9 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
-import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
@@ -109,10 +108,6 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       );
     }
   }, [environments, windowKey]);
-
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
-  useEffect(() => startUsageAutoRefresh(() => refreshRef.current()), []);
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = environments.flatMap((environment) =>

@@ -14,7 +14,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
@@ -111,7 +111,7 @@ export async function readTranscriptFingerprint(
   let handle: NodeFSP.FileHandle | null = null;
   try {
     handle = await NodeFSP.open(filePath, "r");
-    const hash = createHash("sha256");
+    const hash = NodeCrypto.createHash("sha256");
     hash.update(String(observedSize));
     hash.update("\0");
 

@@ -1,6 +1,7 @@
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals, ProjectTotals } from "@t3tools/shared/usageMerge";
 
@@ -141,6 +142,8 @@ export function UsagePage() {
       setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
   };
+  const autoRefresh = useEffectEvent(refreshWindow);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
