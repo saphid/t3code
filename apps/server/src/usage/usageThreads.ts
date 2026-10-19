@@ -32,6 +32,7 @@ export interface ThreadRecordContext {
 }
 
 interface MutableComponentCosts {
+  providerReportedUsd: number;
   cacheWriteUsd: number;
   cacheReadUsd: number;
   freshUsd: number;
@@ -150,12 +151,18 @@ export class ThreadUsageAccumulator {
     group.costUsd += priced.costUsd;
     group.cacheWriteUsd += writeUsd;
 
-    const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+    const components = usageComponentCosts(
+      this.#options.rates,
+      record.model,
+      record.totals,
+      record.reportedCostUsd,
+    );
     let dayEntry = group.daily.get(day);
     if (dayEntry === undefined) {
-      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0, providerReportedUsd: 0 };
       group.daily.set(day, dayEntry);
     }
+    dayEntry.providerReportedUsd += components.providerReportedUsd;
     dayEntry.cacheWriteUsd += components.cacheWriteUsd;
     dayEntry.cacheReadUsd += components.cacheReadUsd;
     dayEntry.freshUsd += components.freshUsd;
@@ -252,9 +259,10 @@ function addDailyCosts(
   for (const [day, components] of source) {
     let dayEntry = target.get(day);
     if (dayEntry === undefined) {
-      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0, providerReportedUsd: 0 };
       target.set(day, dayEntry);
     }
+    dayEntry.providerReportedUsd += components.providerReportedUsd;
     dayEntry.cacheWriteUsd += components.cacheWriteUsd;
     dayEntry.cacheReadUsd += components.cacheReadUsd;
     dayEntry.freshUsd += components.freshUsd;
@@ -402,6 +410,9 @@ export function foldThreadRows(
       daily: [...row.daily.entries()]
         .map(([day, components]) => ({
           day: day as UsageDay,
+          ...(components.providerReportedUsd === 0
+            ? {}
+            : { providerReportedUsd: components.providerReportedUsd }),
           cacheWriteUsd: components.cacheWriteUsd,
           cacheReadUsd: components.cacheReadUsd,
           freshUsd: components.freshUsd,

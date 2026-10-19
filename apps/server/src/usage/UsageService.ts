@@ -15,7 +15,6 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
-  type ThreadId,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
