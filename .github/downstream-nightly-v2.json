@@ -106,6 +106,12 @@
       "repository": "saphid/t3code",
       "sha": "b89586b1912cb22d0e56427f67c4dc42049f996d",
       "name": "fix(server): keep runs alive when one provider event fails to ingest"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "895e1421c32befdde53cfc885224f7ce46f57b37",
+      "name": "fix(server): retain ingestion after skipped child lifecycle starts"
     }
   ]
 }
