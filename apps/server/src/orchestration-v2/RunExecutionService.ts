@@ -1182,6 +1182,10 @@ export const layer: Layer.Layer<
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
                     event.providerThread.id === input.providerThread.id;
+                  const isChildProviderTurnUpdate =
+                    event.type === "provider_turn.updated" &&
+                    event.providerTurn.runAttemptId !== input.attempt.id &&
+                    event.providerTurn.id !== (yield* Ref.get(eventRouting)).rootProviderTurnId;
                   // One event that cannot be stored or decoded must not end the
                   // run while the provider process is alive. Only a terminal
                   // event or the stream closing settles it.
@@ -1234,7 +1238,7 @@ export const layer: Layer.Layer<
                                   ? Ref.set(terminalIngestSkipped, true)
                                   : event.type === "turn_item.updated" ||
                                       event.type === "provider_thread.updated" ||
-                                      event.type === "provider_turn.updated" ||
+                                      isChildProviderTurnUpdate ||
                                       event.type === "subagent.updated"
                                     ? Ref.set(lifecycleIngestSkipped, true)
                                     : Effect.void,
