@@ -1,0 +1,5 @@
+Your previous turn was interrupted because it made dozens of near-identical `rg` and `sed` calls against CodexAdapter.test.ts and produced no diff. Resume in the existing isolated worktree `/Users/aus-m5p-as/projects/t3code-codex-413` on branch `agent/codex-413-payload`.
+
+Do not repeat repository searches you already completed. You already identified the implementation points and existing compaction test. Make the edits now with apply_patch. First add the localImage regression test and implementation. Then add the focused HTTP 413 compact-and-retry test and implementation only if the runtime API supports a safe one-shot retry. Run the narrowest tests after each edit. If a test or type error disproves the second design, keep the proven localImage fix and report the remaining recovery gap instead of looping.
+
+After focused verification, complete the authorized upstream workflow: commit, push only to origin, open the PR against pingdotgg/t3code, and babysit checks and bot comments. Keep commentary tied to concrete diffs, test output, commits, or external blockers.
