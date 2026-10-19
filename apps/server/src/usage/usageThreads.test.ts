@@ -116,6 +116,30 @@ describe("ThreadUsageAccumulator", () => {
     });
   });
 
+  it("reconciles the exact rolling 24-hour window with the summary", () => {
+    const sinceTimeMs = Date.parse("2026-08-06T12:37:00Z");
+    const untilTimeMs = sinceTimeMs + 24 * 60 * 60 * 1000;
+    const options = {
+      timeZone: "UTC",
+      sinceDay: "2026-08-06",
+      untilDay: "2026-08-07",
+      sinceTimeMs,
+      untilTimeMs,
+      rates,
+    };
+    const accumulator = new ThreadUsageAccumulator(options);
+    const summary = new UsageAggregator({ ...options, resolution: "hour" });
+    for (const timestampMs of [sinceTimeMs - 1, sinceTimeMs, untilTimeMs - 1, untilTimeMs]) {
+      const item = record({ timestampMs });
+      accumulator.add(item, { sessionKey: "claude:session-a", agentId: null });
+      summary.add(item);
+    }
+    const expected = summary.finish().buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
+    const actual = accumulator.finish().reduce((sum, group) => sum + group.costUsd, 0);
+    expect(actual).toBeCloseTo(expected, 12);
+    expect(accumulator.finish()[0]?.totals.outputTokens).toBe(100);
+  });
+
   it("drops records outside the window", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([
