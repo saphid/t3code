@@ -1,4 +1,4 @@
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -146,7 +146,7 @@ it.effect("merges session terms ahead of learned history and applies corrections
         if (runInput.args[0] === "transcribe") {
           const vocabIndex = runInput.args.indexOf("--vocab");
           const vocabPath = runInput.args[vocabIndex + 1]!;
-          vocabularyFileContents = NodeFs.readFileSync(vocabPath, "utf8");
+          vocabularyFileContents = NodeFS.readFileSync(vocabPath, "utf8");
           return Effect.succeed(successOutput('{"text":"word tree run via PNP"}'));
         }
         return Effect.succeed(successOutput('{"supported":true,"installed":true}'));

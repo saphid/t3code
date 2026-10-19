@@ -118,6 +118,18 @@ describe("applyVoiceVocabularyCorrections", () => {
     expect(corrected).toBe("run pnpm install");
   });
 
+  it("preserves punctuation separating clauses and sentences", () => {
+    for (const text of ["chat, composer", "chat. Composer", "word, tree"]) {
+      expect(applyVoiceVocabularyCorrections(text, ["ChatComposer", "worktree"])).toBe(text);
+    }
+    expect(
+      applyVoiceVocabularyCorrections("chat composer, then word tree", [
+        "ChatComposer",
+        "worktree",
+      ]),
+    ).toBe("ChatComposer, then worktree");
+  });
+
   it("adopts the vocabulary casing on exact matches", () => {
     const corrected = applyVoiceVocabularyCorrections("ask fable about the chat composer", [
       "Fable",

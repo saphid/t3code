@@ -289,6 +289,12 @@ export function applyVoiceVocabularyCorrections(
       const first = words[index];
       const last = words[index + span - 1];
       if (!first || !last) break;
+      // Join spoken words without erasing punctuation between clauses or
+      // sentences. Longer spans would cross the same boundary as well.
+      if (span > 1) {
+        const previous = words[index + span - 2]!;
+        if (/\S/.test(text.slice(previous.end, last.start))) break;
+      }
       const candidate = canonicalize(
         words
           .slice(index, index + span)

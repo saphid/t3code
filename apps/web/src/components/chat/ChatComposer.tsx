@@ -3276,6 +3276,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {settings.voiceDictationEnabled && voiceCaptureSupported ? (
                   <ComposerVoiceDictation
+                    key={environmentId}
                     environmentId={environmentId}
                     disabled={isConnecting || projectSelectionRequired}
                     getSessionTerms={getVoiceSessionTerms}
