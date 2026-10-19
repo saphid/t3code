@@ -186,7 +186,6 @@ function ThreadRowGroup({
               <button
                 type="button"
                 aria-label="Open thread"
-                title="Open thread"
                 className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                 onClick={(event) => {
                   // The row click toggles expansion; the link must not.
