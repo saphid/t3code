@@ -10,7 +10,8 @@ completed-turn record will not appear.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+headline and chart, and refreshing rescans every connected environment. While the page is open, it
+refreshes every 30 minutes. Preset windows move with the current time; custom date ranges stay fixed.
 
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
 to return to the preset. The date fields beside the presets accept any custom range directly.
