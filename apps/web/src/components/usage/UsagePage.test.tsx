@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  usageThreadTable: vi.fn((_props: unknown) => null),
   metric: "cost" as "cost" | "tokens",
-  breakdown: "time" as "model" | "project" | "time",
+  breakdown: "time" as "model" | "project" | "thread" | "time",
+  projectFilter: undefined as string | null | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -30,7 +32,9 @@ vi.mock("react", async (importOriginal) => {
           ? testState.metric
           : initial === "model"
             ? testState.breakdown
-            : initial,
+            : initial === undefined
+              ? testState.projectFilter
+              : initial,
       vi.fn(),
     ]),
   };
@@ -57,6 +61,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -133,6 +138,8 @@ const projectTotals = Object.freeze([
 beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.projectFilter = undefined;
+  testState.usageThreadTable.mockClear();
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -203,6 +210,26 @@ describe("UsagePage project breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/Outside projects.*Expensive Project/);
+  });
+});
+
+describe("UsagePage thread breakdown", () => {
+  it("requests thread rows in the selected project scope", () => {
+    testState.breakdown = "thread";
+    testState.projectFilter = "Expensive Project";
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable).toHaveBeenCalledOnce();
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        sinceDay: "2026-08-10",
+        untilDay: "2026-08-11",
+        timeZone: "UTC",
+        project: "Expensive Project",
+      },
+      providerContributions: [],
+    });
   });
 });
 

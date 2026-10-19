@@ -6,8 +6,9 @@
  * turns driven outside T3 Code too. This is the approach `ccusage` takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed.
+ * filesystem identity, nanosecond mtime, size, and a sampled content hash. A
+ * cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm scans only reparse
+ * files that changed.
  *
  * @module UsageService
  */
@@ -19,6 +20,8 @@ import {
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
   UsageReadError,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -32,11 +35,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { ProjectionThreadRepository } from "../persistence/Services/ProjectionThreads.ts";
+import { ProviderSessionRuntimeRepository } from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -45,8 +52,12 @@ import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readTranscriptFingerprint,
   readTranscriptRecords,
+  readTranscriptTitle,
+  type TranscriptFile,
 } from "./usageTranscriptReader.ts";
+import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -72,6 +83,38 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
 
+/**
+ * Named thread rows sent per breakdown request. A window can hold thousands
+ * of sessions; lower-cost rows fold into provider/project remainders.
+ */
+const THREAD_ROW_CAP = 40;
+const FINGERPRINT_CONCURRENCY = 32;
+
+/** Exact time bounds shared by the summary and thread drill-down. */
+const resolveHourlyWindow = Effect.fn("UsageService.resolveHourlyWindow")(function* (
+  input: UsageSummaryInput,
+) {
+  if (input.resolution !== "hour") return null;
+  const sinceTime = input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
+  const untilTime = input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
+  if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
+    return yield* new UsageReadError({
+      reason: "invalidWindow",
+      detail: "Hourly usage requires valid sinceTime and untilTime instants",
+    });
+  }
+  const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
+  const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
+  const durationMs = untilTimeMs - sinceTimeMs;
+  if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+    return yield* new UsageReadError({
+      reason: "invalidWindow",
+      detail: "Hourly usage window must be greater than zero and at most 24 hours",
+    });
+  }
+  return { sinceTimeMs, untilTimeMs };
+});
+
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
@@ -93,6 +136,9 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readThreadBreakdown: (
+      input: UsageThreadBreakdownInput,
+    ) => Effect.Effect<UsageThreadBreakdown, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -117,6 +163,16 @@ export const layerTest = Layer.succeed(
         },
         scanDurationMs: 0,
       }),
+    readThreadBreakdown: (input) =>
+      Effect.succeed({
+        contractVersion: USAGE_CONTRACT_VERSION,
+        readAt: "1970-01-01T00:00:00.000Z",
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        rows: [],
+        truncatedRows: 0,
+        scanDurationMs: 0,
+      }),
   }),
 );
 
@@ -128,9 +184,12 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const projectRepository = yield* ProjectionProjectRepository;
+  const threadRepository = yield* ProjectionThreadRepository;
+  const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+  const scanSemaphore = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -286,7 +345,12 @@ export const make = Effect.gen(function* () {
     // Cleared only after the write lands, so a failed persist is retried on
     // the next scan instead of leaving disk permanently stale.
     yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+      Effect.flatMap((serialized) =>
+        writeFileStringAtomically({ filePath: scanCachePath, contents: serialized }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
       Effect.map(() => {
         cacheDirty = false;
       }),
@@ -297,25 +361,31 @@ export const make = Effect.gen(function* () {
 
   /** Parses one transcript, reusing the cached result when it is unchanged. */
   const readFileRecords = (
-    filePath: string,
-    size: number,
-    mtimeMs: number,
+    file: TranscriptFile,
+    fingerprint: string | null,
     provider: UsageProviderKind,
   ): Effect.Effect<readonly UsageRecord[]> =>
     Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
+      if (fingerprint === null) return [];
+
+      const cached = fileCache.get(file.path);
       // Provider is part of the identity: if both providers were ever pointed
       // at one directory, a hit parsed by the other parser must not be reused.
       if (
         cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
+        cached.size === file.size &&
+        cached.mtimeNs === file.mtimeNs &&
+        cached.device === file.device &&
+        cached.inode === file.inode &&
+        cached.fingerprint === fingerprint &&
         cached.provider === provider
       ) {
         return cached.records;
       }
 
-      const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, provider));
+      const parsed = yield* Effect.promise(() =>
+        readTranscriptRecords(file.path, provider, file.size),
+      );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
       if (parsed === null) return [];
@@ -323,12 +393,31 @@ export const make = Effect.gen(function* () {
       // duplicates. The aggregator still runs the cross-file dedupe pass.
       const records = dedupeWithinFile(parsed);
 
-      fileCache.set(filePath, { size, mtimeMs, provider, records });
+      fileCache.set(file.path, {
+        size: file.size,
+        mtimeMs: file.mtimeMs,
+        mtimeNs: file.mtimeNs,
+        device: file.device,
+        inode: file.inode,
+        fingerprint,
+        provider,
+        records,
+      });
       cacheDirty = true;
       return records;
     });
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  /** Samples warm candidates concurrently while retaining the sorted file order. */
+  const fingerprintFiles = (files: readonly TranscriptFile[]) =>
+    Effect.forEach(
+      files,
+      (file) => Effect.promise(() => readTranscriptFingerprint(file.path, file.size)),
+      { concurrency: FINGERPRINT_CONCURRENCY },
+    );
+
+  const readSummaryUnlocked = Effect.fn("UsageService.readSummary")(function* (
+    input: UsageSummaryInput,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -336,29 +425,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
-      const sinceTime =
-        input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
-      const untilTime =
-        input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
-      if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
-        return yield* new UsageReadError({
-          reason: "invalidWindow",
-          detail: "Hourly usage requires valid sinceTime and untilTime instants",
-        });
-      }
-      const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
-      const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
-      const durationMs = untilTimeMs - sinceTimeMs;
-      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
-        return yield* new UsageReadError({
-          reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
-        });
-      }
-      hourlyWindow = { sinceTimeMs, untilTimeMs };
-    }
+    const hourlyWindow = yield* resolveHourlyWindow(input);
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureRates();
@@ -384,6 +451,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
+      cutoffTimeMs: startedAtMs,
       rates,
       resolveProject: yield* resolveProjects(),
     });
@@ -415,15 +483,16 @@ export const make = Effect.gen(function* () {
       const files = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
+      const fingerprints = yield* fingerprintFiles(files);
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        const records = yield* readFileRecords(file, fingerprints[index] ?? null, provider);
         if (records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -459,12 +528,11 @@ export const make = Effect.gen(function* () {
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -483,7 +551,194 @@ export const make = Effect.gen(function* () {
     } satisfies UsageSummary;
   });
 
-  return { readSummary } as const;
+  /**
+   * Maps each thread's current provider session to the thread, from resume
+   * cursors. Historic sessions of the same thread attribute through the
+   * worktree map instead; sessions that never ran through T3 Code stay
+   * session-granular.
+   */
+  const loadThreadAttribution = Effect.fn("UsageService.loadThreadAttribution")(function* () {
+    const sessionToThread = new Map<string, ThreadRef>();
+    const worktreeToThread = new Map<string, ThreadRef>();
+    const titles = new Map<string, string>();
+
+    const projects = yield* projectRepository
+      .listAll()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
+    for (const project of projects) {
+      const threads = yield* threadRepository
+        .listByProjectId({ projectId: project.projectId })
+        .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      for (const thread of threads) {
+        const title = thread.title.trim();
+        if (title.length > 0) titles.set(thread.threadId, title);
+        const worktree = thread.worktreePath?.trim() ?? "";
+        // The project root is not a dedicated worktree: interactive sessions
+        // run there too, and several threads usually share it.
+        if (worktree.length === 0 || worktree === project.workspaceRoot) continue;
+        const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
+        const claim = worktreeClaims.get(worktree);
+        if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });
+        else claim.shared = true;
+      }
+    }
+    for (const [worktree, claim] of worktreeClaims) {
+      if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
+    }
+
+    const runtimes = yield* runtimeRepository
+      .list()
+      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    for (const runtime of runtimes) {
+      const cursor = runtime.resumeCursor;
+      if (typeof cursor !== "object" || cursor === null) continue;
+      const cursorRecord = cursor as Record<string, unknown>;
+      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
+      // carry the rollout uuid as `threadId`. Other providers do not surface
+      // usage transcripts, so their cursors are irrelevant here.
+      const sessionId =
+        runtime.providerName === "claudeAgent"
+          ? cursorRecord["resume"]
+          : runtime.providerName === "codex"
+            ? cursorRecord["threadId"]
+            : undefined;
+      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
+      sessionToThread.set(`${provider}:${sessionId}`, {
+        threadId: runtime.threadId,
+        title: titles.get(runtime.threadId) ?? runtime.threadId,
+      });
+    }
+
+    return { sessionToThread, worktreeToThread };
+  });
+
+  const readThreadBreakdownUnlocked = Effect.fn("UsageService.readThreadBreakdown")(function* (
+    input: UsageThreadBreakdownInput,
+  ) {
+    if (input.sinceDay > input.untilDay) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is after untilDay '${input.untilDay}'`,
+      });
+    }
+    const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
+    if (Option.isNone(windowStart)) {
+      return yield* new UsageReadError({
+        reason: "invalidWindow",
+        detail: `sinceDay '${input.sinceDay}' is not a valid date`,
+      });
+    }
+
+    const hourlyWindow = yield* resolveHourlyWindow(input);
+    const startedAtMs = yield* Clock.currentTimeMillis;
+    yield* ensureRates();
+    yield* ensureScanCacheLoaded;
+
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const windowStartMs =
+      (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      cutoffTimeMs: startedAtMs,
+      rates,
+      ...hourlyWindow,
+      resolveProject: yield* resolveProjects(),
+    });
+
+    // Preferred transcript per session for title extraction: the main file,
+    // never a subagent's.
+    const titleFiles = new Map<
+      string,
+      { readonly path: string; readonly provider: UsageProviderKind }
+    >();
+
+    for (const { provider, dir, fileName } of dirs) {
+      const exists = yield* fileSystem
+        .exists(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!exists) continue;
+
+      const files = yield* Effect.promise(() =>
+        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      );
+      const fingerprints = yield* fingerprintFiles(files);
+      for (const [index, file] of files.entries()) {
+        const records = yield* readFileRecords(file, fingerprints[index] ?? null, provider);
+        if (records.length === 0) continue;
+        const isSubagent =
+          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
+        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
+        for (const record of records) {
+          const sessionKey =
+            record.sessionId.length > 0
+              ? `${provider}:${record.sessionId}`
+              : `${provider}:file:${file.path}`;
+          if (accumulator.add(record, { sessionKey, agentId }) && !isSubagent) {
+            if (!titleFiles.has(sessionKey)) {
+              titleFiles.set(sessionKey, { path: file.path, provider });
+            }
+          }
+        }
+      }
+    }
+
+    yield* persistScanCache();
+
+    const attribution = yield* loadThreadAttribution();
+    const folded = foldThreadRows(accumulator.finish(), attribution, {
+      cap: THREAD_ROW_CAP,
+      ...(input.project === undefined ? {} : { projectFilter: input.project }),
+    });
+
+    // Transcript titles only for retained unattributed rows. Grouped remainder
+    // rows already carry a generated title.
+    const rows = yield* Effect.forEach(
+      folded.rows,
+      Effect.fnUntraced(function* ({ titleSessionKey, ...row }) {
+        if (row.title !== null) return { ...row, title: row.title };
+        const source = titleFiles.get(titleSessionKey);
+        const transcriptTitle =
+          source === undefined
+            ? null
+            : yield* Effect.promise(() => readTranscriptTitle(source.path, source.provider));
+        const fallback = row.key.startsWith("session:") ? shortSessionLabel(row.key) : row.key;
+        return { ...row, title: transcriptTitle ?? fallback };
+      }),
+      { concurrency: 8 },
+    );
+
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    return {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      rows,
+      truncatedRows: folded.truncatedRows,
+      scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
+    } satisfies UsageThreadBreakdown;
+  });
+
+  // Summary and thread scans share one mutable per-file cache. Serialising them
+  // also folds a burst of page requests into warm follow-up reads rather than
+  // racing two cold parses and two cache writes.
+  const readSummary = (input: UsageSummaryInput) =>
+    scanSemaphore.withPermits(1)(readSummaryUnlocked(input));
+  const readThreadBreakdown = (input: UsageThreadBreakdownInput) =>
+    scanSemaphore.withPermits(1)(readThreadBreakdownUnlocked(input));
+
+  return { readSummary, readThreadBreakdown } as const;
 });
+
+/** `session:claude:8f14e45f-...` reads as `Session 8f14e45f`. */
+function shortSessionLabel(rowKey: string): string {
+  const sessionId = rowKey.slice(rowKey.lastIndexOf(":") + 1);
+  return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
 
 export const layer = Layer.effect(UsageService, make);

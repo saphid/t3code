@@ -22,6 +22,7 @@ export interface ModelRate {
   readonly outputCostPerToken: number;
   readonly cacheReadCostPerToken: number;
   readonly cacheCreationCostPerToken: number;
+  readonly cacheCreation1hCostPerToken?: number;
 }
 
 export type RateTable = ReadonlyMap<string, ModelRate>;
@@ -32,6 +33,7 @@ interface LiteLlmEntry {
   readonly output_cost_per_token?: unknown;
   readonly cache_read_input_token_cost?: unknown;
   readonly cache_creation_input_token_cost?: unknown;
+  readonly cache_creation_input_token_cost_above_1hr?: unknown;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -64,6 +66,10 @@ export function parseRateTable(document: unknown): RateTable {
       // input rather than as free.
       cacheReadCostPerToken: finiteNumber(entry.cache_read_input_token_cost) ?? input,
       cacheCreationCostPerToken: finiteNumber(entry.cache_creation_input_token_cost) ?? input,
+      cacheCreation1hCostPerToken:
+        finiteNumber(entry.cache_creation_input_token_cost_above_1hr) ??
+        finiteNumber(entry.cache_creation_input_token_cost) ??
+        input,
     });
   }
   return table;
@@ -109,6 +115,16 @@ export interface PricedUsage {
   readonly costSource: UsageCostSource;
 }
 
+function cacheCreationCost(totals: UsageTokenTotals, rate: ModelRate): number {
+  const fiveMinute = totals.cacheCreation5mTokens ?? 0;
+  const oneHour = totals.cacheCreation1hTokens ?? 0;
+  const unclassified = Math.max(0, totals.cacheCreationTokens - fiveMinute - oneHour);
+  return (
+    (unclassified + fiveMinute) * rate.cacheCreationCostPerToken +
+    oneHour * (rate.cacheCreation1hCostPerToken ?? rate.cacheCreationCostPerToken)
+  );
+}
+
 /**
  * Prices a bucket's tokens.
  *
@@ -131,7 +147,7 @@ export function priceUsage(
   const costUsd =
     totals.uncachedInputTokens * rate.inputCostPerToken +
     totals.cachedInputTokens * rate.cacheReadCostPerToken +
-    totals.cacheCreationTokens * rate.cacheCreationCostPerToken +
+    cacheCreationCost(totals, rate) +
     totals.outputTokens * rate.outputCostPerToken;
 
   return { costUsd, costSource: "modelPriced" };
@@ -148,12 +164,53 @@ export function cacheSavingsUsd(table: RateTable, model: string, totals: UsageTo
 }
 
 /**
- * What this usage's cache writes cost at the model's cache-write rate: the
- * price of re-priming context after cache expiry. Zero for providers that
- * bill no cache writes (Codex reports no write tokens).
+ * What this usage's cache writes cost at the model and TTL-specific rates.
+ * Cache creation is a billing category, not proof of an expiry rewrite.
  */
 export function cacheWriteUsd(table: RateTable, model: string, totals: UsageTokenTotals): number {
   const rate = lookupRate(table, model);
   if (rate === null) return 0;
-  return totals.cacheCreationTokens * rate.cacheCreationCostPerToken;
+  return cacheCreationCost(totals, rate);
+}
+
+export interface UsageComponentCosts {
+  readonly providerReportedUsd: number;
+  readonly cacheWriteUsd: number;
+  readonly cacheReadUsd: number;
+  /** Fresh input plus output. */
+  readonly freshUsd: number;
+}
+
+const ZERO_COMPONENTS: UsageComponentCosts = {
+  cacheWriteUsd: 0,
+  cacheReadUsd: 0,
+  freshUsd: 0,
+  providerReportedUsd: 0,
+};
+
+/**
+ * Splits usage cost into cache writes, cache reads, and everything else, at
+ * the model's rates. Unpriced models contribute nothing; the caller's token
+ * totals still carry them.
+ */
+export function usageComponentCosts(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+  reportedCostUsd: number | null = null,
+): UsageComponentCosts {
+  // A reported total supplies no trustworthy cache-component breakdown.
+  if (reportedCostUsd !== null && Number.isFinite(reportedCostUsd)) {
+    return { ...ZERO_COMPONENTS, providerReportedUsd: reportedCostUsd };
+  }
+  const rate = lookupRate(table, model);
+  if (rate === null) return ZERO_COMPONENTS;
+  return {
+    providerReportedUsd: 0,
+    cacheWriteUsd: cacheCreationCost(totals, rate),
+    cacheReadUsd: totals.cachedInputTokens * rate.cacheReadCostPerToken,
+    freshUsd:
+      totals.uncachedInputTokens * rate.inputCostPerToken +
+      totals.outputTokens * rate.outputCostPerToken,
+  };
 }
