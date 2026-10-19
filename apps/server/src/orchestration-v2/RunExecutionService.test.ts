@@ -3294,6 +3294,48 @@ it.effect("keeps ingesting child completion after a skipped provider turn start"
   }),
 );
 
+it.effect("releases ingestion after a skipped root provider turn update", () =>
+  Effect.gen(function* () {
+    const tailIngested = yield* Ref.make(false);
+    yield* captureRootRunTermination({
+      key: "ingest-failure:root-turn-start",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_turn.updated",
+            driver,
+            threadId: ids.threadId,
+            providerTurn: {
+              id: ids.rootProviderTurnId,
+              providerThreadId: ids.providerThreadId,
+              nodeId: ids.rootNodeId,
+              runAttemptId: ids.attemptId,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running",
+              startedAt: null,
+              completedAt: null,
+            },
+          },
+          rootTerminalEvent(ids, "completed"),
+          {
+            type: "node.updated",
+            driver,
+            node: makeRunOwnedSubagentNodeFixture({ ids, status: "interrupted" }),
+          },
+        ),
+      ingestNormalized: (event) =>
+        event.type === "provider_turn.updated"
+          ? Effect.die(new Error("SQLITE_BUSY: database is locked"))
+          : event.type === "node.updated"
+            ? Ref.set(tailIngested, true).pipe(Effect.as([]))
+            : Effect.succeed([]),
+    });
+    assert.isFalse(yield* Ref.get(tailIngested));
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
