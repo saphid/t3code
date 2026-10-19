@@ -1,6 +1,7 @@
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals, ProjectTotals } from "@t3tools/shared/usageMerge";
 
@@ -17,6 +18,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeCustomWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
@@ -32,6 +34,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
@@ -42,16 +45,19 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 export function UsagePage() {
+  // `days` remembers the last preset even while a custom (brushed or typed)
+  // range is active, so a reset lands back where the user started.
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
+    custom: false,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
   // A project title, null for work outside every project, undefined for all.
   const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
+  const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window, projectFilter);
 
   // Hold the content until every environment is terminal. Rendering merged
@@ -106,10 +112,24 @@ export function UsagePage() {
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
+      custom: false,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
+  const selectCustomWindow = (sinceDay: string, untilDay: string) => {
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeCustomWindow(sinceDay, untilDay),
+    });
+  };
   const refreshWindow = () => {
+    // A custom range is a fixed span of past days; rescanning is all a
+    // refresh can mean for it.
+    if (isCustomWindow) {
+      refresh();
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -119,9 +139,11 @@ export function UsagePage() {
     ) {
       refresh();
     } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
   };
+  const autoRefresh = useEffectEvent(refreshWindow);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
@@ -160,10 +182,15 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        <UsageDateRangeInputs
+          sinceDay={window.sinceDay}
+          untilDay={window.untilDay}
+          onChange={selectCustomWindow}
+        />
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={isCustomWindow ? [] : [String(windowDays)]}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -206,7 +233,12 @@ export function UsagePage() {
             <SelectItem value="tokens">Tokens</SelectItem>
           </SelectPopup>
         </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+        <Select
+          value={isCustomWindow ? "custom" : String(windowDays)}
+          onValueChange={(value) => {
+            if (value !== "custom" && value !== null) selectWindow(Number(value));
+          }}
+        >
           <SelectTrigger
             aria-label="Usage period"
             size="compact"
@@ -214,7 +246,9 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {isCustomWindow
+                ? "Custom"
+                : WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -265,7 +299,9 @@ export function UsagePage() {
                           const scope = sessionsKnown
                             ? `${formatCount(merged.sessions)} sessions`
                             : (projectFilter ?? "Outside projects");
-                          return metric === "cost" ? `${scope} · API estimate` : scope;
+                          return metric === "cost"
+                            ? `${scope} · local public-list estimate`
+                            : scope;
                         })()}
                       </span>
                     </div>
@@ -318,10 +354,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {isPast24Hours ? null : (
+                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       days={days}
@@ -332,6 +375,12 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      {...(isPast24Hours
+                        ? {}
+                        : {
+                            onZoomToDays: selectCustomWindow,
+                            onResetZoom: () => selectWindow(windowDays),
+                          })}
                     />
                   </div>
                 </section>
@@ -347,11 +396,11 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Context re-chunking"
+                      label="Cache writes, estimated"
                       value={formatUsd(merged.costQuality.cacheWriteUsd)}
                       {...(merged.costUsd > 0
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
                           }
                         : {})}
                     />
@@ -371,7 +420,12 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "project" || value === "time") {
+                        if (
+                          value === "model" ||
+                          value === "project" ||
+                          value === "thread" ||
+                          value === "time"
+                        ) {
                           setBreakdown(value);
                         }
                       }}
@@ -380,6 +434,7 @@ export function UsagePage() {
                         [
                           { value: "model", label: "Model" },
                           { value: "project", label: "Project" },
+                          { value: "thread", label: "Thread" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -390,7 +445,15 @@ export function UsagePage() {
                     </ToggleGroup>
                   </div>
 
-                  {breakdown === "project" ? (
+                  {breakdown === "thread" ? (
+                    <UsageThreadTable
+                      input={{
+                        ...window,
+                        ...(projectFilter === undefined ? {} : { project: projectFilter }),
+                      }}
+                      providerContributions={merged.providerContributions}
+                    />
+                  ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
                         <col className="w-[32%]" />
@@ -403,7 +466,7 @@ export function UsagePage() {
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Project</th>
                           <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Re-chunk</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -433,7 +496,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(project.costUsd)}
                               </td>
-                              <ReChunkCell
+                              <CacheWriteCell
                                 cacheWriteTokens={project.cacheWriteTokens}
                                 cacheWriteUsd={project.cacheWriteUsd}
                               />
@@ -461,7 +524,7 @@ export function UsagePage() {
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Model</th>
                           <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Re-chunk</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -488,7 +551,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(model.costUsd)}
                               </td>
-                              <ReChunkCell
+                              <CacheWriteCell
                                 cacheWriteTokens={model.cacheWriteTokens}
                                 cacheWriteUsd={model.cacheWriteUsd}
                               />
@@ -641,6 +704,49 @@ function UsageProjectSelect({
   );
 }
 
+/**
+ * Free date-range bounds beside the presets. Native date inputs; committing
+ * either bound deselects every preset. Hidden below lg with the rest of the
+ * expanded toolbar.
+ */
+function UsageDateRangeInputs({
+  sinceDay,
+  untilDay,
+  onChange,
+}: {
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly onChange: (sinceDay: string, untilDay: string) => void;
+}) {
+  const inputClass =
+    "h-7 rounded-md border border-border bg-transparent px-2 text-xs text-foreground [color-scheme:inherit] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <input
+        type="date"
+        aria-label="From day"
+        className={inputClass}
+        value={sinceDay}
+        max={untilDay}
+        onChange={(event) => {
+          if (event.target.value) onChange(event.target.value, untilDay);
+        }}
+      />
+      <span>to</span>
+      <input
+        type="date"
+        aria-label="To day"
+        className={inputClass}
+        value={untilDay}
+        min={sinceDay}
+        onChange={(event) => {
+          if (event.target.value) onChange(sinceDay, event.target.value);
+        }}
+      />
+    </div>
+  );
+}
+
 /** Brand mark for the harness a row belongs to. */
 function ProviderMark({
   provider,
@@ -677,7 +783,7 @@ function Metric({
  * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
  * dash rather than a misleading $0.00.
  */
-function ReChunkCell({
+function CacheWriteCell({
   cacheWriteTokens,
   cacheWriteUsd,
 }: {
@@ -835,7 +941,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Context re-chunking",
+            "Cache writes, estimated",
             "Cache savings",
           ].map((label) => (
             <div key={label} className="flex flex-col gap-0.5">
