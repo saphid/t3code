@@ -10,12 +10,7 @@ struct FeatureVoiceDictationButton: View {
     let vocabularyProvider: (() -> [String])?
     var onBegin: (() -> Void)?
 
-    /// Draft content at recording start plus finalized segments; the
-    /// volatile hypothesis renders after it and is replaced continually.
-    @State private var committedText = ""
-    /// What dictation last wrote into the draft; a mismatch means the user
-    /// edited mid-recording and the committed base must rebase onto it.
-    @State private var lastWrittenText: String?
+    @State private var dictationDraft = FeatureVoiceDictationDraft()
 
     var body: some View {
         Button(action: toggle) {
@@ -68,8 +63,7 @@ struct FeatureVoiceDictationButton: View {
             model.cancel()
         case .idle:
             onBegin?()
-            committedText = text
-            lastWrittenText = nil
+            dictationDraft = FeatureVoiceDictationDraft(text: text)
             let vocabulary = FeatureVoiceVocabulary.merge([
                 vocabularyProvider?() ?? [],
                 FeatureVoiceVocabulary.staticTerms,
@@ -77,45 +71,12 @@ struct FeatureVoiceDictationButton: View {
             model.start(
                 vocabulary: vocabulary,
                 onVolatile: { hypothesis in
-                    renderVolatile(hypothesis)
+                    text = dictationDraft.renderVolatile(hypothesis, currentText: text)
                 },
                 onText: { segment in
-                    commitSegment(segment)
+                    text = dictationDraft.commitSegment(segment, currentText: text)
                 }
             )
         }
-    }
-
-    private func renderVolatile(_ hypothesis: String) {
-        rebaseIfUserEdited()
-        let trimmed = hypothesis.trimmingCharacters(in: .whitespacesAndNewlines)
-        text = trimmed.isEmpty ? committedText : joined(committedText, trimmed)
-        lastWrittenText = text
-    }
-
-    private func commitSegment(_ segment: String) {
-        rebaseIfUserEdited()
-        let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            committedText = joined(committedText, trimmed)
-        }
-        text = committedText
-        lastWrittenText = text
-    }
-
-    /// The user can still type while recording; adopt their edit as the new
-    /// base instead of overwriting it.
-    private func rebaseIfUserEdited() {
-        if let lastWrittenText, text != lastWrittenText {
-            committedText = text
-        }
-    }
-
-    private func joined(_ base: String, _ addition: String) -> String {
-        if base.isEmpty { return addition }
-        if let last = base.last, last.isWhitespace || last.isNewline {
-            return base + addition
-        }
-        return base + " " + addition
     }
 }

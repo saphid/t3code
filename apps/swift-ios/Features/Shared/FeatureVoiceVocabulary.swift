@@ -242,6 +242,15 @@ enum FeatureVoiceVocabulary {
             Word(range: $0.range, text: String($0.0))
         }
 
+        // A correction may join spoken words, but must preserve punctuation
+        // separating clauses or sentences.
+        func canJoin(_ run: ArraySlice<Word>) -> Bool {
+            zip(run, run.dropFirst()).allSatisfy { left, right in
+                text[left.range.upperBound..<right.range.lowerBound]
+                    .allSatisfy(\.isWhitespace)
+            }
+        }
+
         struct Replacement {
             let range: Range<String.Index>
             let term: String
@@ -257,6 +266,7 @@ enum FeatureVoiceVocabulary {
                 guard index + span <= words.count else { continue }
                 let run = words[index..<(index + span)]
                 guard let first = run.first, let last = run.last else { continue }
+                guard canJoin(run) else { continue }
                 let candidate = canonicalize(run.map(\.text).joined())
                 for term in terms where candidate == term.canonical {
                     let surface = String(text[first.range.lowerBound..<last.range.upperBound])
@@ -282,6 +292,7 @@ enum FeatureVoiceVocabulary {
                 guard index + span <= words.count else { continue }
                 let run = words[index..<(index + span)]
                 guard let first = run.first, let last = run.last else { continue }
+                guard canJoin(run) else { continue }
                 let fuzzyAllowed = span >= 2
                     || run.contains { word in
                         word.text.contains { $0.isUppercase || $0.isNumber }

@@ -77,6 +77,22 @@ struct FeatureVoiceVocabularyTests {
         #expect(corrected == "Add the worktree to the workspace")
     }
 
+    @Test("Corrections preserve punctuation between words")
+    func correctionPreservesPunctuation() {
+        for text in ["chat, composer", "chat. Composer", "word, tree"] {
+            #expect(
+                FeatureVoiceVocabulary.applyCorrections(
+                    to: text, vocabulary: ["ChatComposer", "worktree"]
+                ) == text
+            )
+        }
+        #expect(
+            FeatureVoiceVocabulary.applyCorrections(
+                to: "chat composer, then word tree", vocabulary: ["ChatComposer", "worktree"]
+            ) == "ChatComposer, then worktree"
+        )
+    }
+
     @Test("Corrections repair truncated short terms")
     func correctionShortTerm() {
         let corrected = FeatureVoiceVocabulary.applyCorrections(
