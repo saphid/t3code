@@ -112,6 +112,12 @@
       "repository": "saphid/t3code",
       "sha": "895e1421c32befdde53cfc885224f7ce46f57b37",
       "name": "fix(server): retain ingestion after skipped child lifecycle starts"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "9c306c5a3528822a8669ec207d1c8b6f2836d263",
+      "name": "fix(server): limit skipped turn retention to child lifecycles"
     }
   ]
 }
