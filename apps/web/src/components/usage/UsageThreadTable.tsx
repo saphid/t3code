@@ -3,7 +3,8 @@ import type {
   UsageThreadBreakdownInput,
   UsageThreadDayCost,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -69,7 +70,7 @@ export function UsageThreadTable({
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
           <th className="py-2 font-normal">Thread</th>
           <th className="py-2 text-right font-normal">Cost</th>
-          <th className="py-2 text-right font-normal">Re-chunk</th>
+          <th className="py-2 text-right font-normal">Cache writes</th>
           <th className="py-2 text-right font-normal">Share</th>
           <th className="py-2 text-right font-normal">Tokens</th>
         </tr>
@@ -145,6 +146,8 @@ function ThreadRowGroup({
   readonly onToggle: () => void;
 }) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+  const navigate = useNavigate();
+  const threadId = row.threadId;
   return (
     <>
       <tr
@@ -179,6 +182,23 @@ function ThreadRowGroup({
                 {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
               </span>
             ) : null}
+            {threadId === null ? null : (
+              <button
+                type="button"
+                aria-label="Open thread"
+                className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={(event) => {
+                  // The row click toggles expansion; the link must not.
+                  event.stopPropagation();
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: { environmentId: row.environmentId, threadId },
+                  });
+                }}
+              >
+                <ArrowUpRightIcon className="size-3.5" aria-hidden />
+              </button>
+            )}
           </span>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
@@ -230,9 +250,9 @@ const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
 
 /**
- * One thread's daily cost stacked by component: cache writes (re-priming
- * context after expiry), cache reads, and fresh input plus output. Static
- * SVG, no animation.
+ * One thread's daily cost stacked by component: cache writes, cache reads,
+ * and fresh input plus output. Cache writes are a billing category, not an
+ * inferred cause. Static SVG, no animation.
  */
 export function UsageThreadDailyChart({
   daily,

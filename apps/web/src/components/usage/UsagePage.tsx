@@ -1,6 +1,7 @@
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals, ProjectTotals } from "@t3tools/shared/usageMerge";
 
@@ -141,6 +142,8 @@ export function UsagePage() {
       setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
   };
+  const autoRefresh = useEffectEvent(refreshWindow);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
@@ -296,7 +299,9 @@ export function UsagePage() {
                           const scope = sessionsKnown
                             ? `${formatCount(merged.sessions)} sessions`
                             : (projectFilter ?? "Outside projects");
-                          return metric === "cost" ? `${scope} · API estimate` : scope;
+                          return metric === "cost"
+                            ? `${scope} · local public-list estimate`
+                            : scope;
                         })()}
                       </span>
                     </div>
@@ -391,11 +396,11 @@ export function UsagePage() {
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Context re-chunking"
+                      label="Cache writes, estimated"
                       value={formatUsd(merged.costQuality.cacheWriteUsd)}
                       {...(merged.costUsd > 0
                         ? {
-                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of cost`,
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
                           }
                         : {})}
                     />
@@ -461,7 +466,7 @@ export function UsagePage() {
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Project</th>
                           <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Re-chunk</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -491,7 +496,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(project.costUsd)}
                               </td>
-                              <ReChunkCell
+                              <CacheWriteCell
                                 cacheWriteTokens={project.cacheWriteTokens}
                                 cacheWriteUsd={project.cacheWriteUsd}
                               />
@@ -519,7 +524,7 @@ export function UsagePage() {
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Model</th>
                           <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Re-chunk</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -546,7 +551,7 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(model.costUsd)}
                               </td>
-                              <ReChunkCell
+                              <CacheWriteCell
                                 cacheWriteTokens={model.cacheWriteTokens}
                                 cacheWriteUsd={model.cacheWriteUsd}
                               />
@@ -778,7 +783,7 @@ function Metric({
  * Cache-write cost cell. Providers that bill no cache writes (Codex) show a
  * dash rather than a misleading $0.00.
  */
-function ReChunkCell({
+function CacheWriteCell({
   cacheWriteTokens,
   cacheWriteUsd,
 }: {
@@ -936,7 +941,7 @@ function UsageSkeleton() {
             "Cached input",
             "Uncached input",
             "Output",
-            "Context re-chunking",
+            "Cache writes, estimated",
             "Cache savings",
           ].map((label) => (
             <div key={label} className="flex flex-col gap-0.5">

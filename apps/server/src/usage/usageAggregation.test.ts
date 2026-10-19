@@ -12,6 +12,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -75,7 +76,7 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("counts only one record for a repeated dedupe key", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
@@ -86,6 +87,39 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(1);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("uses the final complete snapshot for a repeated dedupe key", () => {
+    const result = aggregate([
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 1 },
+      }),
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 310 },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(310);
+  });
+
+  it("holds records newer than the request-start cutoff for the next refresh", () => {
+    const cutoffTimeMs = Date.parse("2026-08-07T04:05:14.000Z");
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      cutoffTimeMs,
+      rates,
+    });
+    aggregator.add(record({ timestampMs: cutoffTimeMs }));
+    aggregator.add(record({ timestampMs: cutoffTimeMs + 1 }));
+
+    const result = aggregator.finish();
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.outOfWindow).toBe(1);
   });
 
   it("still sums records that carry no dedupe key", () => {
@@ -178,6 +212,21 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.costSource).toBe("modelPriced");
     // Cache writes priced at the cache-write rate: 10 * 1.25e-5.
     expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(1.25e-4, 12);
+  });
+
+  it("prices one-hour cache writes at their separate rate", () => {
+    const result = aggregate([
+      record({
+        totals: {
+          ...record().totals,
+          cacheCreationTokens: 30,
+          cacheCreation5mTokens: 10,
+          cacheCreation1hTokens: 20,
+        },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(10 * 1.25e-5 + 20 * 2e-5, 12);
   });
 
   it("reports zero cache-write cost for unpriced models and write-free usage", () => {
