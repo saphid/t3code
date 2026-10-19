@@ -4953,10 +4953,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS activity_run_started_at,
               (
                 SELECT json_extract(session.payload_json, '$.lastError')
-                FROM orchestration_v2_projection_provider_sessions session
-                INNER JOIN orchestration_v2_projection_provider_session_bindings binding
-                  ON binding.provider_session_id = session.provider_session_id
+                -- Keep the thread's bindings outermost. Left to itself the planner
+                -- scans every session of the provider instance for every thread.
+                FROM orchestration_v2_projection_provider_session_bindings binding
+                  INDEXED BY orchestration_v2_projection_provider_session_bindings_thread_idx
+                CROSS JOIN orchestration_v2_projection_provider_sessions session
                 WHERE binding.thread_id = t.thread_id
+                  AND session.provider_session_id = binding.provider_session_id
                   AND session.provider_instance_id = t.provider_instance_id
                 ORDER BY session.updated_at DESC, session.provider_session_id DESC
                 LIMIT 1
