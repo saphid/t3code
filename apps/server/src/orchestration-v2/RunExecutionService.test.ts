@@ -3196,6 +3196,72 @@ it.effect("stores the failure item when ingesting a failed terminal was skipped"
   }),
 );
 
+it.effect("keeps ingesting child completion after a skipped subagent start", () =>
+  Effect.gen(function* () {
+    const completionStored = yield* Ref.make(false);
+    yield* captureRootRunTermination({
+      key: "ingest-failure:subagent-start",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          subagentEvent(ids, "running"),
+          rootTerminalEvent(ids, "completed"),
+          subagentEvent(ids, "completed"),
+        ),
+      ingestNormalized: (event) => {
+        if (event.type !== "subagent.updated") return Effect.succeed([]);
+        return event.subagent.status === "running"
+          ? Effect.die(new Error("SQLITE_BUSY: database is locked"))
+          : Ref.set(completionStored, true).pipe(Effect.as([]));
+      },
+    });
+    assert.isTrue(yield* Ref.get(completionStored));
+  }),
+);
+
+it.effect("keeps ingesting child completion after a skipped provider turn start", () =>
+  Effect.gen(function* () {
+    const completionStored = yield* Ref.make(false);
+    const childTurn = (
+      ids: BackgroundScenarioIds,
+      status: "running" | "completed",
+    ): ProviderAdapterV2Event => ({
+      type: "provider_turn.updated",
+      driver,
+      threadId: ids.childThreadId,
+      providerTurn: {
+        id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
+        providerThreadId: ids.providerThreadId,
+        nodeId: ids.subagentNodeId,
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status,
+        startedAt: null,
+        completedAt: null,
+      },
+    });
+    yield* captureRootRunTermination({
+      key: "ingest-failure:provider-turn-start",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          childThreadCreatedEvent(ids),
+          childTurn(ids, "running"),
+          rootTerminalEvent(ids, "completed"),
+          childTurn(ids, "completed"),
+        ),
+      ingestNormalized: (event) => {
+        if (event.type !== "provider_turn.updated") return Effect.succeed([]);
+        return event.providerTurn.status === "running"
+          ? Effect.die(new Error("SQLITE_BUSY: database is locked"))
+          : Ref.set(completionStored, true).pipe(Effect.as([]));
+      },
+    });
+    assert.isTrue(yield* Ref.get(completionStored));
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
