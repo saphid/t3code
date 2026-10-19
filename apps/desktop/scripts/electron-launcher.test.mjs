@@ -8,6 +8,7 @@ import {
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
+  resolveMacAppBundleId,
   resolveMacBundleInfoPlistStrings,
   resolveMacCodeSignArguments,
   resolveMacLauncherIconPaths,
@@ -16,6 +17,22 @@ import {
 } from "./electron-launcher.mjs";
 
 describe("electron development launcher", () => {
+  it("shares a configured macOS identity across worktrees while retaining the default isolation", () => {
+    const roots = ["/worktrees/feature-one", "/worktrees/feature-two"];
+    const resolve = (root, bundleId, development = true) =>
+      resolveMacAppBundleId({ root, bundleId, development });
+
+    assert.deepEqual(
+      roots.map((root) => resolve(root, " com.t3tools.t3code.dev ")),
+      ["com.t3tools.t3code.dev", "com.t3tools.t3code.dev"],
+    );
+    assert.deepEqual(
+      roots.map((root) => resolve(root, "")),
+      ["com.t3tools.t3code.dev.featureone", "com.t3tools.t3code.dev.featuretwo"],
+    );
+    assert.equal(resolve(roots[0], "com.t3tools.t3code.dev", false), "com.t3tools.t3code");
+  });
+
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
       VITE_DEV_SERVER_URL: "http://127.0.0.1:8526",
@@ -125,6 +142,20 @@ describe("electron development launcher", () => {
       "--timestamp=none",
       "/runtime/T3 Code (Dev).app",
     ]);
+  });
+
+  it("signs with a configured identity so macOS privacy grants survive rebuilds", () => {
+    assert.deepEqual(
+      resolveMacCodeSignArguments("/runtime/T3 Code (Dev).app", "Apple Development: dev (ABC123)"),
+      [
+        "--force",
+        "--deep",
+        "--sign",
+        "Apple Development: dev (ABC123)",
+        "--timestamp=none",
+        "/runtime/T3 Code (Dev).app",
+      ],
+    );
   });
 
   it("restores execute permissions on an unchanged launcher", () => {

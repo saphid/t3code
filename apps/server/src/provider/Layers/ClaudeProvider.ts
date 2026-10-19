@@ -225,10 +225,27 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
+/**
+ * A signed-out CLI still initializes, reporting no token and no usage. Left
+ * as "authenticated" it would publish authoritative `unsupported` limits that
+ * hide the Usage row and drop turn updates until the next probe.
+ */
+export function isClaudeSignedOut(
+  capabilities: Pick<ClaudeCapabilitiesProbe, "tokenSource" | "apiKeySource" | "apiProvider">,
+): boolean {
+  return (
+    (capabilities.apiProvider ?? "firstParty") === "firstParty" &&
+    capabilities.tokenSource === "none" &&
+    !capabilities.apiKeySource
+  );
+}
+
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  /** Set when an API key authenticates; `tokenSource` is then `"none"`. */
+  readonly apiKeySource?: string | undefined;
   /**
    * Active API backend reported by the SDK's `AccountInfo`. Anthropic OAuth
    * login only applies when `"firstParty"`; for Amazon Bedrock (`"bedrock"`)
@@ -378,6 +395,7 @@ const probeClaudeCapabilities = (
               readonly email?: string;
               readonly subscriptionType?: string;
               readonly tokenSource?: string;
+              readonly apiKeySource?: string;
               readonly apiProvider?: string;
             }
           | undefined;
@@ -385,6 +403,7 @@ const probeClaudeCapabilities = (
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
+          ...(account?.apiKeySource ? { apiKeySource: account.apiKeySource } : {}),
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
@@ -554,6 +573,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+      },
+    });
+  }
+
+  if (isClaudeSignedOut(capabilities)) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude is signed out. Run `claude` and use /login, then refresh.",
       },
     });
   }

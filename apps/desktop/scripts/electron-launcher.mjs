@@ -12,13 +12,8 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 export const desktopDir = NodePath.resolve(__dirname, "..");
 const repoRoot = NodePath.resolve(desktopDir, "..", "..");
-const devBundleIdSuffix = NodePath.basename(repoRoot)
-  .toLowerCase()
-  .replaceAll(/[^a-z0-9]+/g, "");
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
-const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
+const APP_BUNDLE_ID = resolveMacAppBundleId();
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
 const LAUNCHER_VERSION = 19;
 const developmentMacIconPngPath = NodePath.join(
@@ -30,6 +25,20 @@ const developmentMacIconPngPath = NodePath.join(
 const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "prod", "black-macos-1024.png");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
+
+/** A shared dev identity reuses privacy grants, but also shares the macOS URL handler. */
+export function resolveMacAppBundleId({
+  root = repoRoot,
+  development = isDevelopment,
+  bundleId = process.env.T3CODE_DEV_BUNDLE_ID,
+} = {}) {
+  if (!development) return "com.t3tools.t3code";
+  if (bundleId?.trim()) return bundleId.trim();
+  const suffix = NodePath.basename(root)
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "");
+  return `com.t3tools.t3code.dev.${suffix || "local"}`;
+}
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = NodeChildProcess.spawnSync(
@@ -96,12 +105,20 @@ function runChecked(command, args) {
   throw new Error(`Failed to run ${command} ${args.join(" ")}: ${details}`.trim());
 }
 
-export function resolveMacCodeSignArguments(appBundlePath) {
-  return ["--force", "--deep", "--sign", "-", "--timestamp=none", appBundlePath];
+// macOS keys privacy grants (Documents, Desktop, ...) to the app's code signature.
+// An ad-hoc signature is a content hash, so every rebuilt dev bundle prompts again.
+// Setting T3CODE_DEV_CODESIGN_IDENTITY to a keychain identity such as
+// "Apple Development: you@example.com (TEAMID)" keeps grants across rebuilds.
+const devCodeSignIdentity = process.env.T3CODE_DEV_CODESIGN_IDENTITY?.trim() || "-";
+
+export function resolveMacCodeSignArguments(appBundlePath, identity = "-") {
+  return ["--force", "--deep", "--sign", identity, "--timestamp=none", appBundlePath];
 }
 
+/** Fail on a configured signing error rather than replacing the trusted privacy identity. */
 function signMacLauncherBundle(appBundlePath) {
-  runChecked("codesign", resolveMacCodeSignArguments(appBundlePath));
+  runChecked("codesign", resolveMacCodeSignArguments(appBundlePath, devCodeSignIdentity));
+  return devCodeSignIdentity;
 }
 
 function shellSingleQuote(value) {
@@ -323,6 +340,10 @@ function patchHelperBundleInfoPlists(appBundlePath) {
   }
 }
 
+function writeMetadata(path, metadata) {
+  NodeFS.writeFileSync(path, `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
 function readJson(path) {
   try {
     return JSON.parse(NodeFS.readFileSync(path, "utf8"));
@@ -362,6 +383,7 @@ function buildMacLauncher(electronBinaryPath) {
     iconMtimeMs: NodeFS.statSync(iconPath).mtimeMs,
     appBundleId: APP_BUNDLE_ID,
     appProtocolSchemes: APP_PROTOCOL_SCHEMES,
+    codeSignIdentity: devCodeSignIdentity,
   };
 
   const currentMetadata = readJson(metadataPath);
@@ -377,7 +399,8 @@ function buildMacLauncher(electronBinaryPath) {
       // captured by an older parent app override the live dev-runner environment.
       writeDevelopmentEnvironmentScript();
       if (writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath)) {
-        signMacLauncherBundle(targetAppBundlePath);
+        const codeSignIdentity = signMacLauncherBundle(targetAppBundlePath);
+        writeMetadata(metadataPath, { ...expectedMetadata, codeSignIdentity });
       }
     }
     registerMacLauncherBundle(targetAppBundlePath);
@@ -408,8 +431,8 @@ function buildMacLauncher(electronBinaryPath) {
     writeDevelopmentEnvironmentScript();
     writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
   }
-  signMacLauncherBundle(targetAppBundlePath);
-  NodeFS.writeFileSync(metadataPath, `${JSON.stringify(expectedMetadata, null, 2)}\n`);
+  const codeSignIdentity = signMacLauncherBundle(targetAppBundlePath);
+  writeMetadata(metadataPath, { ...expectedMetadata, codeSignIdentity });
   registerMacLauncherBundle(targetAppBundlePath);
 
   return launcherBinaryPath;
