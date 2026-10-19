@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off
 /**
- * Folds parsed transcript records into `(day, hourStart?, provider, model)`
- * buckets.
+ * Folds parsed transcript records into `(day, hourStart?, project, provider,
+ * model)` buckets.
  *
  * `Intl.DateTimeFormat` is the only reliable way to resolve a wall-clock day in
  * an arbitrary IANA zone, and it takes a `Date`. That is why the raw `Date`
@@ -15,7 +15,7 @@
 import type { UsageBucket, UsageDay, UsageResolution, UsageTokenTotals } from "@t3tools/contracts";
 
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheSavingsUsd, cacheWriteUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**
  * Formats an instant as a `YYYY-MM-DD` day in `timeZone`.
@@ -46,10 +46,59 @@ export function makeDayFormatter(timeZone: string): (timestampMs: number) => str
 
 const HOUR_MS = 60 * 60 * 1000;
 
+export interface ProjectRoot {
+  readonly workspaceRoot: string;
+  readonly title: string;
+  /** Soft-deleted projects still attribute: the spend happened while they existed. */
+  readonly deleted: boolean;
+}
+
+/**
+ * Builds the cwd → project-title resolver used by {@link AggregateOptions}.
+ *
+ * Deepest root wins, so a session in a project nested inside another
+ * attributes to the inner one. Live projects outrank deleted ones sharing a
+ * root, since deleting and re-creating a project leaves both rows. Results are
+ * memoised per cwd; a scan sees few distinct cwds but many records.
+ */
+export function makeProjectResolver(
+  projects: readonly ProjectRoot[],
+  separator: string,
+): (cwd: string) => string {
+  const roots = projects
+    .map((project) => ({
+      root:
+        project.workspaceRoot.length > 1 && project.workspaceRoot.endsWith(separator)
+          ? project.workspaceRoot.slice(0, -1)
+          : project.workspaceRoot,
+      title: project.title.trim(),
+      deleted: project.deleted,
+    }))
+    .filter((entry) => entry.root.length > 0 && entry.title.length > 0)
+    .sort((a, b) => b.root.length - a.root.length || Number(a.deleted) - Number(b.deleted));
+
+  const byCwd = new Map<string, string>();
+  return (cwd) => {
+    if (cwd.length === 0) return "";
+    const cached = byCwd.get(cwd);
+    if (cached !== undefined) return cached;
+    let resolved = "";
+    for (const { root, title } of roots) {
+      if (cwd === root || (cwd.startsWith(root) && cwd[root.length] === separator)) {
+        resolved = title;
+        break;
+      }
+    }
+    byCwd.set(cwd, resolved);
+    return resolved;
+  };
+}
+
 interface MutableBucket {
   totals: UsageTokenTotals;
   costUsd: number;
   cacheSavingsUsd: number;
+  cacheWriteUsd: number;
   records: number;
   unpricedRecords: number;
   providerReportedRecords: number;
@@ -64,6 +113,14 @@ export interface AggregateOptions {
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
+  /** Request-start ceiling. Records written later wait for the next refresh. */
+  readonly cutoffTimeMs?: number;
+  /**
+   * Maps a record's working directory to the title of the project it ran in,
+   * or `""` when it ran outside every project. Omitting it leaves every bucket
+   * unattributed.
+   */
+  readonly resolveProject?: (cwd: string) => string;
 }
 
 export interface AggregateResult {
@@ -82,8 +139,8 @@ export interface AggregateResult {
  * the same `dedupeKey` legitimately appears in several transcripts.
  */
 export class UsageAggregator {
-  readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #recordsByKey = new Map<string, UsageRecord>();
+  readonly #unkeyedRecords: UsageRecord[] = [];
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -112,14 +169,13 @@ export class UsageAggregator {
    * that landed rather than everything the mtime prefilter happened to admit.
    */
   add(record: UsageRecord): boolean {
-    if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
-        this.#duplicatesDropped += 1;
-        return false;
-      }
-      this.#seen.add(record.dedupeKey);
+    if (
+      this.#options.cutoffTimeMs !== undefined &&
+      record.timestampMs > this.#options.cutoffTimeMs
+    ) {
+      this.#outOfWindow += 1;
+      return false;
     }
-
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
@@ -138,6 +194,24 @@ export class UsageAggregator {
       return false;
     }
 
+    if (record.dedupeKey === null) {
+      this.#unkeyedRecords.push(record);
+      return true;
+    }
+    if (this.#recordsByKey.has(record.dedupeKey)) {
+      // Claude writes progressive snapshots for one response. The final copy
+      // is complete, so replace the earlier one without counting it twice.
+      this.#recordsByKey.set(record.dedupeKey, record);
+      this.#duplicatesDropped += 1;
+      return false;
+    }
+    this.#recordsByKey.set(record.dedupeKey, record);
+    return true;
+  }
+
+  #foldRecord(record: UsageRecord, buckets: Map<string, MutableBucket>): void {
+    const day = this.#toDay(record.timestampMs);
+
     const hourStart =
       this.#hourlyWindow === null
         ? ""
@@ -145,19 +219,25 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}`;
-    let bucket = this.#buckets.get(key);
+    // The key is parsed back apart on NUL, which project titles must not carry.
+    const project =
+      this.#options.resolveProject === undefined
+        ? ""
+        : this.#options.resolveProject(record.cwd).replaceAll("\u0000", "");
+    const key = `${day}\u0000${hourStart}\u0000${project}\u0000${record.provider}\u0000${record.model}`;
+    let bucket = buckets.get(key);
     if (bucket === undefined) {
       bucket = {
         totals: EMPTY_TOTALS,
         costUsd: 0,
         cacheSavingsUsd: 0,
+        cacheWriteUsd: 0,
         records: 0,
         unpricedRecords: 0,
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
-      this.#buckets.set(key, bucket);
+      buckets.set(key, bucket);
     }
 
     const priced = priceUsage(
@@ -170,25 +250,31 @@ export class UsageAggregator {
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
     bucket.cacheSavingsUsd += cacheSavingsUsd(this.#options.rates, record.model, record.totals);
+    bucket.cacheWriteUsd += cacheWriteUsd(this.#options.rates, record.model, record.totals);
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
     if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
   }
 
   finish(): AggregateResult {
+    const bucketsByKey = new Map<string, MutableBucket>();
+    for (const record of this.#unkeyedRecords) this.#foldRecord(record, bucketsByKey);
+    for (const record of this.#recordsByKey.values()) this.#foldRecord(record, bucketsByKey);
     const buckets: UsageBucket[] = [];
-    for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
+    for (const [key, bucket] of bucketsByKey) {
+      const [day = "", hourStart = "", project = "", provider = "", model = ""] =
+        key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
         ...(hourStart === "" ? {} : { hourStart }),
+        ...(project === "" ? {} : { project }),
         provider: provider as UsageBucket["provider"],
         model,
         totals: bucket.totals,
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
+        cacheWriteUsd: bucket.cacheWriteUsd,
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
@@ -200,6 +286,7 @@ export class UsageAggregator {
       (a, b) =>
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
+        (a.project ?? "").localeCompare(b.project ?? "") ||
         a.provider.localeCompare(b.provider) ||
         a.model.localeCompare(b.model),
     );

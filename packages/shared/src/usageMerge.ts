@@ -36,6 +36,19 @@ export interface ModelTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
   readonly totalTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number;
+  readonly records: number;
+  readonly costShare: number;
+}
+
+/** One project's slice of the window. `project` is null for buckets that ran outside every project. */
+export interface ProjectTotals {
+  readonly project: string | null;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly cacheWriteUsd: number;
   readonly records: number;
   readonly costShare: number;
 }
@@ -60,6 +73,13 @@ export interface CostQuality {
   readonly modelPricedShare: number;
   readonly unpricedShare: number;
   readonly cacheSavingsUsd: number;
+  /** Cost of re-priming context after cache expiry, at cache-write rates. */
+  readonly cacheWriteUsd: number;
+}
+
+export interface EnvironmentProviderContribution {
+  readonly environmentId: EnvironmentId;
+  readonly providers: readonly UsageProviderKind[];
 }
 
 export interface MergedUsage {
@@ -74,12 +94,19 @@ export interface MergedUsage {
   readonly sessions: number;
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
+  /**
+   * Always computed from the unfiltered buckets, so a project picker keeps its
+   * full option list while a filter is applied.
+   */
+  readonly projects: readonly ProjectTotals[];
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
+  /** Provider rows this environment owns after physical-source de-duplication. */
+  readonly providerContributions: readonly EnvironmentProviderContribution[];
   readonly staleEnvironments: readonly EnvironmentId[];
 }
 
@@ -189,6 +216,7 @@ const EMPTY_MERGED: MergedUsage = {
   sessions: 0,
   providers: [],
   models: [],
+  projects: [],
   daily: [],
   hourly: [],
   costQuality: {
@@ -196,11 +224,25 @@ const EMPTY_MERGED: MergedUsage = {
     modelPricedShare: 0,
     unpricedShare: 0,
     cacheSavingsUsd: 0,
+    cacheWriteUsd: 0,
   },
   duplicateSources: [],
   contributingEnvironments: [],
+  providerContributions: [],
   staleEnvironments: [],
 };
+
+export interface MergeUsageOptions {
+  /**
+   * Restrict every figure except `projects` to buckets from one project:
+   * a title selects that project, `null` selects buckets that ran outside
+   * every project, and `undefined` applies no filter.
+   *
+   * Sessions are counted per source directory, not per project, so a filtered
+   * merge reports `sessions` as 0 rather than a number it cannot know.
+   */
+  readonly projectFilter?: string | null;
+}
 
 /**
  * Merges every connected environment's summary.
@@ -214,8 +256,10 @@ const EMPTY_MERGED: MergedUsage = {
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
+  options?: MergeUsageOptions,
 ): MergedUsage {
   if (environments.length === 0) return EMPTY_MERGED;
+  const projectFilter = options?.projectFilter;
 
   const current: EnvironmentUsage[] = [];
   const staleEnvironments: EnvironmentId[] = [];
@@ -238,6 +282,7 @@ export function mergeUsage(
   let records = 0;
   let sessions = 0;
   let cacheSavingsUsd = 0;
+  let cacheWriteUsd = 0;
   let providerReportedRecords = 0;
   let unpricedRecords = 0;
 
@@ -247,8 +292,28 @@ export function mergeUsage(
   >();
   const modelAccumulator = new Map<
     string,
-    { provider: UsageProviderKind; costUsd: number; totalTokens: number; records: number }
+    {
+      provider: UsageProviderKind;
+      costUsd: number;
+      totalTokens: number;
+      cacheWriteTokens: number;
+      cacheWriteUsd: number;
+      records: number;
+    }
   >();
+  // Keyed by title, with null (outside every project) under a NUL sentinel no
+  // title can contain. Accumulated before the project filter applies.
+  const projectAccumulator = new Map<
+    string,
+    {
+      costUsd: number;
+      totalTokens: number;
+      cacheWriteTokens: number;
+      cacheWriteUsd: number;
+      records: number;
+    }
+  >();
+  let unfilteredCostUsd = 0;
   const dailyAccumulator = new Map<
     string,
     {
@@ -268,29 +333,59 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const providerContributions: EnvironmentProviderContribution[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      providerContributions.push({
+        environmentId: environment.environmentId,
+        providers: [...new Set(buckets.map((bucket) => bucket.provider))].sort(),
+      });
+    }
 
-    for (const [providerKind, providerSessions] of sessionsByProvider) {
-      sessions += providerSessions;
-      if (providerSessions === 0) continue;
-      const provider = providerAccumulator.get(providerKind) ?? {
-        costUsd: 0,
-        totalTokens: 0,
-        records: 0,
-        sessions: 0,
-      };
-      provider.sessions += providerSessions;
-      providerAccumulator.set(providerKind, provider);
+    // Session counts are per source directory; a project filter cannot split
+    // them, so a filtered merge leaves every session figure at 0.
+    if (projectFilter === undefined) {
+      for (const [providerKind, providerSessions] of sessionsByProvider) {
+        sessions += providerSessions;
+        if (providerSessions === 0) continue;
+        const provider = providerAccumulator.get(providerKind) ?? {
+          costUsd: 0,
+          totalTokens: 0,
+          records: 0,
+          sessions: 0,
+        };
+        provider.sessions += providerSessions;
+        providerAccumulator.set(providerKind, provider);
+      }
     }
 
     for (const bucket of buckets) {
       const tokens = bucketTokens(bucket);
 
+      unfilteredCostUsd += bucket.costUsd;
+      const projectKey = bucket.project ?? "\0";
+      const project = projectAccumulator.get(projectKey) ?? {
+        costUsd: 0,
+        totalTokens: 0,
+        cacheWriteTokens: 0,
+        cacheWriteUsd: 0,
+        records: 0,
+      };
+      project.costUsd += bucket.costUsd;
+      project.totalTokens += tokens;
+      project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+      project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+      project.records += bucket.records;
+      projectAccumulator.set(projectKey, project);
+
+      if (projectFilter !== undefined && (bucket.project ?? null) !== projectFilter) continue;
+
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
+      cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
       uncachedInputTokens += bucket.totals.uncachedInputTokens;
       cachedInputTokens += bucket.totals.cachedInputTokens;
       cacheCreationTokens += bucket.totals.cacheCreationTokens;
@@ -316,10 +411,14 @@ export function mergeUsage(
         provider: bucket.provider,
         costUsd: 0,
         totalTokens: 0,
+        cacheWriteTokens: 0,
+        cacheWriteUsd: 0,
         records: 0,
       };
       model.costUsd += bucket.costUsd;
       model.totalTokens += tokens;
+      model.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+      model.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
       model.records += bucket.records;
       modelAccumulator.set(modelKey, model);
 
@@ -378,8 +477,22 @@ export function mergeUsage(
       provider: totals.provider,
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
+      cacheWriteUsd: totals.cacheWriteUsd,
       records: totals.records,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
+
+  const projects: ProjectTotals[] = [...projectAccumulator.entries()]
+    .map(([key, totals]) => ({
+      project: key === "\0" ? null : key,
+      costUsd: totals.costUsd,
+      totalTokens: totals.totalTokens,
+      cacheWriteTokens: totals.cacheWriteTokens,
+      cacheWriteUsd: totals.cacheWriteUsd,
+      records: totals.records,
+      costShare: unfilteredCostUsd === 0 ? 0 : totals.costUsd / unfilteredCostUsd,
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 
@@ -408,6 +521,7 @@ export function mergeUsage(
     sessions,
     providers,
     models,
+    projects,
     daily,
     hourly,
     costQuality: {
@@ -416,9 +530,13 @@ export function mergeUsage(
       modelPricedShare:
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
+      cacheWriteUsd,
     },
     duplicateSources: duplicates,
     contributingEnvironments,
+    providerContributions: providerContributions.sort((a, b) =>
+      a.environmentId.localeCompare(b.environmentId),
+    ),
     staleEnvironments,
   };
 }

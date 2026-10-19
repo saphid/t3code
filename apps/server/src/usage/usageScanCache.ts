@@ -2,7 +2,8 @@
  * Durable per-file scan cache.
  *
  * Transcripts are append-only and a file that has not changed can never yield
- * different usage, so parsed records are keyed by `(size, mtime)` and reused.
+ * different usage, so parsed records are keyed by filesystem identity, exact
+ * modification time, size, and a content fingerprint.
  * Without this every server restart re-parses the whole window: roughly 3.5s
  * for a 30-day scan here, against ~11ms to reload this cache.
  *
@@ -20,11 +21,19 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
-export const USAGE_SCAN_CACHE_VERSION = 2 as const;
+// v3: records carry the session's cwd for project attribution; v2 entries
+// would pin every cached file to "no project" forever.
+// v4: Claude records retain cache TTLs and expanded fallback iterations.
+// v5: cache hits require nanosecond metadata, file identity, and a sampled hash.
+export const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
+  readonly mtimeNs: string;
+  readonly device: string;
+  readonly inode: string;
+  readonly fingerprint: string;
   readonly provider: UsageProviderKind;
   readonly records: readonly UsageRecord[];
 }
@@ -47,11 +56,18 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  cwdIndex: number,
+  cacheCreation5mTokens: number,
+  cacheCreation1hTokens: number,
 ];
 
 interface SerializedFile {
   readonly s: number;
   readonly m: number;
+  readonly n: string;
+  readonly d: string;
+  readonly i: string;
+  readonly h: string;
   readonly p: UsageProviderKind;
   readonly r: readonly SerializedRecord[];
 }
@@ -60,15 +76,18 @@ interface SerializedCache {
   readonly version: number;
   readonly models: readonly string[];
   readonly sessions: readonly string[];
+  readonly cwds: readonly string[];
   readonly files: Readonly<Record<string, SerializedFile>>;
 }
 
-/** Serialises the cache, interning the repeated model and session strings. */
+/** Serialises the cache, interning the repeated model, session and cwd strings. */
 export function encodeScanCache(cache: ScanCache): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
+  const cwds: string[] = [];
   const modelIndex = new Map<string, number>();
   const sessionIndex = new Map<string, number>();
+  const cwdIndex = new Map<string, number>();
 
   const intern = (table: string[], index: Map<string, number>, value: string): number => {
     const existing = index.get(value);
@@ -84,6 +103,10 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     files[path] = {
       s: entry.size,
       m: entry.mtimeMs,
+      n: entry.mtimeNs,
+      d: entry.device,
+      i: entry.inode,
+      h: entry.fingerprint,
       p: entry.provider,
       r: entry.records.map((record) => [
         record.timestampMs,
@@ -96,11 +119,14 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
         record.totals.reasoningTokens,
         record.dedupeKey,
         record.reportedCostUsd,
+        intern(cwds, cwdIndex, record.cwd),
+        record.totals.cacheCreation5mTokens ?? 0,
+        record.totals.cacheCreation1hTokens ?? 0,
       ]),
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, files };
+  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, cwds, files };
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
@@ -119,7 +145,9 @@ export function decodeScanCache(document: unknown): ScanCache {
 
   const root = document as Partial<SerializedCache>;
   if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
-  if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
+  if (!isRecordArray(root.models) || !isRecordArray(root.sessions) || !isRecordArray(root.cwds)) {
+    return cache;
+  }
   if (typeof root.files !== "object" || root.files === null) return cache;
 
   // The intern tables must be all strings: a numeric entry would pass the
@@ -127,13 +155,24 @@ export function decodeScanCache(document: unknown): ScanCache {
   // at normalizeModelName. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
+  if (!root.cwds.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
+  const cwds = root.cwds as readonly string[];
 
   for (const [path, raw] of Object.entries(root.files)) {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
-    if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
+    if (
+      typeof entry.s !== "number" ||
+      typeof entry.m !== "number" ||
+      typeof entry.n !== "string" ||
+      typeof entry.d !== "string" ||
+      typeof entry.i !== "string" ||
+      typeof entry.h !== "string"
+    ) {
+      continue;
+    }
     if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
     if (!isRecordArray(entry.r)) continue;
 
@@ -144,7 +183,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     // file would never be re-parsed, silently losing the dropped rows' usage.
     let corrupt = false;
     for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 10) {
+      if (!isRecordArray(row) || row.length < 13) {
         corrupt = true;
         break;
       }
@@ -159,6 +198,9 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        cwdIndex,
+        cacheCreation5m,
+        cacheCreation1h,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -169,6 +211,8 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
+        !Number.isFinite(cacheCreation5m) ||
+        !Number.isFinite(cacheCreation1h) ||
         !Number.isFinite(output) ||
         !Number.isFinite(reasoning)
       ) {
@@ -181,10 +225,13 @@ export function decodeScanCache(document: unknown): ScanCache {
         timestampMs,
         model,
         sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
+        cwd: (typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined) ?? "",
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
           cacheCreationTokens: cacheCreation,
+          ...(cacheCreation5m === 0 ? {} : { cacheCreation5mTokens: cacheCreation5m }),
+          ...(cacheCreation1h === 0 ? {} : { cacheCreation1hTokens: cacheCreation1h }),
           outputTokens: output,
           reasoningTokens: reasoning,
         },
@@ -194,7 +241,16 @@ export function decodeScanCache(document: unknown): ScanCache {
     }
 
     if (corrupt) continue;
-    cache.set(path, { size: entry.s, mtimeMs: entry.m, provider, records });
+    cache.set(path, {
+      size: entry.s,
+      mtimeMs: entry.m,
+      mtimeNs: entry.n,
+      device: entry.d,
+      inode: entry.i,
+      fingerprint: entry.h,
+      provider,
+      records,
+    });
   }
 
   return cache;
@@ -240,14 +296,18 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/** Within-file de-duplication, applied before an entry is cached. */
+/** Within-file de-duplication, retaining the final complete Claude snapshot. */
 export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const existing = indexByKey.get(record.dedupeKey);
+      if (existing !== undefined) {
+        kept[existing] = record;
+        continue;
+      }
+      indexByKey.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }

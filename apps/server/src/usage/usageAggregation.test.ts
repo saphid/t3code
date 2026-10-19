@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { UsageAggregator } from "./usageAggregation.ts";
+import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -12,6 +12,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -23,6 +24,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: Date.parse("2026-08-07T04:05:13.944Z"),
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "",
     totals: {
       uncachedInputTokens: 100,
       cachedInputTokens: 1000,
@@ -74,7 +76,7 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("counts only one record for a repeated dedupe key", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
@@ -87,11 +89,65 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
+  it("uses the final complete snapshot for a repeated dedupe key", () => {
+    const result = aggregate([
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 1 },
+      }),
+      record({
+        dedupeKey: "msg_partial:",
+        totals: { ...record().totals, outputTokens: 310 },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(310);
+  });
+
+  it("holds records newer than the request-start cutoff for the next refresh", () => {
+    const cutoffTimeMs = Date.parse("2026-08-07T04:05:14.000Z");
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      cutoffTimeMs,
+      rates,
+    });
+    aggregator.add(record({ timestampMs: cutoffTimeMs }));
+    aggregator.add(record({ timestampMs: cutoffTimeMs + 1 }));
+
+    const result = aggregator.finish();
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.outOfWindow).toBe(1);
+  });
+
   it("still sums records that carry no dedupe key", () => {
     const result = aggregate([record(), record()]);
 
     expect(result.duplicatesDropped).toBe(0);
     expect(result.buckets[0]?.totals.outputTokens).toBe(100);
+  });
+
+  it("splits buckets by resolved project and omits the field when unresolved", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: (cwd) => (cwd === "/work/app" ? "App" : ""),
+    });
+    aggregator.add(record({ cwd: "/work/app" }));
+    aggregator.add(record({ cwd: "/work/app" }));
+    aggregator.add(record({ cwd: "/elsewhere" }));
+    const { buckets } = aggregator.finish();
+
+    // Same day, provider and model, so only the project splits the cell.
+    expect(buckets).toHaveLength(2);
+    expect(buckets[0]?.project).toBeUndefined();
+    expect(buckets[0]?.records).toBe(1);
+    expect(buckets[1]?.project).toBe("App");
+    expect(buckets[1]?.records).toBe(2);
   });
 
   it("buckets by the day in the requested time zone", () => {
@@ -154,6 +210,41 @@ describe("UsageAggregator", () => {
     // 100*1e-5 + 1000*1e-6 + 10*1.25e-5 + 50*5e-5
     expect(result.buckets[0]?.costUsd).toBeCloseTo(0.004625, 9);
     expect(result.buckets[0]?.costSource).toBe("modelPriced");
+    // Cache writes priced at the cache-write rate: 10 * 1.25e-5.
+    expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(1.25e-4, 12);
+  });
+
+  it("prices one-hour cache writes at their separate rate", () => {
+    const result = aggregate([
+      record({
+        totals: {
+          ...record().totals,
+          cacheCreationTokens: 30,
+          cacheCreation5mTokens: 10,
+          cacheCreation1hTokens: 20,
+        },
+      }),
+    ]);
+
+    expect(result.buckets[0]?.cacheWriteUsd).toBeCloseTo(10 * 1.25e-5 + 20 * 2e-5, 12);
+  });
+
+  it("reports zero cache-write cost for unpriced models and write-free usage", () => {
+    const unpriced = aggregate([record({ model: "kimi-k3" })]);
+    expect(unpriced.buckets[0]?.cacheWriteUsd).toBe(0);
+
+    const writeFree = aggregate([
+      record({
+        totals: {
+          uncachedInputTokens: 100,
+          cachedInputTokens: 1000,
+          cacheCreationTokens: 0,
+          outputTokens: 50,
+          reasoningTokens: 0,
+        },
+      }),
+    ]);
+    expect(writeFree.buckets[0]?.cacheWriteUsd).toBe(0);
   });
 
   it("counts tokens but not cost for a model with no rate", () => {
@@ -200,5 +291,40 @@ describe("UsageAggregator", () => {
     ]);
 
     expect(result.buckets).toHaveLength(3);
+  });
+});
+
+describe("makeProjectResolver", () => {
+  const resolver = makeProjectResolver(
+    [
+      { workspaceRoot: "/work/app", title: "App", deleted: false },
+      { workspaceRoot: "/work/app/vendored", title: "Vendored", deleted: false },
+      { workspaceRoot: "/work/legacy", title: "Legacy Was Deleted", deleted: true },
+      { workspaceRoot: "/work/legacy", title: "Legacy", deleted: false },
+      { workspaceRoot: "/work/untitled", title: "   ", deleted: false },
+    ],
+    "/",
+  );
+
+  it("matches the root itself and any path under it", () => {
+    expect(resolver("/work/app")).toBe("App");
+    expect(resolver("/work/app/src/deep")).toBe("App");
+  });
+
+  it("requires a path-segment boundary, not a bare prefix", () => {
+    expect(resolver("/work/app-sibling")).toBe("");
+  });
+
+  it("prefers the deepest matching root", () => {
+    expect(resolver("/work/app/vendored/lib")).toBe("Vendored");
+  });
+
+  it("prefers a live project over a deleted one sharing the root", () => {
+    expect(resolver("/work/legacy/src")).toBe("Legacy");
+  });
+
+  it("never attributes to a blank title or an empty cwd", () => {
+    expect(resolver("/work/untitled/src")).toBe("");
+    expect(resolver("")).toBe("");
   });
 });

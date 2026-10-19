@@ -14,21 +14,24 @@
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 9 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 only adds `grok` to {@link UsageProviderKind}; v6 and v7 only add the
+ * optional bucket fields `project` and `cacheWriteUsd`; v8 only adds the
+ * separate thread-breakdown RPC; v9 adds optional cache-write TTL counters.
+ * v4 Claude/Codex buckets remain valid, so
+ * mixed-version environments keep those totals instead of treating every
+ * older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -74,14 +77,19 @@ export const UsageTokenTotals = Schema.Struct({
   uncachedInputTokens: NonNegativeInt,
   cachedInputTokens: NonNegativeInt,
   cacheCreationTokens: NonNegativeInt,
+  /** Anthropic five-minute cache writes, when the transcript reports the TTL. */
+  cacheCreation5mTokens: Schema.optional(NonNegativeInt),
+  /** Anthropic one-hour cache writes, when the transcript reports the TTL. */
+  cacheCreation1hTokens: Schema.optional(NonNegativeInt),
   outputTokens: NonNegativeInt,
   reasoningTokens: NonNegativeInt,
 });
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
 /**
- * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
- * instant of a rolling bucket and is present only for hourly requests.
+ * One `(day, hourStart?, project, provider, model)` cell. `hourStart` is the
+ * UTC start instant of a rolling bucket and is present only for hourly
+ * requests.
  *
  * `costUsd` is the raw API-equivalent cost of these tokens. It is not money
  * spent: subscription plans bill separately. `unpricedRecords` counts records
@@ -91,6 +99,14 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
   hourStart: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Title of the T3 project whose workspace root contains the session's
+   * working directory, resolved per environment at scan time. Absent when the
+   * session ran outside every project on that environment, or when the
+   * transcript carries no working directory (Grok, and summaries from servers
+   * predating this field).
+   */
+  project: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
@@ -101,6 +117,13 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * What the cache writes in this bucket cost at the model and TTL-specific
+   * rates. Cache creation is a billing category, not proof of expiry. A subset of
+   * `costUsd` when the bucket is model-priced. Absent from summaries written
+   * before this field existed.
+   */
+  cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
@@ -201,6 +224,94 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
 });
 export type UsageSummary = typeof UsageSummary.Type;
+
+export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Optional exact bounds match the summary's rolling hourly window. */
+  resolution: Schema.optional(UsageResolution),
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+  untilTime: Schema.optional(TrimmedNonEmptyString),
+  /** Inclusive first day of the window, in `timeZone`. */
+  sinceDay: UsageDay,
+  /** Inclusive last day of the window, in `timeZone`. */
+  untilDay: UsageDay,
+  timeZone: TrimmedNonEmptyString,
+  /**
+   * Restrict to one project's sessions: a title selects that project, `null`
+   * selects sessions outside every project, absent applies no filter.
+   */
+  project: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type UsageThreadBreakdownInput = typeof UsageThreadBreakdownInput.Type;
+
+/** One Claude subagent's slice of its parent thread. */
+export const UsageAgentRow = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+});
+export type UsageAgentRow = typeof UsageAgentRow.Type;
+
+/**
+ * One day of a thread's cost split by component. Days the thread was idle are
+ * omitted. Model-priced components need the rate table; provider-reported
+ * costs remain separate because their cache-component split is unknown.
+ */
+export const UsageThreadDayCost = Schema.Struct({
+  day: UsageDay,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Provider-reported cost without an inferred cache-component split. */
+  providerReportedUsd: Schema.optional(Schema.Number),
+  /** Fresh input plus output priced from model rates. */
+  freshUsd: Schema.Number,
+});
+export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
+
+/**
+ * One thread's (or unattributed session group's) slice of the window.
+ *
+ * `threadId` is present when the sessions map to a T3 Code thread on this
+ * environment, via the thread's resume cursor or its dedicated worktree.
+ * Sessions that never ran through T3 Code stay session-granular with a title
+ * taken from the transcript.
+ */
+export const UsageThreadRow = Schema.Struct({
+  /** Stable within one environment; opaque to clients. */
+  key: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(ThreadId),
+  title: TrimmedNonEmptyString,
+  provider: UsageProviderKind,
+  project: Schema.optional(TrimmedNonEmptyString),
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+  /** Distinct transcript sessions folded into this row. */
+  sessions: NonNegativeInt,
+  /** Lower-cost thread rows represented by this grouped remainder row. */
+  groupedRows: Schema.optional(NonNegativeInt),
+  agents: Schema.Array(UsageAgentRow),
+  daily: Schema.Array(UsageThreadDayCost),
+});
+export type UsageThreadRow = typeof UsageThreadRow.Type;
+
+/**
+ * On-demand drill-down behind the usage summary. Named rows are capped
+ * server-side because a window can hold thousands of sessions. Lower-cost
+ * rows fold into provider/project-specific remainder rows so totals reconcile
+ * without sending every transcript session over the WebSocket.
+ */
+export const UsageThreadBreakdown = Schema.Struct({
+  contractVersion: Schema.Number,
+  readAt: Schema.String,
+  sinceDay: UsageDay,
+  untilDay: UsageDay,
+  rows: Schema.Array(UsageThreadRow),
+  /** Underlying rows folded into the returned remainder rows. */
+  truncatedRows: NonNegativeInt,
+  scanDurationMs: NonNegativeInt,
+});
+export type UsageThreadBreakdown = typeof UsageThreadBreakdown.Type;
 
 export class UsageReadError extends Schema.TaggedErrorClass<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),
