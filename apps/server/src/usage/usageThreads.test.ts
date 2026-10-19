@@ -14,6 +14,7 @@ const rates: RateTable = new Map([
       outputCostPerToken: 5e-5,
       cacheReadCostPerToken: 1e-6,
       cacheCreationCostPerToken: 1.25e-5,
+      cacheCreation1hCostPerToken: 2e-5,
     },
   ],
 ]);
@@ -82,6 +83,22 @@ describe("ThreadUsageAccumulator", () => {
     expect(groups[0]?.totals.outputTokens).toBe(50);
   });
 
+  it("uses the final complete snapshot across files", () => {
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    const groups = accumulate([
+      [
+        record({ dedupeKey: "msg_partial:", totals: { ...record().totals, outputTokens: 1 } }),
+        context,
+      ],
+      [
+        record({ dedupeKey: "msg_partial:", totals: { ...record().totals, outputTokens: 310 } }),
+        context,
+      ],
+    ]);
+
+    expect(groups[0]?.totals.outputTokens).toBe(310);
+  });
+
   it("splits each day's cost into cache write, cache read, and fresh components", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([[record(), context]]);
@@ -147,6 +164,22 @@ describe("ThreadUsageAccumulator", () => {
     ]);
 
     expect(groups).toHaveLength(0);
+  });
+
+  it("holds records newer than the request-start cutoff for the next refresh", () => {
+    const cutoffTimeMs = Date.parse("2026-08-07T04:05:14.000Z");
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      cutoffTimeMs,
+      rates,
+    });
+    const context = { sessionKey: "claude:session-a", agentId: null };
+    accumulator.add(record({ timestampMs: cutoffTimeMs }), context);
+    accumulator.add(record({ timestampMs: cutoffTimeMs + 1 }), context);
+
+    expect(accumulator.finish()[0]?.totals.outputTokens).toBe(50);
   });
 });
 
