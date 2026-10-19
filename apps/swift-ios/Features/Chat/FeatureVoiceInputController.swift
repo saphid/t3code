@@ -108,7 +108,7 @@ protocol FeatureVoiceInputAdapter: AnyObject {
     var isSupported: Bool { get }
     var localeIdentifier: String { get }
 
-    func prepare() async throws
+    func prepare(configuration: FeatureVoiceInputConfiguration) async throws
     func requestMicrophonePermission() async -> FeatureVoiceMicrophonePermission
     func startRecording(maximumDuration: TimeInterval) throws
     func stopRecording() async throws -> URL
@@ -146,6 +146,7 @@ final class FeatureVoiceInputController {
     @ObservationIgnored private let adapter: any FeatureVoiceInputAdapter
     @ObservationIgnored private var currentDraft: FeatureVoiceDraftSnapshot?
     @ObservationIgnored private var capturedDraft: FeatureVoiceDraftSnapshot?
+    @ObservationIgnored private var capturedConfiguration: FeatureVoiceInputConfiguration?
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var recordingLimitTask: Task<Void, Never>?
@@ -174,7 +175,7 @@ final class FeatureVoiceInputController {
         )
     }
 
-    func start() {
+    func start(configuration: FeatureVoiceInputConfiguration = FeatureVoiceInputConfiguration()) {
         guard phase == .idle || phase == .error else { return }
         guard adapter.isSupported else {
             setError("Voice transcription requires a supported device with iOS 26 or later.", nil)
@@ -193,10 +194,11 @@ final class FeatureVoiceInputController {
 
         operationID = id
         capturedDraft = currentDraft
+        capturedConfiguration = configuration
         pendingCommit = nil
         setPhase(.preparing)
         operationTask = Task { [weak self] in
-            await self?.prepareAndStartRecording(id: id)
+            await self?.prepareAndStartRecording(id: id, configuration: configuration)
         }
     }
 
@@ -268,12 +270,15 @@ final class FeatureVoiceInputController {
         await operationTask?.value
     }
 
-    private func prepareAndStartRecording(id: UUID) async {
+    private func prepareAndStartRecording(
+        id: UUID,
+        configuration: FeatureVoiceInputConfiguration
+    ) async {
         do {
             // Locale resolution and asset installation happen before the app
             // asks for microphone access. A permission prompt must not hide a
             // long asset download.
-            try await adapter.prepare()
+            try await adapter.prepare(configuration: configuration)
             guard isCurrent(id) else {
                 await cleanupAndRelease(id: id)
                 return
@@ -321,6 +326,7 @@ final class FeatureVoiceInputController {
                 return
             }
 
+            let vocabulary = capturedConfiguration?.vocabulary ?? []
             let transcript = try await adapter.transcribe(recordingURL: recordingURL)
             guard isCurrent(id) else {
                 await cleanupAndRelease(id: id)
@@ -330,13 +336,17 @@ final class FeatureVoiceInputController {
             let result = FeatureVoiceTranscriptResolver.resolve(
                 captured: capturedDraft,
                 current: currentDraft,
-                transcript: transcript,
+                transcript: FeatureVoiceVocabulary.applyCorrections(
+                    to: transcript,
+                    vocabulary: vocabulary
+                ),
                 localeIdentifier: adapter.localeIdentifier
             )
             await cleanupAndRelease(id: id)
             guard operationID == id else { return }
             operationID = nil
             self.capturedDraft = nil
+            capturedConfiguration = nil
             switch result {
             case let .commit(commit):
                 pendingCommit = commit
@@ -370,6 +380,7 @@ final class FeatureVoiceInputController {
     private func invalidateOperation() {
         operationID = nil
         capturedDraft = nil
+        capturedConfiguration = nil
         recordingStartedAt = nil
         recordingLimitTask?.cancel()
         recordingLimitTask = nil

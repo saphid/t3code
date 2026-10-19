@@ -29,6 +29,10 @@ struct FeatureComposerUploadStatus {
 
 struct FeatureComposerView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @AppStorage(FeatureVoiceDictationSettings.enabledKey)
+    private var voiceDictationEnabled = true
+    @AppStorage(FeatureVoiceDictationSettings.keyboardKey)
+    private var voiceDictationKeyboardEnabled = false
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var isModelPickerPresented = false
@@ -301,7 +305,7 @@ struct FeatureComposerView: View {
             submitButton
                 .padding(.trailing, 7)
 
-            if voiceInputController.isSupported {
+            if voiceInputController.isSupported, voiceDictationEnabled {
                 voiceInputButton
                     .padding(.trailing, 3)
             }
@@ -452,7 +456,7 @@ struct FeatureComposerView: View {
 
             Spacer(minLength: 0)
 
-            if voiceInputController.isSupported {
+            if voiceInputController.isSupported, voiceDictationEnabled {
                 voiceInputButton
             }
 
@@ -907,7 +911,13 @@ struct FeatureComposerView: View {
 
     private func startVoiceInput() {
         synchronizeVoiceDraft(ownerChanged: false)
-        voiceInputController.start()
+        if !voiceDictationKeyboardEnabled, focused {
+            focused = false
+            onDismissKeyboard?()
+        }
+        voiceInputController.start(configuration: FeatureVoiceInputConfiguration(
+            vocabulary: powerFeatures.voiceVocabulary?() ?? []
+        ))
     }
 
     private func handleTextSelectionChange(_ selection: NSRange) {

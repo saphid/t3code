@@ -206,6 +206,26 @@ struct FeatureVoiceInputTests {
         #expect(adapter.cleanupCount == 1)
     }
 
+    @Test
+    func learnedVocabularyCorrectsTheTranscriptBeforeReplacingSelectedText() async {
+        let adapter = TestVoiceInputAdapter()
+        adapter.transcript = "chat composer"
+        let controller = controller(adapter: adapter)
+        controller.start(configuration: FeatureVoiceInputConfiguration(
+            engine: .general,
+            vocabulary: ["ChatComposer"]
+        ))
+        await controller.waitForCurrentOperation()
+        controller.stop()
+        await controller.waitForCurrentOperation()
+
+        #expect(adapter.configuration?.engine == .general)
+        #expect(adapter.configuration?.vocabulary.first == "ChatComposer")
+        #expect(controller.pendingCommit?.text == "hello ChatComposer")
+        #expect(controller.pendingCommit?.caretLocation == "hello ChatComposer".utf16.count)
+        #expect(adapter.cleanupCount == 1)
+    }
+
     private func controller(adapter: TestVoiceInputAdapter) -> FeatureVoiceInputController {
         let controller = FeatureVoiceInputController(adapter: adapter)
         controller.updateDraft(snapshot())
@@ -246,11 +266,15 @@ private final class TestVoiceInputAdapter: FeatureVoiceInputAdapter {
     var onPermissionRequest: (() -> Void)?
     var onStartRecording: (() -> Void)?
     var onTranscribe: (() -> Void)?
+    var transcript = "late transcript"
+    private(set) var configuration: FeatureVoiceInputConfiguration?
     private(set) var startRecordingCount = 0
     private(set) var cleanupCount = 0
     private(set) var ownedRecordingWasRemoved = false
 
-    func prepare() async throws {}
+    func prepare(configuration: FeatureVoiceInputConfiguration) async throws {
+        self.configuration = configuration
+    }
 
     func requestMicrophonePermission() async -> FeatureVoiceMicrophonePermission {
         onPermissionRequest?()
@@ -269,7 +293,7 @@ private final class TestVoiceInputAdapter: FeatureVoiceInputAdapter {
 
     func transcribe(recordingURL: URL) async throws -> String {
         onTranscribe?()
-        return "late transcript"
+        return transcript
     }
 
     func cancelTranscription() async {}
