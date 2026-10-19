@@ -112,6 +112,12 @@
       "repository": "saphid/t3code",
       "sha": "9a03101343a99f5e58442ca25b58602c628ddcb0",
       "name": "fix(voice): close review gaps in the V2 voice restore"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
+      "sha": "4137f81d4880019bb6f48a5a79068c07c55e4ef8",
+      "name": "fix(voice): keep reconnect microphone ownership after stale capture"
     }
   ]
 }
