@@ -226,6 +226,10 @@ export const UsageSummary = Schema.Struct({
 export type UsageSummary = typeof UsageSummary.Type;
 
 export const UsageThreadBreakdownInput = Schema.Struct({
+  /** Optional exact bounds match the summary's rolling hourly window. */
+  resolution: Schema.optional(UsageResolution),
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+  untilTime: Schema.optional(TrimmedNonEmptyString),
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
   /** Inclusive last day of the window, in `timeZone`. */

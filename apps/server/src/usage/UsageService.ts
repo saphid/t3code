@@ -90,6 +90,31 @@ const CACHE_RETENTION_DAYS = 90;
 const THREAD_ROW_CAP = 40;
 const FINGERPRINT_CONCURRENCY = 32;
 
+/** Exact time bounds shared by the summary and thread drill-down. */
+const resolveHourlyWindow = Effect.fn("UsageService.resolveHourlyWindow")(function* (
+  input: UsageSummaryInput,
+) {
+  if (input.resolution !== "hour") return null;
+  const sinceTime = input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
+  const untilTime = input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
+  if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
+    return yield* new UsageReadError({
+      reason: "invalidWindow",
+      detail: "Hourly usage requires valid sinceTime and untilTime instants",
+    });
+  }
+  const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
+  const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
+  const durationMs = untilTimeMs - sinceTimeMs;
+  if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
+    return yield* new UsageReadError({
+      reason: "invalidWindow",
+      detail: "Hourly usage window must be greater than zero and at most 24 hours",
+    });
+  }
+  return { sinceTimeMs, untilTimeMs };
+});
+
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
@@ -400,29 +425,7 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
-    if (input.resolution === "hour") {
-      const sinceTime =
-        input.sinceTime === undefined ? Option.none() : DateTime.make(input.sinceTime);
-      const untilTime =
-        input.untilTime === undefined ? Option.none() : DateTime.make(input.untilTime);
-      if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
-        return yield* new UsageReadError({
-          reason: "invalidWindow",
-          detail: "Hourly usage requires valid sinceTime and untilTime instants",
-        });
-      }
-      const sinceTimeMs = DateTime.toEpochMillis(sinceTime.value);
-      const untilTimeMs = DateTime.toEpochMillis(untilTime.value);
-      const durationMs = untilTimeMs - sinceTimeMs;
-      if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
-        return yield* new UsageReadError({
-          reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
-        });
-      }
-      hourlyWindow = { sinceTimeMs, untilTimeMs };
-    }
+    const hourlyWindow = yield* resolveHourlyWindow(input);
 
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureRates();
@@ -628,12 +631,14 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    const hourlyWindow = yield* resolveHourlyWindow(input);
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureRates();
     yield* ensureScanCacheLoaded;
 
     const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
-    const windowStartMs = DateTime.toEpochMillis(windowStart.value) - MTIME_SLACK_MS;
+    const windowStartMs =
+      (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
@@ -641,6 +646,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       cutoffTimeMs: startedAtMs,
       rates,
+      ...hourlyWindow,
       resolveProject: yield* resolveProjects(),
     });
 

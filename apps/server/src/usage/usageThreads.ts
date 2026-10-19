@@ -69,6 +69,8 @@ interface MutableSessionGroup {
 }
 
 export interface ThreadUsageOptions {
+  readonly sinceTimeMs?: number;
+  readonly untilTimeMs?: number;
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -105,11 +107,18 @@ export class ThreadUsageAccumulator {
 
   add(record: UsageRecord, context: ThreadRecordContext): boolean {
     if (
+      (this.#options.sinceTimeMs !== undefined && record.timestampMs < this.#options.sinceTimeMs) ||
+      (this.#options.untilTimeMs !== undefined && record.timestampMs >= this.#options.untilTimeMs)
+    ) {
+      return false;
+    }
+    if (
       this.#options.cutoffTimeMs !== undefined &&
       record.timestampMs > this.#options.cutoffTimeMs
     ) {
       return false;
     }
+
     const day = this.#toDay(record.timestampMs);
     if (day < this.#options.sinceDay || day > this.#options.untilDay) return false;
 
