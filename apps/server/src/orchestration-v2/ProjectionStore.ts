@@ -409,6 +409,14 @@ export interface ProjectionStoreV2Shape {
     requestId: TurnItemId,
     resultId: TurnItemId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * Whether the stored node row already holds exactly this node. Providers
+   * repeat identical node updates (once per streamed delta); a repeat changes
+   * no read model, so the event sink skips it instead of logging it.
+   */
+  readonly isNodeUnchanged: (
+    node: OrchestrationV2ExecutionNode,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getRuntimeRequest: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -4241,6 +4249,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return rows[0]?.pending === 1;
         }).pipe(Effect.mapError(controlReadError(threadId)));
 
+    const isNodeUnchanged: ProjectionStoreV2Shape["isNodeUnchanged"] = (node) =>
+      Effect.gen(function* () {
+        const payloadJson = yield* encodeNodePayload(node);
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_nodes
+          WHERE node_id = ${node.id} AND thread_id = ${node.threadId}
+        `;
+        return rows[0]?.payload_json === payloadJson;
+      }).pipe(Effect.mapError(controlReadError(node.threadId)));
+
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
         .withTransaction(
@@ -5693,6 +5711,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getTurnItem,
       getThreadRecords,
       getRuntimeRequest,
+      isNodeUnchanged,
       getPlan,
       getProviderControlContext,
       getLimitRecoveryCandidates,
@@ -6000,6 +6019,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             ...fields.map((field) => [field, selected[field]]),
           ]) as ProjectionRecords<(typeof fields)[number]>;
         }),
+      isNodeUnchanged: () => Effect.succeed(false),
       getRuntimeRequest: (threadId, requestId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

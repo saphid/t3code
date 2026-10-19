@@ -306,6 +306,16 @@ const layerBase: Layer.Layer<
         });
       });
 
+    // Providers repeat identical node updates once per streamed delta. A repeat
+    // changes no projection, so committing it only adds an event row, a
+    // projection upsert and a transaction.
+    const dropUnchangedNodeUpdates = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.filter(events, (event) =>
+        event.type === "node.updated"
+          ? projectionStore.isNodeUnchanged(event.payload).pipe(Effect.map((same) => !same))
+          : Effect.succeed(true),
+      );
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -371,10 +381,15 @@ const layerBase: Layer.Layer<
       return yield* commitThenPublish(
         Effect.gen(function* () {
           const normalized = yield* normalizeEvents(
-            input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(input.events)
-              : input.events,
+            yield* dropUnchangedNodeUpdates(
+              input.guardPendingUserInputCancellations === true
+                ? yield* guardUserInputCancellations(input.events)
+                : input.events,
+            ),
           );
+          if (normalized.length === 0 && input.effects.length === 0) {
+            return [] as ReadonlyArray<OrchestrationV2StoredEvent>;
+          }
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             events: normalized,
