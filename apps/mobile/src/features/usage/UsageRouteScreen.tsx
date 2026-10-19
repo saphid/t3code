@@ -1,3 +1,4 @@
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import { useNavigation } from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
@@ -11,7 +12,7 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -92,6 +93,8 @@ export function UsageRouteScreen() {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
   };
+  const autoRefresh = useEffectEvent(refreshWindow);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">

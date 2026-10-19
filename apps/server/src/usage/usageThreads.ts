@@ -74,6 +74,8 @@ export interface ThreadUsageOptions {
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
+  /** Request-start ceiling. Records written later wait for the next refresh. */
+  readonly cutoffTimeMs?: number;
   readonly rates: RateTable;
   /** Same resolver the summary uses; `""` means outside every project. */
   readonly resolveProject?: (cwd: string) => string;
@@ -107,6 +109,12 @@ export class ThreadUsageAccumulator {
     if (
       (this.#options.sinceTimeMs !== undefined && record.timestampMs < this.#options.sinceTimeMs) ||
       (this.#options.untilTimeMs !== undefined && record.timestampMs >= this.#options.untilTimeMs)
+    ) {
+      return false;
+    }
+    if (
+      this.#options.cutoffTimeMs !== undefined &&
+      record.timestampMs > this.#options.cutoffTimeMs
     ) {
       return false;
     }

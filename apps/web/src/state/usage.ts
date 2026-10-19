@@ -18,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 
 import {
   mergeUsage,
@@ -26,6 +26,7 @@ import {
   type EnvironmentUsage,
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
+import { startUsageAutoRefresh } from "@t3tools/shared/usageRefresh";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -230,5 +231,13 @@ export function useUsageThreads(
     () => JSON.stringify({ input, providerContributions }),
     [input, providerContributions],
   );
-  return useAtomValue(usageThreadsAtom(requestKey));
+  const view = useAtomValue(usageThreadsAtom(requestKey));
+  const refresh = useCallback(() => {
+    for (const { environmentId } of providerContributions) {
+      appAtomRegistry.refresh(serverEnvironment.usageThreadBreakdown({ environmentId, input }));
+    }
+  }, [input, providerContributions]);
+  const autoRefresh = useEffectEvent(refresh);
+  useEffect(() => startUsageAutoRefresh(autoRefresh), []);
+  return view;
 }
