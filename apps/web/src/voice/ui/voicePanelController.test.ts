@@ -708,6 +708,66 @@ describe("end during a pending connection", () => {
     expect(harness.controller.getState().starting).toBe(false);
   });
 
+  it("keeps the current mic reachable when a cancelled capture resolves after reconnect", async () => {
+    const harness = makeHarness();
+    let releaseOldCapture!: (mic: VoiceMicController) => void;
+    const oldCapture = new Promise<VoiceMicController>((resolve) => {
+      releaseOldCapture = resolve;
+    });
+    const oldMic = new FakeMic();
+    const currentMic = new FakeMic();
+    let captures = 0;
+    harness.deps = {
+      ...harness.deps,
+      captureMic: () => (++captures === 1 ? oldCapture : Promise.resolve(currentMic)),
+    };
+    harness.controller = createVoicePanelController(harness.deps);
+
+    const cancelled = harness.controller.connect();
+    await harness.controller.end();
+    await harness.controller.connect();
+    releaseOldCapture(oldMic);
+    await cancelled;
+
+    expect(oldMic.stopped).toBe(true);
+    expect(currentMic.stopped).toBe(false);
+    harness.controller.toggleMute();
+    expect(currentMic.track.enabled).toBe(false);
+    await harness.controller.end();
+    expect(currentMic.stopped).toBe(true);
+  });
+
+  it("does not clear a reconnect's starting state when a cancelled capture settles", async () => {
+    const harness = makeHarness();
+    let releaseOldCapture!: (mic: VoiceMicController) => void;
+    let releaseCurrentCapture!: (mic: VoiceMicController) => void;
+    const oldCapture = new Promise<VoiceMicController>((resolve) => {
+      releaseOldCapture = resolve;
+    });
+    const currentCapture = new Promise<VoiceMicController>((resolve) => {
+      releaseCurrentCapture = resolve;
+    });
+    let captures = 0;
+    harness.deps = {
+      ...harness.deps,
+      captureMic: () => (++captures === 1 ? oldCapture : currentCapture),
+    };
+    harness.controller = createVoicePanelController(harness.deps);
+
+    const cancelled = harness.controller.connect();
+    await harness.controller.end();
+    const reconnecting = harness.controller.connect();
+    releaseOldCapture(new FakeMic());
+    await cancelled;
+    harness.controller.clear();
+    expect(harness.controller.getState().starting).toBe(true);
+
+    releaseCurrentCapture(new FakeMic());
+    await reconnecting;
+    expect(harness.controller.getState().phase).toBe("live");
+    await harness.controller.end();
+  });
+
   it("end during a pending start settles the display with starting visible false", async () => {
     const harness = makeGatedHarness();
     await harness.controller.connect();

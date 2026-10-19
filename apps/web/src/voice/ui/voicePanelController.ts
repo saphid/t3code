@@ -331,7 +331,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     deps.history?.beginSession();
     emitChange();
     try {
-      myMic = mic = await deps.captureMic();
+      myMic = await deps.captureMic();
       if (stale()) {
         // Invalidated while the capture was pending: release what arrived,
         // acquire nothing.
@@ -341,6 +341,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         }
         return;
       }
+      mic = myMic;
       const brokerPort = await deps.resolveBrokerPort();
       if (stale()) {
         // Invalidated while the resolution was pending: the mic was already
@@ -402,8 +403,8 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
       mic?.stop();
       mic = undefined;
     } finally {
-      state.starting = false;
       if (!stale()) {
+        state.starting = false;
         emitChange();
       }
     }
