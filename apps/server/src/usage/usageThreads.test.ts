@@ -92,6 +92,30 @@ describe("ThreadUsageAccumulator", () => {
     expect(day?.freshUsd).toBeCloseTo(100 * 1e-5 + 50 * 5e-5, 12);
   });
 
+  it("preserves provider-reported daily cost without inventing a component split", () => {
+    const groups = accumulate([
+      [
+        record({ provider: "grok", model: "unknown-model", reportedCostUsd: 1.75 }),
+        { sessionKey: "grok:session-a", agentId: null },
+      ],
+      [
+        record({ provider: "grok", reportedCostUsd: 2.25, sessionId: "session-b" }),
+        { sessionKey: "grok:session-b", agentId: null },
+      ],
+    ]);
+    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 0 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.costUsd).toBe(4);
+    const daily = rows[0]?.daily ?? [];
+    expect(daily).toHaveLength(1);
+    expect(daily[0]).toMatchObject({
+      providerReportedUsd: 4,
+      cacheWriteUsd: 0,
+      cacheReadUsd: 0,
+      freshUsd: 0,
+    });
+  });
+
   it("drops records outside the window", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([
