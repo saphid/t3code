@@ -11,6 +11,6 @@ These optional features were removed from the active V2 release manifest on 2026
 - style(web): format merged settings imports: `7f5d8aeae210deff0e8e78f8fefd7aecbafd57af`
 - feat(scripts): report Nightly patches present in OV2 builds: `e4d9310aad75a94e7e742985521c7e5393375575`
 
-GPT Live voice was restored on 2026-09-23. It was replayed from `165f817e42f`, `e7bc50f535d` and `5286805d436` onto the current V2 stack as `fix/ov2-voice-restore-20260923`, with contracts, server and web typechecks passing.
+GPT Live voice is preserved in draft #88. Restore it only after the selected stack passes current contracts, server, and web checks and integrated client verification.
 
 The obsolete replay-gate test patch `b53e8dd2714d0bc08c4d3de290936d8a1ebb04dd` was retired because upstream `e9bc38f7f4` already supplies event-driven arrival waiting and its test.

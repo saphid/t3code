@@ -82,7 +82,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      should_build: ${{ steps.plan.outputs.should_build }}
+      should_build: ${{ steps.gate.outputs.should_build }}
       upstream_repository: ${{ steps.plan.outputs.upstream_repository }}
       upstream_tag: ${{ steps.plan.outputs.upstream_tag }}
       release_channel: ${{ steps.plan.outputs.release_channel }}
@@ -116,8 +116,34 @@ jobs:
             --force "$FORCE_REBUILD" \
             --upstream-tag "$UPSTREAM_TAG_OVERRIDE"
 
+      # Scheduled and dispatch runs retry the same failing input every few
+      # minutes. record_failure stores a marker per input; manual runs retry.
+      - id: failed_before
+        name: Look up an earlier failure of this input
+        if: steps.plan.outputs.should_build == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/cache/restore@v6
+        with:
+          path: fork-nightly-failed
+          key: fork-nightly-failed-${{ steps.plan.outputs.release_channel }}-${{ steps.plan.outputs.fingerprint }}
+          lookup-only: true
+
+      - id: gate
+        name: Skip an input that already failed
+        shell: bash
+        env:
+          SHOULD_BUILD: ${{ steps.plan.outputs.should_build }}
+          FAILED_BEFORE: ${{ steps.failed_before.outputs.cache-hit }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          if [[ "$SHOULD_BUILD" == "true" && "$FAILED_BEFORE" == "true" ]]; then
+            echo "::notice::$TAG already failed with this upstream source and patch stack. Change the manifest or run the workflow manually to retry."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout exact upstream source
-        if: steps.plan.outputs.should_build == 'true'
+        if: steps.gate.outputs.should_build == 'true'
         shell: bash
         env:
           UPSTREAM_REPOSITORY: ${{ steps.plan.outputs.upstream_repository }}
@@ -132,14 +158,14 @@ jobs:
 
       - id: apply
         name: Apply selected patches
-        if: steps.plan.outputs.should_build == 'true'
+        if: steps.gate.outputs.should_build == 'true'
         run: |
           node automation/.github/scripts/downstream-nightly.mjs apply \
             --plan "$RUNNER_TEMP/downstream-nightly-plan.json" \
             --source source
 
       - name: Push generated source
-        if: steps.plan.outputs.should_build == 'true'
+        if: steps.gate.outputs.should_build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GENERATED_BRANCH: ${{ steps.plan.outputs.generated_branch }}
@@ -696,3 +722,23 @@ jobs:
               --notes-file release-notes.md \
               --prerelease
           fi
+
+  record_failure:
+    name: Remember failed input
+    needs: [prepare, quality, build, publish]
+    if: failure() && needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write failure marker
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p fork-nightly-failed
+          echo "$RUN_URL" > fork-nightly-failed/run-url
+
+      - name: Save failure marker
+        uses: actions/cache/save@v6
+        with:
+          path: fork-nightly-failed
+          key: fork-nightly-failed-${{ needs.prepare.outputs.release_channel }}-${{ needs.prepare.outputs.fingerprint }}
