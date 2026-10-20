@@ -29,7 +29,11 @@ import {
   mergeVoiceVocabulary,
   type VoiceVocabularySource,
 } from "@t3tools/shared/voiceVocabulary";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessEnvironment,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -166,12 +170,57 @@ interface LearnedVocabularyCache {
   readonly terms: ReadonlyArray<string>;
 }
 
+/** Resolve real executables in npm, Electron extraResources, and SwiftPM
+ * source layouts. The module directory is explicit so packaged layouts can be
+ * exercised against filesystem fixtures without bundling the whole server.
+ */
+export const resolveVoiceTranscriberBinary = Effect.fn("resolveVoiceTranscriberBinary")(function* (
+  moduleDirectory: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
+  const environment = yield* HostProcessEnvironment;
+  if (platform !== "darwin") return null;
+  const binaryCandidates = [
+    ...(environment.T3_VOICE_TRANSCRIBER_PATH ? [environment.T3_VOICE_TRANSCRIBER_PATH] : []),
+    path.resolve(
+      moduleDirectory,
+      "voice-transcriber",
+      `darwin-${architecture}`,
+      "t3-voice-transcriber",
+    ),
+    // Packaged Electron server: Resources/app.asar/apps/server/dist. The
+    // executable is an extraResource, never spawned from inside app.asar.
+    path.resolve(moduleDirectory, "../../../../voice-transcriber/t3-voice-transcriber"),
+    path.resolve(moduleDirectory, "voice-transcriber", "t3-voice-transcriber"),
+    path.resolve(
+      moduleDirectory,
+      "../native/voice-transcriber/.build/release/t3-voice-transcriber",
+    ),
+    path.resolve(
+      moduleDirectory,
+      "../../native/voice-transcriber/.build/release/t3-voice-transcriber",
+    ),
+  ];
+
+  for (const candidate of binaryCandidates) {
+    const exists = yield* fileSystem
+      .exists(candidate)
+      .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+    if (exists) return candidate;
+  }
+  return null;
+});
+
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const processRunner = yield* ProcessRunner;
   const platform = yield* HostProcessPlatform;
+  const architecture = yield* HostProcessArchitecture;
   const environment = yield* HostProcessEnvironment;
+  const processRunner = yield* ProcessRunner;
   const threadMessages = yield* ProjectionThreadMessageRepository;
   const threads = yield* ProjectionThreadRepository;
 
@@ -183,31 +232,14 @@ export const make = Effect.gen(function* () {
   const resolveLocale = (localeHint: string | undefined): string =>
     normalizeVoiceLocale(localeHint) ?? hostLocale;
 
-  // Dev builds run from source, so the sidecar sits next to the server
-  // package rather than next to the emitted bundle; probe both layouts.
-  const binaryCandidates = [
-    ...(environment.T3_VOICE_TRANSCRIBER_PATH ? [environment.T3_VOICE_TRANSCRIBER_PATH] : []),
-    path.resolve(import.meta.dirname, "voice-transcriber", "t3-voice-transcriber"),
-    path.resolve(
-      import.meta.dirname,
-      "../../native/voice-transcriber/.build/arm64-apple-macosx/release/t3-voice-transcriber",
-    ),
-    path.resolve(
-      import.meta.dirname,
-      "../../../native/voice-transcriber/.build/arm64-apple-macosx/release/t3-voice-transcriber",
-    ),
-  ];
-
-  const resolveBinary = Effect.fn("VoiceDictationService.resolveBinary")(function* () {
-    if (platform !== "darwin") return null;
-    for (const candidate of binaryCandidates) {
-      const exists = yield* fileSystem
-        .exists(candidate)
-        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
-      if (exists) return candidate;
-    }
-    return null;
-  });
+  const resolveBinary = () =>
+    resolveVoiceTranscriberBinary(import.meta.dirname).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(HostProcessArchitecture, architecture),
+      Effect.provideService(HostProcessEnvironment, environment),
+    );
 
   const getStatus: VoiceDictationService["Service"]["getStatus"] = Effect.fn(
     "VoiceDictationService.getStatus",

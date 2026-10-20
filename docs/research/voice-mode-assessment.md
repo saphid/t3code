@@ -170,9 +170,18 @@ In development the transcriber binary is one command away:
 pnpm --dir apps/server run build:voice-transcriber
 ```
 
-which runs `swift build -c release --package-path native/voice-transcriber`.
-The server probes the SwiftPM release output path automatically (or honors
-`T3_VOICE_TRANSCRIBER_PATH`). Packaging the sidecar into the desktop artifact
-is still an open task: the build script does not yet compile or bundle the
-binary, so shipped desktop builds report dictation as unsupported until that
-is done.
+which runs `swift build -c release --package-path native/voice-transcriber`
+on a Mac with the macOS 26 SDK. The server probes SwiftPM's architecture-neutral
+release path automatically (or honors `T3_VOICE_TRANSCRIBER_PATH`).
+
+The macOS desktop artifact build compiles the requested architecture (both for
+universal), verifies it with `lipo`, and stages the executable outside ASAR as
+`Contents/Resources/voice-transcriber/t3-voice-transcriber`. Electron's signing
+pass includes that helper before notarization. The same release runners upload
+ad hoc signed arm64/x64 helpers for the Linux npm publish job to include under
+`dist/voice-transcriber/darwin-{arm64,x64}`. Linux and Windows desktop builds do
+not compile or bundle the Apple helper; runtime support still requires macOS 26.
+
+This wiring needs acceptance from an actual macOS release artifact: compile,
+signature/notarization, helper launch, Apple Speech assets and transcription,
+and first-use microphone capture have not been established by Linux checks.

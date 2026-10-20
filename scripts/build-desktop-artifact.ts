@@ -300,6 +300,15 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorCl
   }
 }
 
+export class VoiceTranscriberBuildOutputMissingError extends Schema.TaggedErrorClass<VoiceTranscriberBuildOutputMissingError>()(
+  "VoiceTranscriberBuildOutputMissingError",
+  { binaryPath: Schema.String },
+) {
+  override get message(): string {
+    return `Voice transcriber build did not produce ${this.binaryPath}.`;
+  }
+}
+
 const desktopIconPlatformNames = {
   mac: "macOS",
   linux: "Linux",
@@ -1720,6 +1729,93 @@ const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input:
   }
 });
 
+/** Build on the macOS release runner, retaining thin binaries for the CLI
+ * artifact handoff. The desktop resource is thin or universal to match Electron.
+ */
+export const stageVoiceTranscriber = Effect.fn("stageVoiceTranscriber")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.platform !== "mac") return;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packagePath = path.join(input.repoRoot, "apps/server/native/voice-transcriber");
+  const architectures = input.arch === "universal" ? (["arm64", "x64"] as const) : [input.arch];
+  const binaries: string[] = [];
+  for (const arch of architectures) {
+    const swiftArch = arch === "arm64" ? "arm64" : "x86_64";
+    const buildArgs = [
+      "build",
+      "--configuration",
+      "release",
+      "--package-path",
+      packagePath,
+      "--scratch-path",
+      path.join(packagePath, ".build", arch),
+      "--arch",
+      swiftArch,
+    ];
+    yield* runCommand(ChildProcess.make("swift", buildArgs), {
+      label: `swift build voice transcriber (${arch})`,
+      verbose: input.verbose,
+    });
+    const output = yield* spawnAndCollectOutput(
+      ChildProcess.make("swift", [...buildArgs, "--show-bin-path"]),
+    );
+    if (output.exitCode !== 0) {
+      return yield* new BuildCommandFailedError({
+        command: "swift build --show-bin-path",
+        exitCode: output.exitCode,
+        stdoutTail: output.stdout,
+        stderrTail: output.stderr,
+      });
+    }
+    const binaryPath = path.join(output.stdout.trim(), "t3-voice-transcriber");
+    if (!output.stdout.trim() || !(yield* fs.exists(binaryPath))) {
+      return yield* new VoiceTranscriberBuildOutputMissingError({ binaryPath });
+    }
+    yield* runCommand(ChildProcess.make("lipo", ["-verify_arch", swiftArch, binaryPath]), {
+      label: `verify voice transcriber architecture (${arch})`,
+      verbose: input.verbose,
+    });
+    const artifactDirectory = path.join(packagePath, ".build/artifacts", `darwin-${arch}`);
+    const artifactPath = path.join(artifactDirectory, "t3-voice-transcriber");
+    yield* fs.makeDirectory(artifactDirectory, { recursive: true });
+    yield* fs.copyFile(binaryPath, artifactPath);
+    yield* fs.chmod(artifactPath, 0o755);
+    // CLI binaries travel through the Linux npm publish runner. Give each a
+    // local signature here; electron-builder signs the desktop copy again.
+    yield* runCommand(ChildProcess.make("codesign", ["--force", "--sign", "-", artifactPath]), {
+      label: `ad hoc sign CLI voice transcriber (${arch})`,
+      verbose: input.verbose,
+    });
+    yield* runCommand(ChildProcess.make("codesign", ["--verify", "--strict", artifactPath]), {
+      label: `verify CLI voice transcriber signature (${arch})`,
+      verbose: input.verbose,
+    });
+    binaries.push(artifactPath);
+  }
+
+  const resourceDirectory = path.join(input.stageResourcesDir, "voice-transcriber");
+  const destinationPath = path.join(resourceDirectory, "t3-voice-transcriber");
+  yield* fs.makeDirectory(resourceDirectory, { recursive: true });
+  if (binaries.length === 1) {
+    yield* fs.copyFile(binaries[0]!, destinationPath);
+  } else {
+    yield* runCommand(
+      ChildProcess.make("lipo", ["-create", ...binaries, "-output", destinationPath]),
+      {
+        label: "lipo voice transcriber universal binary",
+        verbose: input.verbose,
+      },
+    );
+  }
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2051,6 +2147,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
+      ...(platform === "mac"
+        ? [
+            {
+              from: "apps/desktop/prod-resources/voice-transcriber",
+              to: "voice-transcriber",
+            },
+          ]
+        : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
@@ -2071,6 +2175,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // extraResources sit outside ASAR and must be signed before notarization.
+      binaries: ["Contents/Resources/voice-transcriber/t3-voice-transcriber"],
       // Voice dictation records from the renderer; macOS requires the usage
       // string, and signed builds need the audio-input entitlement on every
       // helper process (entitlementsInherit), not just the app binary.
@@ -2835,6 +2941,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
   yield* stageResourceMonitor({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
+
+  yield* stageVoiceTranscriber({
     repoRoot,
     stageResourcesDir,
     platform: options.platform,

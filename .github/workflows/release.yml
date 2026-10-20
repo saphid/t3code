@@ -648,6 +648,23 @@ jobs:
           mkdir -p "$target_dir"
           cp "$source_path" "$target_dir/$binary_name"
 
+      - name: Collect voice transcriber
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_dir="voice-transcriber-publish/darwin-${{ matrix.arch }}"
+          mkdir -p "$target_dir"
+          cp "apps/server/native/voice-transcriber/.build/artifacts/darwin-${{ matrix.arch }}/t3-voice-transcriber" "$target_dir/"
+
+      - name: Upload voice transcriber
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@v7
+        with:
+          name: voice-transcriber-darwin-${{ matrix.arch }}
+          path: voice-transcriber-publish/darwin-${{ matrix.arch }}/*
+          if-no-files-found: error
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -736,6 +753,23 @@ jobs:
             mkdir -p "$target_dir"
             cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
             chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
+
+      - name: Download voice transcribers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: voice-transcriber-*
+          path: ${{ runner.temp }}/voice-transcribers
+
+      - name: Bundle voice transcribers into CLI package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in arm64 x64; do
+            target_dir="apps/server/dist/voice-transcriber/darwin-${arch}"
+            mkdir -p "$target_dir"
+            cp "$RUNNER_TEMP/voice-transcribers/voice-transcriber-darwin-${arch}/t3-voice-transcriber" "$target_dir/"
+            chmod +x "$target_dir/t3-voice-transcriber"
           done
 
       - name: Publish CLI package
