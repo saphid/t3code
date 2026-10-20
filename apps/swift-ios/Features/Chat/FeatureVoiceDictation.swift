@@ -30,10 +30,26 @@ final class FeatureVoiceDictationModel {
     private(set) var audioLevel: Double = 0
     private(set) var errorMessage: String?
 
-    private var engineBox: AnyObject?
+    private var engineBox: (any FeatureVoiceDictationEngineProtocol)?
+    private var generation = UUID()
+    private let requestPermission: @MainActor () async -> Bool
+    private let makeEngine: @MainActor () -> (any FeatureVoiceDictationEngineProtocol)?
     private var startTask: Task<Void, Never>?
     private var autoStopTask: Task<Void, Never>?
     private var interruptionObserver: (any NSObjectProtocol)?
+
+    init(
+        requestPermission: @escaping @MainActor () async -> Bool = {
+            await AVAudioApplication.requestRecordPermission()
+        },
+        makeEngine: @escaping @MainActor () -> (any FeatureVoiceDictationEngineProtocol)? = {
+            if #available(iOS 26.0, *) { return FeatureVoiceDictationEngine() }
+            return nil
+        }
+    ) {
+        self.requestPermission = requestPermission
+        self.makeEngine = makeEngine
+    }
 
     /// Recordings stop themselves after five minutes; dictation is for
     /// composing messages, not meetings.
@@ -61,24 +77,29 @@ final class FeatureVoiceDictationModel {
         errorMessage = nil
         audioLevel = 0
 
-        guard #available(iOS 26.0, *) else {
+        guard let engine = makeEngine() else {
             errorMessage = "Voice dictation needs iOS 26 or later."
             return
         }
 
+        let generation = UUID()
+        self.generation = generation
+        engineBox = engine
         phase = .preparing
         startTask = Task { @MainActor [weak self] in
-            defer { self?.startTask = nil }
-            let granted = await AVAudioApplication.requestRecordPermission()
-            guard let self, !Task.isCancelled else { return }
+            defer {
+                if self?.generation == generation { self?.startTask = nil }
+            }
+            guard let self else { return }
+            let granted = await requestPermission()
+            guard !Task.isCancelled, self.generation == generation else { return }
             guard granted else {
                 errorMessage = "Allow microphone access for T3 Code in Settings."
+                engineBox = nil
                 phase = .idle
                 return
             }
 
-            let engine = FeatureVoiceDictationEngine()
-            engineBox = engine
             do {
                 // Callbacks capture the engine weakly: the engine retains the
                 // results task, which retains these closures, and a strong
@@ -86,7 +107,8 @@ final class FeatureVoiceDictationModel {
                 try await engine.start(
                     vocabulary: vocabulary,
                     onVolatile: { [weak self, weak engine] text in
-                        guard let engine, self?.engineBox === engine else { return }
+                        guard let engine, self?.generation == generation,
+                              self?.engineBox === engine else { return }
                         onVolatile(
                             FeatureVoiceVocabulary.applyCorrections(
                                 to: text,
@@ -95,7 +117,8 @@ final class FeatureVoiceDictationModel {
                         )
                     },
                     onFinal: { [weak self, weak engine] text in
-                        guard let engine, self?.engineBox === engine else { return }
+                        guard let engine, self?.generation == generation,
+                              self?.engineBox === engine else { return }
                         let corrected = FeatureVoiceVocabulary.applyCorrections(
                             to: text,
                             vocabulary: vocabulary
@@ -103,18 +126,26 @@ final class FeatureVoiceDictationModel {
                         onText(corrected)
                     },
                     onLevel: { [weak self, weak engine] level in
-                        guard let self, let engine, engineBox === engine else { return }
+                        guard let self, let engine, self.generation == generation,
+                              engineBox === engine else { return }
                         audioLevel = audioLevel * 0.55 + level * 0.45
                     },
                     onDownloading: { [weak self, weak engine] in
-                        guard let engine, self?.engineBox === engine else { return }
+                        guard let engine, self?.generation == generation,
+                              self?.engineBox === engine else { return }
                         self?.phase = .downloadingModel
+                    },
+                    onFailure: { [weak self, weak engine] error in
+                        guard !(error is CancellationError), let self, let engine,
+                              self.generation == generation, engineBox === engine else { return }
+                        // Invalidate callbacks before scheduling teardown. Already
+                        // written draft text is retained; no late segment may land.
+                        cancel()
+                        errorMessage = "Dictation stopped unexpectedly. Try again."
                     }
                 )
-                guard !Task.isCancelled, engineBox === engine else {
-                    await engine.cancel()
-                    return
-                }
+                guard !Task.isCancelled, self.generation == generation,
+                      engineBox === engine else { return }
                 phase = .recording
                 observeInterruptions()
                 autoStopTask = Task { [weak self] in
@@ -126,7 +157,7 @@ final class FeatureVoiceDictationModel {
                 // The engine tears its partial state down before throwing;
                 // cancel() here is an idempotent belt-and-braces pass.
                 await engine.cancel()
-                guard engineBox === engine else { return }
+                guard self.generation == generation, engineBox === engine else { return }
                 engineBox = nil
                 phase = .idle
                 if !(error is CancellationError) {
@@ -139,12 +170,11 @@ final class FeatureVoiceDictationModel {
     /// Stops recording and finalizes; remaining segments flush through
     /// `onText` before the phase returns to idle.
     func stop() {
-        guard #available(iOS 26.0, *),
-              let engine = engineBox as? FeatureVoiceDictationEngine,
-              phase == .recording else {
+        guard let engine = engineBox, phase == .recording else {
             cancel()
             return
         }
+        let generation = self.generation
         phase = .stopping
         stopObservingInterruptions()
         autoStopTask?.cancel()
@@ -152,7 +182,7 @@ final class FeatureVoiceDictationModel {
         audioLevel = 0
         Task { @MainActor in
             await engine.finishAndFlush()
-            guard engineBox === engine else { return }
+            guard self.generation == generation, engineBox === engine else { return }
             engineBox = nil
             phase = .idle
         }
@@ -162,6 +192,11 @@ final class FeatureVoiceDictationModel {
     /// call in any phase, including mid-startup: the startup task observes
     /// its cancellation at the next suspension and tears the engine down.
     func cancel() {
+        // Repeated cancellation must not unlock a recording while its first
+        // teardown still owns the audio session.
+        guard engineBox != nil || phase != .stopping else { return }
+        let generation = UUID()
+        self.generation = generation
         startTask?.cancel()
         startTask = nil
         autoStopTask?.cancel()
@@ -170,7 +205,7 @@ final class FeatureVoiceDictationModel {
         audioLevel = 0
         let box = engineBox
         engineBox = nil
-        guard #available(iOS 26.0, *), let engine = box as? FeatureVoiceDictationEngine else {
+        guard let engine = box else {
             phase = .idle
             return
         }
@@ -179,7 +214,7 @@ final class FeatureVoiceDictationModel {
         phase = .stopping
         Task { @MainActor in
             await engine.cancel()
-            if phase == .stopping, engineBox == nil {
+            if self.generation == generation, phase == .stopping, engineBox == nil {
                 phase = .idle
             }
         }
@@ -234,9 +269,42 @@ private final class FeatureVoiceConversionChunk: @unchecked Sendable {
     }
 }
 
+@MainActor
+protocol FeatureVoiceDictationEngineProtocol: AnyObject {
+    func start(
+        vocabulary: [String],
+        onVolatile: @escaping @MainActor (String) -> Void,
+        onFinal: @escaping @MainActor (String) -> Void,
+        onLevel: @escaping @MainActor (Double) -> Void,
+        onDownloading: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void
+    ) async throws
+    func finishAndFlush() async
+    func cancel() async
+}
+
+/// Both Apple recognizers use this collector so cancellation never reports
+/// an error, while a failed results sequence reaches the owning recording.
+@MainActor
+func featureConsumeVoiceResults<Results: AsyncSequence>(
+    _ results: Results,
+    onResult: @MainActor (Results.Element) -> Void,
+    onFailure: @MainActor (Error) -> Void
+) async {
+    do {
+        for try await result in results {
+            try Task.checkCancellation()
+            onResult(result)
+        }
+    } catch {
+        guard !Task.isCancelled, !(error is CancellationError) else { return }
+        onFailure(error)
+    }
+}
+
 @available(iOS 26.0, *)
 @MainActor
-final class FeatureVoiceDictationEngine {
+final class FeatureVoiceDictationEngine: FeatureVoiceDictationEngineProtocol {
     private let audioEngine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
@@ -249,7 +317,8 @@ final class FeatureVoiceDictationEngine {
         onVolatile: @escaping @MainActor (String) -> Void,
         onFinal: @escaping @MainActor (String) -> Void,
         onLevel: @escaping @MainActor (Double) -> Void,
-        onDownloading: @escaping @MainActor () -> Void
+        onDownloading: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void
     ) async throws {
         do {
             try await startImpl(
@@ -257,7 +326,8 @@ final class FeatureVoiceDictationEngine {
                 onVolatile: onVolatile,
                 onFinal: onFinal,
                 onLevel: onLevel,
-                onDownloading: onDownloading
+                onDownloading: onDownloading,
+                onFailure: onFailure
             )
         } catch {
             // Every failure path releases the mic, the session, and the
@@ -272,7 +342,8 @@ final class FeatureVoiceDictationEngine {
         onVolatile: @escaping @MainActor (String) -> Void,
         onFinal: @escaping @MainActor (String) -> Void,
         onLevel: @escaping @MainActor (Double) -> Void,
-        onDownloading: @escaping @MainActor () -> Void
+        onDownloading: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void
     ) async throws {
         // Two on-device Apple models: DictationTranscriber accepts the
         // contextual vocabulary; SpeechTranscriber transcribes better but
@@ -298,19 +369,18 @@ final class FeatureVoiceDictationEngine {
                 attributeOptions: []
             )
             resultsTask = Task { @MainActor in
-                do {
-                    for try await result in transcriber.results {
+                await featureConsumeVoiceResults(
+                    transcriber.results,
+                    onResult: { result in
                         let text = String(result.text.characters)
                         if result.isFinal {
                             onFinal(text)
                         } else {
                             onVolatile(text)
                         }
-                    }
-                } catch {
-                    // Cancellation and post-teardown stream errors are
-                    // expected; start() surfaces real startup failures.
-                }
+                    },
+                    onFailure: onFailure
+                )
             }
             module = transcriber
             supportsContextualVocabulary = false
@@ -334,19 +404,18 @@ final class FeatureVoiceDictationEngine {
                 attributeOptions: []
             )
             resultsTask = Task { @MainActor in
-                do {
-                    for try await result in transcriber.results {
+                await featureConsumeVoiceResults(
+                    transcriber.results,
+                    onResult: { result in
                         let text = String(result.text.characters)
                         if result.isFinal {
                             onFinal(text)
                         } else {
                             onVolatile(text)
                         }
-                    }
-                } catch {
-                    // Cancellation and post-teardown stream errors are
-                    // expected; start() surfaces real startup failures.
-                }
+                    },
+                    onFailure: onFailure
+                )
             }
             module = transcriber
             supportsContextualVocabulary = true
@@ -444,6 +513,7 @@ final class FeatureVoiceDictationEngine {
         audioEngine.prepare()
         try audioEngine.start()
         try await analyzer.start(inputSequence: inputSequence)
+        try Task.checkCancellation()
     }
 
     /// Stops capture, finalizes recognition, and waits for the last
@@ -457,9 +527,11 @@ final class FeatureVoiceDictationEngine {
     }
 
     func cancel() async {
+        // Cancel the consumer before ending the analyzer: Apple may throw a
+        // non-CancellationError while the canceled results sequence unwinds.
+        resultsTask?.cancel()
         teardownCapture()
         await analyzer?.cancelAndFinishNow()
-        resultsTask?.cancel()
         analyzer = nil
         resultsTask = nil
     }
