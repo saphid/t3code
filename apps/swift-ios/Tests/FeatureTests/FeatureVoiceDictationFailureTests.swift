@@ -127,18 +127,13 @@ struct FeatureVoiceDictationFailureTests {
 
     @Test("A canceled consumer suppresses a non-cancellation error from teardown")
     func canceledConsumerIgnoresTeardownFailure() async {
-        let release = AsyncStream<Void>.makeStream()
-        let results = AsyncThrowingStream<String, Error>.makeStream()
         var failed = false
         let consumer = Task { @MainActor in
-            for await _ in release.stream { break }
-            await featureConsumeVoiceResults(results.stream, onResult: { _ in }, onFailure: { _ in
+            await featureConsumeVoiceResults(FailingVoiceResults(), onResult: { _ in }, onFailure: { _ in
                 failed = true
             })
         }
         consumer.cancel()
-        results.continuation.finish(throwing: VoiceResultsFailure.failed)
-        release.continuation.finish()
         await consumer.value
         #expect(!failed)
     }
@@ -146,6 +141,20 @@ struct FeatureVoiceDictationFailureTests {
 
 private enum VoiceResultsFailure: Error {
     case failed
+}
+
+/// Ignores task cancellation deliberately, like an Apple sequence that throws
+/// its own framework error while teardown is unwinding.
+private struct FailingVoiceResults: AsyncSequence {
+    typealias Element = String
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        mutating func next() async throws -> String? {
+            throw VoiceResultsFailure.failed
+        }
+    }
+
+    func makeAsyncIterator() -> AsyncIterator { AsyncIterator() }
 }
 
 /// Uses the production results collector with an injected failing sequence;
