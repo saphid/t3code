@@ -72,7 +72,7 @@ import {
   executeAtomQuery,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { fetchEnvironmentShellSnapshot } from "@t3tools/client-runtime/state/shell";
+import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import { fetchEnvironmentThreadSnapshot } from "@t3tools/client-runtime/state/threads";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1783,7 +1783,9 @@ function createPreparedEnvironmentAccess(prepared: PreparedConnection): VoiceEnv
   return {
     shellSnapshot: async () => {
       const signer = await resolveSigner();
-      return runEnvironmentHttp(fetchEnvironmentShellSnapshot({ prepared, signer }));
+      return runEnvironmentHttp(
+        ShellSnapshotLoader.fetchEnvironmentShellSnapshot({ prepared, signer }),
+      );
     },
     searchThreads: async (input) => {
       const result = await executeAtomQuery(
