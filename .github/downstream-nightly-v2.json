@@ -1,6 +1,6 @@
 {
   "upstreamRepository": "pingdotgg/t3code",
-  "upstreamBranch": "t3code/codex-turn-mapping",
+  "upstreamBranch": "23309198ba004bd1e62bfd998d6784c7051f4f5d",
   "releaseRepository": "saphid/t3code",
   "releaseChannel": "nightly-v2",
   "generatedBranch": "automation/downstream-nightly-v2",
