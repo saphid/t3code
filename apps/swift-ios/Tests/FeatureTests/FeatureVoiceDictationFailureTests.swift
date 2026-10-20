@@ -208,11 +208,11 @@ private func waitForDictationPhase(
     model: FeatureVoiceDictationModel
 ) async {
     while model.phase != phase {
-        let changes = AsyncStream<Void>.makeStream()
+        let changes = AsyncStream<Bool>.makeStream()
         withObservationTracking {
             _ = model.phase
         } onChange: {
-            changes.continuation.yield(())
+            changes.continuation.yield(true)
             changes.continuation.finish()
         }
         for await _ in changes.stream { break }
