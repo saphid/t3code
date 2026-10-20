@@ -16,6 +16,8 @@ PR heads and refs are pinned on purpose. If one moves, the workflow stops before
 
 If a selected commit is already part of the upstream Nightly, the assembler skips it. A real cherry-pick conflict stops the release and leaves the previous fork Nightly available.
 
+A failed build records a cache marker for its release channel and stack fingerprint. Later scheduled and dispatch-triggered runs skip that same input with a notice instead of failing again. A new upstream source or any manifest change produces a new fingerprint and builds normally. To retry the same input, for example after a flaky runner, run the workflow manually. Markers expire when GitHub evicts the cache, currently after 7 days without access.
+
 Normal scheduled and dispatch-triggered runs are idempotent. To repair artifacts without changing the upstream tag or patch stack, run the workflow manually with `force_rebuild` enabled. The workflow rebuilds every gate and replaces the matching release assets.
 
 Fork Nightly currently publishes macOS arm64 and macOS x64 desktop artifacts. The Linux, Windows, and WSL platform-specific steps remain available for later restoration, but they are not on the current release path. Ordinary Fork Nightly is complete when its merged macOS updater manifest is present. OV2 additionally requires both architectures' DMG and ZIP installers, the Apple Silicon server archive, and `SHA256SUMS`.
