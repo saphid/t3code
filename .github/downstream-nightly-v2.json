@@ -128,6 +128,12 @@
     {
       "type": "commit",
       "repository": "saphid/t3code",
+      "sha": "077c96efd09d061828778ee8db8f7323912eaa8f",
+      "name": "fix(voice): use the current shell snapshot loader export"
+    },
+    {
+      "type": "commit",
+      "repository": "saphid/t3code",
       "sha": "fac2a4d94673be8eae3dbd1ea1cbb3c83c72310e",
       "name": "fix(server): keep runs alive when one provider event fails to ingest"
     },
