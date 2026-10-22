@@ -1,45 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off - runs before `vp i`, so only Node built-ins exist.
-/**
- * Worktree setup, run by the t3.json "Setup Worktree" action as
- * `node scripts/setup-worktree.ts`. Plain Node keeps one command working in
- * every shell T3 Code spawns (zsh, bash, fish, PowerShell): it installs
- * dependencies, links the main checkout's gitignored env files into this
- * worktree, then warms the web dependency cache.
- */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-const ENV_FILES = [".env", NodePath.join("infra", "relay", ".env")];
-
-const projectRoot = process.env.T3CODE_PROJECT_ROOT;
-if (!projectRoot) {
+if (!process.env.T3CODE_PROJECT_ROOT) {
   throw new Error("T3CODE_PROJECT_ROOT is not set. Run this through the t3.json setup action.");
 }
-const worktree = NodePath.dirname(import.meta.dirname);
 
-// `shell` resolves `vp` through PATH, including Windows command shims.
-const install = NodeChildProcess.spawnSync("vp i", {
-  cwd: worktree,
-  shell: true,
-  stdio: "inherit",
-});
-if (install.status !== 0) process.exit(install.status ?? 1);
-
-// In the main checkout itself, relinking would replace the real env files.
-if (NodeFS.realpathSync(projectRoot) !== NodeFS.realpathSync(worktree)) {
-  for (const file of ENV_FILES) {
-    const source = NodePath.join(projectRoot, file);
-    if (!NodeFS.existsSync(source)) continue;
-    const target = NodePath.join(worktree, file);
-    NodeFS.rmSync(target, { force: true });
-    NodeFS.symlinkSync(source, target);
-  }
+// Use the same source-only default and admitted opt-in actions as saved project
+// scripts. Calling this raw entrypoint must not bypass their disk reservations.
+const setup = NodePath.join(NodeOS.homedir(), ".local", "bin", "t3-worktree-setup");
+if (!NodeFS.existsSync(setup)) {
+  throw new Error("The managed t3-worktree-setup helper must be installed before worktree setup.");
 }
-
-const warm = NodeChildProcess.spawnSync(
-  process.execPath,
-  [NodePath.join(worktree, "apps", "web", "scripts", "warm-dep-cache.ts")],
-  { cwd: worktree, stdio: "inherit" },
-);
-process.exit(warm.status ?? 1);
+const worktree = NodePath.dirname(import.meta.dirname);
+const child = NodeChildProcess.spawnSync(process.execPath, [setup, ...process.argv.slice(2)], {
+  cwd: worktree,
+  env: { ...process.env, T3CODE_WORKTREE_ROOT: worktree },
+  stdio: ["ignore", "inherit", "inherit"],
+});
+if (child.error) throw child.error;
+process.exit(child.status ?? 1);
