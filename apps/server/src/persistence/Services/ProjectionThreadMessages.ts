@@ -49,6 +49,13 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
 
+export const ListRecentUserMessageTextsInput = Schema.Struct({
+  /** Inclusive lower bound on `createdAt`. */
+  since: IsoDateTime,
+  limit: Schema.Int,
+});
+export type ListRecentUserMessageTextsInput = typeof ListRecentUserMessageTextsInput.Type;
+
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
  */
@@ -84,6 +91,16 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadMessagesInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * List the texts of recent user-authored messages, newest first.
+   *
+   * Narrow read for dictation-vocabulary learning: only the text column
+   * travels, bounded by `since` and `limit`.
+   */
+  readonly listRecentUserMessageTexts: (
+    input: ListRecentUserMessageTextsInput,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionRepositoryError>;
 }
 
 /**

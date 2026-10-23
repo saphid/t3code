@@ -173,6 +173,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "voice-dictation",
+    title: "Voice dictation (beta)",
+    to: "/settings/general",
+  },
+  {
     id: "legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/general",

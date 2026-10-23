@@ -14,6 +14,7 @@ import {
   type ProjectionThreadMessageRepositoryShape,
   DeleteProjectionThreadMessagesInput,
   ListProjectionThreadMessagesInput,
+  ListRecentUserMessageTextsInput,
   ProjectionThreadMessage,
 } from "../Services/ProjectionThreadMessages.ts";
 
@@ -146,6 +147,19 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const listRecentUserMessageTextRows = SqlSchema.findAll({
+    Request: ListRecentUserMessageTextsInput,
+    Result: Schema.Struct({ text: Schema.String }),
+    execute: ({ since, limit }) =>
+      sql`
+        SELECT text
+        FROM projection_thread_messages
+        WHERE role = 'user' AND created_at >= ${since}
+        ORDER BY created_at DESC, message_id DESC
+        LIMIT ${limit}
+      `,
+  });
+
   const upsert: ProjectionThreadMessageRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadMessageRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadMessageRepository.upsert:query")),
@@ -174,11 +188,23 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
     );
 
+  const listRecentUserMessageTexts: ProjectionThreadMessageRepositoryShape["listRecentUserMessageTexts"] =
+    (input) =>
+      listRecentUserMessageTextRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.listRecentUserMessageTexts:query",
+          ),
+        ),
+        Effect.map((rows) => rows.map((row) => row.text)),
+      );
+
   return {
     upsert,
     getByMessageId,
     listByThreadId,
     deleteByThreadId,
+    listRecentUserMessageTexts,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });
 

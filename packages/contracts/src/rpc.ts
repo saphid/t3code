@@ -180,6 +180,15 @@ import {
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import {
+  VoiceAudioTooLargeError,
+  VoiceDictationStatus,
+  VoiceDictationUnsupportedError,
+  VoiceLocaleHint,
+  VoiceTranscribeInput,
+  VoiceTranscribeResult,
+  VoiceTranscriptionFailedError,
+} from "./voice.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -273,6 +282,11 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+
+  // Voice dictation methods
+  voiceGetStatus: "voice.getStatus",
+  voiceInstall: "voice.install",
+  voiceTranscribe: "voice.transcribe",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -433,6 +447,33 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+export const WsVoiceGetStatusRpc = Rpc.make(WS_METHODS.voiceGetStatus, {
+  payload: Schema.Struct({ localeHint: Schema.optional(VoiceLocaleHint) }),
+  success: VoiceDictationStatus,
+  error: Schema.Union([EnvironmentAuthorizationError, VoiceTranscriptionFailedError]),
+});
+
+export const WsVoiceInstallRpc = Rpc.make(WS_METHODS.voiceInstall, {
+  payload: Schema.Struct({ localeHint: Schema.optional(VoiceLocaleHint) }),
+  success: VoiceDictationStatus,
+  error: Schema.Union([
+    EnvironmentAuthorizationError,
+    VoiceDictationUnsupportedError,
+    VoiceTranscriptionFailedError,
+  ]),
+});
+
+export const WsVoiceTranscribeRpc = Rpc.make(WS_METHODS.voiceTranscribe, {
+  payload: VoiceTranscribeInput,
+  success: VoiceTranscribeResult,
+  error: Schema.Union([
+    EnvironmentAuthorizationError,
+    VoiceDictationUnsupportedError,
+    VoiceAudioTooLargeError,
+    VoiceTranscriptionFailedError,
+  ]),
 });
 
 export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
@@ -1000,6 +1041,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsVoiceGetStatusRpc,
+  WsVoiceInstallRpc,
+  WsVoiceTranscribeRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,

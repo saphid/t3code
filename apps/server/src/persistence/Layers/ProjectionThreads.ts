@@ -10,6 +10,7 @@ import {
   DeleteProjectionThreadInput,
   GetProjectionThreadInput,
   ListProjectionThreadsByProjectInput,
+  ListRecentThreadTitlesInput,
   ProjectionThread,
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
@@ -195,6 +196,19 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+  const listRecentThreadTitleRows = SqlSchema.findAll({
+    Request: ListRecentThreadTitlesInput,
+    Result: Schema.Struct({ title: Schema.String }),
+    execute: ({ limit }) =>
+      sql`
+        SELECT title
+        FROM projection_threads
+        WHERE deleted_at IS NULL
+        ORDER BY updated_at DESC, thread_id DESC
+        LIMIT ${limit}
+      `,
+  });
+
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.upsert:query")),
@@ -215,11 +229,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.deleteById:query")),
     );
 
+  const listRecentTitles: ProjectionThreadRepositoryShape["listRecentTitles"] = (input) =>
+    listRecentThreadTitleRows(input).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listRecentTitles:query")),
+      Effect.map((rows) => rows.map((row) => row.title)),
+    );
+
   return {
     upsert,
     getById,
     listByProjectId,
     deleteById,
+    listRecentTitles,
   } satisfies ProjectionThreadRepositoryShape;
 });
 

@@ -46,6 +46,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetUsageSummary]: AuthOrchestrationReadScope,
+  // Status is a read like the diagnostics beside it. Transcription derives
+  // its output from projected message history, so it needs the same read
+  // scope as serverGetUsageSummary. Install downloads assets onto the
+  // environment, so it keeps the operate scope that orchestration mutations
+  // (dispatchCommand) already require.
+  [WS_METHODS.voiceGetStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.voiceInstall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceTranscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSignalProcess]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverReportHostPowerState]: AuthOrchestrationOperateScope,
