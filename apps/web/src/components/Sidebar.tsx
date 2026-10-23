@@ -211,7 +211,6 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
-  resolveSidebarRowThreadId,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -1116,10 +1115,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
-  // Highlighted as the open thread. Also true for the parent of an open
-  // subagent, which has no row of its own; isRouteThread is the exact match.
   isActive: boolean;
-  isRouteThread: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
@@ -1194,7 +1190,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const terminalProcessCount = runningTerminalIds.length;
   // Unsent composer text on this thread. The open thread shows its own
   // composer, so the marker only decorates rows you have navigated away from.
-  const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
+  const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isActive;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const handleDiscardDraftClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -1512,7 +1508,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       if (!url) return;
       const showInRightPanel = targetUrl !== undefined || openPullRequestsInRightPanel;
       const openedInRightPanel = openPrLink(event, url, showInRightPanel ? threadRef : undefined);
-      if (openedInRightPanel && showInRightPanel && !props.isRouteThread) {
+      if (openedInRightPanel && showInRightPanel && !props.isActive) {
         onThreadActivate(threadRef);
       }
     },
@@ -1522,7 +1518,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       openPullRequestsInRightPanel,
       pr,
       currentLinkedPr,
-      props.isRouteThread,
+      props.isActive,
       threadRef,
     ],
   );
@@ -1649,8 +1645,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     : null;
   const handlePrListClick = useCallback(() => {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
-    if (!props.isRouteThread) onThreadActivate(threadRef);
-  }, [onThreadActivate, props.isRouteThread, threadRef]);
+    if (!props.isActive) onThreadActivate(threadRef);
+  }, [onThreadActivate, props.isActive, threadRef]);
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
@@ -2398,18 +2394,6 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  // The row standing for the open thread: an open subagent has no row, so its
-  // parent's row stays highlighted, visible in collapsed shelves, and anchors
-  // next/previous thread navigation.
-  const routeRowThreadKey = useMemo(() => {
-    if (routeThreadRef === null) return null;
-    return scopedThreadKey(
-      scopeThreadRef(
-        routeThreadRef.environmentId,
-        resolveSidebarRowThreadId(routeThreadRef.threadId, routeThreadRef.environmentId, threads),
-      ),
-    );
-  }, [routeThreadRef, threads]);
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
@@ -2879,17 +2863,17 @@ export default function Sidebar() {
     // The open thread must never hide under "Show more": navigating into a
     // deep settled thread (search, deep link) pulls its row into the visible
     // tail so the highlight and the un-settle affordance stay reachable.
-    if (routeRowThreadKey !== null) {
+    if (routeThreadKey !== null) {
       const routeThread = settledThreads
         .slice(settledVisibleCount)
         .find(
           (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeRowThreadKey,
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
         );
       if (routeThread !== undefined) visible.push(routeThread);
     }
     return visible;
-  }, [routeRowThreadKey, settledThreads, settledVisibleCount]);
+  }, [routeThreadKey, settledThreads, settledVisibleCount]);
   const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
@@ -2906,13 +2890,13 @@ export default function Sidebar() {
   );
   const renderedSettledThreads = useMemo(() => {
     if (settledShelfExpanded) return visibleSettledThreads;
-    if (routeRowThreadKey === null) return EMPTY_THREADS;
+    if (routeThreadKey === null) return EMPTY_THREADS;
     const routeThread = visibleSettledThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeRowThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
     );
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeRowThreadKey, settledShelfExpanded, visibleSettledThreads]);
+  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -2932,13 +2916,13 @@ export default function Sidebar() {
     // snoozed thread reached by route (deep link, open before snoozing
     // elsewhere) keeps its row — with highlight and wake affordance — same
     // exception the settled tail's "Show more" makes.
-    if (routeRowThreadKey === null) return EMPTY_THREADS;
+    if (routeThreadKey === null) return EMPTY_THREADS;
     const routeThread = snoozedThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeRowThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
     );
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeRowThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   // The Working shelf (beta) collapses the same way, with the same route
   // exception: sending a message folds the open thread into the shelf, and
@@ -2954,13 +2938,13 @@ export default function Sidebar() {
   );
   const visibleWorkingThreads = useMemo(() => {
     if (workingShelfExpanded) return workingThreads;
-    if (routeRowThreadKey === null) return EMPTY_THREADS;
+    if (routeThreadKey === null) return EMPTY_THREADS;
     const routeThread = workingThreads.find(
       (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeRowThreadKey,
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
     );
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeRowThreadKey, workingShelfExpanded, workingThreads]);
+  }, [routeThreadKey, workingShelfExpanded, workingThreads]);
 
   const orderedThreads = useMemo(
     () => [
@@ -3730,14 +3714,14 @@ export default function Sidebar() {
         ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
         settledExpanded: settledShelfExpanded,
         settledVisibleCount,
-        routeThreadKey: routeRowThreadKey,
+        routeThreadKey,
         snoozedThreadCount: snoozedThreads.length,
       }),
     [
       draggedActiveOrder,
       draggedSettledOrder,
       isContextDrag,
-      routeRowThreadKey,
+      routeThreadKey,
       settledShelfExpanded,
       settledVisibleCount,
       sidebarListItems,
@@ -4599,7 +4583,7 @@ export default function Sidebar() {
         navigateToThreadKey(
           resolveAdjacentThreadId({
             threadIds: orderedThreadKeys,
-            currentThreadId: routeRowThreadKey,
+            currentThreadId: routeThreadKey,
             direction: traversalDirection,
           }),
         );
@@ -4615,8 +4599,8 @@ export default function Sidebar() {
     keybindings,
     navigateToThread,
     orderedThreadKeys,
-    routeRowThreadKey,
     routeTerminalOpen,
+    routeThreadKey,
     threadByKey,
   ]);
 
@@ -4886,7 +4870,7 @@ export default function Sidebar() {
                           EMPTY_PROVIDER_ENTRIES
                         }
                         isHighlighted={activeSearchResultIndex === index}
-                        isRouteActive={routeRowThreadKey === threadKey}
+                        isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
                         searchMatch={
                           threadSearchMatchByKey.get(
@@ -5014,8 +4998,7 @@ export default function Sidebar() {
                             // the wake signal must survive the trip. Still-snoozed
                             // rows resolve to null on their own.
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                            isActive={routeRowThreadKey === threadKey}
-                            isRouteThread={routeThreadKey === threadKey}
+                            isActive={routeThreadKey === threadKey}
                             openPullRequestsInRightPanel={routeThreadRef !== null}
                             jumpLabel={
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
