@@ -161,9 +161,11 @@ export function FloatingWorkingControl(props: {
     hasAgents ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
-  // The queue, agents, questions, and reconnect labels have separate tap targets.
+  // The queue, agents, questions, reconnect, and preparing labels have separate tap targets.
   const statusInteractive =
-    props.status?.kind === "connection" || props.status?.kind === "child-input";
+    props.status?.kind === "connection" ||
+    props.status?.kind === "child-input" ||
+    (props.status?.kind === "preparing" && props.status.onPress !== undefined);
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
@@ -457,6 +459,9 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="preparing"
         accessibilityLabel={props.status.label}
+        {...(props.status.onPress
+          ? { accessibilityRole: "button" as const, onPress: props.status.onPress }
+          : {})}
         className="gap-1.5"
         onLayout={props.onLayout}
       >
