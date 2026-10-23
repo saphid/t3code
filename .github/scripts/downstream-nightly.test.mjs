@@ -343,6 +343,14 @@ describe("Downstream Nightly assembly", () => {
 });
 
 describe("Orchestrator v2 release stream", () => {
+  const completeAssets = (version) => [
+    { name: "nightly-v2-mac.yml" },
+    { name: "SHA256SUMS" },
+    { name: `t3-${version}-darwin-arm64.tar.gz` },
+    ...["arm64", "x64"].flatMap((arch) =>
+      ["dmg", "zip"].map((extension) => ({ name: `T3-Code-${version}-${arch}.${extension}` })),
+    ),
+  ];
   const v2Manifest = {
     upstreamRepository: "pingdotgg/t3code",
     upstreamBranch: "t3code/codex-turn-mapping",
@@ -390,7 +398,7 @@ describe("Orchestrator v2 release stream", () => {
       {
         tag_name: first.tag,
         body: releaseMarker(first.upstreamTag, first.fingerprint),
-        assets: [{ name: "nightly-v2-mac.yml" }],
+        assets: completeAssets(first.version),
       },
     ];
     assert.equal((await resolvePlan(v2Manifest, "test")).shouldBuild, false);
@@ -403,14 +411,39 @@ describe("Orchestrator v2 release stream", () => {
     assert.equal(moved.upstreamCheckoutRef, sha);
   });
 
+  it("requires a complete OV2 desktop and server release", () => {
+    const version = "0.0.42-nightly-v2.20260917.123456";
+    const fingerprint = "f".repeat(64);
+    const release = {
+      tag_name: `v${version}`,
+      body: releaseMarker("source", fingerprint),
+      assets: [{ name: "nightly-v2-mac.yml" }],
+    };
+    assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), false);
+    release.assets.push(
+      { name: `t3-${version}-darwin-arm64.tar.gz` },
+      { name: "SHA256SUMS" },
+      ...["arm64", "x64"].flatMap((arch) =>
+        ["dmg", "zip"].map((extension) => ({ name: `T3-Code-${version}-${arch}.${extension}` })),
+      ),
+    );
+    assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), true);
+    assert.equal(
+      isCompleteMatchingRelease({ ...release, draft: true }, "source", fingerprint, "nightly-v2"),
+      false,
+    );
+  });
+
   it("does not let one stream's assets satisfy another stream", () => {
     const fingerprint = "c".repeat(64);
+    const version = "0.0.42-nightly-v2.20260917.123456";
     const release = {
+      tag_name: `v${version}`,
       body: releaseMarker("source", fingerprint),
       assets: [{ name: "nightly-mac.yml" }],
     };
     assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), false);
-    release.assets = [{ name: "nightly-v2-mac.yml" }];
+    release.assets = completeAssets(version);
     assert.equal(isCompleteMatchingRelease(release, "source", fingerprint, "nightly-v2"), true);
     assert.equal(isCompleteMatchingRelease(release, "source", fingerprint), false);
   });

@@ -224,12 +224,22 @@ export function releaseMarker(upstreamTag, fingerprint) {
 }
 
 export function isCompleteMatchingRelease(release, upstreamTag, fingerprint, channel = "nightly") {
-  if (typeof release?.body !== "string") return false;
+  if (release?.draft || typeof release?.body !== "string") return false;
   if (!release.body.includes(releaseMarker(upstreamTag, fingerprint))) return false;
   const assetNames = new Set((release.assets ?? []).map((asset) => asset?.name));
-  return REQUIRED_UPDATE_MANIFESTS.every((name) =>
-    assetNames.has(name.replace("nightly", channel)),
-  );
+  if (channel === "nightly-v2") {
+    const version = /^v(\d+\.\d+\.\d+-nightly-v2\.\d{8}\.\d+)$/.exec(release.tag_name)?.[1];
+    if (version === undefined) return false;
+    return [
+      "nightly-v2-mac.yml",
+      "SHA256SUMS",
+      `t3-${version}-darwin-arm64.tar.gz`,
+      ...["arm64", "x64"].flatMap((arch) =>
+        ["dmg", "zip"].map((extension) => `T3-Code-${version}-${arch}.${extension}`),
+      ),
+    ].every((name) => assetNames.has(name));
+  }
+  return REQUIRED_UPDATE_MANIFESTS.every((name) => assetNames.has(name));
 }
 
 async function githubRequest(path, token) {
@@ -425,7 +435,7 @@ function runGit(sourceDir, args, options = {}) {
   return typeof output === "string" ? output.trim() : "";
 }
 
-function cherryPick(sourceDir, sha, label) {
+function cherryPick(sourceDir, sha, label, preserveConflicts = false) {
   const ancestor = spawnSync("git", ["-C", sourceDir, "merge-base", "--is-ancestor", sha, "HEAD"]);
   if (ancestor.status === 0) {
     console.log(`Skipping ${sha}: already contained in generated source.`);
@@ -450,7 +460,7 @@ function cherryPick(sourceDir, sha, label) {
     return;
   }
 
-  if (pickInProgress) runGit(sourceDir, ["cherry-pick", "--abort"]);
+  if (pickInProgress && !preserveConflicts) runGit(sourceDir, ["cherry-pick", "--abort"]);
   fail(`Patch ${label} failed while cherry-picking ${sha}; inspect the git error above.`);
 }
 
@@ -471,7 +481,7 @@ function stringifyBuildMetadata(metadata) {
   return `${json}\n`;
 }
 
-export function applyPlan(plan, sourceDir) {
+export function applyPlan(plan, sourceDir, options = {}) {
   runGit(sourceDir, ["config", "user.name", "github-actions[bot]"]);
   runGit(sourceDir, [
     "config",
@@ -481,8 +491,14 @@ export function applyPlan(plan, sourceDir) {
 
   for (const [index, patch] of plan.patches.entries()) {
     const localRef = `refs/downstream/patch-${index}`;
-    runGit(sourceDir, ["fetch", "--no-tags", patch.fetchUrl, `+${patch.fetchRef}:${localRef}`]);
-    for (const sha of patch.commits) cherryPick(sourceDir, sha, patch.label);
+    runGit(sourceDir, [
+      "fetch",
+      "--no-tags",
+      options.localRepository ?? patch.fetchUrl,
+      `+${patch.fetchRef}:${localRef}`,
+    ]);
+    for (const sha of patch.commits)
+      cherryPick(sourceDir, sha, patch.label, options.preserveConflicts);
   }
 
   updatePackageVersions(sourceDir, plan.version);
