@@ -242,7 +242,9 @@ async function resolve({ github, context, core }) {
     return;
   }
 
-  let pullNumber = source.pull_requests?.[0]?.number;
+  // A fork's run and commit also list upstream PRs from the same head branch.
+  const targetsThisRepo = (pull) => pull.base?.repo?.url?.endsWith(`/repos/${owner}/${repo}`);
+  let pullNumber = source.pull_requests?.find(targetsThisRepo)?.number;
   if (!pullNumber) {
     const associated = await github.paginate(
       github.rest.repos.listPullRequestsAssociatedWithCommit,
@@ -250,6 +252,7 @@ async function resolve({ github, context, core }) {
     );
     const matchingPulls = associated.filter(
       (pull) =>
+        targetsThisRepo(pull) &&
         pull.state === "open" &&
         pull.head.sha === source.head_sha &&
         pull.head.ref === source.head_branch,
