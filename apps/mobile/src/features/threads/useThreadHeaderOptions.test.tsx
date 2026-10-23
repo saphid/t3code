@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { makeThreadShellFixture } from "../../test-fixtures";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -8,6 +10,12 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // navigation snapshots the right items at each setOptions, as native-stack does.
 const harness = vi.hoisted(() => ({
   setOptionsCalls: 0,
+  headerWidth: 402,
+  usesDuo: false,
+  split: false,
+  titleMaxWidth: 0,
+  titleSubtitle: undefined as string | undefined,
+  platform: { OS: "ios" },
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
   navigatedRoutes: [] as string[],
 }));
@@ -21,7 +29,16 @@ vi.mock("@react-navigation/native", () => {
       harness.navigatedRoutes.push(route);
     },
     addListener: () => () => {},
-    setOptions: (options: { unstable_headerRightItems?: () => Array<Record<string, unknown>> }) => {
+    setOptions: (options: {
+      unstable_headerRightItems?: () => Array<Record<string, unknown>>;
+      headerTitle?: string | (() => { props: { maxWidth: number; subtitle: string } });
+    }) => {
+      // The non-glass Git fallback applies its own options without a title.
+      if (typeof options.headerTitle === "function") {
+        const title = options.headerTitle();
+        harness.titleMaxWidth = title.props.maxWidth;
+        harness.titleSubtitle = title.props.subtitle;
+      }
       harness.setOptionsCalls += 1;
       harness.renderedRightItems.push(options.unstable_headerRightItems?.() ?? []);
     },
@@ -29,6 +46,7 @@ vi.mock("@react-navigation/native", () => {
   return {
     StackActions: { replace: () => ({}) },
     useNavigation: () => navigation,
+    useRoute: () => ({ key: "thread", name: "Thread", params: undefined }),
   };
 });
 vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
@@ -42,11 +60,30 @@ vi.mock("../../components/ui/AppBar", async () => {
     ),
   };
 });
-vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
+vi.mock("../../native/native-layout-metrics", () => ({
+  useDeviceType: () => (harness.usesDuo ? "duo-folded" : "phone"),
+  useNativeLayoutMetrics: () => (harness.usesDuo ? { verticalBarEdge: "right" } : null),
+}));
+vi.mock("../../native/NativeWorkspaceColumns", () => ({
+  useNativeWorkspaceColumnsSupported: () => harness.usesDuo,
+}));
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaFrame: () => ({ width: harness.headerWidth, height: 874 }),
+  useSafeAreaInsets: () => ({ left: 0, right: 0, top: 62, bottom: 34 }),
+}));
+vi.mock("react-native", () => ({
+  Alert: { alert: () => {} },
+  Linking: {},
+  Platform: harness.platform,
+}));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
-    layout: { usesSplitView: false },
-    panes: { primarySidebarVisible: false, auxiliaryPaneVisible: false },
+    layout: { usesSplitView: harness.split },
+    panes: {
+      primarySidebarVisible: false,
+      auxiliaryPaneVisible: false,
+      contentPaneWidth: harness.headerWidth,
+    },
     togglePrimarySidebar: () => {},
     toggleAuxiliaryPane: () => {},
   }),
@@ -58,6 +95,8 @@ vi.mock("../layout/native-mail-search-toolbar", () => ({
 vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeVariables: {} }),
 }));
+
+vi.mock("./ThreadTitleMenu", () => ({ ThreadTitleMenu: () => null }));
 
 import { ThreadHeader } from "./ThreadHeader";
 
@@ -86,13 +125,20 @@ function status(
   } as unknown as VcsStatusResult;
 }
 
-function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly title?: string }) {
+function Header(props: {
+  readonly gitStatus: VcsStatusResult | null;
+  readonly title?: string;
+  readonly subtitle?: string;
+  readonly thread?: EnvironmentThreadShell;
+  readonly glass?: boolean;
+}) {
   return (
     <ThreadHeader
+      thread={props.thread ?? null}
       title={props.title ?? "Thread"}
-      subtitle=""
+      subtitle={props.subtitle ?? ""}
       headerColor="#000"
-      usesNativeHeaderGlass
+      usesNativeHeaderGlass={props.glass ?? true}
       gitControls={{
         environmentId: "environment-1",
         threadId: "thread-1",
@@ -151,9 +197,84 @@ afterEach(() => {
   harness.setOptionsCalls = 0;
   harness.renderedRightItems = [];
   harness.navigatedRoutes = [];
+  harness.titleMaxWidth = 0;
+  harness.titleSubtitle = undefined;
+  harness.headerWidth = 402;
+  harness.usesDuo = false;
+  harness.split = false;
+  harness.platform.OS = "ios";
 });
 
 describe("ThreadHeader", () => {
+  it.each([
+    { name: "compact Duo with a vertical bar", duo: true, split: false, minimum: 200 },
+    { name: "minimum-width split pane", duo: false, split: true, minimum: 44 },
+  ])("keeps the title action target usable in a $name", ({ duo, split, minimum }) => {
+    harness.headerWidth = 320;
+    harness.usesDuo = duo;
+    harness.split = split;
+    render(<Header gitStatus={status([])} thread={makeThreadShellFixture()} />);
+    expect(harness.titleMaxWidth).toBeGreaterThanOrEqual(minimum);
+  });
+
+  it("updates native title content when the available pane width changes", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} />);
+    const applied = harness.setOptionsCalls;
+    harness.headerWidth = 600;
+    render(<Header gitStatus={status([])} thread={thread} />);
+    expect(harness.setOptionsCalls).toBe(applied + 1);
+  });
+
+  it("does not reapply native options for streaming-only shell updates", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} />);
+    const applied = harness.setOptionsCalls;
+    for (let index = 0; index < 10; index += 1) {
+      render(
+        <Header
+          gitStatus={status([])}
+          thread={{
+            ...thread,
+            updatedAt: new Date(1_000 + index).toISOString(),
+            itemCount: index + 1,
+          }}
+        />,
+      );
+    }
+    expect(harness.setOptionsCalls).toBe(applied);
+  });
+
+  it("reapplies native title content when only the project subtitle changes", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Old project" />);
+    const applied = harness.setOptionsCalls;
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Renamed project" />);
+    expect(harness.setOptionsCalls).toBe(applied + 1);
+  });
+
+  it("shows the project subtitle in iOS title content only with the glass header", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Project" glass={false} />);
+    expect(harness.titleSubtitle).toBe("");
+
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Project" />);
+    expect(harness.titleSubtitle).toBe("Project");
+  });
+
+  it("always shows the project subtitle in Android title content", () => {
+    harness.platform.OS = "android";
+    render(
+      <Header
+        gitStatus={status([])}
+        thread={makeThreadShellFixture()}
+        subtitle="Project"
+        glass={false}
+      />,
+    );
+    expect(harness.titleSubtitle).toBe("Project");
+  });
+
   it("re-applies native header items when Git status changes", () => {
     render(<Header gitStatus={status([])} />);
     expect(renderedGitStatusDescription()).toBe("Clean");
