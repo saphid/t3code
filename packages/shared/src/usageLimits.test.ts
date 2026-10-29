@@ -1512,6 +1512,49 @@ describe("providerQuotaStatus", () => {
     });
   });
 
+  it("offers no reset once a fresher read of the account shows the credits spent", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const spentWindows = [{ ...window, usedPercent: 100 }];
+    const older = provider({
+      instanceId: ProviderInstanceId.make("a"),
+      auth,
+      usageLimits: { checkedAt, windows: spentWindows, resetCredits: { availableCount: 1 } },
+    });
+    const newer = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: spentWindows,
+        resetCredits: { availableCount: 0 },
+      },
+    });
+    const hub = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt,
+        accounts: [
+          {
+            id: "same",
+            driver: older.driver,
+            email: "same@example.com",
+            usageLimits: {
+              checkedAt,
+              windows: spentWindows,
+              resetCredits: { availableCount: 1, nextCreditId: "credit" },
+            },
+          },
+        ],
+      },
+    ];
+    for (const sources of [[], hub]) {
+      const status = providerQuotaStatus(older.instanceId, [older, newer], sources, now);
+      expect(status).toMatchObject({ state: "exhausted", reset: null });
+    }
+  });
+
   it("follows the account once a sibling instance redeems and refreshes", () => {
     const auth = { status: "authenticated", email: "same@example.com" } as const;
     const stale = provider({

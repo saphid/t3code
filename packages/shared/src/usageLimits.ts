@@ -931,8 +931,9 @@ const newestFirst = (
 ) => Date.parse(right.limits.checkedAt) - Date.parse(left.limits.checkedAt);
 
 /**
- * A hub redemption also clears the routing cooldown the hub holds for the
- * account, so a hub credit wins over the freshest native one.
+ * The balance comes from the freshest snapshot that reports one, so a spent
+ * credit is not offered again from an older read. A hub redemption also clears
+ * the hub's routing cooldown for the account, so a hub route wins.
  */
 function resetCreditTarget({
   native,
@@ -941,29 +942,24 @@ function resetCreditTarget({
   ProviderQuotaStatus,
   { readonly state: "exhausted" }
 >["reset"] {
-  const hubCredit = [...hub].sort(newestFirst).flatMap(({ source, account, limits }) =>
-    limits.resetCredits &&
-    limits.resetCredits.availableCount > 0 &&
-    limits.resetCredits.nextCreditId
-      ? [
-          {
-            input: {
-              sourceId: source.id,
-              accountId: account.id,
-              creditId: limits.resetCredits.nextCreditId,
-            },
-            credits: limits.resetCredits,
-          },
-        ]
-      : [],
-  )[0];
-  if (hubCredit) return hubCredit;
-  const nativeCredit = native
-    .filter(({ limits }) => (limits.resetCredits?.availableCount ?? 0) > 0)
-    .sort(newestFirst)[0];
-  return nativeCredit?.limits.resetCredits
-    ? { input: { instanceId: nativeCredit.instanceId }, credits: nativeCredit.limits.resetCredits }
-    : null;
+  const credits = [...native, ...hub]
+    .filter(({ limits }) => limits.resetCredits !== undefined)
+    .sort(newestFirst)[0]?.limits.resetCredits;
+  if (!credits || credits.availableCount === 0) return null;
+  const banked = <T extends { readonly limits: ServerProviderUsageLimits }>(snapshots: T[]) =>
+    snapshots
+      .filter(({ limits }) => (limits.resetCredits?.availableCount ?? 0) > 0)
+      .sort(newestFirst);
+  const hubRoute = banked(hub).find(({ limits }) => limits.resetCredits?.nextCreditId);
+  const creditId = hubRoute?.limits.resetCredits?.nextCreditId;
+  if (hubRoute && creditId) {
+    return {
+      input: { sourceId: hubRoute.source.id, accountId: hubRoute.account.id, creditId },
+      credits,
+    };
+  }
+  const nativeRoute = banked(native)[0];
+  return nativeRoute ? { input: { instanceId: nativeRoute.instanceId }, credits } : null;
 }
 
 /**
