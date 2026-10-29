@@ -1512,6 +1512,27 @@ describe("providerQuotaStatus", () => {
     });
   });
 
+  it("follows the account once a sibling instance redeems and refreshes", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const stale = provider({
+      instanceId: ProviderInstanceId.make("a"),
+      auth,
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 100 }] },
+    });
+    const refreshed = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: [{ ...window, usedPercent: 0 }],
+      },
+    });
+    expect(providerQuotaStatus(stale.instanceId, [stale, refreshed], [], now)).toEqual({
+      state: "available",
+      remainingPercent: 100,
+    });
+  });
+
   it("redeems through the hub that routes the account", () => {
     const selected = provider({
       auth: { status: "authenticated", email: "same@example.com" },

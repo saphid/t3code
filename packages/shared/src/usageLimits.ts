@@ -885,64 +885,89 @@ function gatesProvider(
 }
 
 /**
- * A hub redemption also clears the routing cooldown the hub holds for the
- * account, so a hub credit wins; otherwise the freshest native read of the same
- * account, which may belong to a sibling instance.
+ * Every readable snapshot of the provider's account: its own, sibling instances
+ * on the same account, and hub entries for it. Redeeming a credit refreshes
+ * only the snapshot it went through, so status follows the freshest one.
  */
-function resetCreditTarget(
+function accountSnapshots(
   provider: ServerProvider,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
-): Extract<ProviderQuotaStatus, { readonly state: "exhausted" }>["reset"] {
+) {
   const resolveKey = accountKeyResolver([
     ...providers.filter((candidate) => candidate.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
   const key = resolveKey(nativeReport(provider));
-  const newestFirst = (left: ServerProviderUsageLimits, right: ServerProviderUsageLimits) =>
-    Date.parse(right.checkedAt) - Date.parse(left.checkedAt);
-  const hub = sources
-    .flatMap((source) => source.accounts.map((account) => ({ source, account })))
-    .filter(
-      ({ account }) =>
-        key !== null &&
-        resolveKey(account) === key &&
-        (account.usageLimits.resetCredits?.availableCount ?? 0) > 0 &&
-        account.usageLimits.resetCredits?.nextCreditId !== undefined &&
-        limitsNotice(account.usageLimits) === null,
-    )
-    .sort((left, right) => newestFirst(left.account.usageLimits, right.account.usageLimits))[0];
-  const hubCredits = hub?.account.usageLimits.resetCredits;
-  if (hub && hubCredits?.nextCreditId) {
-    return {
-      input: {
-        sourceId: hub.source.id,
-        accountId: hub.account.id,
-        creditId: hubCredits.nextCreditId,
-      },
-      credits: hubCredits,
-    };
-  }
-  const native = providersWithLimits(providers)
-    .filter(
+  const readable = (limits: ServerProviderUsageLimits | undefined) =>
+    limits !== undefined && limitsNotice(limits) === null;
+  const native = [
+    provider,
+    ...providersWithLimits(providers).filter(
       (candidate) =>
-        candidate.instanceId === provider.instanceId ||
-        (key !== null &&
-          candidate.driver === provider.driver &&
-          resolveKey(nativeReport(candidate)) === key),
-    )
-    .flatMap((candidate) =>
-      candidate.usageLimits?.resetCredits ? [{ candidate, limits: candidate.usageLimits }] : [],
-    )
-    .sort((left, right) => newestFirst(left.limits, right.limits))[0];
-  const credits = native?.limits.resetCredits;
-  return native && credits && credits.availableCount > 0
-    ? { input: { instanceId: native.candidate.instanceId }, credits }
+        key !== null &&
+        candidate.instanceId !== provider.instanceId &&
+        candidate.driver === provider.driver &&
+        resolveKey(nativeReport(candidate)) === key,
+    ),
+  ].flatMap((candidate) =>
+    candidate.usageLimits && readable(candidate.usageLimits)
+      ? [{ instanceId: candidate.instanceId, limits: candidate.usageLimits }]
+      : [],
+  );
+  const hub = sources.flatMap((source) =>
+    source.accounts.flatMap((account) =>
+      key !== null && resolveKey(account) === key && readable(account.usageLimits)
+        ? [{ source, account, limits: account.usageLimits }]
+        : [],
+    ),
+  );
+  return { native, hub };
+}
+
+const newestFirst = (
+  left: { readonly limits: ServerProviderUsageLimits },
+  right: { readonly limits: ServerProviderUsageLimits },
+) => Date.parse(right.limits.checkedAt) - Date.parse(left.limits.checkedAt);
+
+/**
+ * A hub redemption also clears the routing cooldown the hub holds for the
+ * account, so a hub credit wins over the freshest native one.
+ */
+function resetCreditTarget({
+  native,
+  hub,
+}: ReturnType<typeof accountSnapshots>): Extract<
+  ProviderQuotaStatus,
+  { readonly state: "exhausted" }
+>["reset"] {
+  const hubCredit = [...hub].sort(newestFirst).flatMap(({ source, account, limits }) =>
+    limits.resetCredits &&
+    limits.resetCredits.availableCount > 0 &&
+    limits.resetCredits.nextCreditId
+      ? [
+          {
+            input: {
+              sourceId: source.id,
+              accountId: account.id,
+              creditId: limits.resetCredits.nextCreditId,
+            },
+            credits: limits.resetCredits,
+          },
+        ]
+      : [],
+  )[0];
+  if (hubCredit) return hubCredit;
+  const nativeCredit = native
+    .filter(({ limits }) => (limits.resetCredits?.availableCount ?? 0) > 0)
+    .sort(newestFirst)[0];
+  return nativeCredit?.limits.resetCredits
+    ? { input: { instanceId: nativeCredit.instanceId }, credits: nativeCredit.limits.resetCredits }
     : null;
 }
 
 /**
- * Reads the instance's own credential rather than every account on its driver,
+ * Follows the provider's own account rather than every account on its driver,
  * so a proxy instance on the Claude driver does not inherit Claude's quota.
  */
 export function providerQuotaStatus(
@@ -952,8 +977,10 @@ export function providerQuotaStatus(
   now: number,
 ): ProviderQuotaStatus | null {
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-  const limits = provider?.usageLimits;
-  if (!provider || !limits || limitsNotice(limits) !== null) return null;
+  if (!provider) return null;
+  const snapshots = accountSnapshots(provider, providers, sources);
+  const limits = [...snapshots.native, ...snapshots.hub].sort(newestFirst)[0]?.limits;
+  if (!limits) return null;
   const gates = limits.windows.filter((window) => gatesProvider(provider.driver, window));
   if (gates.length === 0) return null;
   const pending = (window: ServerProviderUsageWindow) => {
@@ -973,6 +1000,17 @@ export function providerQuotaStatus(
   return {
     state: "exhausted",
     resetsAt: resets.every((at): at is number => at !== null) ? Math.max(...resets) : null,
-    reset: resetCreditTarget(provider, providers, sources),
+    reset: resetCreditTarget(snapshots),
   };
+}
+
+/** The earliest moment a spent provider refills, so one timer covers the list. */
+export function nextProviderRefill(statuses: Iterable<ProviderQuotaStatus>): number | null {
+  let next: number | null = null;
+  for (const status of statuses) {
+    if (status.state === "exhausted" && status.resetsAt !== null) {
+      next = next === null ? status.resetsAt : Math.min(next, status.resetsAt);
+    }
+  }
+  return next;
 }

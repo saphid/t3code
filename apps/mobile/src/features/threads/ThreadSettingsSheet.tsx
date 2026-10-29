@@ -121,13 +121,9 @@ import {
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
-import {
-  formatDuration,
-  providerQuotaStatus,
-  type ProviderQuotaStatus,
-} from "@t3tools/shared/usageLimits";
+import { formatDuration, type ProviderQuotaStatus } from "@t3tools/shared/usageLimits";
 import { ResetCredits } from "../usage/UsageLimitsSection";
-import { useNowAfter, useNowMinuteMs } from "../../lib/clock";
+import { useProviderQuotas } from "./use-provider-quotas";
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
@@ -385,31 +381,10 @@ function ThreadSettingsSessionProvider(
           ),
         )
       : props.providerGroups;
-  const quotaAt = (now: number) =>
-    new Map(
-      providerGroups.flatMap((group) => {
-        const instanceId = group.models[0]?.selection.instanceId;
-        const quota =
-          config && instanceId
-            ? providerQuotaStatus(instanceId, config.providers, config.usageLimitSources ?? [], now)
-            : null;
-        return quota ? [[group.providerKey, quota] as const] : [];
-      }),
-    );
-  // The minute tick moves countdowns; the refill deadline flips a spent provider
-  // back on time instead of up to a minute late.
-  const minuteNow = useNowMinuteMs();
-  const minuteQuota = quotaAt(minuteNow);
-  const nextRefill = Math.min(
-    ...[...minuteQuota.values()].flatMap((quota) =>
-      quota.state === "exhausted" && quota.resetsAt !== null ? [quota.resetsAt] : [],
-    ),
+  const { checkedAt: quotaCheckedAt, byProvider: quotaByProvider } = useProviderQuotas(
+    providerGroups,
+    config,
   );
-  const quotaCheckedAt = Math.max(
-    minuteNow,
-    useNowAfter(Number.isFinite(nextRefill) ? nextRefill : null),
-  );
-  const quotaByProvider = quotaCheckedAt === minuteNow ? minuteQuota : quotaAt(quotaCheckedAt);
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
