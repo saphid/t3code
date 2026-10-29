@@ -871,16 +871,74 @@ export type ProviderQuotaStatus =
     };
 
 /**
- * Only allowances that stop every model count. Claude's model-scoped weekly
- * windows block some models, and monthly spend or credit caps meter extra
- * usage rather than the subscription itself.
+ * Only windows that stop every model. Codex has no model-scoped windows (Free/Go
+ * allowances are monthly); Claude's others are model-scoped or extra spend.
+ * Antigravity and Cursor split quota by model family, so none count.
  */
 function gatesProvider(
   driver: ServerProvider["driver"],
   window: ServerProviderUsageWindow,
 ): boolean {
-  if (window.kind !== "session" && window.kind !== "weekly") return false;
-  return driver !== "claudeAgent" || window.id === "five_hour" || window.id === "seven_day";
+  if (driver === "codex") return true;
+  if (driver === "claudeAgent") return window.id === "five_hour" || window.id === "seven_day";
+  return false;
+}
+
+/**
+ * A hub redemption also clears the routing cooldown the hub holds for the
+ * account, so a hub credit wins; otherwise the freshest native read of the same
+ * account, which may belong to a sibling instance.
+ */
+function resetCreditTarget(
+  provider: ServerProvider,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): Extract<ProviderQuotaStatus, { readonly state: "exhausted" }>["reset"] {
+  const resolveKey = accountKeyResolver([
+    ...providers.filter((candidate) => candidate.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ]);
+  const key = resolveKey(nativeReport(provider));
+  const newestFirst = (left: ServerProviderUsageLimits, right: ServerProviderUsageLimits) =>
+    Date.parse(right.checkedAt) - Date.parse(left.checkedAt);
+  const hub = sources
+    .flatMap((source) => source.accounts.map((account) => ({ source, account })))
+    .filter(
+      ({ account }) =>
+        key !== null &&
+        resolveKey(account) === key &&
+        (account.usageLimits.resetCredits?.availableCount ?? 0) > 0 &&
+        account.usageLimits.resetCredits?.nextCreditId !== undefined &&
+        limitsNotice(account.usageLimits) === null,
+    )
+    .sort((left, right) => newestFirst(left.account.usageLimits, right.account.usageLimits))[0];
+  const hubCredits = hub?.account.usageLimits.resetCredits;
+  if (hub && hubCredits?.nextCreditId) {
+    return {
+      input: {
+        sourceId: hub.source.id,
+        accountId: hub.account.id,
+        creditId: hubCredits.nextCreditId,
+      },
+      credits: hubCredits,
+    };
+  }
+  const native = providersWithLimits(providers)
+    .filter(
+      (candidate) =>
+        candidate.instanceId === provider.instanceId ||
+        (key !== null &&
+          candidate.driver === provider.driver &&
+          resolveKey(nativeReport(candidate)) === key),
+    )
+    .flatMap((candidate) =>
+      candidate.usageLimits?.resetCredits ? [{ candidate, limits: candidate.usageLimits }] : [],
+    )
+    .sort((left, right) => newestFirst(left.limits, right.limits))[0];
+  const credits = native?.limits.resetCredits;
+  return native && credits && credits.availableCount > 0
+    ? { input: { instanceId: native.candidate.instanceId }, credits }
+    : null;
 }
 
 /**
@@ -912,17 +970,9 @@ export function providerQuotaStatus(
     };
   }
   const resets = spent.map(resetMillis);
-  // The report already prefers redeeming through a hub, which also clears its routing cooldown.
-  const account = collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts.find(
-    (candidate) => candidate.instanceId === instanceId,
-  );
-  const credits = account?.limits.resetCredits ?? limits.resetCredits;
   return {
     state: "exhausted",
     resetsAt: resets.every((at): at is number => at !== null) ? Math.max(...resets) : null,
-    reset:
-      credits && credits.availableCount > 0
-        ? { input: account?.resetCreditInput ?? { instanceId }, credits }
-        : null,
+    reset: resetCreditTarget(provider, providers, sources),
   };
 }

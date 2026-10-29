@@ -1467,6 +1467,51 @@ describe("providerQuotaStatus", () => {
     expect(providerQuotaStatus(proxy.instanceId, [spent, proxy], [], now)).toBeNull();
   });
 
+  it("counts a Codex Free or Go monthly allowance", () => {
+    const selected = provider({
+      usageLimits: {
+        checkedAt,
+        windows: [
+          { ...window, id: "primary", kind: "monthly", label: "Monthly", usedPercent: 100 },
+        ],
+      },
+    });
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)?.state).toBe("exhausted");
+  });
+
+  it("claims nothing for drivers whose windows are per model family", () => {
+    const selected = provider({
+      instanceId: ProviderInstanceId.make("antigravity"),
+      driver: ProviderDriverKind.make("antigravity"),
+      usageLimits: {
+        checkedAt,
+        windows: [
+          { ...weekly, id: "3p-weekly", label: "Claude & GPT (shared) · Weekly", usedPercent: 100 },
+        ],
+      },
+    });
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)).toBeNull();
+  });
+
+  it("offers a sibling instance's credit for the same account", () => {
+    const spent = { checkedAt, windows: [{ ...window, usedPercent: 100 }] };
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const first = provider({ instanceId: ProviderInstanceId.make("a"), auth, usageLimits: spent });
+    const second = provider({
+      instanceId: ProviderInstanceId.make("b"),
+      auth,
+      usageLimits: {
+        ...spent,
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        resetCredits: { availableCount: 1 },
+      },
+    });
+    const status = providerQuotaStatus(first.instanceId, [first, second], [], now);
+    expect(status?.state === "exhausted" ? status.reset?.input : null).toEqual({
+      instanceId: "b",
+    });
+  });
+
   it("redeems through the hub that routes the account", () => {
     const selected = provider({
       auth: { status: "authenticated", email: "same@example.com" },
@@ -1492,11 +1537,14 @@ describe("providerQuotaStatus", () => {
         ],
       },
     ];
-    const status = providerQuotaStatus(selected.instanceId, [selected], hub, now);
-    expect(status?.state === "exhausted" ? status.reset?.input : null).toEqual({
-      sourceId: "hub",
-      accountId: "same",
-      creditId: "credit",
-    });
+    const sibling = provider({ ...selected, instanceId: ProviderInstanceId.make("sibling") });
+    for (const instanceId of [selected.instanceId, sibling.instanceId]) {
+      const status = providerQuotaStatus(instanceId, [selected, sibling], hub, now);
+      expect(status?.state === "exhausted" ? status.reset?.input : null).toEqual({
+        sourceId: "hub",
+        accountId: "same",
+        creditId: "credit",
+      });
+    }
   });
 });
