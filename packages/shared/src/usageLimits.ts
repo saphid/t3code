@@ -10,6 +10,7 @@ import {
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -855,4 +856,73 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+export type ProviderQuotaStatus =
+  | { readonly state: "available"; readonly remainingPercent: number }
+  | {
+      readonly state: "exhausted";
+      /** When every spent allowance has refilled; null when the provider gave no clock. */
+      readonly resetsAt: number | null;
+      readonly reset: {
+        readonly input: ProviderConsumeResetCreditInput;
+        readonly credits: ServerProviderResetCredits;
+      } | null;
+    };
+
+/**
+ * Only allowances that stop every model count. Claude's model-scoped weekly
+ * windows block some models, and monthly spend or credit caps meter extra
+ * usage rather than the subscription itself.
+ */
+function gatesProvider(
+  driver: ServerProvider["driver"],
+  window: ServerProviderUsageWindow,
+): boolean {
+  if (window.kind !== "session" && window.kind !== "weekly") return false;
+  return driver !== "claudeAgent" || window.id === "five_hour" || window.id === "seven_day";
+}
+
+/**
+ * Reads the instance's own credential rather than every account on its driver,
+ * so a proxy instance on the Claude driver does not inherit Claude's quota.
+ */
+export function providerQuotaStatus(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ProviderQuotaStatus | null {
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  const limits = provider?.usageLimits;
+  if (!provider || !limits || limitsNotice(limits) !== null) return null;
+  const gates = limits.windows.filter((window) => gatesProvider(provider.driver, window));
+  if (gates.length === 0) return null;
+  const pending = (window: ServerProviderUsageWindow) => {
+    const at = resetMillis(window);
+    return at === null || at > now;
+  };
+  const spent = gates.filter((window) => window.usedPercent >= 100 && pending(window));
+  if (spent.length === 0) {
+    return {
+      state: "available",
+      remainingPercent: Math.min(
+        ...gates.map((window) => (pending(window) ? remainingPercent(window) : 100)),
+      ),
+    };
+  }
+  const resets = spent.map(resetMillis);
+  // The report already prefers redeeming through a hub, which also clears its routing cooldown.
+  const account = collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts.find(
+    (candidate) => candidate.instanceId === instanceId,
+  );
+  const credits = account?.limits.resetCredits ?? limits.resetCredits;
+  return {
+    state: "exhausted",
+    resetsAt: resets.every((at): at is number => at !== null) ? Math.max(...resets) : null,
+    reset:
+      credits && credits.availableCount > 0
+        ? { input: account?.resetCreditInput ?? { instanceId }, credits }
+        : null,
+  };
 }

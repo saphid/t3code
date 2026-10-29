@@ -121,6 +121,12 @@ import {
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatDuration,
+  providerQuotaStatus,
+  type ProviderQuotaStatus,
+} from "@t3tools/shared/usageLimits";
+import { ResetCredits } from "../usage/UsageLimitsSection";
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
@@ -156,12 +162,33 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly quota: ProviderQuotaStatus | null;
   readonly onToggle: () => void;
 }) {
+  const quotaLabel =
+    props.quota?.state === "exhausted"
+      ? "Out of tokens"
+      : props.quota
+        ? `${props.quota.remainingPercent}% left`
+        : null;
   const content = (
     <>
       <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      <Text className="shrink text-sm font-t3-medium text-foreground-muted" numberOfLines={1}>
+        {props.label}
+      </Text>
+      {quotaLabel ? (
+        <Text
+          className={cn(
+            "text-2xs font-t3-medium",
+            props.quota?.state === "exhausted"
+              ? "text-warning-foreground"
+              : "text-foreground-tertiary",
+          )}
+        >
+          {quotaLabel}
+        </Text>
+      ) : null}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -184,7 +211,9 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={[props.label, quotaLabel, `${props.modelCount} models`]
+          .filter(Boolean)
+          .join(", ")}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60 android:min-h-12"
@@ -292,6 +321,8 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
+  readonly quotaByProvider: ReadonlyMap<string, ProviderQuotaStatus>;
+  readonly quotaCheckedAt: number;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
   readonly pendingHiddenKeys: ReadonlySet<string>;
@@ -353,6 +384,23 @@ function ThreadSettingsSessionProvider(
           ),
         )
       : props.providerGroups;
+  // One clock per sheet: the compiler caches render output, so reading it per render would not tick.
+  const [quotaCheckedAt] = useState(() => Date.now());
+  const quotaByProvider = new Map(
+    providerGroups.flatMap((group) => {
+      const instanceId = group.models[0]?.selection.instanceId;
+      const quota =
+        config && instanceId
+          ? providerQuotaStatus(
+              instanceId,
+              config.providers,
+              config.usageLimitSources ?? [],
+              quotaCheckedAt,
+            )
+          : null;
+      return quota ? [[group.providerKey, quota] as const] : [];
+    }),
+  );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -616,6 +664,8 @@ function ThreadSettingsSessionProvider(
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
+    quotaByProvider,
+    quotaCheckedAt,
     providerExpansionOverrides,
     hasLegacyModels,
     pendingModel,
@@ -657,6 +707,7 @@ type ThreadSettingsProviderCatalog = {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly quota: ProviderQuotaStatus | null;
   readonly models: ReadonlyArray<ModelOption>;
 };
 
@@ -677,6 +728,11 @@ type ThreadSettingsCatalogItem =
       readonly kind: "notice";
       readonly key: string;
       readonly text: string;
+    }
+  | {
+      readonly kind: "quota";
+      readonly key: string;
+      readonly quota: Extract<ProviderQuotaStatus, { readonly state: "exhausted" }>;
     }
   | {
       readonly kind: "empty";
@@ -709,6 +765,7 @@ function ThreadSettingsModelListRow(props: {
           : undefined
       }
       hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
+      dimmed={session.quotaByProvider.get(props.option.providerKey)?.state === "exhausted"}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />
@@ -729,8 +786,34 @@ function ThreadSettingsProviderListHeader(props: {
       iconUrl={props.provider.iconUrl}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
+      quota={props.provider.quota}
       onToggle={onToggle}
     />
+  );
+}
+
+function ThreadSettingsQuotaNotice(props: {
+  readonly quota: Extract<ProviderQuotaStatus, { readonly state: "exhausted" }>;
+}) {
+  const session = useThreadSettingsSession();
+  const { resetsAt, reset } = props.quota;
+  return (
+    <View className="mx-5 mb-2 gap-1.5">
+      <Text className="text-xs text-foreground-muted">
+        {resetsAt === null
+          ? "The provider did not report when your limit resets."
+          : `Usage limit resets in ${formatDuration(resetsAt - session.quotaCheckedAt)}.`}
+      </Text>
+      {reset && session.environmentId ? (
+        <ResetCredits
+          dense
+          environmentId={session.environmentId}
+          input={reset.input}
+          credits={reset.credits}
+          now={session.quotaCheckedAt}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -792,6 +875,7 @@ function buildThreadSettingsCatalogItems(
       collapsible,
       collapsed,
       modelCount: visibleModels.length,
+      quota: session.quotaByProvider.get(group.providerKey) ?? null,
       models: collapsed ? [] : visibleModels,
     };
     return [
@@ -800,6 +884,15 @@ function buildThreadSettingsCatalogItems(
         key: `provider:${group.providerKey}`,
         provider,
       },
+      ...(provider.quota?.state === "exhausted"
+        ? [
+            {
+              kind: "quota" as const,
+              key: `quota:${group.providerKey}`,
+              quota: provider.quota,
+            },
+          ]
+        : []),
       ...provider.models.map((option, index) => ({
         kind: "model" as const,
         key: `model:${option.key}`,
@@ -962,6 +1055,8 @@ function ThreadSettingsMainContent(props: {
       );
     } else if (item.kind === "notice") {
       content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
+    } else if (item.kind === "quota") {
+      content = <ThreadSettingsQuotaNotice quota={item.quota} />;
     } else if (item.kind === "empty") {
       content = (
         <View className="items-center px-8 py-14">
