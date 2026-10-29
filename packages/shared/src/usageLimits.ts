@@ -931,9 +931,9 @@ const newestFirst = (
 ) => Date.parse(right.limits.checkedAt) - Date.parse(left.limits.checkedAt);
 
 /**
- * The balance comes from the freshest snapshot that reports one, so a spent
- * credit is not offered again from an older read. A hub redemption also clears
- * the hub's routing cooldown for the account, so a hub route wins.
+ * Redeems through whichever snapshot read the balance last: an older read's
+ * credit id may already be spent. A hub wins ties, since redeeming there also
+ * clears the hub's routing cooldown for the account.
  */
 function resetCreditTarget({
   native,
@@ -942,24 +942,25 @@ function resetCreditTarget({
   ProviderQuotaStatus,
   { readonly state: "exhausted" }
 >["reset"] {
-  const credits = [...native, ...hub]
+  const latest = [
+    ...hub.map((snapshot) => ({ ...snapshot, route: "hub" as const })),
+    ...native.map((snapshot) => ({ ...snapshot, route: "native" as const })),
+  ]
     .filter(({ limits }) => limits.resetCredits !== undefined)
-    .sort(newestFirst)[0]?.limits.resetCredits;
-  if (!credits || credits.availableCount === 0) return null;
-  const banked = <T extends { readonly limits: ServerProviderUsageLimits }>(snapshots: T[]) =>
-    snapshots
-      .filter(({ limits }) => (limits.resetCredits?.availableCount ?? 0) > 0)
-      .sort(newestFirst);
-  const hubRoute = banked(hub).find(({ limits }) => limits.resetCredits?.nextCreditId);
-  const creditId = hubRoute?.limits.resetCredits?.nextCreditId;
-  if (hubRoute && creditId) {
-    return {
-      input: { sourceId: hubRoute.source.id, accountId: hubRoute.account.id, creditId },
-      credits,
-    };
-  }
-  const nativeRoute = banked(native)[0];
-  return nativeRoute ? { input: { instanceId: nativeRoute.instanceId }, credits } : null;
+    .sort(newestFirst)[0];
+  const credits = latest?.limits.resetCredits;
+  if (!latest || !credits || credits.availableCount === 0) return null;
+  if (latest.route === "native") return { input: { instanceId: latest.instanceId }, credits };
+  return credits.nextCreditId
+    ? {
+        input: {
+          sourceId: latest.source.id,
+          accountId: latest.account.id,
+          creditId: credits.nextCreditId,
+        },
+        credits,
+      }
+    : null;
 }
 
 /**
@@ -979,20 +980,25 @@ export function providerQuotaStatus(
   if (!limits) return null;
   const gates = limits.windows.filter((window) => gatesProvider(provider.driver, window));
   if (gates.length === 0) return null;
-  const pending = (window: ServerProviderUsageWindow) => {
+  // A reset that passed before the read is a stale clock, not a refill.
+  const checked = Date.parse(limits.checkedAt);
+  const refilled = (window: ServerProviderUsageWindow) => {
     const at = resetMillis(window);
-    return at === null || at > now;
+    return at !== null && at > checked && at <= now;
   };
-  const spent = gates.filter((window) => window.usedPercent >= 100 && pending(window));
+  const spent = gates.filter((window) => window.usedPercent >= 100 && !refilled(window));
   if (spent.length === 0) {
     return {
       state: "available",
       remainingPercent: Math.min(
-        ...gates.map((window) => (pending(window) ? remainingPercent(window) : 100)),
+        ...gates.map((window) => (refilled(window) ? 100 : remainingPercent(window))),
       ),
     };
   }
-  const resets = spent.map(resetMillis);
+  const resets = spent.map((window) => {
+    const at = resetMillis(window);
+    return at !== null && at > now ? at : null;
+  });
   return {
     state: "exhausted",
     resetsAt: resets.every((at): at is number => at !== null) ? Math.max(...resets) : null,

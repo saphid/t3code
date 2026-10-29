@@ -1555,6 +1555,56 @@ describe("providerQuotaStatus", () => {
     }
   });
 
+  it("redeems natively when the hub's credit id is older than the latest balance", () => {
+    const auth = { status: "authenticated", email: "same@example.com" } as const;
+    const spentWindows = [{ ...window, usedPercent: 100 }];
+    const selected = provider({
+      auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:45:00.000Z",
+        windows: spentWindows,
+        resetCredits: { availableCount: 1 },
+      },
+    });
+    const hub = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt,
+        accounts: [
+          {
+            id: "same",
+            driver: selected.driver,
+            email: "same@example.com",
+            usageLimits: {
+              checkedAt,
+              windows: spentWindows,
+              resetCredits: { availableCount: 2, nextCreditId: "spent-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    expect(providerQuotaStatus(selected.instanceId, [selected], hub, now)).toMatchObject({
+      reset: { input: { instanceId: "codex" }, credits: { availableCount: 1 } },
+    });
+  });
+
+  it("stays out of tokens when the reported reset predates the read", () => {
+    const selected = claude([
+      { ...window, usedPercent: 100, resetsAt: "2026-09-03T11:30:00.000Z" },
+    ]);
+    const stale = {
+      ...selected,
+      usageLimits: { ...selected.usageLimits!, checkedAt: "2026-09-03T11:45:00.000Z" },
+    };
+    expect(providerQuotaStatus(stale.instanceId, [stale], [], now)).toMatchObject({
+      state: "exhausted",
+      resetsAt: null,
+    });
+  });
+
   it("follows the account once a sibling instance redeems and refreshes", () => {
     const auth = { status: "authenticated", email: "same@example.com" } as const;
     const stale = provider({
