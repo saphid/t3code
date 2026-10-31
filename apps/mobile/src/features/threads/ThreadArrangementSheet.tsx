@@ -105,6 +105,7 @@ function DragHandle(props: {
   latest.current = props;
   const gesture = useMemo(
     () =>
+      // oxlint-disable-next-line react/capitalized-calls -- Gesture.Pan is a gesture factory, not a React component.
       Gesture.Pan()
         .enabled(!props.disabled)
         .minDistance(0)
@@ -269,6 +270,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const geometry = useRef({ height: 0, offset: 0 });
   const drag = useRef<Drag | null>(null);
   const frame = useRef<number | null>(null);
+  const lastFrameTime = useRef(0);
   const [preview, setPreview] = useState<Drag | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
   const latest = useRef({ rows, planners, moveThread });
@@ -293,7 +295,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     [],
   );
 
-  function update(translation: number) {
+  function update(translation: number, rearm = true) {
     const current = drag.current;
     if (current === null) return;
     current.translation = translation;
@@ -334,6 +336,45 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       current.destination = destination;
       setPreview({ ...current });
     }
+    if (rearm) armAutoscroll();
+  }
+  function nextScrollOffset(dt: number) {
+    const bounds = geometry.current;
+    const current = drag.current;
+    if (!current) return bounds.offset;
+    const y = current.startY + current.translation;
+    const speed =
+      y < 48
+        ? -Math.min(1, (48 - y) / 48)
+        : y > bounds.height - 48
+          ? Math.min(1, (y - bounds.height + 48) / 48)
+          : 0;
+    const tail = latest.current.rows.at(-1);
+    const maximum = Math.max(0, (tail ? tail.offset + tail.height : 0) - bounds.height);
+    return Math.max(0, Math.min(maximum, bounds.offset + speed * dt * 0.5));
+  }
+  function armAutoscroll() {
+    // Geometry can also leave an offset out of range with a neutral finger.
+    if (frame.current !== null || nextScrollOffset(1) === geometry.current.offset) return;
+    lastFrameTime.current = performance.now();
+    frame.current = requestAnimationFrame(tick);
+  }
+  function tick() {
+    frame.current = null;
+    const current = drag.current;
+    if (!current) return;
+    const timestamp = performance.now();
+    const dt = Math.min(timestamp - lastFrameTime.current, 32);
+    lastFrameTime.current = timestamp;
+    const bounds = geometry.current;
+    const offset = nextScrollOffset(dt);
+    if (offset !== bounds.offset) {
+      bounds.offset = offset;
+      list.current?.scrollToOffset({ offset, animated: false });
+      update(current.translation, false);
+    }
+    if (frame.current === null && nextScrollOffset(1) !== bounds.offset)
+      frame.current = requestAnimationFrame(tick);
   }
   function start(row: Row) {
     if (!row.thread || preview !== null) return;
@@ -347,32 +388,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     };
     setPreview({ ...drag.current });
     update(0);
-    let last = performance.now();
-    const tick = () => {
-      const current = drag.current;
-      if (!current) return;
-      const timestamp = performance.now();
-      const dt = Math.min(timestamp - last, 32);
-      last = timestamp;
-      const bounds = geometry.current;
-      const y = current.startY + current.translation;
-      const speed =
-        y < 48
-          ? -Math.min(1, (48 - y) / 48)
-          : y > bounds.height - 48
-            ? Math.min(1, (y - bounds.height + 48) / 48)
-            : 0;
-      const tail = latest.current.rows.at(-1);
-      const maximum = Math.max(0, (tail ? tail.offset + tail.height : 0) - bounds.height);
-      const offset = Math.max(0, Math.min(maximum, bounds.offset + speed * dt * 0.5));
-      if (offset !== bounds.offset) {
-        bounds.offset = offset;
-        list.current?.scrollToOffset({ offset, animated: false });
-        update(current.translation);
-      }
-      frame.current = requestAnimationFrame(tick);
-    };
-    frame.current = requestAnimationFrame(tick);
   }
   const visiblePreview = preview?.orderVersion === orderVersion ? preview : null;
   const sourceRow = visiblePreview
@@ -415,6 +430,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
               <View
                 onLayout={(event) => {
                   geometry.current.height = event.nativeEvent.layout.height;
+                  armAutoscroll();
                 }}
                 className="flex-1"
                 style={{ overflow: "hidden" }}
@@ -427,6 +443,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                   removeClippedSubviews={false}
                   onScroll={(event) => {
                     geometry.current.offset = event.nativeEvent.contentOffset.y;
+                    armAutoscroll();
                   }}
                   scrollEventThrottle={16}
                   getItemLayout={(_, index) => ({
