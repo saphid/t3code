@@ -2,7 +2,8 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
-import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { ThreadMarkdownVideo } from "./ThreadMarkdownVideo";
+import { ThreadMediaVisibility, THREAD_ROW_VIEWABILITY_CONFIG } from "./ThreadMediaVisibility";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -27,7 +28,7 @@ import {
 } from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
+import type { LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
@@ -790,9 +791,6 @@ function MessageAttachmentUnknown(props: { readonly name: string }) {
   );
 }
 
-// LegendList only computes hook visibility when the list has a viewability config.
-const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
-
 // The composer and overlays beside the feed keep UIKit from finding it on its own, so
 // register it with the screen controller. Header minimization observes this scroll view.
 function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.ScrollView>) {
@@ -801,14 +799,6 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
       <Animated.ScrollView {...props} />
     </NativeScrollViewMarker>
   );
-}
-
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
-  const [visible, setVisible] = useState(false);
-  useViewabilityAmount<ThreadFeedEntry>(
-    useCallback((token) => setVisible(token.sizeVisible > 0), []),
-  );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
 }
 
 interface MarkdownLinkHandlers {
@@ -3191,7 +3181,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             data={presentedFeed}
             extraData={listAppearanceData}
             renderItem={renderItem}
-            viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
+            viewabilityConfig={THREAD_ROW_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
             getItemType={(entry) => {
               if (entry.type !== "message") return entry.type;

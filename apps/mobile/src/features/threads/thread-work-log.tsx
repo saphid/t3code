@@ -61,6 +61,11 @@ import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { BrowserAppIcon } from "./BrowserAppIcon";
+import {
+  ThreadMediaVisibility,
+  THREAD_ROW_VIEWABILITY_CONFIG,
+  useThreadRowVisible,
+} from "./ThreadMediaVisibility";
 import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
@@ -250,6 +255,7 @@ function ShimmerWorkContent(props: {
 }
 
 export function ShimmeringWorkContent(props: {
+  readonly visible?: boolean;
   readonly className?: string;
   readonly textClassName?: string;
   readonly compact?: boolean;
@@ -263,6 +269,7 @@ export function ShimmeringWorkContent(props: {
 }) {
   const [availableWidth, setAvailableWidth] = useState(0);
   const [textWidth, setTextWidth] = useState(0);
+  const rowIsVisible = useThreadRowVisible(props.visible);
   const appIsActive = useAppActive();
   const reducedMotion = useReduceMotionEnabled();
   const screenIsFocused = useIsFocused();
@@ -278,7 +285,8 @@ export function ShimmeringWorkContent(props: {
   // (package.json). See docs/internals/performance-regressions.md.
   useEffect(() => {
     progress.setValue(0);
-    if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
+    if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused || !rowIsVisible)
+      return;
 
     const loop = NativeAnimated.loop(
       NativeAnimated.timing(progress, {
@@ -290,7 +298,7 @@ export function ShimmeringWorkContent(props: {
     );
     loop.start();
     return () => loop.stop();
-  }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
+  }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused, rowIsVisible]);
 
   // One timing covers the sweep and the pause, so the native driver can loop it.
   // The React Compiler memoizes these, so re-renders don't rebuild the native
@@ -323,7 +331,7 @@ export function ShimmeringWorkContent(props: {
         toolIcon={props.toolIcon}
         onTextLayout={(event) => setTextWidth(event.nativeEvent.lines[0]?.width ?? 0)}
       />
-      {!reducedMotion && appIsActive && screenIsFocused && contentWidth > 0 ? (
+      {!reducedMotion && appIsActive && screenIsFocused && rowIsVisible && contentWidth > 0 ? (
         <NativeAnimated.View
           pointerEvents="none"
           accessible={false}
@@ -683,7 +691,7 @@ function ThreadWorkGroupList(props: {
       : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
   const renderItem = ({ item, index }: { item: ThreadFeedActivity; index: number }) => (
     <View className={index < props.activities.length - 1 ? "pb-px" : undefined}>
-      {props.renderRow(item)}
+      <ThreadMediaVisibility>{props.renderRow(item)}</ThreadMediaVisibility>
     </View>
   );
 
@@ -693,6 +701,7 @@ function ThreadWorkGroupList(props: {
       <AnimatedLegendList
         ref={listRef}
         data={props.activities}
+        viewabilityConfig={THREAD_ROW_VIEWABILITY_CONFIG}
         keyExtractor={workLogRowKey}
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
         getFixedItemSize={getFixedItemSize}

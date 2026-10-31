@@ -136,15 +136,18 @@ vi.mock("../state/assets", () => ({
   assetEnvironment: {},
 }));
 vi.mock("../features/threads/ThreadMarkdownVideo", async (importOriginal) => {
-  const { createContext } = await import("react");
   const actual = await importOriginal<typeof import("../features/threads/ThreadMarkdownVideo")>();
   return {
     ...actual,
-    ThreadMediaVisibleContext: createContext(true),
     ThreadMarkdownVideo: (props: Parameters<typeof actual.ThreadMarkdownVideo>[0]) =>
       createElement(actual.ThreadMarkdownVideo, { ...props, thumbnailVisible: true }),
   };
 });
+
+vi.mock("../features/threads/ThreadMediaVisibility", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../features/threads/ThreadMediaVisibility")>()),
+  useThreadMediaVisible: () => true,
+}));
 
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),

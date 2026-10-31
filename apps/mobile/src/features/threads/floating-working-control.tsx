@@ -499,6 +499,7 @@ function FloatingStatusLabel(props: {
           type="monochrome"
         />
         <ShimmeringWorkContent
+          visible
           className="flex-none"
           textClassName="font-t3-medium"
           compact
