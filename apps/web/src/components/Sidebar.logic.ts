@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadConnectionStatus,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -567,6 +570,8 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
+    | "Reconnecting"
+    | "Offline"
     | "Completed"
     | "Failed"
     | "Pending Approval"
@@ -586,6 +591,8 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Failed: 3.5,
   Working: 3,
   Connecting: 3,
+  Reconnecting: 3,
+  Offline: 3,
   Waiting: 2.5,
   "Plan Ready": 2,
   Completed: 1,
@@ -601,6 +608,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestRun"
   | "runtime"
+  | "connectionPhase"
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
@@ -840,6 +848,9 @@ export function isContextMenuPointerDown(input: {
 }
 
 export type SidebarThreadStatus =
+  | "connecting"
+  | "reconnecting"
+  | "offline"
   | "approval"
   | "input"
   | "request"
@@ -879,7 +890,10 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
->;
+  | "connectionPhase"
+> & {
+  readonly pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"];
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -892,6 +906,8 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
   }
+  const connectionStatus = resolveThreadConnectionStatus(thread);
+  if (connectionStatus !== null) return connectionStatus;
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
@@ -911,6 +927,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 }
 
 export type SidebarV2TopStatusKind =
+  | "connecting"
+  | "reconnecting"
+  | "offline"
   | "approval"
   | "done"
   | "failed"
@@ -926,6 +945,13 @@ export function resolveSidebarV2TopStatus(input: {
   readonly isUnread: boolean;
   readonly isWoke: boolean;
 }): SidebarV2TopStatusKind | null {
+  if (
+    input.status === "connecting" ||
+    input.status === "reconnecting" ||
+    input.status === "offline"
+  ) {
+    return input.status;
+  }
   if (input.status === "working") {
     return "working";
   }
@@ -1087,6 +1113,21 @@ export function resolveThreadStatusPill(input: {
       label: "Guest Request",
       colorClass: "text-guest-foreground",
       dotClass: "bg-guest",
+      pulse: false,
+    };
+  }
+
+  const connectionStatus = resolveThreadConnectionStatus(thread);
+  if (connectionStatus !== null) {
+    return {
+      label:
+        connectionStatus === "connecting"
+          ? "Connecting"
+          : connectionStatus === "reconnecting"
+            ? "Reconnecting"
+            : "Offline",
+      colorClass: "text-sidebar-muted-foreground",
+      dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     };
   }
