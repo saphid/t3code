@@ -14,6 +14,9 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
+Choose **Project** under **Breakdown** to split usage by the T3 project whose thread ran it,
+including its worktrees. Sessions started outside T3, such as in a terminal, show as
+**Not in a T3 thread**.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
