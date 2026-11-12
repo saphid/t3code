@@ -10,7 +10,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { Fragment, useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -196,6 +196,7 @@ export function UsagePage() {
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -205,6 +206,7 @@ export function UsagePage() {
   const hiddenProviders = new Set(preferences.hiddenProviders);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
+  const usageWindow = breakdown === "project" ? { ...window, includeThreads: true } : window;
   const {
     merged: answeredUsage,
     environments,
@@ -212,12 +214,12 @@ export function UsagePage() {
     shown,
     isPartial,
     refresh,
-  } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
+  } = useUsage(usageWindow, selectedEnvironmentIds, hiddenProviders);
   const merged = shown?.merged ?? answeredUsage;
-  const shownWindow = shown?.window ?? window;
+  const shownWindow = shown?.window ?? usageWindow;
   const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
-  const showingKept = shown !== null && shown.window !== window;
+  const showingKept = shown !== null && shown.window !== usageWindow;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
@@ -316,7 +318,9 @@ export function UsagePage() {
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
-    void refresh(nextWindow).finally(() => {
+    void refresh(
+      breakdown === "project" ? { ...nextWindow, includeThreads: true } : nextWindow,
+    ).finally(() => {
       refreshingRef.current = false;
       setIsRefreshing(false);
     });
@@ -546,6 +550,8 @@ export function UsagePage() {
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
                 showChatGptSharing={showChatGptSharing}
+                breakdown={breakdown}
+                onBreakdownChange={setBreakdown}
                 onSelectModel={selectUsageModel}
               />
             )}
@@ -594,6 +600,8 @@ function UsageOverview({
   hiddenProviders,
   refreshingUsage,
   showChatGptSharing,
+  breakdown,
+  onBreakdownChange,
   onSelectModel,
 }: {
   readonly merged: MergedUsage;
@@ -607,9 +615,11 @@ function UsageOverview({
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
   readonly showChatGptSharing: boolean;
+  readonly breakdown: "model" | "project" | "time";
+  readonly onBreakdownChange: (breakdown: "model" | "project" | "time") => void;
   readonly onSelectModel: (key: string) => void;
 }) {
-  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
+  const [expandedProjects, setExpandedProjects] = useState<ReadonlySet<string>>(() => new Set());
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -862,7 +872,7 @@ function UsageOverview({
             onValueChange={(next) => {
               const value = next[0];
               if (value === "model" || value === "project" || value === "time") {
-                setBreakdown(value);
+                onBreakdownChange(value);
               }
             }}
           >
@@ -976,54 +986,111 @@ function UsageOverview({
                 breakdownProjects.map((project, index) => {
                   const value = metric === "tokens" ? project.totalTokens : project.costUsd;
                   const costUnknown = isModelCostUnknown(project);
+                  const expanded = expandedProjects.has(project.key);
+                  const projectThreads =
+                    metric === "tokens"
+                      ? project.threads.toSorted(
+                          (left, right) =>
+                            right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+                        )
+                      : project.threads;
                   return (
-                    <tr
-                      key={project.key}
-                      className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums"
-                    >
-                      <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
-                      <td className="py-2.5 text-left whitespace-normal">
-                        <span className={project.kind === "project" ? "text-foreground" : ""}>
-                          {project.kind === "project" ? project.title : "No project"}
-                        </span>
-                        {project.kind === "project" && selectedEnvironments.length > 1 ? (
-                          <span className="ml-1.5 text-xs">{project.environmentLabel}</span>
-                        ) : null}
-                        {project.duplicateTitleId !== null ? (
-                          <span className="block text-xs">ID {project.duplicateTitleId}</span>
-                        ) : null}
-                        {value > 0 && projectPeak > 0 ? (
-                          <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
-                            <div
-                              className="h-full rounded-full bg-foreground/60"
-                              style={{ width: `max(0.5rem, ${(value / projectPeak) * 100}%)` }}
-                            />
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="py-2.5 pl-6 text-foreground">
-                        {costUnknown ? (
-                          <span className="text-muted-foreground">Unpriced</span>
-                        ) : (
-                          <>
-                            {formatUsd(project.costUsd)}
-                            {project.unpricedRecords > 0 ? (
-                              <span className="block text-xs text-muted-foreground">
-                                Some unpriced
-                              </span>
-                            ) : null}
-                          </>
-                        )}
-                      </td>
-                      <td className="hidden py-2.5 pl-6 sm:table-cell">
-                        {metric === "tokens"
-                          ? formatPercent(project.tokenShare)
-                          : costUnknown
-                            ? ""
-                            : formatPercent(project.costShare)}
-                      </td>
-                      <td className="py-2.5 pl-6">{formatTokens(project.totalTokens)}</td>
-                    </tr>
+                    <Fragment key={project.key}>
+                      <tr className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+                        <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
+                        <td className="py-2.5 text-left whitespace-normal">
+                          {project.kind === "project" && project.threads.length > 0 ? (
+                            <button
+                              type="button"
+                              aria-expanded={expanded}
+                              aria-label={`${expanded ? "Collapse" : "Expand"} threads for ${project.title}`}
+                              onClick={() =>
+                                setExpandedProjects((current) => {
+                                  const next = new Set(current);
+                                  if (expanded) next.delete(project.key);
+                                  else next.add(project.key);
+                                  return next;
+                                })
+                              }
+                              className="inline-flex items-center gap-1 text-foreground"
+                            >
+                              <ChevronDownIcon
+                                aria-hidden
+                                className={cn("size-3.5", !expanded && "-rotate-90")}
+                              />
+                              {project.title}
+                            </button>
+                          ) : (
+                            <span className={project.kind === "project" ? "text-foreground" : ""}>
+                              {project.kind === "project" ? project.title : "No project"}
+                            </span>
+                          )}
+                          {project.kind === "project" && selectedEnvironments.length > 1 ? (
+                            <span className="ml-1.5 text-xs">{project.environmentLabel}</span>
+                          ) : null}
+                          {project.duplicateTitleId !== null ? (
+                            <span className="block text-xs">ID {project.duplicateTitleId}</span>
+                          ) : null}
+                          {value > 0 && projectPeak > 0 ? (
+                            <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
+                              <div
+                                className="h-full rounded-full bg-foreground/60"
+                                style={{ width: `max(0.5rem, ${(value / projectPeak) * 100}%)` }}
+                              />
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="py-2.5 pl-6 text-foreground">
+                          {costUnknown ? (
+                            <span className="text-muted-foreground">Unpriced</span>
+                          ) : (
+                            <>
+                              {formatUsd(project.costUsd)}
+                              {project.unpricedRecords > 0 ? (
+                                <span className="block text-xs text-muted-foreground">
+                                  Some unpriced
+                                </span>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <td className="hidden py-2.5 pl-6 sm:table-cell">
+                          {metric === "tokens"
+                            ? formatPercent(project.tokenShare)
+                            : costUnknown
+                              ? ""
+                              : formatPercent(project.costShare)}
+                        </td>
+                        <td className="py-2.5 pl-6">{formatTokens(project.totalTokens)}</td>
+                      </tr>
+                      {project.kind === "project" && expanded
+                        ? projectThreads.map((thread) => {
+                            const threadCostUnknown = isModelCostUnknown(thread);
+                            return (
+                              <tr
+                                key={thread.threadId}
+                                className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums"
+                              >
+                                <td />
+                                <td className="py-2.5 pl-6 text-left whitespace-normal text-foreground">
+                                  {thread.title ?? "Deleted thread"}
+                                </td>
+                                <td className="py-2.5 pl-6 text-foreground">
+                                  {threadCostUnknown ? "Unpriced" : formatUsd(thread.costUsd)}
+                                </td>
+                                <td className="hidden py-2.5 pl-6 sm:table-cell">
+                                  {metric === "tokens"
+                                    ? formatPercent(thread.tokenShare)
+                                    : threadCostUnknown
+                                      ? ""
+                                      : formatPercent(thread.costShare)}
+                                </td>
+                                <td className="py-2.5 pl-6">{formatTokens(thread.totalTokens)}</td>
+                              </tr>
+                            );
+                          })
+                        : null}
+                    </Fragment>
                   );
                 })
               )}

@@ -163,6 +163,7 @@ export function useUsage(
     resolution: input.resolution,
     sinceTime: input.sinceTime,
     untilTime: input.untilTime,
+    ...(input.includeThreads === true ? { includeThreads: true } : {}),
   });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
