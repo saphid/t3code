@@ -2,6 +2,7 @@ import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
   type UsageBucket,
   type UsageProviderKind,
   type UsageSource,
@@ -72,6 +73,17 @@ type ProjectIdentity =
     }
   | { readonly kind: "none" };
 
+export interface ThreadTotals {
+  readonly threadId: ThreadId;
+  readonly title: string | null;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly records: number;
+  readonly unpricedRecords: number;
+  readonly costShare: number;
+  readonly tokenShare: number;
+}
+
 export type ProjectTotals = ProjectIdentity & {
   readonly key: string;
   /** Shortest id prefix that tells this project from same-titled ones in its environment. */
@@ -82,6 +94,7 @@ export type ProjectTotals = ProjectIdentity & {
   readonly unpricedRecords: number;
   readonly costShare: number;
   readonly tokenShare: number;
+  readonly threads: readonly ThreadTotals[];
 };
 
 export interface CostQuality {
@@ -417,6 +430,16 @@ export function mergeUsage(
       totalTokens: number;
       records: number;
       unpricedRecords: number;
+      threads: Map<
+        ThreadId,
+        {
+          title: string | null;
+          costUsd: number;
+          totalTokens: number;
+          records: number;
+          unpricedRecords: number;
+        }
+      >;
     }
   >();
   const addProjectUsage = (
@@ -430,6 +453,7 @@ export function mergeUsage(
       totalTokens: 0,
       records: 0,
       unpricedRecords: 0,
+      threads: new Map(),
     };
     project.costUsd += usage.costUsd;
     project.totalTokens += bucketTokens(usage);
@@ -450,7 +474,7 @@ export function mergeUsage(
     );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
-    const { projectTotals, projects = [] } = environment.summary;
+    const { projectTotals, projects = [], threadTotals, threads = [] } = environment.summary;
     if (projectTotals === undefined) {
       for (const bucket of buckets) addProjectUsage(noProjectKey, noProjectIdentity, bucket);
     } else {
@@ -476,6 +500,29 @@ export function mergeUsage(
           },
           row,
         );
+      }
+    }
+
+    if (threadTotals !== undefined) {
+      const titles = new Map(threads.map((thread) => [thread.threadId, thread.title ?? null]));
+      for (const row of threadTotals) {
+        if (!owns(row)) continue;
+        const project = projectAccumulator.get(
+          JSON.stringify([environment.environmentId, row.projectId]),
+        );
+        if (project === undefined || project.identity.kind !== "project") continue;
+        const thread = project.threads.get(row.threadId) ?? {
+          title: titles.get(row.threadId) ?? null,
+          costUsd: 0,
+          totalTokens: 0,
+          records: 0,
+          unpricedRecords: 0,
+        };
+        thread.costUsd += row.costUsd;
+        thread.totalTokens += bucketTokens(row);
+        thread.records += row.records;
+        thread.unpricedRecords += row.unpricedRecords;
+        project.threads.set(row.threadId, thread);
       }
     }
 
@@ -647,13 +694,21 @@ export function mergeUsage(
   };
 
   const projects: ProjectTotals[] = [...projectAccumulator.entries()]
-    .map(([key, { identity, ...totals }]) => ({
+    .map(([key, { identity, threads, ...totals }]) => ({
       ...identity,
       key,
       duplicateTitleId: duplicateTitleId(identity),
       ...totals,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
       tokenShare: totalTokens === 0 ? 0 : totals.totalTokens / totalTokens,
+      threads: [...threads.entries()]
+        .map(([threadId, thread]) => ({
+          threadId,
+          ...thread,
+          costShare: totals.costUsd === 0 ? 0 : thread.costUsd / totals.costUsd,
+          tokenShare: totals.totalTokens === 0 ? 0 : thread.totalTokens / totals.totalTokens,
+        }))
+        .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens),
     }))
     .sort((a, b) => b.costUsd - a.costUsd || b.totalTokens - a.totalTokens);
 

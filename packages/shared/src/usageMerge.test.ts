@@ -3,6 +3,7 @@ import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
@@ -148,22 +149,32 @@ describe("mergeUsage", () => {
       records: 1,
       unpricedRecords: 0,
     });
+    const threadRows = (projectTotals: NonNullable<UsageSummary["projectTotals"]>) =>
+      projectTotals.flatMap((row) =>
+        row.projectId === undefined
+          ? []
+          : [{ ...row, projectId: row.projectId, threadId: "t1" as ThreadId }],
+      );
     const withProjects = (
       usageSummary: UsageSummary,
-      projectTotals: UsageSummary["projectTotals"],
+      projectTotals: NonNullable<UsageSummary["projectTotals"]>,
+      threadTitle: string,
     ): UsageSummary => ({
       ...usageSummary,
       projectTotals,
       projects: [{ projectId: "p1" as ProjectId, title: "App" }],
+      threadTotals: threadRows(projectTotals),
+      threads: [{ threadId: "t1" as ThreadId, title: threadTitle }],
     });
     const merged = mergeUsage(
       [
         environment(
           "env-a",
-          withProjects(summary([bucket({ sourcePath: "/claude", costUsd: 10 })], [shared]), [
-            projectRow("claude", "/claude", 6, "p1"),
-            projectRow("claude", "/claude", 4),
-          ]),
+          withProjects(
+            summary([bucket({ sourcePath: "/claude", costUsd: 10 })], [shared]),
+            [projectRow("claude", "/claude", 6, "p1"), projectRow("claude", "/claude", 4)],
+            "Env A thread",
+          ),
         ),
         // Its shared Claude copy is env-a's; only its own Codex usage counts here.
         environment(
@@ -177,6 +188,7 @@ describe("mergeUsage", () => {
               [shared, codex],
             ),
             [projectRow("claude", "/claude", 10, "p1"), projectRow("codex", "/codex", 3, "p1")],
+            "Env B thread",
           ),
         ),
         environment(
@@ -203,6 +215,25 @@ describe("mergeUsage", () => {
       ["none", null, 5, 5 / 14],
       ["project", "env-b:App", 3, 3 / 14],
     ]);
+    const projectThreads = merged.projects.filter((project) => project.kind === "project");
+    expect(
+      projectThreads.map((project) => [
+        project.environmentId,
+        project.threads[0]?.threadId,
+        project.threads[0]?.title,
+      ]),
+    ).toEqual([
+      ["env-a", "t1", "Env A thread"],
+      ["env-b", "t1", "Env B thread"],
+    ]);
+    for (const project of projectThreads) {
+      expect(project.threads.reduce((sum, thread) => sum + thread.costUsd, 0)).toBe(
+        project.costUsd,
+      );
+      expect(project.threads.reduce((sum, thread) => sum + thread.totalTokens, 0)).toBe(
+        project.totalTokens,
+      );
+    }
   });
 
   it("gives same-titled projects in one environment a distinguishing id prefix", () => {
