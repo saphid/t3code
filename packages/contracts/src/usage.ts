@@ -4,6 +4,7 @@ import {
   ForwardCompatibleArray,
   NonNegativeInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
@@ -94,6 +95,20 @@ export const UsageProject = Schema.Struct({
 });
 export type UsageProject = typeof UsageProject.Type;
 
+export const UsageThreadTotals = Schema.Struct({
+  ...UsageProjectTotals.fields,
+  projectId: ProjectId,
+  threadId: ThreadId,
+});
+export type UsageThreadTotals = typeof UsageThreadTotals.Type;
+
+export const UsageThread = Schema.Struct({
+  threadId: ThreadId,
+  /** Absent after a thread is deleted or before it receives a title. */
+  title: Schema.optional(TrimmedNonEmptyString),
+});
+export type UsageThread = typeof UsageThread.Type;
+
 export const UsageSourceFingerprint = Schema.Struct({
   hostId: TrimmedNonEmptyString,
   provider: UsageProviderKind,
@@ -158,6 +173,7 @@ export const UsageSummaryInput = Schema.Struct({
   untilTime: Schema.optional(TrimmedNonEmptyString),
   awaitRefresh: Schema.optional(Schema.Boolean),
   modelFilter: Schema.optional(UsageModelFilter),
+  includeThreads: Schema.optional(Schema.Boolean),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -176,6 +192,8 @@ export const UsageSummary = Schema.Struct({
   /** Absent when the server predates projects or could not read them; totals are unaffected. */
   projectTotals: Schema.optional(ForwardCompatibleArray(UsageProjectTotals)),
   projects: Schema.optional(ForwardCompatibleArray(UsageProject)),
+  threadTotals: Schema.optional(ForwardCompatibleArray(UsageThreadTotals)),
+  threads: Schema.optional(ForwardCompatibleArray(UsageThread)),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

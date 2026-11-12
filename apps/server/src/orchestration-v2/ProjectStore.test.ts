@@ -125,12 +125,12 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
 
         const rows = yield* projects.listProviderSessionProjects();
         assert.deepStrictEqual(
-          rows.map((row) => `${row.nativeId} ${row.projectId} ${row.title}`).sort(),
+          rows.map((row) => `${row.nativeId} ${row.projectId} ${row.threadId}`).sort(),
           [
-            "ambiguous p-app App",
-            "ambiguous p-other Other",
-            "bound p-app App",
-            "worktree p-app App",
+            "ambiguous p-app t-main",
+            "ambiguous p-other t-other",
+            "bound p-app t-main",
+            "worktree p-app t-worktree",
           ],
         );
       }),

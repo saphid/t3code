@@ -1,4 +1,4 @@
-import type { UsageProject } from "@t3tools/contracts";
+import type { ThreadId, UsageProject } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,27 +16,41 @@ export class UsageProjectAttributionReadError extends Schema.TaggedError<UsagePr
 
 export const sessionKey = (driver: string, nativeId: string) => `${driver}\u0000${nativeId}`;
 
-/** Keyed by `sessionKey`. A session claimed by threads in different projects belongs to neither. */
+export interface UsageSessionAttribution {
+  readonly project: UsageProject;
+  readonly threadId?: ThreadId;
+  readonly threadTitle?: string;
+}
+
+/** Keyed by `sessionKey`. A session claimed by different projects belongs to neither. */
 export function projectsBySession(
   rows: ReadonlyArray<ProjectStore.ProviderSessionProjectRow>,
-): ReadonlyMap<string, UsageProject> {
-  const claimed = new Map<string, UsageProject | null>();
+): ReadonlyMap<string, UsageSessionAttribution> {
+  const claimed = new Map<string, UsageSessionAttribution | null>();
   for (const row of rows) {
     const key = sessionKey(row.driver, row.nativeId);
     const existing = claimed.get(key);
     if (existing !== undefined) {
-      if (existing?.projectId !== row.projectId) claimed.set(key, null);
+      if (existing === null) continue;
+      if (existing.project.projectId !== row.projectId) claimed.set(key, null);
+      else if (existing.threadId !== row.threadId) claimed.set(key, { project: existing.project });
       continue;
     }
     const title =
-      row.title.trim() ||
+      row.projectTitle.trim() ||
       row.workspaceRoot.split(/[\\/]/).findLast((part) => part.length > 0) ||
       "Untitled project";
-    claimed.set(key, { projectId: row.projectId, title });
+    const threadTitle = row.threadTitle?.trim() || undefined;
+    claimed.set(key, {
+      project: { projectId: row.projectId, title },
+      threadId: row.threadId,
+      ...(threadTitle === undefined ? {} : { threadTitle }),
+    });
   }
-  const projects = new Map<string, UsageProject>();
-  for (const [key, project] of claimed) if (project !== null) projects.set(key, project);
-  return projects;
+  const attributions = new Map<string, UsageSessionAttribution>();
+  for (const [key, attribution] of claimed)
+    if (attribution !== null) attributions.set(key, attribution);
+  return attributions;
 }
 
 export class UsageProjectAttribution extends Context.Service<
@@ -44,7 +58,7 @@ export class UsageProjectAttribution extends Context.Service<
   {
     /** Keyed by `sessionKey`; deleted projects keep their past usage. */
     readonly read: Effect.Effect<
-      ReadonlyMap<string, UsageProject>,
+      ReadonlyMap<string, UsageSessionAttribution>,
       UsageProjectAttributionReadError
     >;
   }

@@ -2,11 +2,13 @@ import {
   type ProjectId,
   type ProviderInstanceConfig,
   ProviderInstanceId,
+  type ThreadId,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageProject,
   type UsageSource,
+  type UsageThread,
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
@@ -778,6 +780,16 @@ export const make = Effect.gen(function* () {
       { concurrency: 3 },
     );
     const referencedProjects = new Map<ProjectId, UsageProject>();
+    const referencedThreads = new Map<ThreadId, UsageThread>();
+
+    const attributionFor = (record: UsageRecord, transcriptPath?: string) => {
+      const driverKind = driverKindByProvider.get(record.provider);
+      // Pi binds threads to the session file, rather than the header's display id.
+      const nativeId = record.provider === "pi" ? transcriptPath : record.sessionId;
+      return driverKind === undefined || nativeId === undefined || nativeId.length === 0
+        ? undefined
+        : sessionProjects?.get(UsageProjectAttribution.sessionKey(driverKind, nativeId));
+    };
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -793,17 +805,33 @@ export const make = Effect.gen(function* () {
         ? {}
         : {
             attributeProject: (record: UsageRecord, transcriptPath?: string) => {
-              const driverKind = driverKindByProvider.get(record.provider);
-              // Pi binds threads to the session file, rather than the header's display id.
-              const nativeId = record.provider === "pi" ? transcriptPath : record.sessionId;
-              const project =
-                driverKind === undefined || nativeId === undefined || nativeId.length === 0
-                  ? undefined
-                  : sessionProjects.get(UsageProjectAttribution.sessionKey(driverKind, nativeId));
-              if (project === undefined) return null;
-              referencedProjects.set(project.projectId, project);
-              return project.projectId;
+              const attribution = attributionFor(record, transcriptPath);
+              if (
+                attribution === undefined ||
+                (input.includeThreads === true && attribution.threadId === undefined)
+              )
+                return null;
+              referencedProjects.set(attribution.project.projectId, attribution.project);
+              return attribution.project.projectId;
             },
+            ...(input.includeThreads !== true
+              ? {}
+              : {
+                  attributeThread: (record: UsageRecord, transcriptPath?: string) => {
+                    const attribution = attributionFor(record, transcriptPath);
+                    if (attribution?.threadId === undefined) return null;
+                    referencedThreads.set(attribution.threadId, {
+                      threadId: attribution.threadId,
+                      ...(attribution.threadTitle === undefined
+                        ? {}
+                        : { title: attribution.threadTitle }),
+                    });
+                    return {
+                      projectId: attribution.project.projectId,
+                      threadId: attribution.threadId,
+                    };
+                  },
+                }),
           }),
     });
 
@@ -966,6 +994,9 @@ export const make = Effect.gen(function* () {
       ...(aggregated.projectTotals === undefined
         ? {}
         : { projectTotals: aggregated.projectTotals, projects: [...referencedProjects.values()] }),
+      ...(aggregated.threadTotals === undefined
+        ? {}
+        : { threadTotals: aggregated.threadTotals, threads: [...referencedThreads.values()] }),
     } satisfies UsageSummary;
   });
 
@@ -982,6 +1013,7 @@ export const make = Effect.gen(function* () {
       settings,
       input.awaitRefresh === true,
       input.modelFilter ?? null,
+      input.includeThreads === true,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (

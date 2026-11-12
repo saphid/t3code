@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import { mergeUsageCopies, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
@@ -274,6 +274,10 @@ describe("UsageAggregator", () => {
         item.sessionId === "session-a" && transcriptPath === "/first.jsonl"
           ? ProjectId.make("p1")
           : null,
+      attributeThread: (item, transcriptPath) =>
+        item.sessionId === "session-a" && transcriptPath === "/first.jsonl"
+          ? { projectId: ProjectId.make("p1"), threadId: ThreadId.make("t1") }
+          : null,
     });
     const partial = record({
       dedupeKey: "msg_1:",
@@ -327,9 +331,14 @@ describe("UsageAggregator", () => {
         unpricedRecords: 1,
       },
     ]);
+    expect(result.threadTotals).toEqual([
+      expect.objectContaining({ ...result.projectTotals?.[0], threadId: "t1" }),
+    ]);
     const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
     expect(bucketCost).toBeCloseTo(projectCost, 9);
-    expect(aggregate([record()]).projectTotals).toBeUndefined();
+    const defaultResult = aggregate([record()]);
+    expect(defaultResult.projectTotals).toBeUndefined();
+    expect(defaultResult.threadTotals).toBeUndefined();
   });
 });
 

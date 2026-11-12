@@ -6,6 +6,7 @@ import {
   StoredProjectIcon,
   ProjectId,
   ProjectScript,
+  ThreadId,
   ThreadEnvMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -59,8 +60,10 @@ const ProviderSessionProjectRow = Schema.Struct({
   driver: Schema.String,
   nativeId: Schema.String,
   projectId: ProjectId,
-  title: Schema.String,
+  projectTitle: Schema.String,
   workspaceRoot: Schema.String,
+  threadId: ThreadId,
+  threadTitle: Schema.NullOr(Schema.String),
 });
 export type ProviderSessionProjectRow = typeof ProviderSessionProjectRow.Type;
 
@@ -165,8 +168,10 @@ export const make = Effect.gen(function* () {
         provider_thread.driver AS "driver",
         json_extract(provider_thread.payload_json, '$.nativeThreadRef.nativeId') AS "nativeId",
         project.project_id AS "projectId",
-        project.title AS "title",
-        project.workspace_root AS "workspaceRoot"
+        project.title AS "projectTitle",
+        project.workspace_root AS "workspaceRoot",
+        thread.thread_id AS "threadId",
+        thread.title AS "threadTitle"
       FROM orchestration_v2_projection_provider_threads AS provider_thread
       JOIN orchestration_v2_projection_threads AS thread
         ON thread.thread_id = provider_thread.thread_id
