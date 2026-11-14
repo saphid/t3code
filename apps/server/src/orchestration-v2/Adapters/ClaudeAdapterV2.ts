@@ -7151,6 +7151,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? "pending"
                   : member.state === "failed" &&
                       stopRequestedAt !== undefined &&
+                      previous?.status !== "failed" &&
                       (member.completedAt ?? stopRequestedAt) >= stopRequestedAt
                     ? "cancelled"
                     : member.state;
@@ -13748,6 +13749,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     cause,
                   }),
               ),
+              Effect.onError(() => Effect.sync(() => workflowStopRequestedAt.delete(taskId))),
             );
           }),
           awaitBackgroundTasks: Effect.fn("ClaudeAdapterV2.awaitBackgroundTasks")(
