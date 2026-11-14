@@ -7151,8 +7151,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? "pending"
                   : member.state === "failed" &&
                       stopRequestedAt !== undefined &&
-                      previous?.status !== "failed" &&
-                      (member.completedAt ?? stopRequestedAt) >= stopRequestedAt
+                      // lastProgressAt (completedAt) is the last tick, often before Stop for a blocked tool.
+                      previous?.status !== "failed"
                     ? "cancelled"
                     : member.state;
             const settled = status !== "pending" && status !== "running";

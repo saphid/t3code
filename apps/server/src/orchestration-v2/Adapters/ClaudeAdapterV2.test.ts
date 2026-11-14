@@ -22764,7 +22764,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001379", state: "start" }),
         );
         yield* harness.offerAndWait(
-          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001380", state: "error" }),
+          workflowSnapshot({
+            uuid: "00000000-0000-4000-8000-000000001380",
+            state: "error",
+            // Claude's last progress tick for a member blocked in one tool predates the Stop.
+            lastProgressAt: Date.parse("2026-10-17T05:59:00.000Z"),
+          }),
         );
         yield* harness.offerAndWait(
           workflowNotification({ uuid: "00000000-0000-4000-8000-000000001376", status: "stopped" }),
