@@ -239,7 +239,7 @@ export function ProviderModelsSection({
   const handleRemove = (slug: string) => {
     if (!canManageCustomModels) return;
     if (editingSlug === slug) setEditingSlug(null);
-    onChange(customModels.filter((entry) => entry.slug !== slug));
+    void onChange(customModels.filter((entry) => entry.slug !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
@@ -247,7 +247,7 @@ export function ProviderModelsSection({
 
   const handleSaveEdit = (next: CustomModelDefinition) => {
     if (!canManageCustomModels) return;
-    onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
+    void onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
     setEditingSlug(null);
   };
 
@@ -438,7 +438,7 @@ export function ProviderModelsSection({
               }
               if (event.key !== "Enter") return;
               event.preventDefault();
-              handleAdd();
+              void handleAdd();
             }}
             placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
             spellCheck={false}
