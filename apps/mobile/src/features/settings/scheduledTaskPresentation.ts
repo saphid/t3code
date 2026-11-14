@@ -38,7 +38,6 @@ export function formatNextScheduledTaskRun(nextRunAt: string, now: number): stri
   const days = localCalendarDay(next) - localCalendarDay(current);
   if (days === 0) {
     if (remaining < MINUTE) return "Next run in less than a minute";
-    // Choose the unit after rounding so 59.5 minutes never renders as "60 minutes".
     const minutes = Math.round(remaining / MINUTE);
     const unit = minutes < 60 ? "minute" : "hour";
     const count = minutes < 60 ? minutes : Math.round(remaining / HOUR);
