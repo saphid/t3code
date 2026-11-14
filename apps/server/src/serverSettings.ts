@@ -413,8 +413,9 @@ function migrateLegacySourceControlSettings(
 } {
   const sourceControlHosts = { ...settings.sourceControlHosts };
   const secretMoves: Array<{ readonly from: string; readonly to: string }> = [];
-  if (legacy.bitbucket !== undefined && sourceControlHosts.bitbucket === undefined) {
-    sourceControlHosts.bitbucket = legacy.bitbucket;
+  // A host made from a retired record while its token was unreadable still owes that token a move.
+  if (legacy.bitbucket !== undefined) {
+    sourceControlHosts.bitbucket ??= legacy.bitbucket;
     for (const [field, from] of Object.entries(LEGACY_BITBUCKET_SECRET_NAMES)) {
       if (legacy.bitbucket[field] !== SECRET_REDACTED) continue;
       secretMoves.push({
@@ -423,8 +424,8 @@ function migrateLegacySourceControlSettings(
       });
     }
   }
-  if (legacy.github !== undefined && sourceControlHosts.github === undefined) {
-    sourceControlHosts.github = legacy.github;
+  if (legacy.github !== undefined) {
+    sourceControlHosts.github ??= legacy.github;
     for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
       if (serverHost === null || value !== SECRET_REDACTED) continue;
       secretMoves.push({
@@ -739,10 +740,7 @@ const make = Effect.gen(function* () {
         stripDefaultServerSettings(settings, managed.defaults),
         // Retired keys whose secrets could not be copied yet stay for the next load to migrate.
         Object.fromEntries(
-          Object.entries(retiredSourceControl).filter(
-            ([kind, value]) =>
-              value !== undefined && settings.sourceControlHosts[kind] === undefined,
-          ),
+          Object.entries(retiredSourceControl).filter(([, value]) => value !== undefined),
         ),
       );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -903,44 +901,45 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
-    // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
-    const legacySecretsCopied = yield* Effect.forEach(
-      settingsFileTrusted
-        ? migrateLegacySourceControlSettings(folded, legacySourceControl).secretMoves
-        : [],
-      (move) =>
-        secretStore.get(move.from).pipe(
-          Effect.flatMap((secret) =>
-            Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
-          ),
-          Effect.as(true),
-          Effect.catch(() =>
-            Effect.logWarning("failed to copy a source control secret to its new name", {
-              secretName: move.to,
-            }).pipe(Effect.as(false)),
-          ),
-        ),
-    ).pipe(Effect.map((copied) => copied.every(Boolean)));
-    const hasLegacySourceControl =
+    const hasRetiredSourceControl =
       settingsFileTrusted &&
-      legacySecretsCopied &&
       (legacySourceControl.bitbucket !== undefined || legacySourceControl.github !== undefined);
-    const retiredSourceControl =
-      settingsFileTrusted && !legacySecretsCopied ? legacySourceControl : {};
-    const sourceControlMigration = hasLegacySourceControl
+    const sourceControlMigration = hasRetiredSourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
+    // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
+    const legacySecretsCopied = yield* Effect.forEach(sourceControlMigration.secretMoves, (move) =>
+      secretStore.get(move.to).pipe(
+        // A token saved under the new name while the copy was pending is the newer one.
+        Effect.flatMap((saved) =>
+          Option.isSome(saved) ? Effect.succeedNone : secretStore.get(move.from),
+        ),
+        Effect.flatMap((secret) =>
+          Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
+        ),
+        Effect.as(true),
+        Effect.catch(() =>
+          Effect.logWarning("failed to copy a source control secret to its new name", {
+            secretName: move.to,
+          }).pipe(Effect.as(false)),
+        ),
+      ),
+    ).pipe(Effect.map((copied) => copied.every(Boolean)));
+    const retiredSourceControl =
+      hasRetiredSourceControl && !legacySecretsCopied ? legacySourceControl : {};
     const migrated = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
     if (
       migrated !== loaded ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
-      hasLegacySourceControl
+      hasRetiredSourceControl
     ) {
       yield* writeSettingsAtomically(migrated, retiredSourceControl);
-      for (const move of sourceControlMigration.secretMoves) {
-        yield* secretStore.remove(move.from).pipe(Effect.ignore);
+      if (legacySecretsCopied) {
+        for (const move of sourceControlMigration.secretMoves) {
+          yield* secretStore.remove(move.from).pipe(Effect.ignore);
+        }
       }
     }
     return { settings: migrated, parseFailure, retiredSourceControl };
