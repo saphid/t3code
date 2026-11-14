@@ -799,6 +799,9 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // Secret names of retired tokens whose copy failed on the last load; nothing is stored there yet.
+  let pendingSourceControlSecrets: ReadonlySet<string> = new Set();
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = managed.defaults;
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
@@ -908,7 +911,7 @@ const make = Effect.gen(function* () {
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
     // Remove retired keys only after copying secrets and writing the new file; failures retry on next load.
-    const legacySecretsCopied = yield* Effect.forEach(sourceControlMigration.secretMoves, (move) =>
+    const copied = yield* Effect.forEach(sourceControlMigration.secretMoves, (move) =>
       secretStore.get(move.to).pipe(
         // A token saved under the new name while the copy was pending is the newer one.
         Effect.flatMap((saved) =>
@@ -924,7 +927,13 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as(false)),
         ),
       ),
-    ).pipe(Effect.map((copied) => copied.every(Boolean)));
+    );
+    const legacySecretsCopied = copied.every(Boolean);
+    pendingSourceControlSecrets = new Set(
+      sourceControlMigration.secretMoves
+        .filter((_, index) => !copied[index])
+        .map((move) => move.to),
+    );
     const retiredSourceControl =
       hasRetiredSourceControl && !legacySecretsCopied ? legacySourceControl : {};
     const migrated = settingsFileTrusted
@@ -969,7 +978,13 @@ const make = Effect.gen(function* () {
         return secret;
       });
       for (const secret of pending.values()) {
-        const value = yield* secretStore.get(secret.secretName).pipe(
+        const read = secretStore.get(secret.secretName);
+        // A token still waiting to move must not make settings unreadable while the store fails.
+        const value = yield* (
+          pendingSourceControlSecrets.has(secret.secretName)
+            ? read.pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()))
+            : read
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ServerSettingsError({
@@ -1223,11 +1238,7 @@ const make = Effect.gen(function* () {
         // a removed provider's reference is cleared below rather than restored by persistence.
         const echoed = withEchoedSecretReferences(current, yield* update(current));
         // Clients see a token still waiting to move as unset and echo it back empty; keep its marker.
-        const pendingTokens = new Set(
-          migrateLegacySourceControlSettings(current, retiredSourceControl).secretMoves.map(
-            (move) => move.to,
-          ),
-        );
+        const pendingTokens = pendingSourceControlSecrets;
         const updated =
           pendingTokens.size === 0
             ? echoed
