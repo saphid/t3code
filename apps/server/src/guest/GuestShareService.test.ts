@@ -84,6 +84,7 @@ const layerConnect = Layer.mock(CloudManagedEndpointRuntime)({
     pid: 1,
     readyConnections: 1,
     hostname: value,
+    origin: null,
     protocol: "http2",
   })),
 });
@@ -91,7 +92,7 @@ const layerProviders = Layer.mock(ProviderRegistry.ProviderRegistry)({
   getProviders: Effect.succeed([]),
 });
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-guest-share-" });
-// The real cleanup also closes terminals and previews; these tests only need the files gone.
+// The real cleanup also closes terminals, previews and devices; these tests only need the files gone.
 const layerCleanup = Layer.effect(
   ResourceCleanupService.ResourceCleanupService,
   Effect.gen(function* () {
@@ -101,6 +102,7 @@ const layerCleanup = Layer.effect(
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
       cleanupPreviews: () => Effect.void,
+      cleanupDevices: () => Effect.void,
       cleanupAttachments: (attachmentIds) =>
         Effect.forEach(
           attachmentIds,
