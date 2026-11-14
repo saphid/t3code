@@ -1,0 +1,49 @@
+~/scripts$ E2E_TELEMETRY_DISABLED=1 e2e run scenarios/recovery-29570-cancel-save.e2e.ts --target web ⊘ cache disabled
+
+ RUN  e2e v0.23.0 /Users/saphid/.t3/worktrees/pr-recovery-29570-20261113/scripts
+      run 01a1d8a6-4e7c-764a-ba29-89448ef49f7b · targets: web, ios · CI
+
+ ✓ target "web" command at http://127.0.0.1:56808/.well-known/t3/environment ready 4.12s
+   × |web| scenarios/recovery-29570-cancel-save.e2e.ts > Cancelling a queued edit while its save is held releases its preview after settlement 51.43s
+     → expect.poll(...).toBe(...) timed out after 15000 ms
+ ❯ |web| scenarios/recovery-29570-cancel-save.e2e.ts (1 test | 1 failed) 51.43s
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |web| scenarios/recovery-29570-cancel-save.e2e.ts > Cancelling a queued edit while its save is held releases its preview after settlement
+ASSERTION_FAILED: expect.poll(...).toBe(...) timed out after 15000 ms
+last: expected false to be true
+ ❯ scenarios/recovery-29570-cancel-save.e2e.ts:60:5
+     58|     await app.screenshot("cancelled-before-settlement");
+     59|     await browser.evaluate(() => (window as any).__proof29570.held());
+     60|     await expect.poll(() => browser.evaluate(() => {
+       |     ^
+     61|       const p = (window as any).__proof29570;
+     62|       return p.previews.every((url: string) => p.revoked.includes(url…
+ ❯ at http://127.0.0.1:56808/e661a364-1ee9-4384-acfe-11ff12f11eb1/mcp:01ff9e5f-c1c8-44f6-81a1-750a9d82f855
+ ❯ app 1 error, 1 warning logged
+   × console error: flushSync was called from inside a lifecycle method. React cannot flush when React is already rendering. Consider moving this call to a scheduler task or micro task. (at /node_modules/.vite/deps/react-dom-DGZhW92G.js?v=8e9e6aa6:92)
+ ❯ trace .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/trace.md
+ ❯ video .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/video/video.webm
+ ❯ video .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-2/video/video.webm
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 0 passed (1)
+      Tests  1 failed | 0 passed (1)
+   Start at  17:02:20
+   Duration  57.78s (startup 4.12s)
+     Traces  .e2e/results/ (1 page, trace.md in each test's directory)
+Screenshots  .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/001-save-held.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/002-cancelled-before-settlement.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-2/screenshots/001-save-held.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-2/screenshots/002-cancelled-before-settlement.png
+
+   Markdown  .e2e/summary.md
+
+     Failed  × |web| scenarios/recovery-29570-cancel-save.e2e.ts:60 > Cancelling a queued edit while its save is held releases its preview after settlement
+               ASSERTION_FAILED: expect.poll(...).toBe(...) timed out after 15000 ms
+               trace .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/trace.md
+
+

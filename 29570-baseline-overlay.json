@@ -1,0 +1,15 @@
+{
+  "base": "f7936cf7ee96237dda7cffe308222d1f864bba44",
+  "head": "4cdf8a7e5247b9c930fc76475f124476bee573f0",
+  "files": {
+    "apps/web/src/components/chat/useQueuedRunEdit.browser.test.tsx": {
+      "candidateSha256": "fc1492b1d38f55e62a6f7f51c5e4b84e5708b60b847acdfb9feb35c51043962d",
+      "baseSha256": "8c99758bde45337197e658bc14123664b415c9ed532d65b7a606ce4d147661c8"
+    },
+    "apps/web/src/components/chat/useQueuedRunEdit.ts": {
+      "candidateSha256": "c6321493a7ff2aaeda56cb241b2165486c39913c5bce8c5317a05a2c6867efe5",
+      "baseSha256": "0f7f2395e8dfd1109a8c43949e6ed051db0a75df28183890fcb41bb49a1d787d"
+    }
+  },
+  "method": "Exact baseline blobs for complete two-file contribution temporarily overlaid in owned worktree; no branch/worktree creation. Runner app fresh isolated state; scenario tooling unchanged."
+}

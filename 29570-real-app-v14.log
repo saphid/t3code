@@ -1,0 +1,22 @@
+~/scripts$ E2E_TELEMETRY_DISABLED=1 e2e run scenarios/recovery-29570-cancel-save.e2e.ts --target web ⊘ cache disabled
+
+ RUN  e2e v0.23.0 /Users/saphid/.t3/worktrees/pr-recovery-29570-20261113/scripts
+      run 01a1d8a5-5c49-7936-acf8-533f7e80ec95 · targets: web, ios · CI
+
+ ✓ target "web" command at http://127.0.0.1:56084/.well-known/t3/environment ready 4.71s
+   ✓ |web| scenarios/recovery-29570-cancel-save.e2e.ts > Cancelling a queued edit while its save is held releases its preview after settlement 14.17s
+ ✓ |web| scenarios/recovery-29570-cancel-save.e2e.ts (1 test) 14.17s
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  17:01:18
+   Duration  22.48s (startup 4.71s)
+     Traces  .e2e/results/ (1 page, trace.md in each test's directory)
+Screenshots  .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/001-save-held.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/002-cancelled-before-settlement.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/003-preview-released-after-settlement.png
+             .e2e/results/recovery-29570-cancel-save-cancelling-a-queued-edit-while-16c648f464e203f5/attempt-1/screenshots/004-saved-attachment-reopened.png
+
+   Markdown  .e2e/summary.md
+
+
