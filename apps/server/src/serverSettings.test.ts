@@ -1980,11 +1980,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
-    const githubTokenName = sourceControlHostSecretName({
-      kind: "github",
-      field: "tokens",
-      serverHost: "github.com",
-    });
     const secrets = new Map([
       [
         `github-token-${Buffer.from("github.com", "utf8").toString("base64url")}`,
@@ -2021,7 +2016,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const loaded = (yield* serverSettings.getSettings).sourceControlHosts;
       assert.deepEqual(loaded.bitbucket, { email: "me@example.com", accessToken: "" });
       assert.deepEqual(loaded.github?.tokens, { "github.com": "ghp_saved" });
-      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
+      const afterLoad = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(afterLoad.bitbucket, JSON.parse(legacy).bitbucket);
+      assert.isUndefined(afterLoad.github);
 
       yield* serverSettings.updateSettings({ defaultAutoPull: true });
       yield* serverSettings.updateSettings({
@@ -2038,7 +2035,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         accessToken: SECRET_REDACTED,
       });
       assert.deepEqual(written.sourceControlHosts.github.tokens, { "github.com": "" });
-      assert.isFalse(secrets.has(githubTokenName));
+      assert.deepEqual([...secrets.keys()], []);
       assert.equal(written.defaultAutoPull, true);
     }).pipe(Effect.provide(layerSettings));
   });

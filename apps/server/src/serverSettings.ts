@@ -409,16 +409,25 @@ function migrateLegacySourceControlSettings(
   },
 ): {
   readonly settings: ServerSettings;
-  readonly secretMoves: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+  readonly secretMoves: ReadonlyArray<{
+    readonly kind: "bitbucket" | "github";
+    readonly from: string;
+    readonly to: string;
+  }>;
 } {
   const sourceControlHosts = { ...settings.sourceControlHosts };
-  const secretMoves: Array<{ readonly from: string; readonly to: string }> = [];
+  const secretMoves: Array<{
+    readonly kind: "bitbucket" | "github";
+    readonly from: string;
+    readonly to: string;
+  }> = [];
   // A host made from a retired record while its token was unreadable still owes that token a move.
   if (legacy.bitbucket !== undefined) {
     sourceControlHosts.bitbucket ??= legacy.bitbucket;
     for (const [field, from] of Object.entries(LEGACY_BITBUCKET_SECRET_NAMES)) {
       if (legacy.bitbucket[field] !== SECRET_REDACTED) continue;
       secretMoves.push({
+        kind: "bitbucket",
         from,
         to: sourceControlHostSecretName({ kind: "bitbucket", field, serverHost: null }),
       });
@@ -429,6 +438,7 @@ function migrateLegacySourceControlSettings(
     for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
       if (serverHost === null || value !== SECRET_REDACTED) continue;
       secretMoves.push({
+        kind: "github",
         from: legacyGitHubTokenSecretName(serverHost),
         to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
       });
@@ -928,14 +938,18 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-    const legacySecretsCopied = copied.every(Boolean);
-    pendingSourceControlSecrets = new Set(
-      sourceControlMigration.secretMoves
-        .filter((_, index) => !copied[index])
-        .map((move) => move.to),
-    );
-    const retiredSourceControl =
-      hasRetiredSourceControl && !legacySecretsCopied ? legacySourceControl : {};
+    const failedMoves = sourceControlMigration.secretMoves.filter((_, index) => !copied[index]);
+    pendingSourceControlSecrets = new Set(failedMoves.map((move) => move.to));
+    // Each kind retires on its own, so a finished one is not copied again while another waits.
+    const pendingKinds = new Set(failedMoves.map((move) => move.kind));
+    const retiredSourceControl = {
+      bitbucket: pendingKinds.has("bitbucket") ? legacySourceControl.bitbucket : undefined,
+      github: pendingKinds.has("github") ? legacySourceControl.github : undefined,
+    };
+    const retiringKind =
+      (legacySourceControl.bitbucket !== undefined &&
+        retiredSourceControl.bitbucket === undefined) ||
+      (legacySourceControl.github !== undefined && retiredSourceControl.github === undefined);
     const migrated = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
@@ -945,13 +959,12 @@ const make = Effect.gen(function* () {
       folded !== loaded ||
       migrated !== sourceControlMigration.settings ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
-      (hasRetiredSourceControl && legacySecretsCopied)
+      (hasRetiredSourceControl && retiringKind)
     ) {
       yield* writeSettingsAtomically(migrated, retiredSourceControl);
-      if (legacySecretsCopied) {
-        for (const move of sourceControlMigration.secretMoves) {
-          yield* secretStore.remove(move.from).pipe(Effect.ignore);
-        }
+      for (const move of sourceControlMigration.secretMoves) {
+        if (pendingKinds.has(move.kind)) continue;
+        yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
     return { settings: migrated, parseFailure, retiredSourceControl };
