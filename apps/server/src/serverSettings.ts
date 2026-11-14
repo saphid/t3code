@@ -930,10 +930,13 @@ const make = Effect.gen(function* () {
     const migrated = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
+    // Hosts filled from a still-pending retired record do not count: rewriting the same file on each
+    // load would wake the settings watcher, which reloads and writes again.
     if (
-      migrated !== loaded ||
+      folded !== loaded ||
+      migrated !== sourceControlMigration.settings ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
-      hasRetiredSourceControl
+      (hasRetiredSourceControl && legacySecretsCopied)
     ) {
       yield* writeSettingsAtomically(migrated, retiredSourceControl);
       if (legacySecretsCopied) {

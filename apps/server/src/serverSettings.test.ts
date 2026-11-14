@@ -1993,10 +1993,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       yield* Effect.exit(serverSettings.getSettings);
 
-      assert.deepEqual(
-        JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)).bitbucket,
-        JSON.parse(legacy).bitbucket,
-      );
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
 
       yield* serverSettings.updateSettings({ defaultAutoPull: true });
       yield* serverSettings.updateSettings({
