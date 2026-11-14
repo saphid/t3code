@@ -116,6 +116,7 @@ function useThreadActionExecutor(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
+    restoreUnsettledAt?: string | null,
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -155,7 +156,11 @@ function useThreadActionExecutor(
               // suppressed until real activity clears the pin server-side.
               await unsettleMutation({
                 environmentId: thread.environmentId,
-                input: { threadId: thread.id, reason: "user" },
+                input: {
+                  threadId: thread.id,
+                  reason: "user",
+                  ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
+                },
               })
             : await (
                 action === "settle"
@@ -265,7 +270,7 @@ export function useThreadListActions(): {
             async (step) => {
               switch (step.action) {
                 case "unsettle":
-                  return unsettleThread(thread);
+                  return unsettleThread(thread, step.restoreUnsettledAt);
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
@@ -421,8 +426,10 @@ export function useThreadListActions(): {
     snoozeInFlightThreadKeys.current.delete(key);
     return succeeded;
   };
-  const unsettleThread = async (thread: EnvironmentThreadShell) =>
-    (await executeAction("unsettle", thread)) === true;
+  const unsettleThread = async (
+    thread: EnvironmentThreadShell,
+    restoreUnsettledAt?: string | null,
+  ) => (await executeAction("unsettle", thread, undefined, restoreUnsettledAt)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {

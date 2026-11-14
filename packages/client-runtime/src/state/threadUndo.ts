@@ -36,7 +36,7 @@ export function invalidate(kind: string, threadKey: string) {
 }
 
 export type ThreadUndoStep =
-  | { readonly action: "unsettle" }
+  | { readonly action: "unsettle"; readonly restoreUnsettledAt?: string | null }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
   | { readonly action: "reorderActive"; readonly orderKey: string }
@@ -50,6 +50,7 @@ export function planThreadUndo(
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
     readonly activeOrderKey?: string | null;
+    readonly unsettledAt?: string | null;
     readonly snoozedUntil?: string | null;
   } | null,
 ): ThreadUndoPlan {
@@ -71,7 +72,11 @@ export function planThreadUndo(
       : thread?.activeOrderKey != null
         ? [{ action: "reorderActive", orderKey: thread.activeOrderKey }]
         : [];
-  return [{ action: "unsettle" }, ...placement, ...snooze];
+  const unsettle: ThreadUndoStep =
+    thread == null
+      ? { action: "unsettle" }
+      : { action: "unsettle", restoreUnsettledAt: thread.unsettledAt ?? null };
+  return [unsettle, ...placement, ...snooze];
 }
 
 export async function executeThreadUndo<Result>(

@@ -63,6 +63,7 @@ const threadShell = vi.hoisted(() => ({
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
   activeOrderKey: null as string | null,
+  unsettledAt: null as string | null,
   snoozedUntil: null as string | null,
   projectId: "project",
   environmentId: "undo-env",
@@ -124,6 +125,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.activeOrderKey = null;
+  threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
   shellLoaded.current = true;
 });
@@ -328,6 +330,21 @@ describe("settle and snooze Undo", () => {
     expect(commands.unsettle.mock.invocationCallOrder[0]).toBeLessThan(
       commands.reorderActive.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("puts an automatically ordered thread back at its Active anchor", async () => {
+    threadShell.unsettledAt = "2026-01-02T00:00:00.000Z";
+    await useThreadActions().settleThread(target);
+    await currentUndo()();
+    expect(commands.unsettle).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: {
+        threadId: target.threadId,
+        reason: "user",
+        restoreUnsettledAt: "2026-01-02T00:00:00.000Z",
+      },
+    });
+    expect(commands.reorderActive).not.toHaveBeenCalled();
   });
 
   it("stops settle restoration if restoring the pin fails", async () => {
