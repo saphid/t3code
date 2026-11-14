@@ -1997,7 +1997,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       yield* serverSettings.updateSettings({ defaultAutoPull: true });
       yield* serverSettings.updateSettings({
-        sourceControlHosts: { bitbucket: { email: "new@example.com" } },
+        sourceControlHosts: { bitbucket: { email: "new@example.com", accessToken: "" } },
       });
 
       const written = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));

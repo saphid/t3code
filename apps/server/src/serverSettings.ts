@@ -1221,7 +1221,19 @@ const make = Effect.gen(function* () {
         }
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withEchoedSecretReferences(current, yield* update(current));
+        const echoed = withEchoedSecretReferences(current, yield* update(current));
+        // Clients see a token still waiting to move as unset and echo it back empty; keep its marker.
+        const pendingTokens = new Set(
+          migrateLegacySourceControlSettings(current, retiredSourceControl).secretMoves.map(
+            (move) => move.to,
+          ),
+        );
+        const updated =
+          pendingTokens.size === 0
+            ? echoed
+            : mapSettingsSecretValues(echoed, (value, secretName) =>
+                value === "" && pendingTokens.has(secretName) ? SECRET_REDACTED : value,
+              );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
