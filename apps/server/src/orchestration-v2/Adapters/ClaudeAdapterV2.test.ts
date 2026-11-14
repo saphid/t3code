@@ -22725,16 +22725,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
             ...denial,
           });
+        const denial = {
+          toolUseResult: "User rejected tool use",
+          toolDenialKind: "user-rejected",
+        };
         NodeFS.appendFileSync(
           transcriptPath,
-          errorLine("line-ping-failed", "toolu_a1_ping", "Exit code 1") +
-            memberAssistantLine("line-sleep", "msg_a1_sleep", [
-              { type: "tool_use", id: "toolu_a1_sleep", name: "Bash", input: { command: "sleep" } },
-            ]),
+          errorLine("line-ping-failed", "toolu_a1_ping", "Exit code 1"),
         );
         yield* harness.offerAndWait(
           workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001378", state: "start" }),
         );
+        // A declined approval written before Stop but first read after it stays a failure.
+        NodeFS.appendFileSync(
+          transcriptPath,
+          memberAssistantLine("line-rm", "msg_a1_rm", [
+            { type: "tool_use", id: "toolu_a1_rm", name: "Bash", input: { command: "rm" } },
+          ]) +
+            errorLine("line-rm-declined", "toolu_a1_rm", "Declined", denial) +
+            memberAssistantLine("line-sleep", "msg_a1_sleep", [
+              { type: "tool_use", id: "toolu_a1_sleep", name: "Bash", input: { command: "sleep" } },
+            ]),
+        );
+        yield* TestClock.setTime(Date.parse("2026-10-17T06:00:00.000Z"));
         yield* harness.runtime.stopTask!({
           providerThread: harness.providerThread,
           taskId: WORKFLOW_TASK_ID,
@@ -22743,8 +22756,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         NodeFS.appendFileSync(
           transcriptPath,
           errorLine("line-sleep-stopped", "toolu_a1_sleep", "Rejected", {
-            toolUseResult: "User rejected tool use",
-            toolDenialKind: "user-rejected",
+            ...denial,
+            timestamp: "2026-10-17T06:00:01.000Z",
           }),
         );
         yield* harness.offerAndWait(
@@ -22760,6 +22773,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(latestMemberThreadItems(harness.events, threadId).map(describeItem), [
           "user_message",
           "command failed: Exit code 1",
+          "command failed: Declined",
           "command interrupted: Rejected",
         ]);
         yield* Queue.offer(
