@@ -16,6 +16,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
@@ -1130,7 +1131,19 @@ describe("UsageService", () => {
           );
         });
         yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
+          const makeAttributed = UsageService.make.pipe(
+            Effect.provideService(UsageProjectAttribution.UsageProjectAttribution, {
+              read: Effect.succeed(
+                new Map(
+                  ["parent.jsonl", "fork.jsonl"].map((name) => [
+                    UsageProjectAttribution.sessionKey("pi", NodePath.join(dir, name)),
+                    { projectId: ProjectId.make("pi-project"), title: "Pi project" },
+                  ]),
+                ),
+              ),
+            }),
+          );
+          const service = yield* makeAttributed;
           const first = yield* service.readSummary(WINDOW);
           const pi = first.buckets.filter((bucket) => bucket.provider === "pi");
           assert.strictEqual(
@@ -1193,9 +1206,24 @@ describe("UsageService", () => {
               .reduce((total, bucket) => total + bucket.costUsd, 0),
             45,
           );
+          assert.ok(grown.projectTotals?.every((row) => row.projectId === "pi-project"));
+          yield* Effect.promise(async () => {
+            for (const name of ["parent.jsonl", "fork.jsonl"]) {
+              const file = NodePath.join(dir, name);
+              await NodeFSP.writeFile(
+                file + ".zst",
+                NodeZlib.zstdCompressSync(await NodeFSP.readFile(file)),
+              );
+              await NodeFSP.unlink(file);
+            }
+          });
+          const archived = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(archived.projectTotals, grown.projectTotals);
           yield* service.awaitPersisted;
-          const restarted = yield* UsageService.make;
-          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          const restarted = yield* makeAttributed;
+          const restored = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(restored.buckets, grown.buckets);
+          assert.deepStrictEqual(restored.projectTotals, grown.projectTotals);
         }).pipe(
           Effect.scoped,
           Effect.provide(

@@ -1024,7 +1024,10 @@ export const make = Effect.gen(function* () {
             attributeProject: (record: UsageRecord, transcriptPath?: string) => {
               const driverKind = driverKindByProvider.get(record.provider);
               // Pi binds threads to the session file, rather than the header's display id.
-              const nativeId = record.provider === "pi" ? transcriptPath : record.sessionId;
+              const nativeId =
+                record.provider === "pi"
+                  ? transcriptPath?.replace(/\.jsonl\.zst$/, ".jsonl")
+                  : record.sessionId;
               const project =
                 driverKind === undefined || nativeId === undefined || nativeId.length === 0
                   ? undefined
