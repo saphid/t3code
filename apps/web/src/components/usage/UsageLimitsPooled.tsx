@@ -569,27 +569,15 @@ function PoolWindowCard({
   readonly description?: string | undefined;
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
-  const inlineBar = pool.columns.length === 1 && label !== null;
   return (
-    <div className="@container/usage-window w-full max-w-4xl">
-      <div
-        className={cn(
-          "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-lg border border-border/60 px-3 py-2.5",
-          inlineBar && "@2xl/usage-window:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto]",
-        )}
-      >
+    <div className="w-full max-w-4xl">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 rounded-lg border border-border/60 px-3 py-2.5">
         {label !== null ? (
           <span className="min-w-0 text-sm font-medium wrap-break-word text-foreground">
             {label ?? pool.label}
           </span>
         ) : null}
-        <div
-          className={cn(
-            "col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1",
-            inlineBar && "@2xl/usage-window:col-start-3",
-            label === null && "col-start-1 justify-start",
-          )}
-        >
+        <div className="col-start-2 row-start-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <span className="flex items-baseline gap-1.5 whitespace-nowrap">
             <span className="text-3xl font-semibold text-foreground tabular-nums">
               {pool.remainingPercent}%
@@ -605,13 +593,7 @@ function PoolWindowCard({
             </span>
           ) : null}
         </div>
-        <div
-          className={cn(
-            "col-span-full min-w-0",
-            inlineBar &&
-              "@2xl/usage-window:col-span-1 @2xl/usage-window:col-start-2 @2xl/usage-window:row-start-1",
-          )}
-        >
+        <div className="col-span-full min-w-0">
           <PoolBar pool={pool} color={color} now={now} />
         </div>
         {description ? (
