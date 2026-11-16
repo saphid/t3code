@@ -300,7 +300,8 @@ describe("UsageAggregator", () => {
       rates,
       modelFilter: { exclude: [{ model: "claude-opus-5" }] },
       attributeProject: (item, transcriptPath) =>
-        item.sessionId === "session-a" && transcriptPath === "/first.jsonl"
+        (item.sessionId === "session-a" && transcriptPath === "/first.jsonl") ||
+        (item.sessionId === "session-b" && transcriptPath === "/other.jsonl")
           ? ProjectId.make("p1")
           : null,
     });
@@ -359,6 +360,41 @@ describe("UsageAggregator", () => {
     const bucketCost = result.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0);
     expect(bucketCost).toBeCloseTo(projectCost, 9);
     expect(aggregate([record()]).projectTotals).toBeUndefined();
+
+    for (const copyProject of ["p1", "p2", null]) {
+      for (const copies of [
+        [partial, complete, partial],
+        [complete, partial, complete],
+      ]) {
+        const copied = new UsageAggregator({
+          timeZone: "UTC",
+          sinceDay: "2026-08-01",
+          untilDay: "2026-08-31",
+          rates,
+          attributeProject: (item) =>
+            item.sessionId === "session-a"
+              ? ProjectId.make("p1")
+              : copyProject === null
+                ? null
+                : ProjectId.make(copyProject),
+        });
+        for (const copy of copies) copied.add(copy, "/claude");
+        const result = copied.finish();
+        expect(result.projectTotals).toEqual([
+          {
+            ...(copyProject === "p1" ? { projectId: "p1" } : {}),
+            provider: "claude",
+            sourcePath: "/claude",
+            totals: merged.totals,
+            costUsd: expect.closeTo(result.buckets[0]!.costUsd, 9),
+            records: 1,
+            unpricedRecords: 0,
+          },
+        ]);
+        expect(result.buckets[0]!.totals).toEqual(merged.totals);
+        expect(result.duplicatesDropped).toBe(2);
+      }
+    }
   });
 });
 

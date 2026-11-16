@@ -225,7 +225,7 @@ interface Contribution {
   record: UsageRecord;
   /** Null when the first copy fell outside the window. */
   readonly bucket: MutableBucket | null;
-  readonly project: MutableProjectTotals | null;
+  project: MutableProjectTotals | null;
 }
 
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
@@ -275,6 +275,13 @@ export class UsageAggregator {
             record.provider === "grok"
               ? smallestGrokCopy(held.record, record)
               : mergeUsageCopies(held.record, record);
+          if (
+            held.project !== null &&
+            held.project.projectId !== null &&
+            held.project.projectId !== this.#options.attributeProject?.(record, transcriptPath)
+          ) {
+            held.project = this.#projectFor(held.record, held.project.sourcePath, null);
+          }
         }
         return false;
       }
@@ -282,7 +289,11 @@ export class UsageAggregator {
 
     const source = sourcePath ?? "";
     const bucket = this.#placeInWindow(record, source);
-    const project = bucket === null ? null : this.#projectFor(record, source, transcriptPath);
+    const attribute = this.#options.attributeProject;
+    const project =
+      bucket === null || attribute === undefined
+        ? null
+        : this.#projectFor(record, source, attribute(record, transcriptPath));
     if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket, project });
     if (bucket === null) {
       this.#outOfWindow += 1;
@@ -321,11 +332,8 @@ export class UsageAggregator {
   #projectFor(
     record: UsageRecord,
     source: string,
-    transcriptPath: string | undefined,
-  ): MutableProjectTotals | null {
-    const attribute = this.#options.attributeProject;
-    if (attribute === undefined) return null;
-    const projectId = attribute(record, transcriptPath);
+    projectId: ProjectId | null,
+  ): MutableProjectTotals {
     const key = `${projectId ?? ""}\u0000${record.provider}\u0000${source}`;
     let project = this.#projects.get(key);
     if (project === undefined) {
@@ -510,15 +518,17 @@ export class UsageAggregator {
     const projectTotals =
       this.#options.attributeProject === undefined
         ? undefined
-        : [...this.#projects.values()].map((project): UsageProjectTotals => ({
-            ...(project.projectId === null ? {} : { projectId: project.projectId }),
-            provider: project.provider,
-            ...(project.sourcePath === "" ? {} : { sourcePath: project.sourcePath }),
-            totals: { ...project.totals },
-            costUsd: project.costUsd,
-            records: project.records,
-            unpricedRecords: project.unpricedRecords,
-          }));
+        : [...this.#projects.values()]
+            .filter((project) => project.records > 0)
+            .map((project): UsageProjectTotals => ({
+              ...(project.projectId === null ? {} : { projectId: project.projectId }),
+              provider: project.provider,
+              ...(project.sourcePath === "" ? {} : { sourcePath: project.sourcePath }),
+              totals: { ...project.totals },
+              costUsd: project.costUsd,
+              records: project.records,
+              unpricedRecords: project.unpricedRecords,
+            }));
 
     return {
       buckets,
