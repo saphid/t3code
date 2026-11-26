@@ -56,6 +56,11 @@ describe("embeddedScripts", () => {
 
   it.each([
     [`bash -Ec 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -Ec -o pipefail 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -Oc extglob 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -co pipefail 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -o pipefail -c 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -Ec +o pipefail 'echo hi'`, "shellscript", "echo hi"],
     [`python3 -c 'print(1)'`, "python", "print(1)"],
     [`py -3 -c 'print(1)'`, "python", "print(1)"],
     [`"C:\\Program Files\\Python312\\python.exe" -c 'print(1)'`, "python", "print(1)"],
@@ -110,6 +115,7 @@ describe("embeddedScripts", () => {
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
+    ["a shell whose -O consumes the only remaining argument after -Oc", `bash -Oc 'echo hi'`],
     ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
     expect(scriptsOf(command)).toEqual([]);

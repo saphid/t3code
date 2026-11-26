@@ -346,14 +346,19 @@ function interpreterArgs(
   const whole = (word: Word): ScriptArgument => ({ word, inValue: false });
   let optionsEnded = false;
   let scriptFromFile = false;
+  let shellInline = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     const flag = interpreter.ignoreCase ? arg.value.toLowerCase() : arg.value;
-    if (!optionsEnded && flag === "--") {
+    if (!optionsEnded && (flag === "--" || (interpreter === SHELL && flag === "-"))) {
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
+    if (
+      !optionsEnded &&
+      ((flag.startsWith("-") && flag !== "-") ||
+        (interpreter === SHELL && /^\+[a-zA-Z]+$/u.test(flag)))
+    ) {
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -362,13 +367,20 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
+      if (interpreter === SHELL) {
+        // POSIX shells execute the first operand after all options, never stdin, when `-c` is set.
+        if (interpreter.inline(name)) shellInline = true;
+        if (/^[+-][a-zA-Z]+$/u.test(flag)) {
+          index += flag.match(/[oO]/gu)?.length ?? 0;
+        } else if (value === undefined && interpreter.valueOptions?.has(flag)) {
+          index += 1;
+        }
+        continue;
+      }
       if (interpreter.inline(name)) {
-        // Only POSIX shells skip a `--` after `-c`, and they never read a missing `-c` script from stdin.
-        const next =
-          args[index + (interpreter === SHELL && args[index + 1]?.value === "--" ? 2 : 1)];
+        const next = args[index + 1];
         if (value !== undefined) scripts.push({ word: arg, inValue: true });
         else if (next) scripts.push(whole(next));
-        else if (interpreter === SHELL) scriptFromFile = true;
         if (!interpreter.repeatable) return { scripts, scriptFromFile };
         if (value === undefined) index += 1;
         continue;
@@ -378,6 +390,11 @@ function interpreterArgs(
     }
     positionals.push(arg);
     if (interpreter.stdin === "without-script-file" && !interpreter.subcommand) break;
+  }
+
+  if (shellInline) {
+    const first = positionals[0];
+    return { scripts: first ? [whole(first)] : [], scriptFromFile: !first };
   }
 
   if (interpreter.subcommand) {
