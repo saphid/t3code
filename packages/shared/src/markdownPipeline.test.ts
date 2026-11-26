@@ -1016,6 +1016,9 @@ it.each([
         '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
       ),
     ).toEqual([]);
+    expect(links('<a href="x">\nlabel\n</a data-x>\n\nSee /Users/me/app.ts:42')).toEqual([
+      "/Users/me/app.ts:42",
+    ]);
     expect(links("Use <a> for links.\n\nSee /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
     expect(
       links(
@@ -1032,6 +1035,11 @@ it.each([
       "https://example.com",
       "/Users/me/app.ts:42",
     ]);
+    expect(
+      links(
+        '[<a href="/target">label][target] then /Users/me/app.ts:42\n\n[target]: https://example.com',
+      ),
+    ).toEqual(["/Users/me/app.ts:42"]);
     expect(
       links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
     ).toEqual([]);

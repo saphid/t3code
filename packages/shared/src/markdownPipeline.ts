@@ -58,6 +58,7 @@ function scanRawHtmlAnchors(rawType: "raw" | "html") {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     const anchorAt = new Map<MarkdownImageHastNode, MarkdownImageHastNode | null>();
+    let attributedAnchorCount = 0;
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === rawType && typeof node.value === "string") {
@@ -76,7 +77,7 @@ function scanRawHtmlAnchors(rawType: "raw" | "html") {
             continue;
           }
           if (tag.startsWith("<!--")) continue;
-          const closing = /^<\/([a-z]+)\s*>$/i.exec(tag)?.[1]?.toLowerCase();
+          const closing = /^<\/([a-z]+)(?:\s|>)/i.exec(tag)?.[1]?.toLowerCase();
           const opening = /^<([a-z]+)(?:\s|\/?>)/i.exec(tag)?.[1]?.toLowerCase();
           if (
             opening &&
@@ -84,13 +85,15 @@ function scanRawHtmlAnchors(rawType: "raw" | "html") {
           ) {
             rawTextTag = opening;
           } else if (opening === "a") {
-            anchors.push(node.value === tag && /^<a\s*\/?>$/i.test(tag) ? node : null);
+            const anchor = node.value === tag && /^<a\s*\/?>$/i.test(tag) ? node : null;
+            anchors.push(anchor);
+            if (anchor === null) attributedAnchorCount++;
           } else if (closing === "a") {
-            anchors.pop();
+            if (anchors.pop() === null) attributedAnchorCount--;
           }
         }
       } else if (rawType === "html" && node.type === "text" && (rawTextTag || anchors.length > 0)) {
-        anchorAt.set(node, rawTextTag || anchors.includes(null) ? null : anchors.at(-1)!);
+        anchorAt.set(node, rawTextTag || attributedAnchorCount > 0 ? null : anchors.at(-1)!);
       }
       // Like the linker, stay out of Markdown link labels: the browser closes raw anchors there.
       if (rawType === "html" && (node.type === "link" || node.type === "linkReference")) return;
