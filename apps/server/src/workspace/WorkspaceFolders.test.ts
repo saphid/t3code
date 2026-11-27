@@ -102,7 +102,9 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         yield* fileSystem.makeDirectory(path.join(root, folder), { recursive: true });
       }
       if (!(yield* HostProcess.isWindows)) {
-        yield* fileSystem.makeDirectory(path.join(root, "trailing "), { recursive: true });
+        for (const folder of [" notes ", "trailing "]) {
+          yield* fileSystem.makeDirectory(path.join(root, folder), { recursive: true });
+        }
       }
       yield* fileSystem.symlink(outside, path.join(root, "linked"));
       yield* fileSystem.symlink(root, path.join(root, "self"));
@@ -145,6 +147,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             // Entries that lead nowhere take none of the room the real ones need.
             ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
+            { "path": " notes ", "name": "TrailingNotes" },
             { "path": " notes", "name": "Intended" },
             { "path": "notes" },
             { "path": "trailing /", "name": "TrailingSlash" },
