@@ -66,7 +66,6 @@ function videoTagSource(html: string): string | undefined {
 }
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
-const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
 const VIDEO_TAG_CLOSE_PATTERN = /<\/video>/iu;
 
 /** Bounded like `VIDEO_TAG_MAX_LINES`; room for a before/after table with several rows. */
@@ -396,9 +395,12 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     while (cursor < lastCandidate && !VIDEO_TAG_CLOSE_PATTERN.test(lines[cursor]!)) {
       cursor += 1;
     }
-    const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
-      : undefined;
+    const closeMatch = VIDEO_TAG_CLOSE_PATTERN.exec(lines[cursor]!);
+    const source =
+      closeMatch !== null &&
+      lines[cursor]!.slice(closeMatch.index + closeMatch[0].length).trim().length === 0
+        ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
+        : undefined;
     if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();
       segments.push({

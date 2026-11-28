@@ -216,6 +216,11 @@ describe("pull request body segmentation", () => {
       { id: "markdown:0", kind: "markdown", text: captioned, sourceOffset: 0 },
       { id: "attachment:1", kind: "attachment", url: "https://example.com/b.mp4", media: "video" },
     ]);
+    const pair =
+      '<video src="https://example.org/first.mp4"></video> and <video src="https://example.org/second.mp4"></video>';
+    expect(split(pair)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: pair, sourceOffset: 0 },
+    ]);
   });
 
   it("treats an info-string fence as a nested opener, not a close", () => {
