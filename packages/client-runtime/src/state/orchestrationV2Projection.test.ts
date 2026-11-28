@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -107,6 +108,58 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("keeps the latest submitted result and recorded fields across a stale run update", () => {
+    const running = { ...run, status: "running", completedAt: null } as const;
+    const first = { value: "A", submittedAt: "2026-06-20T00:00:01.000Z" };
+    const latest = { value: "B", submittedAt: "2026-06-20T00:00:02.000Z" };
+    const delegatedCompletion = {
+      disposition: "stopped",
+      nextGeneration: 2,
+      delivery: null,
+    } as const;
+    const restartCancelledBackgroundWork = [
+      { kind: "subagent", label: "Background work" },
+    ] as const;
+    const eventBase = { threadId, runId, occurredAt: now };
+    const events: OrchestrationV2DomainEvent[] = [
+      {
+        ...eventBase,
+        id: EventId.make("run-created"),
+        type: "run.created",
+        payload: { ...running, delegatedCompletion, explicitQueue: true },
+      },
+      ...[first, latest].map((output) => ({
+        ...eventBase,
+        id: EventId.make(`output-${output.value}`),
+        type: "run.output-submitted" as const,
+        payload: { runId, output },
+      })),
+      {
+        ...eventBase,
+        id: EventId.make("background-work-cancelled"),
+        type: "run.background-work-cancelled",
+        payload: { runId, restartCancelledBackgroundWork },
+      },
+      {
+        ...eventBase,
+        id: EventId.make("run-completed"),
+        type: "run.updated",
+        payload: { ...run, output: first },
+      },
+    ];
+    const next = events.reduce<OrchestrationV2ThreadProjection | null>(
+      (projection, event) => applyOrchestrationV2ProjectionEvent(projection, event),
+      emptyProjection,
+    );
+    expect(next?.runs[0]).toMatchObject({
+      status: "completed",
+      output: latest,
+      delegatedCompletion,
+      restartCancelledBackgroundWork,
+      explicitQueue: true,
+    });
+  });
+
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",
